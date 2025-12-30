@@ -6,10 +6,10 @@ use concepts::{
     prefixed_ulid::{DelayId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
-        JoinSetRequest, Locked, LockedBy, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateLocked,
-        VersionParseError, http_client_trace::HttpClientTrace,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState, HistoryEvent,
+        HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy, Pagination, PendingState,
+        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateLocked, VersionParseError, http_client_trace::HttpClientTrace,
     },
 };
 use concepts::{JoinSetId, JoinSetKind};
@@ -43,6 +43,11 @@ impl TryFrom<grpc_gen::DelayId> for DelayId {
 
 impl From<JoinSetId> for grpc_gen::JoinSetId {
     fn from(join_set_id: JoinSetId) -> Self {
+        (&join_set_id).into()
+    }
+}
+impl From<&JoinSetId> for grpc_gen::JoinSetId {
+    fn from(join_set_id: &JoinSetId) -> Self {
         Self {
             kind: grpc_gen::join_set_id::JoinSetKind::from(join_set_id.kind) as i32,
             name: join_set_id.name.to_string(),
@@ -261,12 +266,14 @@ impl From<grpc_gen::ComponentType> for ComponentType {
     }
 }
 
-impl From<PendingState> for grpc_gen::ExecutionStatus {
-    fn from(pending_state: PendingState) -> grpc_gen::ExecutionStatus {
+impl From<&ExecutionWithState> for grpc_gen::ExecutionStatus {
+    fn from(execution_with_state: &ExecutionWithState) -> grpc_gen::ExecutionStatus {
         use grpc_gen::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
         grpc_gen::ExecutionStatus {
-            component_digest: Some(pending_state.component_digest().into()),
-            status: Some(match pending_state {
+            component_digest: Some(grpc_gen::ContentDigest::from(
+                &execution_with_state.component_digest,
+            )),
+            status: Some(match &execution_with_state.pending_state {
                 PendingState::Locked(PendingStateLocked {
                     locked_by:
                         LockedBy {
@@ -274,27 +281,24 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
                             run_id,
                         },
                     lock_expires_at,
-                    component_id_input_digest: _,
                 }) => Status::Locked(Locked {
-                    run_id: Some(run_id.into()),
-                    lock_expires_at: Some(lock_expires_at.into()),
+                    run_id: Some((*run_id).into()),
+                    lock_expires_at: Some((*lock_expires_at).into()),
                 }),
                 PendingState::PendingAt {
                     scheduled_at,
                     last_lock: _,
-                    component_id_input_digest: _,
                 } => Status::PendingAt(PendingAt {
-                    scheduled_at: Some(scheduled_at.into()),
+                    scheduled_at: Some((*scheduled_at).into()),
                 }),
                 PendingState::BlockedByJoinSet {
                     join_set_id,
                     lock_expires_at,
                     closing,
-                    component_id_input_digest: _,
                 } => Status::BlockedByJoinSet(BlockedByJoinSet {
                     join_set_id: Some(join_set_id.into()),
-                    lock_expires_at: Some(lock_expires_at.into()),
-                    closing,
+                    lock_expires_at: Some((*lock_expires_at).into()),
+                    closing: *closing,
                 }),
                 PendingState::Finished {
                     finished:
@@ -303,18 +307,34 @@ impl From<PendingState> for grpc_gen::ExecutionStatus {
                             finished_at,
                             result_kind,
                         },
-                    component_id_input_digest: _,
                 } => Status::Finished(Finished {
-                    finished_at: Some(finished_at.into()),
-                    result_kind: grpc_gen::ResultKind::from(result_kind).into(),
+                    finished_at: Some((*finished_at).into()),
+                    result_kind: grpc_gen::ResultKind::from(*result_kind).into(),
                 }),
             }),
         }
     }
 }
 
+impl From<ExecutionWithState> for grpc_gen::ExecutionSummary {
+    fn from(value: ExecutionWithState) -> Self {
+        grpc_gen::ExecutionSummary {
+            current_status: Some((&value).into()),
+            execution_id: Some(value.execution_id.into()),
+            function_name: Some(value.ffqn.into()),
+            created_at: Some(value.created_at.into()),
+            first_scheduled_at: Some(value.first_scheduled_at.into()),
+        }
+    }
+}
+
 impl From<PendingStateFinishedResultKind> for grpc_gen::ResultKind {
     fn from(result_kind: PendingStateFinishedResultKind) -> Self {
+        (&result_kind).into()
+    }
+}
+impl From<&PendingStateFinishedResultKind> for grpc_gen::ResultKind {
+    fn from(result_kind: &PendingStateFinishedResultKind) -> Self {
         match result_kind {
             PendingStateFinishedResultKind::Ok => grpc_gen::ResultKind {
                 value: Some(result_kind::Value::Ok(result_kind::Ok {})),
@@ -369,6 +389,11 @@ impl TryFrom<grpc_gen::ResultKind> for PendingStateFinishedResultKind {
 
 impl From<ExecutionFailureKind> for grpc_gen::ExecutionFailureKind {
     fn from(value: ExecutionFailureKind) -> Self {
+        (&value).into()
+    }
+}
+impl From<&ExecutionFailureKind> for grpc_gen::ExecutionFailureKind {
+    fn from(value: &ExecutionFailureKind) -> Self {
         match value {
             ExecutionFailureKind::TimedOut => grpc_gen::ExecutionFailureKind::TimedOut,
             ExecutionFailureKind::NondeterminismDetected => {

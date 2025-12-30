@@ -1,6 +1,6 @@
 use concepts::{
     ExecutionId,
-    storage::{DbErrorRead, DbPool, PendingState, PendingStateFinished},
+    storage::{DbErrorRead, DbPool, ExecutionWithState, PendingState, PendingStateFinished},
     time::{ClockFn, Sleep},
 };
 use executor::AbortOnDropHandle;
@@ -72,8 +72,12 @@ impl<S: Sleep + 'static, C: ClockFn + 'static> PreopensCleaner<S, C> {
                     .get_pending_state(&execution_id)
                     .await
                 {
-                    Ok(PendingState::Finished {
-                        finished: PendingStateFinished { finished_at, .. },
+                    Ok(ExecutionWithState {
+                        pending_state:
+                            PendingState::Finished {
+                                finished: PendingStateFinished { finished_at, .. },
+                                ..
+                            },
                         ..
                     }) if finished_at < delete_older_than => {
                         // finished => delete after specified time

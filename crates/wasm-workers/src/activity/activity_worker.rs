@@ -1496,12 +1496,12 @@ pub(crate) mod tests {
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
-                .unwrap();
+                .unwrap()
+                .pending_state;
             let (scheduled_at, found_run_id) = assert_matches!(pending_state,
                 PendingState::PendingAt {
                     scheduled_at,
                     last_lock: Some(LockedBy { executor_id: _, run_id }),
-                    component_id_input_digest: _
                 }
             => (scheduled_at, run_id));
             // retry_exp_backoff is 0

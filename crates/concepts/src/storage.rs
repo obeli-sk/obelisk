@@ -44,10 +44,29 @@ pub struct ExecutionLog {
     pub events: Vec<ExecutionEvent>,
     pub responses: Vec<JoinSetResponseEventOuter>,
     pub next_version: Version, // Is not advanced once in Finished state
-    pub pending_state: PendingState,
+    pub pending_state: PendingState, // updated on every state change
+    pub component_digest: InputContentDigest, // updated on every state change
 }
 
 impl ExecutionLog {
+    #[must_use]
+    pub fn as_execution_with_state(&self) -> ExecutionWithState {
+        let (created_at, first_scheduled_at, ffqn) = assert_matches!(self.events.first(), Some(ExecutionEvent {
+            event: ExecutionRequest::Created { ffqn, scheduled_at: first_scheduled_at,.. },
+            created_at,
+            ..
+        }) => (created_at, first_scheduled_at, ffqn));
+
+        ExecutionWithState {
+            execution_id: self.execution_id.clone(),
+            ffqn: ffqn.clone(),
+            pending_state: self.pending_state.clone(),
+            created_at: *created_at,
+            first_scheduled_at: *first_scheduled_at,
+            component_digest: self.component_digest.clone(),
+        }
+    }
+
     /// Return some duration after which the execution will be retried.
     /// Return `None` if no more retries are allowed.
     #[must_use]
@@ -961,7 +980,7 @@ pub trait DbConnection: DbExecutor {
     async fn get_pending_state(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<PendingState, DbErrorRead>;
+    ) -> Result<ExecutionWithState, DbErrorRead>;
 
     /// Get currently expired locks and async timers (delay requests)
     async fn get_expired_timers(
@@ -1216,7 +1235,8 @@ pub struct ResponseWithCursor {
     pub cursor: ResponseCursorType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, derive_more::Display)]
+#[display("{execution_id} {pending_state} {component_digest}")]
 pub struct ExecutionWithState {
     pub execution_id: ExecutionId,
     pub ffqn: FunctionFqn,
@@ -1362,7 +1382,6 @@ pub enum PendingState {
     PendingAt {
         scheduled_at: DateTime<Utc>,
         last_lock: Option<LockedBy>, // Needed for lock extension
-        component_id_input_digest: InputContentDigest,
     }, // e.g. created with a schedule, temporary timeout/failure
     #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
     /// Caused by [`HistoryEvent::JoinNext`]
@@ -1372,36 +1391,12 @@ pub enum PendingState {
         lock_expires_at: DateTime<Utc>,
         /// Blocked by closing of the join set
         closing: bool,
-        component_id_input_digest: InputContentDigest,
     },
     #[display("Finished({finished})")]
     Finished {
         #[serde(flatten)]
         finished: PendingStateFinished,
-        component_id_input_digest: InputContentDigest,
     },
-}
-impl PendingState {
-    #[must_use]
-    pub fn component_digest(&self) -> &InputContentDigest {
-        match self {
-            PendingState::Locked(pending_state_locked) => {
-                &pending_state_locked.component_id_input_digest
-            }
-            PendingState::PendingAt {
-                component_id_input_digest,
-                ..
-            }
-            | PendingState::BlockedByJoinSet {
-                component_id_input_digest,
-                ..
-            }
-            | PendingState::Finished {
-                component_id_input_digest,
-                ..
-            } => component_id_input_digest,
-        }
-    }
 }
 
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
@@ -1409,7 +1404,6 @@ impl PendingState {
 pub struct PendingStateLocked {
     pub locked_by: LockedBy,
     pub lock_expires_at: DateTime<Utc>,
-    pub component_id_input_digest: InputContentDigest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1480,7 +1474,6 @@ impl PendingState {
             PendingState::PendingAt {
                 scheduled_at,
                 last_lock,
-                component_id_input_digest: _,
             } => {
                 if *scheduled_at <= created_at {
                     // pending now, ok to lock
@@ -1507,7 +1500,6 @@ impl PendingState {
                         run_id: current_pending_state_run_id,
                     },
                 lock_expires_at: _,
-                component_id_input_digest: _,
             }) => {
                 if executor_id == *current_pending_state_executor_id
                     && run_id == *current_pending_state_run_id

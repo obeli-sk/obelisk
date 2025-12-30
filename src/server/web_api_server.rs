@@ -79,7 +79,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             "/executions/{execution-id}/stub",
             routing::put(execution_stub),
         )
-        .route("/executions/{execution-id}", routing::get(execution_get))
+        .route(
+            "/executions/{execution-id}",
+            routing::get(execution_get_retval),
+        )
         .route(
             "/executions/{execution-id}",
             routing::put(execution_submit_put),
@@ -408,7 +411,7 @@ async fn execution_status_get(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    let pending_state = state
+    let execution_with_state = state
         .db_pool
         .external_api_conn()
         .await
@@ -417,8 +420,8 @@ async fn execution_status_get(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(match accept {
-        AcceptHeader::Json => Json(pending_state).into_response(),
-        AcceptHeader::Text => pending_state.to_string().into_response(),
+        AcceptHeader::Json => Json(execution_with_state).into_response(),
+        AcceptHeader::Text => execution_with_state.to_string().into_response(),
     })
 }
 
@@ -515,7 +518,7 @@ impl From<SupportedFunctionReturnValue> for RetVal {
     }
 }
 
-async fn execution_get(
+async fn execution_get_retval(
     Path(execution_id): Path<ExecutionId>,
     Query(params): Query<ExecutionFollowParam>,
     state: State<Arc<WebApiState>>,

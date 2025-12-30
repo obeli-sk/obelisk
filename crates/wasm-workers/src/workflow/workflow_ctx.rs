@@ -2005,7 +2005,8 @@ pub(crate) mod tests {
                 let pending_state = db_connection
                     .get_pending_state(&execution_id)
                     .await
-                    .unwrap();
+                    .unwrap()
+                    .pending_state;
                 if pending_state.is_finished() {
                     break;
                 }
@@ -2129,7 +2130,6 @@ pub(crate) mod tests {
                     ),
                     ..
                 },
-                component_id_input_digest: _,
             } => kind
         );
         assert_eq!(ExecutionFailureKind::Uncategorized, kind);
@@ -2291,7 +2291,6 @@ pub(crate) mod tests {
                     result_kind: PendingStateFinishedResultKind::Ok,
                     ..
                 },
-                component_id_input_digest: _,
             }
         );
 
@@ -2497,14 +2496,14 @@ pub(crate) mod tests {
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
-                .unwrap();
+                .unwrap()
+                .pending_state;
             info!("Got {pending_state:?}");
             let join_set_id = match pending_state {
                 PendingState::BlockedByJoinSet { join_set_id, .. } => join_set_id,
                 PendingState::PendingAt {
                     scheduled_at,
                     last_lock: _,
-                    component_id_input_digest: _,
                 } if scheduled_at <= sim_clock.now() => {
                     // Can happen when join set cancels delay requests.
                     continue;

@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use concepts::component_id::InputContentDigest;
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionRequest,
     HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
@@ -16,7 +17,8 @@ use tokio::sync::oneshot;
 #[derive(Debug)]
 pub(crate) struct ExecutionJournal {
     pub(crate) execution_id: ExecutionId,
-    pub(crate) pending_state: PendingState,
+    pub(crate) pending_state: PendingState, // updated on every state change
+    pub(crate) component_digest: InputContentDigest, // updated on every state change
     pub(crate) execution_events: VecDeque<ExecutionEvent>, // TODO: Use Vec instead
     pub(crate) responses: Vec<JoinSetResponseEventOuter>,
     pub(crate) response_subscriber: Option<oneshot::Sender<JoinSetResponseEventOuter>>,
@@ -28,9 +30,10 @@ impl ExecutionJournal {
         let pending_state = PendingState::PendingAt {
             scheduled_at: req.scheduled_at,
             last_lock: None,
-            component_id_input_digest: req.component_id.input_digest.clone(),
         };
         let execution_id = req.execution_id.clone();
+        let component_digest = req.component_id.input_digest.clone();
+
         let created_at = req.created_at;
         let event = ExecutionEvent {
             event: ExecutionRequest::from(req),
@@ -44,6 +47,7 @@ impl ExecutionJournal {
             execution_events: VecDeque::from([event]),
             responses: Vec::default(),
             response_subscriber: None,
+            component_digest,
         }
     }
 
@@ -237,10 +241,6 @@ impl ExecutionJournal {
         Ok(())
     }
 
-    fn update_pending_state(&mut self) {
-        self.pending_state = self.calculate_pending_state();
-    }
-
     pub(crate) fn find_last_lock(&self) -> Option<(LockedBy, &ComponentId)> {
         self.execution_events
             .iter()
@@ -290,8 +290,9 @@ impl ExecutionJournal {
         }
     }
 
-    fn calculate_pending_state(&self) -> PendingState {
-        self.execution_events
+    fn update_pending_state(&mut self) {
+        let (pending_state, component_digest) = self
+            .execution_events
             .iter()
             .enumerate()
             .rev()
@@ -300,11 +301,13 @@ impl ExecutionJournal {
                     scheduled_at,
                     component_id,
                     ..
-                } => Some(PendingState::PendingAt {
-                    scheduled_at: *scheduled_at,
-                    last_lock: None,
-                    component_id_input_digest: component_id.input_digest.clone(),
-                }),
+                } => Some((
+                    PendingState::PendingAt {
+                        scheduled_at: *scheduled_at,
+                        last_lock: None,
+                    },
+                    component_id.input_digest.clone(),
+                )),
 
                 ExecutionRequest::Finished { result, .. } => {
                     let component_id_input_digest = self
@@ -312,14 +315,16 @@ impl ExecutionJournal {
                         .map(|l| l.1.input_digest.clone())
                         .unwrap_or_else(|| self.get_create_request().component_id.input_digest);
                     assert_eq!(self.execution_events.len() - 1, idx);
-                    Some(PendingState::Finished {
-                        finished: PendingStateFinished {
-                            version: VersionType::try_from(idx).expect("version limit reached"),
-                            finished_at: event.created_at,
-                            result_kind: PendingStateFinishedResultKind::from(result),
+                    Some((
+                        PendingState::Finished {
+                            finished: PendingStateFinished {
+                                version: VersionType::try_from(idx).expect("version limit reached"),
+                                finished_at: event.created_at,
+                                result_kind: PendingStateFinishedResultKind::from(result),
+                            },
                         },
                         component_id_input_digest,
-                    })
+                    ))
                 }
 
                 ExecutionRequest::Locked(Locked {
@@ -328,14 +333,16 @@ impl ExecutionJournal {
                     run_id,
                     component_id,
                     retry_config: _,
-                }) => Some(PendingState::Locked(PendingStateLocked {
-                    locked_by: LockedBy {
-                        executor_id: *executor_id,
-                        run_id: *run_id,
-                    },
-                    lock_expires_at: *lock_expires_at,
-                    component_id_input_digest: component_id.input_digest.clone(),
-                })),
+                }) => Some((
+                    PendingState::Locked(PendingStateLocked {
+                        locked_by: LockedBy {
+                            executor_id: *executor_id,
+                            run_id: *run_id,
+                        },
+                        lock_expires_at: *lock_expires_at,
+                    }),
+                    component_id.input_digest.clone(),
+                )),
 
                 ExecutionRequest::TemporarilyFailed {
                     backoff_expires_at: expires_at,
@@ -353,11 +360,13 @@ impl ExecutionJournal {
                         .find_last_lock()
                         .map(|l| l.1.input_digest.clone())
                         .unwrap_or_else(|| self.get_create_request().component_id.input_digest);
-                    Some(PendingState::PendingAt {
-                        scheduled_at: *expires_at,
-                        last_lock: self.find_last_lock().map(|(ll, _)| ll),
+                    Some((
+                        PendingState::PendingAt {
+                            scheduled_at: *expires_at,
+                            last_lock: self.find_last_lock().map(|(ll, _)| ll),
+                        },
                         component_id_input_digest,
-                    })
+                    ))
                 }
 
                 ExecutionRequest::HistoryEvent {
@@ -402,19 +411,23 @@ impl ExecutionJournal {
                     if let Some(nth_created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
                         let scheduled_at = max(*lock_expires_at, *nth_created_at);
-                        Some(PendingState::PendingAt {
-                            scheduled_at,
-                            last_lock: self.find_last_lock().map(|(ll, _)| ll),
+                        Some((
+                            PendingState::PendingAt {
+                                scheduled_at,
+                                last_lock: self.find_last_lock().map(|(ll, _)| ll),
+                            },
                             component_id_input_digest,
-                        })
+                        ))
                     } else {
                         // Still waiting for response
-                        Some(PendingState::BlockedByJoinSet {
-                            join_set_id: expected_join_set_id.clone(),
-                            lock_expires_at: *lock_expires_at,
-                            closing: *closing,
+                        Some((
+                            PendingState::BlockedByJoinSet {
+                                join_set_id: expected_join_set_id.clone(),
+                                lock_expires_at: *lock_expires_at,
+                                closing: *closing,
+                            },
                             component_id_input_digest,
-                        })
+                        ))
                     }
                 }
                 // No pending state change for following events:
@@ -434,7 +447,9 @@ impl ExecutionJournal {
                         | HistoryEvent::JoinNextTooMany { .. },
                 } => None,
             })
-            .expect("journal must begin with Created event")
+            .expect("journal must begin with Created event");
+        self.pending_state = pending_state;
+        self.component_digest = component_digest;
     }
 
     pub fn event_history(&self) -> impl Iterator<Item = (HistoryEvent, Version)> + '_ {
@@ -476,6 +491,7 @@ impl ExecutionJournal {
             next_version: self.version(),
             pending_state: self.pending_state.clone(),
             responses: self.responses.clone(),
+            component_digest: self.component_digest.clone(),
         }
     }
 

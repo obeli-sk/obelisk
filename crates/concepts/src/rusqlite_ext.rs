@@ -1,5 +1,7 @@
+use std::str::FromStr;
+
 use crate::{
-    ContentDigest, ExecutionId, JoinSetId,
+    ContentDigest, ExecutionId, FunctionFqn, JoinSetId,
     component_id::{Digest, InputContentDigest},
     prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
@@ -166,6 +168,22 @@ impl From<rusqlite::Error> for DbErrorWrite {
             DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
         } else {
             Self::from(DbErrorGeneric::from(err))
+        }
+    }
+}
+
+impl FromSql for FunctionFqn {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        match value {
+            ValueRef::Text(ffqn) => {
+                let ffqn = String::from_utf8_lossy(ffqn);
+                let ffqn = FunctionFqn::from_str(&ffqn).map_err(|err| {
+                    warn!("Cannot deserialize ffqn - {err:?}");
+                    FromSqlError::Other(Box::from(format!("cannot deserialize ffqn - {err}")))
+                })?;
+                Ok(ffqn)
+            }
+            _ => Err(FromSqlError::InvalidType),
         }
     }
 }

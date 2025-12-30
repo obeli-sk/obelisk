@@ -71,8 +71,8 @@ impl CancelRegistry {
         };
         let mut finished = Vec::new();
         for execution_id in execution_ids {
-            if let Ok(pending_state) = db_connection.get_pending_state(&execution_id).await
-                && pending_state.is_finished()
+            if let Ok(execution_with_state) = db_connection.get_pending_state(&execution_id).await
+                && execution_with_state.pending_state.is_finished()
             {
                 finished.push(execution_id);
             }

@@ -1510,7 +1510,6 @@ mod tests {
             PendingState::PendingAt {
                 scheduled_at,
                 last_lock: Some(LockedBy { executor_id: found_executor_id, run_id: _}),
-                component_id_input_digest: _
             } if scheduled_at == sim_clock.now() && found_executor_id == parent_executor_id,
             "parent should be back to pending"
         );
@@ -1679,7 +1678,6 @@ mod tests {
                     executor_id: found_executor_id,
                     run_id: _,
                 }),
-                component_id_input_digest: _
             } if found_scheduled_by == expected_first_timeout_expiry && found_executor_id == exec_config.executor_id
         );
         sim_clock.move_time_forward(timeout_duration);

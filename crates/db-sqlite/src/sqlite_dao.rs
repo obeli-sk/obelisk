@@ -32,7 +32,6 @@ use std::{
     fmt::Debug,
     ops::DerefMut,
     path::Path,
-    str::FromStr,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -249,13 +248,16 @@ enum RusqliteError {
 mod conversions {
 
     use super::RusqliteError;
-    use concepts::storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite};
+    use concepts::{
+        StrVariant,
+        storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite},
+    };
     use rusqlite::{
         ToSql,
         types::{FromSql, FromSqlError},
     };
     use std::fmt::Debug;
-    use tracing::error;
+    use tracing::{error, warn};
 
     impl From<rusqlite::Error> for RusqliteError {
         fn from(err: rusqlite::Error) -> Self {
@@ -352,16 +354,24 @@ mod conversions {
         FromSqlError::other(OtherError(input)).into()
     }
 
-    pub(crate) fn consistency_db_err(input: &'static str) -> DbErrorGeneric {
-        DbErrorGeneric::Uncategorized(input.into())
+    pub(crate) fn consistency_db_err(err: impl Into<StrVariant>) -> DbErrorGeneric {
+        let err = err.into();
+        warn!(
+            backtrace = %std::backtrace::Backtrace::capture(),
+            "Consistency error: {err}"
+        );
+        DbErrorGeneric::Uncategorized(err)
     }
 }
 
 #[derive(Debug)]
 struct CombinedStateDTO {
+    execution_id: ExecutionId,
     state: String,
-    ffqn: String,
-    component_id_input_digest: InputContentDigest,
+    ffqn: FunctionFqn,
+    component_digest: InputContentDigest,
+    created_at: DateTime<Utc>,
+    first_scheduled_at: DateTime<Utc>,
     pending_expires_finished: DateTime<Utc>,
     // Locked:
     last_lock_version: Option<Version>,
@@ -375,19 +385,18 @@ struct CombinedStateDTO {
 }
 #[derive(Debug)]
 struct CombinedState {
-    ffqn: FunctionFqn,
-    pending_state: PendingState,
+    execution_with_state: ExecutionWithState,
     corresponding_version: Version,
 }
 impl CombinedState {
     fn get_next_version_assert_not_finished(&self) -> Version {
-        assert!(!self.pending_state.is_finished());
+        assert!(!self.execution_with_state.pending_state.is_finished());
         self.corresponding_version.increment()
     }
 
     #[cfg(feature = "test")]
     fn get_next_version_or_finished(&self) -> Version {
-        if self.pending_state.is_finished() {
+        if self.execution_with_state.pending_state.is_finished() {
             self.corresponding_version.clone()
         } else {
             self.corresponding_version.increment()
@@ -417,16 +426,15 @@ struct AppendNotifier {
 
 impl CombinedState {
     fn new(dto: CombinedStateDTO, corresponding_version: Version) -> Result<Self, rusqlite::Error> {
-        let ffqn = FunctionFqn::from_str(&dto.ffqn).map_err(|parse_err| {
-            error!("Error parsing ffqn of {dto:?} - {parse_err:?}");
-            consistency_rusqlite("invalid ffqn value in `t_state`")
-        })?;
-        let pending_state = match dto {
+        let execution_with_state = match dto {
             // Pending - just created
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
                 executor_id: None,
@@ -434,16 +442,25 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_PENDING_AT => PendingState::PendingAt {
-                scheduled_at,
-                last_lock: None,
-                component_id_input_digest,
+            } if state == STATE_PENDING_AT => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::PendingAt {
+                    scheduled_at,
+                    last_lock: None,
+                },
             },
             // Pending, previously locked
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
                 executor_id: Some(executor_id),
@@ -451,18 +468,27 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_PENDING_AT => PendingState::PendingAt {
-                scheduled_at,
-                last_lock: Some(LockedBy {
-                    executor_id,
-                    run_id,
-                }),
-                component_id_input_digest,
+            } if state == STATE_PENDING_AT => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::PendingAt {
+                    scheduled_at,
+                    last_lock: Some(LockedBy {
+                        executor_id,
+                        run_id,
+                    }),
+                },
             },
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: Some(_),
                 executor_id: Some(executor_id),
@@ -470,18 +496,27 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_LOCKED => PendingState::Locked(PendingStateLocked {
-                locked_by: LockedBy {
-                    executor_id,
-                    run_id,
-                },
-                lock_expires_at,
-                component_id_input_digest,
-            }),
+            } if state == STATE_LOCKED => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Locked(PendingStateLocked {
+                    locked_by: LockedBy {
+                        executor_id,
+                        run_id,
+                    },
+                    lock_expires_at,
+                }),
+            },
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: None,
                 executor_id: _,
@@ -489,16 +524,25 @@ impl CombinedState {
                 join_set_id: Some(join_set_id),
                 join_set_closing: Some(join_set_closing),
                 result_kind: None,
-            } if state == STATE_BLOCKED_BY_JOIN_SET => PendingState::BlockedByJoinSet {
-                join_set_id: join_set_id.clone(),
-                closing: join_set_closing,
-                lock_expires_at,
-                component_id_input_digest,
+            } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::BlockedByJoinSet {
+                    join_set_id: join_set_id.clone(),
+                    closing: join_set_closing,
+                    lock_expires_at,
+                },
             },
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: finished_at,
                 last_lock_version: None,
                 executor_id: None,
@@ -506,23 +550,27 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: Some(result_kind),
-            } if state == STATE_FINISHED => PendingState::Finished {
-                finished: PendingStateFinished {
-                    finished_at,
-                    version: corresponding_version.0,
-                    result_kind,
+            } if state == STATE_FINISHED => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Finished {
+                    finished: PendingStateFinished {
+                        finished_at,
+                        version: corresponding_version.0,
+                        result_kind,
+                    },
                 },
-                component_id_input_digest,
             },
-
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
                 return Err(consistency_rusqlite("invalid `t_state`"));
             }
         };
         Ok(Self {
-            ffqn,
-            pending_state,
+            execution_with_state,
             corresponding_version,
         })
     }
@@ -1077,7 +1125,7 @@ impl SqlitePool {
                 let event = row
                     .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                     .map_err(|serde| {
-                        error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
+                        warn!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
                         consistency_rusqlite("cannot deserialize `Created` event")
                     })?;
                 Ok((created_at, event.0))
@@ -1544,6 +1592,7 @@ impl SqlitePool {
         let mut stmt = tx.prepare(
             r"
                 SELECT
+                    created_at, first_scheduled_at,
                     state, ffqn, component_id_input_digest, corresponding_version, pending_expires_finished,
                     last_lock_version, executor_id, run_id,
                     join_set_id, join_set_closing,
@@ -1558,11 +1607,17 @@ impl SqlitePool {
                 ":execution_id": execution_id.to_string(),
             },
             |row| {
+                let created_at: DateTime<Utc> = row.get("created_at")?;
+                let first_scheduled_at: DateTime<Utc> = row.get("first_scheduled_at")?;
+                let ffqn = row.get("ffqn")?;
                 CombinedState::new(
                     CombinedStateDTO {
-                        component_id_input_digest: row.get("component_id_input_digest")?,
+                        execution_id: execution_id.clone(),
+                        created_at,
+                        first_scheduled_at,
+                        component_digest: row.get("component_id_input_digest")?,
                         state: row.get("state")?,
-                        ffqn: row.get("ffqn")?,
+                        ffqn,
                         pending_expires_finished: row
                             .get::<_, DateTime<Utc>>("pending_expires_finished")?,
                         last_lock_version: row
@@ -1684,15 +1739,20 @@ impl SqlitePool {
                     .as_ref(),
                 |row| {
                     let execution_id = row.get::<_, ExecutionId>("execution_id")?;
-                    let component_id_input_digest: InputContentDigest =
+                    let component_digest: InputContentDigest =
                         row.get("component_id_input_digest")?;
                     let created_at = row.get("created_at")?;
                     let first_scheduled_at = row.get("first_scheduled_at")?;
+                    let ffqn: FunctionFqn = row.get("ffqn")?;
+
                     let combined_state = CombinedState::new(
                         CombinedStateDTO {
-                            component_id_input_digest: component_id_input_digest.clone(),
+                            execution_id,
+                            created_at,
+                            first_scheduled_at,
+                            component_digest,
                             state: row.get("state")?,
-                            ffqn: row.get("ffqn")?,
+                            ffqn,
                             pending_expires_finished: row
                                 .get::<_, DateTime<Utc>>("pending_expires_finished")?,
                             executor_id: row.get::<_, Option<ExecutorId>>("executor_id")?,
@@ -1711,14 +1771,7 @@ impl SqlitePool {
                         },
                         Version::new(row.get("corresponding_version")?),
                     )?;
-                    Ok(ExecutionWithState {
-                        execution_id,
-                        ffqn: combined_state.ffqn,
-                        pending_state: combined_state.pending_state,
-                        created_at,
-                        first_scheduled_at,
-                        component_digest: component_id_input_digest,
-                    })
+                    Ok(combined_state.execution_with_state)
                 },
             )?
             .collect::<Vec<Result<_, _>>>()
@@ -1848,12 +1901,10 @@ impl SqlitePool {
     ) -> Result<LockedExecution, DbErrorWrite> {
         debug!("lock_single_execution");
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        combined_state.pending_state.can_append_lock(
-            created_at,
-            executor_id,
-            run_id,
-            lock_expires_at,
-        )?;
+        combined_state
+            .execution_with_state
+            .pending_state
+            .can_append_lock(created_at, executor_id, run_id, lock_expires_at)?;
         let expected_version = combined_state.get_next_version_assert_not_finished();
         Self::check_expected_next_and_appending_version(&expected_version, appending_version)?;
 
@@ -2076,7 +2127,11 @@ impl SqlitePool {
         }
 
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        if combined_state.pending_state.is_finished() {
+        if combined_state
+            .execution_with_state
+            .pending_state
+            .is_finished()
+        {
             debug!("Execution is already finished");
             return Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::IllegalState("already finished".into()),
@@ -2127,10 +2182,7 @@ impl SqlitePool {
                     &appending_version,
                     *backoff_expires_at,
                     true, // an intermittent failure
-                    combined_state
-                        .pending_state
-                        .component_digest()
-                        .clone(),
+                    combined_state.execution_with_state.component_digest,
                 )?;
                 return Ok((next_version, notifier));
             }
@@ -2144,10 +2196,7 @@ impl SqlitePool {
                     &appending_version,
                     *backoff_expires_at,
                     false, // not an intermittent failure
-                    combined_state
-                        .pending_state
-                        .component_digest()
-                        .clone(),
+                    combined_state.execution_with_state.component_digest,
                 )?;
                 return Ok((next_version, notifier));
             }
@@ -2249,10 +2298,7 @@ impl SqlitePool {
                         &appending_version,
                         scheduled_at,
                         false, // not an intermittent failure
-                        combined_state
-                            .pending_state
-                            .component_digest()
-                            .clone(),
+                        combined_state.execution_with_state.component_digest,
                     )?;
                     return Ok((next_version, notifier));
                 }
@@ -2316,8 +2362,7 @@ impl SqlitePool {
             join_set_id: found_join_set_id,
             lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
             closing: _,
-            component_id_input_digest,
-        } = combined_state.pending_state
+        } = combined_state.execution_with_state.pending_state
             && *join_set_id == found_join_set_id
         {
             // PendingAt should be set to current time if called from expired_timers_watcher,
@@ -2330,7 +2375,7 @@ impl SqlitePool {
                 execution_id,
                 scheduled_at,
                 &combined_state.corresponding_version, // not changing the version
-                component_id_input_digest,
+                combined_state.execution_with_state.component_digest,
             )?
         } else {
             AppendNotifier::default()
@@ -2432,7 +2477,8 @@ impl SqlitePool {
             events,
             responses,
             next_version: combined_state.get_next_version_or_finished(), // In case of finished, this will be the already last version
-            pending_state: combined_state.pending_state,
+            pending_state: combined_state.execution_with_state.pending_state,
+            component_digest: combined_state.execution_with_state.component_digest,
         })
     }
 
@@ -3517,7 +3563,7 @@ impl DbConnection for SqlitePool {
             let execution_id = execution_id.clone();
             self.transaction(move |tx| {
                 let pending_state =
-                    Self::get_combined_state(tx, &execution_id)?.pending_state;
+                    Self::get_combined_state(tx, &execution_id)?.execution_with_state.pending_state;
                 if let PendingState::Finished { finished, .. } = pending_state {
                     let event =
                         Self::get_execution_event(tx, &execution_id, finished.version)?;
@@ -3731,7 +3777,7 @@ impl DbConnection for SqlitePool {
     async fn get_pending_state(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<PendingState, DbErrorRead> {
+    ) -> Result<ExecutionWithState, DbErrorRead> {
         let execution_id = execution_id.clone();
         Ok(self
             .transaction(
@@ -3739,7 +3785,7 @@ impl DbConnection for SqlitePool {
                 "get_pending_state",
             )
             .await?
-            .pending_state)
+            .execution_with_state)
     }
 }
 

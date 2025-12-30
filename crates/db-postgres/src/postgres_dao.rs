@@ -536,9 +536,12 @@ fn consistency_db_err(err: impl Into<StrVariant>) -> DbErrorGeneric {
 
 #[derive(Debug)]
 struct CombinedStateDTO {
+    execution_id: ExecutionId,
     state: String,
-    ffqn: String,
-    component_id_input_digest: InputContentDigest,
+    ffqn: FunctionFqn,
+    component_digest: InputContentDigest,
+    created_at: DateTime<Utc>,
+    first_scheduled_at: DateTime<Utc>,
     pending_expires_finished: DateTime<Utc>,
     // Locked:
     last_lock_version: Option<Version>,
@@ -552,23 +555,21 @@ struct CombinedStateDTO {
 }
 #[derive(Debug)]
 struct CombinedState {
-    ffqn: FunctionFqn,
-    pending_state: PendingState,
+    execution_with_state: ExecutionWithState,
     corresponding_version: Version,
 }
 
 impl CombinedState {
     fn new(dto: CombinedStateDTO, corresponding_version: Version) -> Result<Self, DbErrorGeneric> {
-        let ffqn = FunctionFqn::from_str(&dto.ffqn).map_err(|parse_err| {
-            error!("Error parsing ffqn of {dto:?} - {parse_err:?}");
-            consistency_db_err("invalid ffqn value in `t_state`")
-        })?;
-        let pending_state = match dto {
+        let execution_with_state = match dto {
             // Pending - just created
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
                 executor_id: None,
@@ -576,16 +577,25 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_PENDING_AT => PendingState::PendingAt {
-                scheduled_at,
-                last_lock: None,
-                component_id_input_digest,
+            } if state == STATE_PENDING_AT => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::PendingAt {
+                    scheduled_at,
+                    last_lock: None,
+                },
             },
             // Pending, previously locked
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
                 executor_id: Some(executor_id),
@@ -593,18 +603,27 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_PENDING_AT => PendingState::PendingAt {
-                scheduled_at,
-                last_lock: Some(LockedBy {
-                    executor_id,
-                    run_id,
-                }),
-                component_id_input_digest,
+            } if state == STATE_PENDING_AT => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::PendingAt {
+                    scheduled_at,
+                    last_lock: Some(LockedBy {
+                        executor_id,
+                        run_id,
+                    }),
+                },
             },
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: Some(_),
                 executor_id: Some(executor_id),
@@ -612,18 +631,27 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-            } if state == STATE_LOCKED => PendingState::Locked(PendingStateLocked {
-                locked_by: LockedBy {
-                    executor_id,
-                    run_id,
-                },
-                lock_expires_at,
-                component_id_input_digest,
-            }),
+            } if state == STATE_LOCKED => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Locked(PendingStateLocked {
+                    locked_by: LockedBy {
+                        executor_id,
+                        run_id,
+                    },
+                    lock_expires_at,
+                }),
+            },
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: None,
                 executor_id: _,
@@ -631,16 +659,25 @@ impl CombinedState {
                 join_set_id: Some(join_set_id),
                 join_set_closing: Some(join_set_closing),
                 result_kind: None,
-            } if state == STATE_BLOCKED_BY_JOIN_SET => PendingState::BlockedByJoinSet {
-                join_set_id: join_set_id.clone(),
-                closing: join_set_closing,
-                lock_expires_at,
-                component_id_input_digest,
+            } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::BlockedByJoinSet {
+                    join_set_id: join_set_id.clone(),
+                    closing: join_set_closing,
+                    lock_expires_at,
+                },
             },
             CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
                 state,
-                ffqn: _,
-                component_id_input_digest,
+                ffqn,
+                component_digest,
                 pending_expires_finished: finished_at,
                 last_lock_version: None,
                 executor_id: None,
@@ -648,35 +685,39 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: Some(result_kind),
-            } if state == STATE_FINISHED => PendingState::Finished {
-                finished: PendingStateFinished {
-                    finished_at,
-                    version: corresponding_version.0,
-                    result_kind,
+            } if state == STATE_FINISHED => ExecutionWithState {
+                component_digest,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Finished {
+                    finished: PendingStateFinished {
+                        finished_at,
+                        version: corresponding_version.0,
+                        result_kind,
+                    },
                 },
-                component_id_input_digest,
             },
-
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
                 return Err(consistency_db_err("invalid `t_state`"));
             }
         };
         Ok(Self {
-            ffqn,
-            pending_state,
+            execution_with_state,
             corresponding_version,
         })
     }
 
     fn get_next_version_assert_not_finished(&self) -> Version {
-        assert!(!self.pending_state.is_finished());
+        assert!(!self.execution_with_state.pending_state.is_finished());
         self.corresponding_version.increment()
     }
 
     #[cfg(feature = "test")]
     fn get_next_version_or_finished(&self) -> Version {
-        if self.pending_state.is_finished() {
+        if self.execution_with_state.pending_state.is_finished() {
             self.corresponding_version.clone()
         } else {
             self.corresponding_version.increment()
@@ -1187,6 +1228,7 @@ async fn get_combined_state(
         .query_one(
             r"
             SELECT
+                created_at, first_scheduled_at,
                 state, ffqn, component_id_input_digest, corresponding_version, pending_expires_finished,
                 last_lock_version, executor_id, run_id,
                 join_set_id, join_set_closing,
@@ -1200,6 +1242,10 @@ async fn get_combined_state(
         .map_err(DbErrorRead::from)?;
 
     // Parsing columns
+
+    let created_at: DateTime<Utc> = get(&row, "created_at")?;
+    let first_scheduled_at: DateTime<Utc> = get(&row, "first_scheduled_at")?;
+
     let digest_bytes: Vec<u8> = get(&row, "component_id_input_digest")?;
     let digest = Digest::try_from(digest_bytes.as_slice())
         .map_err(|err| consistency_db_err(err.to_string()))?;
@@ -1207,6 +1253,10 @@ async fn get_combined_state(
 
     let state: String = get(&row, "state")?;
     let ffqn: String = get(&row, "ffqn")?;
+    let ffqn = FunctionFqn::from_str(&ffqn).map_err(|parse_err| {
+        consistency_db_err(format!("invalid ffqn value in `t_state` - {parse_err}"))
+    })?;
+
     let pending_expires_finished: DateTime<Utc> = get(&row, "pending_expires_finished")?;
 
     let last_lock_version_raw: Option<i64> = get(&row, "last_lock_version")?;
@@ -1245,9 +1295,12 @@ async fn get_combined_state(
     );
 
     let dto = CombinedStateDTO {
+        execution_id: execution_id.clone(),
+        created_at,
+        first_scheduled_at,
         state,
         ffqn,
-        component_id_input_digest,
+        component_digest: component_id_input_digest,
         pending_expires_finished,
         last_lock_version,
         executor_id,
@@ -1412,10 +1465,19 @@ async fn list_executions(
                 .transpose()
                 .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
 
+            let ffqn: String = get(&row, "ffqn")?;
+            let ffqn = FunctionFqn::from_str(&ffqn).map_err(|parse_err| {
+                error!("Error parsing ffqn - {parse_err:?}");
+                consistency_db_err("invalid ffqn value in `t_state`")
+            })?;
+
             let combined_state_dto = CombinedStateDTO {
-                component_id_input_digest: component_id_input_digest.clone(),
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                component_digest: component_id_input_digest,
                 state: get(&row, "state")?,
-                ffqn: get(&row, "ffqn")?,
+                ffqn,
                 pending_expires_finished: get(&row, "pending_expires_finished")?,
                 executor_id,
                 last_lock_version,
@@ -1427,14 +1489,7 @@ async fn list_executions(
 
             let combined_state = CombinedState::new(combined_state_dto, corresponding_version)?;
 
-            Ok(ExecutionWithState {
-                execution_id,
-                ffqn: combined_state.ffqn,
-                pending_state: combined_state.pending_state,
-                created_at,
-                first_scheduled_at,
-                component_digest: component_id_input_digest,
-            })
+            Ok(combined_state.execution_with_state)
         };
 
         match unpack() {
@@ -1609,12 +1664,10 @@ async fn lock_single_execution(
 
     // 1. Check State
     let combined_state = get_combined_state(tx, execution_id).await?;
-    combined_state.pending_state.can_append_lock(
-        created_at,
-        executor_id,
-        run_id,
-        lock_expires_at,
-    )?;
+    combined_state
+        .execution_with_state
+        .pending_state
+        .can_append_lock(created_at, executor_id, run_id, lock_expires_at)?;
     let expected_version = combined_state.get_next_version_assert_not_finished();
     check_expected_next_and_appending_version(&expected_version, appending_version)?;
 
@@ -1841,7 +1894,11 @@ async fn append(
     }
 
     let combined_state = get_combined_state(tx, execution_id).await?;
-    if combined_state.pending_state.is_finished() {
+    if combined_state
+        .execution_with_state
+        .pending_state
+        .is_finished()
+    {
         debug!("Execution is already finished");
         return Err(DbErrorWrite::NonRetriable(
             DbErrorWriteNonRetriable::IllegalState("already finished".into()),
@@ -1892,7 +1949,7 @@ async fn append(
                 &appending_version,
                 *backoff_expires_at,
                 true, // an intermittent failure
-                combined_state.pending_state.component_digest().clone(),
+                combined_state.execution_with_state.component_digest,
             )
             .await?;
             return Ok((next_version, notifier));
@@ -1907,7 +1964,7 @@ async fn append(
                 &appending_version,
                 *backoff_expires_at,
                 false, // not an intermittent failure
-                combined_state.pending_state.component_digest().clone(),
+                combined_state.execution_with_state.component_digest,
             )
             .await?;
             return Ok((next_version, notifier));
@@ -2016,7 +2073,7 @@ async fn append(
                     &appending_version,
                     scheduled_at,
                     false, // not an intermittent failure
-                    combined_state.pending_state.component_digest().clone(),
+                    combined_state.execution_with_state.component_digest,
                 )
                 .await?;
                 return Ok((next_version, notifier));
@@ -2086,8 +2143,7 @@ async fn append_response(
         join_set_id: found_join_set_id,
         lock_expires_at,
         closing: _,
-        component_id_input_digest,
-    } = combined_state.pending_state
+    } = combined_state.execution_with_state.pending_state
         && *join_set_id == found_join_set_id
     {
         let scheduled_at = std::cmp::max(lock_expires_at, response_outer.created_at);
@@ -2097,7 +2153,7 @@ async fn append_response(
             execution_id,
             scheduled_at,
             &combined_state.corresponding_version,
-            component_id_input_digest,
+            combined_state.execution_with_state.component_digest,
         )
         .await?
     } else {
@@ -2195,7 +2251,8 @@ async fn get_execution_log(
         events,
         responses,
         next_version: combined_state.get_next_version_or_finished(),
-        pending_state: combined_state.pending_state,
+        pending_state: combined_state.execution_with_state.pending_state,
+        component_digest: combined_state.execution_with_state.component_digest,
     })
 }
 
@@ -3235,7 +3292,10 @@ impl DbConnection for PostgresConnection {
                     .insert(unique_tag, sender);
             }
 
-            let pending_state = get_combined_state(&tx, execution_id).await?.pending_state;
+            let pending_state = get_combined_state(&tx, execution_id)
+                .await?
+                .execution_with_state
+                .pending_state;
 
             if let PendingState::Finished { finished, .. } = pending_state {
                 let event = get_execution_event(&tx, execution_id, finished.version).await?;
@@ -3503,17 +3563,17 @@ impl DbConnection for PostgresConnection {
     async fn get_pending_state(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<PendingState, DbErrorRead> {
+    ) -> Result<ExecutionWithState, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard
             .transaction()
             .await
             .map_err(DbErrorRead::from)?;
 
-        let state = get_combined_state(&tx, execution_id).await?.pending_state;
+        let combined_state = get_combined_state(&tx, execution_id).await?;
 
         tx.commit().await.map_err(DbErrorRead::from)?;
-        Ok(state)
+        Ok(combined_state.execution_with_state)
     }
 }
 

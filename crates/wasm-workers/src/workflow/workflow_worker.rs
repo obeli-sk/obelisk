@@ -1197,7 +1197,8 @@ pub(crate) mod tests {
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
-                .unwrap();
+                .unwrap()
+                .pending_state;
             assert_matches!(pending_state, PendingState::BlockedByJoinSet {lock_expires_at, .. } => lock_expires_at)
         };
         assert_eq!(sim_clock.now(), blocked_until);
@@ -1222,7 +1223,8 @@ pub(crate) mod tests {
             db_connection
                 .get_pending_state(&execution_id)
                 .await
-                .unwrap(),
+                .unwrap()
+                .pending_state,
             PendingState::Finished {
                 finished: PendingStateFinished {
                     result_kind: PendingStateFinishedResultKind::Ok,
@@ -1317,7 +1319,8 @@ pub(crate) mod tests {
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
-                .unwrap();
+                .unwrap()
+                .pending_state;
             assert_matches!(pending_state, PendingState::BlockedByJoinSet {lock_expires_at, .. } => lock_expires_at)
         };
         match join_next_blocking_strategy {
@@ -1351,14 +1354,14 @@ pub(crate) mod tests {
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
-                .unwrap();
+                .unwrap()
+                .pending_state;
 
             let (actual_pending_at, found_executor_id, found_run_id) = assert_matches!(
                 pending_state,
                 PendingState::PendingAt {
                     scheduled_at,
                     last_lock: Some(LockedBy { executor_id, run_id }),
-                    component_id_input_digest: _,
                 }
                 => (scheduled_at, executor_id, run_id)
             );
@@ -1388,7 +1391,8 @@ pub(crate) mod tests {
             db_connection
                 .get_pending_state(&execution_id)
                 .await
-                .unwrap(),
+                .unwrap()
+                .pending_state,
             PendingState::Finished {
                 finished: PendingStateFinished {
                     result_kind: PendingStateFinishedResultKind::Ok,
@@ -1874,7 +1878,8 @@ pub(crate) mod tests {
         let pending_state = db_connection
             .get_pending_state(&execution_id)
             .await
-            .unwrap();
+            .unwrap()
+            .pending_state;
         assert_matches!(
             pending_state,
             PendingState::Finished {
@@ -1884,7 +1889,6 @@ pub(crate) mod tests {
                     ),
                     ..
                 },
-                component_id_input_digest: _,
             }
         );
         drop(db_connection);
@@ -1966,12 +1970,12 @@ pub(crate) mod tests {
         let pending_state = db_connection
             .get_pending_state(&execution_id)
             .await
-            .unwrap();
+            .unwrap()
+            .pending_state;
         let (scheduled_at, found_executor_id, found_run_id) = assert_matches!(pending_state,
             PendingState::PendingAt {
                 scheduled_at,
                 last_lock: Some(LockedBy { executor_id, run_id }),
-                component_id_input_digest: _,
             }
             => (scheduled_at, executor_id, run_id));
         assert_eq!(sim_clock.now(), scheduled_at);
@@ -2114,7 +2118,8 @@ pub(crate) mod tests {
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
-                .unwrap();
+                .unwrap()
+                .pending_state;
 
             assert_matches!(pending_state, PendingState::BlockedByJoinSet { .. });
 
@@ -2147,7 +2152,8 @@ pub(crate) mod tests {
         let pending_state = db_connection
             .get_pending_state(&execution_id)
             .await
-            .unwrap();
+            .unwrap()
+            .pending_state;
         assert_matches!(
             pending_state,
             PendingState::Finished {
@@ -2155,7 +2161,6 @@ pub(crate) mod tests {
                     result_kind: PendingStateFinishedResultKind::Ok,
                     ..
                 },
-                component_id_input_digest: _,
             }
         );
         let execution_log = db_connection.get(&execution_id).await.unwrap();
@@ -2296,13 +2301,13 @@ pub(crate) mod tests {
         let pending_state = db_connection
             .get_pending_state(&execution_id)
             .await
-            .unwrap();
+            .unwrap()
+            .pending_state;
         let join_set_id = assert_matches!(pending_state,
             PendingState::BlockedByJoinSet {
                 join_set_id,
                 lock_expires_at:_,
                 closing: false,
-                component_id_input_digest: _,
             } => join_set_id);
         let stub_execution_id = execution_id.next_level(&join_set_id);
         write_stub_response(
@@ -2442,14 +2447,14 @@ pub(crate) mod tests {
         let pending_state = db_connection
             .get_pending_state(&execution_id)
             .await
-            .unwrap();
+            .unwrap()
+            .pending_state;
         assert_matches!(
             pending_state,
             PendingState::BlockedByJoinSet {
                 join_set_id: _,
                 lock_expires_at: _,
                 closing: false,
-                component_id_input_digest: _,
             }
         );
 
@@ -2501,7 +2506,8 @@ pub(crate) mod tests {
         let pending_state = db_connection
             .get_pending_state(&execution_id)
             .await
-            .unwrap();
+            .unwrap()
+            .pending_state;
         assert_matches!(
             pending_state,
             PendingState::Finished {
@@ -2509,7 +2515,6 @@ pub(crate) mod tests {
                     result_kind: PendingStateFinishedResultKind::Ok,
                     ..
                 },
-                component_id_input_digest: _,
             }
         );
         drop(db_connection);

@@ -906,7 +906,6 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
             PendingState::PendingAt {
                 scheduled_at,
                 last_lock: None,
-                component_id_input_digest: _
             } if scheduled_at == sim_clock.now()
         );
         // Create child 1
@@ -952,7 +951,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
                 join_set_id: found_join_set_id,
                 lock_expires_at,
                 closing: false,
-                component_id_input_digest: _ }
+            }
             if found_join_set_id == join_set_id && lock_expires_at == sim_clock.now()
         );
 

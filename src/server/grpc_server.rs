@@ -21,7 +21,6 @@ use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
-use concepts::storage::ExecutionWithState;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
@@ -260,12 +259,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
-        let current_pending_state = conn.get_pending_state(&execution_id).await.to_status()?;
-        let (create_request, current_pending_state, grpc_pending_status) = {
+        let execution_with_state = conn.get_pending_state(&execution_id).await.to_status()?;
+        let (create_request, current_execution_with_state, grpc_pending_status) = {
             let create_request = conn.get_create_request(&execution_id).await.to_status()?;
-            let grpc_pending_status =
-                grpc_gen::ExecutionStatus::from(current_pending_state.clone());
-            (create_request, current_pending_state, grpc_pending_status)
+            let grpc_pending_status = grpc_gen::ExecutionStatus::from(&execution_with_state);
+            (create_request, execution_with_state, grpc_pending_status)
         };
         let summary = grpc_gen::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary {
@@ -276,10 +274,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 current_status: Some(grpc_pending_status),
             })),
         };
-        if current_pending_state.is_finished() || !request.follow {
+        if current_execution_with_state.pending_state.is_finished() || !request.follow {
             // No waiting in this case
             let output: Self::GetStatusStream = if let PendingState::Finished { finished, .. } =
-                current_pending_state
+                current_execution_with_state.pending_state
                 && request.send_finished_status
             {
                 // Send summary + finished status only if the execution is finished && request.send_finished_status
@@ -328,7 +326,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         termination_watcher,
                         execution_id,
                         status_stream_sender,
-                        current_pending_state,
+                        current_execution_with_state.pending_state,
                         create_request,
                         request.send_finished_status,
                     )
@@ -378,22 +376,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .await
             .to_status()?
             .into_iter()
-            .map(
-                |ExecutionWithState {
-                     execution_id,
-                     ffqn,
-                     pending_state,
-                     created_at,
-                     first_scheduled_at,
-                     component_digest: _,
-                 }| grpc_gen::ExecutionSummary {
-                    execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
-                    function_name: Some(ffqn.into()),
-                    current_status: Some(grpc_gen::ExecutionStatus::from(pending_state)),
-                    created_at: Some(created_at.into()),
-                    first_scheduled_at: Some(first_scheduled_at.into()),
-                },
-            )
+            .map(grpc_gen::ExecutionSummary::from)
             .collect();
         Ok(tonic::Response::new(grpc_gen::ListExecutionsResponse {
             executions,
@@ -755,9 +738,9 @@ async fn notify_status(
     send_finished_status: bool,
 ) -> Result<PendingState, ()> {
     match conn.get_pending_state(execution_id).await {
-        Ok(pending_state) => {
-            if pending_state != old_pending_state {
-                let grpc_pending_status = grpc_gen::ExecutionStatus::from(pending_state.clone());
+        Ok(execution_with_state) => {
+            if execution_with_state.pending_state != old_pending_state {
+                let grpc_pending_status = grpc_gen::ExecutionStatus::from(&execution_with_state);
 
                 let message = grpc_gen::GetStatusResponse {
                     message: Some(Message::CurrentStatus(grpc_pending_status)),
@@ -770,7 +753,7 @@ async fn notify_status(
                 if let PendingState::Finished {
                     finished: pending_state_finished,
                     ..
-                } = pending_state
+                } = execution_with_state.pending_state
                 {
                     if send_finished_status {
                         // Send the last message and close the RPC.
@@ -810,7 +793,7 @@ async fn notify_status(
                     return Err(());
                 }
             }
-            Ok(pending_state)
+            Ok(execution_with_state.pending_state)
         }
         Err(db_err) => {
             let _ = status_stream_sender

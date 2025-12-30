@@ -13,9 +13,9 @@ use concepts::storage::{
     AppendResponse, AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection,
     DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
     DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionLog,
-    ExecutionRequest, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent, JoinSetResponse,
-    JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedExecution, TimeoutOutcome,
-    Version, VersionType,
+    ExecutionRequest, ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent,
+    JoinSetResponse, JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedExecution,
+    TimeoutOutcome, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
@@ -370,8 +370,13 @@ impl DbConnection for InMemoryDbConnection {
     async fn get_pending_state(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<PendingState, DbErrorRead> {
-        Ok(self.0.lock().unwrap().get(execution_id)?.pending_state)
+    ) -> Result<ExecutionWithState, DbErrorRead> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .get(execution_id)?
+            .as_execution_with_state())
     }
 
     async fn append_backtrace(&self, _append: BacktraceInfo) -> Result<(), DbErrorWrite> {
@@ -503,7 +508,6 @@ mod index {
                 PendingState::PendingAt {
                     scheduled_at,
                     last_lock: _,
-                    component_id_input_digest: _,
                 } => {
                     self.pending_scheduled
                         .entry(scheduled_at)
