@@ -84,6 +84,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             "/executions/{execution-id}",
             routing::put(execution_submit_put),
         )
+        .route(
+            "/executions/{execution-id}/upgrade",
+            routing::put(execution_upgrade),
+        )
 }
 
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
@@ -713,6 +717,33 @@ async fn stream_execution_response_task(
             }
         }
     }
+}
+
+#[derive(Deserialize)]
+struct ExecutionUpgradePayload {
+    pub old: InputContentDigest,
+    pub new: InputContentDigest,
+}
+
+async fn execution_upgrade(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    Json(payload): Json<ExecutionUpgradePayload>,
+) -> Result<Response, HttpResponse> {
+    state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?
+        .upgrade_execution_component(&execution_id, &payload.old, &payload.new)
+        .await
+        .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
+    Ok(HttpResponse {
+        status: StatusCode::OK,
+        message: "upgraded".to_string(),
+        accept: AcceptHeader::Json,
+    }
+    .into_response())
 }
 
 pub(crate) mod components {

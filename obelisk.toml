@@ -197,6 +197,7 @@ exec.lock_expiry.seconds = 10
 name = "test_programs_sleep_workflow"
 location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-12-08@sha256:b833454a0c4befaa2767957ed1ddbcd4210510c7075ebf9d22ca7e2f14445ff4"
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
+exec.locking_strategy = "by_component_id"
 
 ### Send spans via gRPC to an OTLP collector.
 # [otlp]
