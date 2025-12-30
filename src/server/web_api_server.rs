@@ -759,7 +759,8 @@ pub(crate) mod components {
         component_id::InputContentDigest,
     };
     use http::StatusCode;
-    use std::fmt::Write as _;
+    use itertools::Itertools;
+    use std::fmt::{Debug, Write as _};
 
     #[derive(Deserialize, Debug)]
     pub(crate) struct ComponentsListParams {
@@ -772,6 +773,7 @@ pub(crate) mod components {
         imports: bool,
         #[serde(default)]
         extensions: bool,
+        /// If set to true, show only submittable exports.
         submittable: Option<bool>,
     }
 
@@ -811,9 +813,8 @@ pub(crate) mod components {
         let components: Vec<_> = components
             .into_iter()
             .map(|c| {
-                let (exports, exports_ext) = if params.exports {
+                let exports = if params.exports {
                     let mut exports = Vec::new();
-                    let mut exports_ext = Vec::new();
                     for export in c
                         .workflow_or_activity_config
                         .into_iter()
@@ -826,23 +827,12 @@ pub(crate) mod components {
                             }
                         })
                     {
-                        if export.extension.is_none() {
-                            exports.push(FunctionMetadataLite::from(export));
-                        } else if params.extensions {
-                            exports_ext.push(FunctionMetadataLite::from(export));
-                        }
+                        exports.push(FunctionMetadataLite::from(export));
                     }
 
-                    (
-                        Some(exports),
-                        if params.extensions {
-                            Some(exports_ext)
-                        } else {
-                            None
-                        },
-                    )
+                    Some(exports)
                 } else {
-                    (None, None)
+                    None
                 };
 
                 ComponentConfig {
@@ -858,7 +848,6 @@ pub(crate) mod components {
                         None
                     },
                     exports,
-                    exports_ext,
                 }
             })
             .collect();
@@ -868,7 +857,24 @@ pub(crate) mod components {
             AcceptHeader::Text => {
                 let mut output = String::new();
                 for component in components {
-                    writeln!(output, "{}", component.component_id).expect("writing to string");
+                    writeln!(
+                        output,
+                        "{} {}",
+                        component.component_id, component.component_id.input_digest
+                    )
+                    .expect("writing to string");
+                    if let Some(fns) = component.exports {
+                        writeln!(output, " exports:").expect("writing to string");
+                        for func in fns {
+                            writeln!(output, "  {func}").expect("writing to string");
+                        }
+                    }
+                    if let Some(fns) = component.imports {
+                        writeln!(output, " imports:").expect("writing to string");
+                        for func in fns {
+                            writeln!(output, "  {func}").expect("writing to string");
+                        }
+                    }
                 }
                 output.into_response()
             }
@@ -882,11 +888,10 @@ pub(crate) mod components {
         imports: Option<Vec<FunctionMetadataLite>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         exports: Option<Vec<FunctionMetadataLite>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        exports_ext: Option<Vec<FunctionMetadataLite>>,
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(serde::Serialize, derive_more::Display)]
+    #[display("{ffqn}: func({}) -> {return_type}", parameter_types.iter().join(", "))]
     struct FunctionMetadataLite {
         ffqn: FunctionFqn,
         parameter_types: Vec<ParameterTypeLite>,
@@ -913,7 +918,8 @@ pub(crate) mod components {
         }
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(serde::Serialize, derive_more::Display)]
+    #[display("{name}: {wit_type}")]
     struct ParameterTypeLite {
         name: String,
         wit_type: String,
