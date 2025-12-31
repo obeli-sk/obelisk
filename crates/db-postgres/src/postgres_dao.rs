@@ -518,12 +518,12 @@ impl PostgresPool {
     }
 }
 
+#[track_caller]
 fn consistency_db_err(err: impl Into<StrVariant>) -> DbErrorGeneric {
+    let loc = std::panic::Location::caller();
+    let (loc_file, loc_line) = (loc.file(), loc.line());
     let err = err.into();
-    error!(
-        backtrace = %std::backtrace::Backtrace::capture(),
-        "Consistency error: {err}"
-    );
+    error!(loc_file, loc_line, "Consistency error: {err}");
     DbErrorGeneric::Uncategorized(err)
 }
 
