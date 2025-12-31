@@ -1716,13 +1716,17 @@ impl SqlitePool {
                 .where_vec
                 .push(format!("state != '{STATE_FINISHED}'"));
         }
+        let prefix_temporary;
         if let Some(prefix) = &filter.prefix {
             statement_mod
                 .where_vec
-                .push(format!("execution_id LIKE :prefix || %")); // concat %
+                .push(format!("execution_id LIKE :prefix"));
+            prefix_temporary = format!("{prefix}%"); // concat %
             statement_mod.params.push((
                 ":prefix",
-                prefix.to_sql().expect("string conversion never fails"),
+                prefix_temporary
+                    .to_sql()
+                    .expect("string conversion never fails"),
             ));
         }
 

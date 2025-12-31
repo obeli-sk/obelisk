@@ -1381,8 +1381,8 @@ async fn list_executions(
         qb.add_where(format!("state != '{STATE_FINISHED}'"));
     }
     if let Some(prefix) = filter.prefix {
-        let placeholder = qb.add_param(prefix);
-        qb.add_where(format!("execution_id LIKE {placeholder} || %")); // concat %
+        let placeholder = qb.add_param(format!("{prefix}%")); // concat %
+        qb.add_where(format!("execution_id LIKE {placeholder}"));
     }
 
     let where_str = if qb.where_clauses.is_empty() {
