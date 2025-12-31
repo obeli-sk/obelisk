@@ -137,8 +137,11 @@ impl FromSql for InputContentDigest {
 }
 
 impl From<rusqlite::Error> for DbErrorGeneric {
+    #[track_caller]
     fn from(err: rusqlite::Error) -> DbErrorGeneric {
-        error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
+        let loc = std::panic::Location::caller();
+        let (loc_file, loc_line) = (loc.file(), loc.line());
+        error!(loc_file, loc_line, "Sqlite error {err:?}");
         DbErrorGeneric::Uncategorized(err.to_string().into())
     }
 }
