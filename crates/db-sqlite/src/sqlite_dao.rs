@@ -258,7 +258,7 @@ mod conversions {
         types::{FromSql, FromSqlError},
     };
     use std::fmt::Debug;
-    use tracing::{error, warn};
+    use tracing::error;
 
     impl From<rusqlite::Error> for RusqliteError {
         fn from(err: rusqlite::Error) -> Self {
@@ -351,17 +351,14 @@ mod conversions {
     #[derive(Debug, thiserror::Error)]
     #[error("{0}")]
     pub(crate) struct OtherError(&'static str);
+    // Every call to this function must be preceded by an `error!` statement.
     pub(crate) fn consistency_rusqlite(input: &'static str) -> rusqlite::Error {
         FromSqlError::other(OtherError(input)).into()
     }
 
+    // Every call to this function must be preceded by an `error!` statement.
     pub(crate) fn consistency_db_err(err: impl Into<StrVariant>) -> DbErrorGeneric {
-        let err = err.into();
-        warn!(
-            backtrace = %std::backtrace::Backtrace::capture(),
-            "Consistency error: {err}"
-        );
-        DbErrorGeneric::Uncategorized(err)
+        DbErrorGeneric::Uncategorized(err.into())
     }
 }
 

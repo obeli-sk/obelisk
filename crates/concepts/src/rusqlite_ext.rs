@@ -23,10 +23,7 @@ impl FromSql for ExecutionId {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<ExecutionId>().map_err(|err| {
-            error!(
-                backtrace = %std::backtrace::Backtrace::capture(),
-                "Cannot convert to ExecutionId value:`{str}` - {err:?}"
-            );
+            error!("Cannot convert to ExecutionId value:`{str}` - {err:?}");
             FromSqlError::InvalidType
         })
     }
@@ -41,10 +38,7 @@ impl FromSql for ExecutionIdDerived {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<ExecutionIdDerived>().map_err(|err| {
-            error!(
-                backtrace = %std::backtrace::Backtrace::capture(),
-                "Cannot convert to ExecutionIdDerived value:`{str}` - {err:?}"
-            );
+            error!("Cannot convert to ExecutionIdDerived value:`{str}` - {err:?}");
             FromSqlError::InvalidType
         })
     }
@@ -59,10 +53,7 @@ impl FromSql for JoinSetId {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<JoinSetId>().map_err(|err| {
-            error!(
-                backtrace = %std::backtrace::Backtrace::capture(),
-                "Cannot convert to JoinSetId value:`{str}` - {err:?}"
-            );
+            error!("Cannot convert to JoinSetId value:`{str}` - {err:?}");
             FromSqlError::InvalidType
         })
     }
@@ -78,8 +69,8 @@ impl FromSql for DelayId {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {
             error!(
-                backtrace = %std::backtrace::Backtrace::capture(),
-                "Cannot convert to {} value:`{str}` - {err:?}", std::any::type_name::<Self>()
+                "Cannot convert to {} value:`{str}` - {err:?}",
+                std::any::type_name::<Self>()
             );
             FromSqlError::InvalidType
         })
@@ -96,8 +87,8 @@ impl FromSql for RunId {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {
             error!(
-                backtrace = %std::backtrace::Backtrace::capture(),
-                "Cannot convert to {} value:`{str}` - {err:?}", std::any::type_name::<Self>()
+                "Cannot convert to {} value:`{str}` - {err:?}",
+                std::any::type_name::<Self>()
             );
             FromSqlError::InvalidType
         })
@@ -114,8 +105,8 @@ impl FromSql for ExecutorId {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {
             error!(
-                backtrace = %std::backtrace::Backtrace::capture(),
-                "Cannot convert to {} value:`{str}` - {err:?}", std::any::type_name::<Self>()
+                "Cannot convert to {} value:`{str}` - {err:?}",
+                std::any::type_name::<Self>()
             );
             FromSqlError::InvalidType
         })
@@ -131,8 +122,13 @@ impl FromSql for InputContentDigest {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value {
             ValueRef::Blob(b) => {
-                let digest = Digest::try_from(b)
-                    .map_err(|err| FromSqlError::Other(Box::from(err.to_string())))?;
+                let digest = Digest::try_from(b).map_err(|err| {
+                    error!(
+                        "Cannot convert to {} - {err:?}",
+                        std::any::type_name::<Self>()
+                    );
+                    FromSqlError::Other(Box::from(err.to_string()))
+                })?;
                 Ok(InputContentDigest(ContentDigest(digest)))
             }
             _ => Err(FromSqlError::InvalidType),
