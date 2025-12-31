@@ -2579,6 +2579,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "const_format",
+ "deadpool-postgres",
  "derive-where",
  "derive_more",
  "fxhash",

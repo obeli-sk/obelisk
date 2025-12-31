@@ -18,6 +18,7 @@ async-trait.workspace = true
 cfg-if.workspace = true
 chrono.workspace = true
 const_format.workspace = true
+deadpool-postgres = { optional = true, workspace = true }
 derive-where.workspace = true
 derive_more.workspace = true
 fxhash.workspace = true
@@ -46,7 +47,7 @@ rstest.workspace = true
 [features]
 test = []
 rusqlite = ["dep:rusqlite"]
-postgres = ["dep:tokio-postgres"]
+postgres = ["dep:tokio-postgres", "dep:deadpool-postgres"]
 
 [lints]
 workspace = true

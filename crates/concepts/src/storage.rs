@@ -571,26 +571,12 @@ pub enum DbErrorRead {
     Generic(#[from] DbErrorGeneric),
 }
 
-impl From<DbErrorRead> for DbErrorWrite {
-    fn from(value: DbErrorRead) -> DbErrorWrite {
-        match value {
-            DbErrorRead::NotFound => DbErrorWrite::NotFound,
-            DbErrorRead::Generic(err) => DbErrorWrite::Generic(err),
-        }
-    }
-}
-
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum DbErrorReadWithTimeout {
     #[error("timeout")]
     Timeout(TimeoutOutcome),
     #[error(transparent)]
     DbErrorRead(#[from] DbErrorRead),
-}
-impl From<DbErrorGeneric> for DbErrorReadWithTimeout {
-    fn from(value: DbErrorGeneric) -> DbErrorReadWithTimeout {
-        Self::from(DbErrorRead::from(value))
-    }
 }
 
 // Represents next version after successfuly appended to execution log.

@@ -1,4 +1,5 @@
 pub mod component_id;
+mod error_conversions;
 #[cfg(feature = "postgres")]
 mod postgres_ext;
 #[cfg(feature = "rusqlite")]

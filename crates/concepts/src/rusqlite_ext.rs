@@ -12,7 +12,7 @@ use rusqlite::{
     ErrorCode, ToSql,
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
 };
-use tracing::warn;
+use tracing::error;
 
 impl ToSql for ExecutionId {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
@@ -23,7 +23,7 @@ impl FromSql for ExecutionId {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<ExecutionId>().map_err(|err| {
-            warn!(
+            error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
                 "Cannot convert to ExecutionId value:`{str}` - {err:?}"
             );
@@ -41,7 +41,7 @@ impl FromSql for ExecutionIdDerived {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<ExecutionIdDerived>().map_err(|err| {
-            warn!(
+            error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
                 "Cannot convert to ExecutionIdDerived value:`{str}` - {err:?}"
             );
@@ -59,7 +59,7 @@ impl FromSql for JoinSetId {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<JoinSetId>().map_err(|err| {
-            warn!(
+            error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
                 "Cannot convert to JoinSetId value:`{str}` - {err:?}"
             );
@@ -77,7 +77,7 @@ impl FromSql for DelayId {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {
-            warn!(
+            error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
                 "Cannot convert to {} value:`{str}` - {err:?}", std::any::type_name::<Self>()
             );
@@ -95,7 +95,7 @@ impl FromSql for RunId {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {
-            warn!(
+            error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
                 "Cannot convert to {} value:`{str}` - {err:?}", std::any::type_name::<Self>()
             );
@@ -113,7 +113,7 @@ impl FromSql for ExecutorId {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {
-            warn!(
+            error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
                 "Cannot convert to {} value:`{str}` - {err:?}", std::any::type_name::<Self>()
             );
@@ -142,7 +142,7 @@ impl FromSql for InputContentDigest {
 
 impl From<rusqlite::Error> for DbErrorGeneric {
     fn from(err: rusqlite::Error) -> DbErrorGeneric {
-        warn!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
+        error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
         DbErrorGeneric::Uncategorized(err.to_string().into())
     }
 }
@@ -178,7 +178,7 @@ impl FromSql for FunctionFqn {
             ValueRef::Text(ffqn) => {
                 let ffqn = String::from_utf8_lossy(ffqn);
                 let ffqn = FunctionFqn::from_str(&ffqn).map_err(|err| {
-                    warn!("Cannot deserialize ffqn - {err:?}");
+                    error!("Cannot deserialize ffqn - {err:?}");
                     FromSqlError::Other(Box::from(format!("cannot deserialize ffqn - {err}")))
                 })?;
                 Ok(ffqn)

@@ -1126,7 +1126,7 @@ impl SqlitePool {
                 let event = row
                     .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                     .map_err(|serde| {
-                        warn!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
+                        error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
                         consistency_rusqlite("cannot deserialize `Created` event")
                     })?;
                 Ok((created_at, event.0))
@@ -2870,9 +2870,8 @@ impl SqlitePool {
         new: &InputContentDigest,
     ) -> Result<(), DbErrorWrite> {
         debug!("Updating t_state to component {new}");
-        let mut stmt = tx
-            .prepare_cached(
-                r"
+        let mut stmt = tx.prepare_cached(
+            r"
                 UPDATE t_state
                 SET
                     updated_at = CURRENT_TIMESTAMP,
@@ -2881,15 +2880,12 @@ impl SqlitePool {
                     execution_id = :execution_id AND
                     component_id_input_digest = :old
             ",
-            )
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
-        let updated = stmt
-            .execute(named_params! {
-                ":execution_id": execution_id,
-                ":old": old,
-                ":new": new,
-            })
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        )?;
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id,
+            ":old": old,
+            ":new": new,
+        })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
         }

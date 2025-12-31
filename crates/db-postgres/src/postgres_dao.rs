@@ -271,14 +271,6 @@ type ExecutionFinishedSubscribers = std::sync::Mutex<
     HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>,
 >;
 
-fn map_pool_error(err: deadpool_postgres::PoolError) -> DbErrorGeneric {
-    match err {
-        deadpool_postgres::PoolError::Backend(err) => DbErrorGeneric::from(err),
-        deadpool_postgres::PoolError::Closed => DbErrorGeneric::Close,
-        other => DbErrorGeneric::Uncategorized(other.to_string().into()),
-    }
-}
-
 pub struct PostgresPool {
     pool: Pool,
     response_subscribers: ResponseSubscribers,
@@ -291,7 +283,7 @@ pub struct PostgresPool {
 #[async_trait]
 impl DbPool for PostgresPool {
     async fn db_exec_conn(&self) -> Result<Box<dyn DbExecutor>, DbErrorGeneric> {
-        let client = self.pool.get().await.map_err(map_pool_error)?;
+        let client = self.pool.get().await?;
 
         Ok(Box::new(PostgresConnection {
             client: tokio::sync::Mutex::new(client),
@@ -302,7 +294,7 @@ impl DbPool for PostgresPool {
     }
 
     async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric> {
-        let client = self.pool.get().await.map_err(map_pool_error)?;
+        let client = self.pool.get().await?;
 
         Ok(Box::new(PostgresConnection {
             client: tokio::sync::Mutex::new(client),
@@ -313,7 +305,7 @@ impl DbPool for PostgresPool {
     }
 
     async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric> {
-        let client = self.pool.get().await.map_err(map_pool_error)?;
+        let client = self.pool.get().await?;
 
         Ok(Box::new(PostgresConnection {
             client: tokio::sync::Mutex::new(client),
@@ -327,7 +319,7 @@ impl DbPool for PostgresPool {
     async fn connection_test(
         &self,
     ) -> Result<Box<dyn concepts::storage::DbConnectionTest>, DbErrorGeneric> {
-        let client = self.pool.get().await.map_err(map_pool_error)?;
+        let client = self.pool.get().await?;
 
         Ok(Box::new(PostgresConnection {
             client: tokio::sync::Mutex::new(client),
@@ -528,7 +520,7 @@ impl PostgresPool {
 
 fn consistency_db_err(err: impl Into<StrVariant>) -> DbErrorGeneric {
     let err = err.into();
-    warn!(
+    error!(
         backtrace = %std::backtrace::Backtrace::capture(),
         "Consistency error: {err}"
     );
@@ -1019,8 +1011,12 @@ async fn update_state_locked_get_intermittent_event_count(
     retry_config: ComponentRetryConfig,
 ) -> Result<u32, DbErrorWrite> {
     debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
-    let backoff_millis = i64::try_from(retry_config.retry_exp_backoff.as_millis())
-        .map_err(|_| DbErrorGeneric::Uncategorized("backoff too big".into()))?; // BIGINT = i64
+    let backoff_millis =
+        i64::try_from(retry_config.retry_exp_backoff.as_millis()).map_err(|_| {
+            // BIGINT = i64
+            error!("Backoff too big");
+            DbErrorGeneric::Uncategorized("backoff too big".into())
+        })?;
 
     let execution_id_str = execution_id.to_string();
 
@@ -1070,7 +1066,7 @@ async fn update_state_locked_get_intermittent_event_count(
             &[&execution_id_str],
         )
         .await
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        .map_err(DbErrorGeneric::from)?;
 
     let count: i64 = get(&row, "intermittent_event_count")?; // Postgres BIGINT
     let count = u32::try_from(count)
@@ -1270,19 +1266,19 @@ async fn get_combined_state(
     let executor_id = executor_id_raw
         .map(|id| ExecutorId::from_str(&id))
         .transpose()
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        .map_err(DbErrorGeneric::from)?;
 
     let run_id_raw: Option<String> = get(&row, "run_id")?;
     let run_id = run_id_raw
         .map(|id| RunId::from_str(&id))
         .transpose()
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        .map_err(DbErrorGeneric::from)?;
 
     let join_set_id_raw: Option<String> = get(&row, "join_set_id")?;
     let join_set_id = join_set_id_raw
         .map(|id| JoinSetId::from_str(&id))
         .transpose()
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        .map_err(DbErrorGeneric::from)?;
 
     let join_set_closing: Option<bool> = get(&row, "join_set_closing")?;
 
@@ -1347,7 +1343,7 @@ async fn list_executions(
 
     let mut qb = QueryBuilder::new();
 
-    // 1. Pagination Logic
+    // Pagination Logic
     let (limit, limit_desc) = match pagination {
         ExecutionListPagination::CreatedBy(p) => {
             let limit = p.length();
@@ -1415,10 +1411,7 @@ async fn list_executions(
         .map(|p| p.as_ref() as &(dyn ToSql + Sync))
         .collect();
 
-    let rows = read_tx
-        .query(&sql, &params_refs)
-        .await
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+    let rows = read_tx.query(&sql, &params_refs).await?;
 
     let mut vec = Vec::with_capacity(rows.len());
 
@@ -1448,8 +1441,7 @@ async fn list_executions(
             let executor_id_str: Option<String> = get(&row, "executor_id")?;
             let executor_id = executor_id_str
                 .map(|id| ExecutorId::from_str(&id))
-                .transpose()
-                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+                .transpose()?;
 
             let last_lock_version_raw: Option<i64> = get(&row, "last_lock_version")?;
             let last_lock_version = last_lock_version_raw
@@ -1458,16 +1450,12 @@ async fn list_executions(
                 .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
             let run_id_str: Option<String> = get(&row, "run_id")?;
-            let run_id = run_id_str
-                .map(|id| RunId::from_str(&id))
-                .transpose()
-                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+            let run_id = run_id_str.map(|id| RunId::from_str(&id)).transpose()?;
 
             let join_set_id_str: Option<String> = get(&row, "join_set_id")?;
             let join_set_id = join_set_id_str
                 .map(|id| JoinSetId::from_str(&id))
-                .transpose()
-                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+                .transpose()?;
 
             let ffqn: String = get(&row, "ffqn")?;
             let ffqn = FunctionFqn::from_str(&ffqn).map_err(|parse_err| {
@@ -1589,21 +1577,20 @@ fn parse_response_with_cursor(
 
     let created_at: DateTime<Utc> = get(row, "created_at")?;
     let join_set_id_str: String = get(row, "join_set_id")?;
-    let join_set_id = JoinSetId::from_str(&join_set_id_str)
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+    let join_set_id = JoinSetId::from_str(&join_set_id_str).map_err(DbErrorGeneric::from)?;
 
     // Extract Optionals
     let delay_id: Option<String> = get(row, "delay_id")?;
     let delay_id = delay_id
         .map(|id| DelayId::from_str(&id))
         .transpose()
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        .map_err(DbErrorGeneric::from)?;
     let delay_success: Option<bool> = get(row, "delay_success")?;
     let child_execution_id: Option<String> = get(row, "child_execution_id")?;
     let child_execution_id = child_execution_id
         .map(|id| ExecutionIdDerived::from_str(&id))
         .transpose()
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        .map_err(DbErrorGeneric::from)?;
     let finished_version = get::<Option<i64>>(row, "finished_version")?
         .map(Version::try_from)
         .transpose()
@@ -1666,7 +1653,7 @@ async fn lock_single_execution(
 ) -> Result<LockedExecution, DbErrorWrite> {
     debug!("lock_single_execution");
 
-    // 1. Check State
+    // Check State
     let combined_state = get_combined_state(tx, execution_id).await?;
     combined_state
         .execution_with_state
@@ -1675,7 +1662,7 @@ async fn lock_single_execution(
     let expected_version = combined_state.get_next_version_assert_not_finished();
     check_expected_next_and_appending_version(&expected_version, appending_version)?;
 
-    // 2. Prepare Event
+    // Prepare Event
     let locked_event = Locked {
         component_id,
         executor_id,
@@ -1687,7 +1674,7 @@ async fn lock_single_execution(
 
     let event = Json(event);
 
-    // 3. Append to execution_log
+    // Append to execution_log
     tx.execute(
         "INSERT INTO t_execution_log \
             (execution_id, created_at, json_value, version, variant) \
@@ -1706,7 +1693,7 @@ async fn lock_single_execution(
         DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState("cannot lock".into()))
     })?;
 
-    // 4. Update t_state
+    // Update t_state
     let responses_dto = list_responses(tx, execution_id, None).await?;
     let responses = responses_dto.into_iter().map(|resp| resp.event).collect();
     trace!("Responses: {responses:?}");
@@ -1722,7 +1709,7 @@ async fn lock_single_execution(
     )
     .await?;
 
-    // 5. Fetch History
+    // Fetch History
     // Fetch event_history and `Created` event.
     let rows = tx
         .query(
@@ -1736,7 +1723,7 @@ async fn lock_single_execution(
             ],
         )
         .await
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        .map_err(DbErrorGeneric::from)?;
 
     let mut events: VecDeque<ExecutionEvent> = VecDeque::new();
 
@@ -1756,7 +1743,7 @@ async fn lock_single_execution(
         });
     }
 
-    // 6. Extract Created Event
+    // Extract Created Event
     let Some(ExecutionRequest::Created {
         ffqn,
         params,
@@ -1769,7 +1756,7 @@ async fn lock_single_execution(
         return Err(consistency_db_err("execution log must contain `Created` event").into());
     };
 
-    // 7. Extract History Events
+    // Extract History Events
     let mut event_history = Vec::new();
     for ExecutionEvent { event, version, .. } in events {
         if let ExecutionRequest::HistoryEvent { event } = event {
@@ -2342,8 +2329,7 @@ async fn get_execution_event(
                  execution_id = $1 AND version = $2",
             &[&execution_id.to_string(), &i64::from(version)],
         )
-        .await
-        .map_err(DbErrorRead::from)?;
+        .await?;
 
     let created_at: DateTime<Utc> = get(&row, "created_at")?;
     let json_val: Json<ExecutionRequest> = get(&row, "json_value")?;
@@ -2370,8 +2356,7 @@ async fn get_last_execution_event(
                  execution_id = $1 ORDER BY version DESC LIMIT 1",
             &[&execution_id.to_string()],
         )
-        .await
-        .map_err(DbErrorRead::from)?;
+        .await?;
 
     let created_at: DateTime<Utc> = get(&row, "created_at")?;
     let event: Json<ExecutionRequest> = get(&row, "json_value")?;
@@ -2401,8 +2386,7 @@ async fn delay_response(
                  execution_id = $1 AND delay_id = $2",
             &[&execution_id.to_string(), &delay_id.to_string()],
         )
-        .await
-        .map_err(DbErrorRead::from)?;
+        .await?;
 
     match row {
         Some(r) => Ok(Some(get::<bool>(&r, "delay_success")?)),
@@ -2435,8 +2419,7 @@ async fn get_responses_with_offset(
                      &(i64::from(skip_rows)),
                  ]
             )
-            .await
-            .map_err(DbErrorRead::from)?;
+            .await?;
 
     let mut results = Vec::with_capacity(rows.len());
     for row in rows {
@@ -2565,8 +2548,7 @@ async fn get_pending_by_component_input_digest(
                 &i64::from(batch_size),
             ],
         )
-        .await
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        .await?;
 
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
@@ -2627,8 +2609,7 @@ async fn upgrade_execution_component(
                 &old.as_slice(),           // $3: BYTEA
             ],
         )
-        .await
-        .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        .await?;
 
     if updated != 1 {
         return Err(DbErrorWrite::NotFound);
@@ -2703,10 +2684,7 @@ impl DbExecutor for PostgresConnection {
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorGeneric> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let execution_ids_versions = get_pending_by_ffqns(
             &tx,
@@ -2720,7 +2698,7 @@ impl DbExecutor for PostgresConnection {
         if execution_ids_versions.is_empty() {
             // Commit is required to release the connection state cleanly,
             // though rollback/drop works too for read-only.
-            tx.commit().await.map_err(DbErrorGeneric::from)?;
+            tx.commit().await?;
             return Ok(vec![]);
         }
 
@@ -2749,7 +2727,7 @@ impl DbExecutor for PostgresConnection {
             }
         }
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
 
         Ok(locked_execs)
     }
@@ -2767,10 +2745,7 @@ impl DbExecutor for PostgresConnection {
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorGeneric> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let execution_ids_versions = get_pending_by_component_input_digest(
             &tx,
@@ -2782,7 +2757,7 @@ impl DbExecutor for PostgresConnection {
         .await?;
 
         if execution_ids_versions.is_empty() {
-            tx.commit().await.map_err(DbErrorGeneric::from)?;
+            tx.commit().await?;
             return Ok(vec![]);
         }
 
@@ -2810,7 +2785,7 @@ impl DbExecutor for PostgresConnection {
             }
         }
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         Ok(locked_execs)
     }
 
@@ -2828,10 +2803,7 @@ impl DbExecutor for PostgresConnection {
     ) -> Result<LockedExecution, DbErrorWrite> {
         debug!(%execution_id, "lock_one");
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let res = lock_single_execution(
             &tx,
@@ -2846,7 +2818,7 @@ impl DbExecutor for PostgresConnection {
         )
         .await?;
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         Ok(res)
     }
 
@@ -2862,14 +2834,11 @@ impl DbExecutor for PostgresConnection {
         let created_at = req.created_at;
 
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let (new_version, notifier) = append(&tx, &execution_id, req, version).await?;
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
 
         // Explicitly drop guard (optional, happens at end of scope anyway)
         drop(client_guard);
@@ -2900,10 +2869,7 @@ impl DbExecutor for PostgresConnection {
         }
 
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let mut version = events.version;
         let mut notifiers = Vec::new();
@@ -2932,7 +2898,7 @@ impl DbExecutor for PostgresConnection {
         .await?;
         notifiers.push(pending_at_parent);
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         drop(client_guard);
 
         self.notify_all(notifiers, current_time);
@@ -3080,14 +3046,11 @@ impl DbExecutor for PostgresConnection {
         execution_id: &ExecutionId,
     ) -> Result<ExecutionEvent, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let event = get_last_execution_event(&tx, execution_id).await?;
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         Ok(event)
     }
 }
@@ -3100,14 +3063,11 @@ impl DbConnection for PostgresConnection {
         let created_at = req.created_at;
 
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let (version, notifier) = create_inner(&tx, req.clone()).await?;
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         drop(client_guard); // Release DB lock before notifying
 
         self.notify_all(vec![notifier], created_at);
@@ -3127,10 +3087,7 @@ impl DbConnection for PostgresConnection {
         assert!(!batch.is_empty(), "Empty batch request");
 
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let mut version = version;
         let mut notifier = None;
@@ -3141,7 +3098,7 @@ impl DbConnection for PostgresConnection {
             notifier = Some(n);
         }
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         drop(client_guard);
 
         self.notify_all(
@@ -3165,10 +3122,7 @@ impl DbConnection for PostgresConnection {
         assert!(!batch.is_empty(), "Empty batch request");
 
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let mut version = version;
         let mut notifier = None;
@@ -3187,7 +3141,7 @@ impl DbConnection for PostgresConnection {
             notifiers.push(n);
         }
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         drop(client_guard);
 
         self.notify_all(notifiers, current_time);
@@ -3218,10 +3172,7 @@ impl DbConnection for PostgresConnection {
 
         let receiver = {
             let mut client_guard = self.client.lock().await;
-            let tx = client_guard
-                .transaction()
-                .await
-                .map_err(DbErrorRead::from)?;
+            let tx = client_guard.transaction().await?;
 
             // Register listener before fetching from database.
             // This is a best-effort mechanism that shortens the polling time, if it
@@ -3245,7 +3196,7 @@ impl DbConnection for PostgresConnection {
                 receiver
             } else {
                 cleanup(); // Remove the just inserted subscriber as we already have the answer.
-                tx.commit().await.map_err(DbErrorRead::from)?;
+                tx.commit().await?;
                 return Ok(responses);
             }
         };
@@ -3281,10 +3232,7 @@ impl DbConnection for PostgresConnection {
 
         let receiver = {
             let mut client_guard = self.client.lock().await;
-            let tx = client_guard
-                .transaction()
-                .await
-                .map_err(DbErrorRead::from)?;
+            let tx = client_guard.transaction().await?;
 
             // Register listener
             let (sender, receiver) = oneshot::channel();
@@ -3303,7 +3251,7 @@ impl DbConnection for PostgresConnection {
 
             if let PendingState::Finished { finished, .. } = pending_state {
                 let event = get_execution_event(&tx, execution_id, finished.version).await?;
-                tx.commit().await.map_err(DbErrorRead::from)?;
+                tx.commit().await?;
                 cleanup();
 
                 if let ExecutionRequest::Finished { result, .. } = event.event {
@@ -3314,7 +3262,7 @@ impl DbConnection for PostgresConnection {
                     "cannot get finished event based on t_state version",
                 )));
             }
-            tx.commit().await.map_err(DbErrorRead::from)?;
+            tx.commit().await?;
             receiver
         };
 
@@ -3355,16 +3303,13 @@ impl DbConnection for PostgresConnection {
         };
 
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let res = append_response(&tx, &execution_id, event).await;
 
         match res {
             Ok(notifier) => {
-                tx.commit().await.map_err(DbErrorGeneric::from)?;
+                tx.commit().await?;
                 drop(client_guard);
                 self.notify_all(vec![notifier], created_at);
                 Ok(AppendDelayResponseOutcome::Success)
@@ -3372,22 +3317,22 @@ impl DbConnection for PostgresConnection {
             Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)) => {
                 // Check if already finished
                 // Roll back the failed tx, start new read tx.
-                tx.rollback().await.map_err(DbErrorGeneric::from)?;
+                tx.rollback().await?;
 
                 // Start new tx for check
-                let tx = client_guard
-                    .transaction()
-                    .await
-                    .map_err(DbErrorGeneric::from)?;
+                let tx = client_guard.transaction().await?;
                 let delay_success = delay_response(&tx, &execution_id, &delay_id).await?;
-                tx.commit().await.map_err(DbErrorGeneric::from)?;
+                tx.commit().await?;
 
                 match delay_success {
                     Some(true) => Ok(AppendDelayResponseOutcome::AlreadyFinished),
                     Some(false) => Ok(AppendDelayResponseOutcome::AlreadyCancelled),
-                    None => Err(DbErrorWrite::Generic(DbErrorGeneric::Uncategorized(
-                        "insert failed yet select did not find the response".into(),
-                    ))),
+                    None => {
+                        error!("Insert failed yet select did not find the response");
+                        Err(DbErrorWrite::Generic(DbErrorGeneric::Uncategorized(
+                            "insert failed yet select did not find the response".into(),
+                        )))
+                    }
                 }
             }
             Err(err) => {
@@ -3401,14 +3346,11 @@ impl DbConnection for PostgresConnection {
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite> {
         debug!("append_backtrace");
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         append_backtrace(&tx, &append).await?;
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -3416,16 +3358,13 @@ impl DbConnection for PostgresConnection {
     async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite> {
         debug!("append_backtrace_batch");
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         for append in batch {
             append_backtrace(&tx, &append).await?;
         }
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -3436,32 +3375,25 @@ impl DbConnection for PostgresConnection {
         at: DateTime<Utc>,
     ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
-        // 1. Expired Delays
+        // Expired Delays
         let rows = tx
             .query(
                 "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= $1",
                 &[&at],
             )
-            .await
-            .map_err(DbErrorGeneric::from)?;
+            .await?;
 
         let mut expired_timers = Vec::with_capacity(rows.len());
         for row in rows {
             let unpack = || -> Result<ExpiredTimer, DbErrorGeneric> {
                 let execution_id: String = get(&row, "execution_id")?;
-                let execution_id = ExecutionId::from_str(&execution_id)
-                    .map_err(|err| consistency_db_err(err.to_string()))?;
+                let execution_id = ExecutionId::from_str(&execution_id)?;
                 let join_set_id: String = get(&row, "join_set_id")?;
-                let join_set_id = JoinSetId::from_str(&join_set_id)
-                    .map_err(|err| consistency_db_err(err.to_string()))?;
+                let join_set_id = JoinSetId::from_str(&join_set_id)?;
                 let delay_id: String = get(&row, "delay_id")?;
-                let delay_id = DelayId::from_str(&delay_id)
-                    .map_err(|err| consistency_db_err(err.to_string()))?;
+                let delay_id = DelayId::from_str(&delay_id)?;
 
                 Ok(ExpiredTimer::Delay(ExpiredDelay {
                     execution_id,
@@ -3476,7 +3408,7 @@ impl DbConnection for PostgresConnection {
             }
         }
 
-        // 2. Expired Locks
+        // Expired Locks
         let rows = tx.query(
             &format!(
                 "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id \
@@ -3484,20 +3416,17 @@ impl DbConnection for PostgresConnection {
                  WHERE pending_expires_finished <= $1 AND state = '{STATE_LOCKED}'"
             ),
             &[&at]
-        ).await.map_err(DbErrorGeneric::from)?;
+        ).await?;
 
         for row in rows {
             let unpack = || -> Result<ExpiredTimer, DbErrorGeneric> {
                 let execution_id: String = get(&row, "execution_id")?;
-                let execution_id = ExecutionId::from_str(&execution_id)
-                    .map_err(|err| consistency_db_err(err.to_string()))?;
+                let execution_id = ExecutionId::from_str(&execution_id)?;
                 let last_lock_version: i64 = get(&row, "last_lock_version")?;
-                let last_lock_version = Version::try_from(last_lock_version)
-                    .map_err(|_| consistency_db_err("version must be non-negative"))?;
+                let last_lock_version = Version::try_from(last_lock_version)?;
 
                 let corresponding_version: i64 = get(&row, "corresponding_version")?;
-                let corresponding_version = Version::try_from(corresponding_version)
-                    .map_err(|_| consistency_db_err("version must be non-negative"))?;
+                let corresponding_version = Version::try_from(corresponding_version)?;
 
                 let intermittent_event_count =
                     u32::try_from(get::<i64>(&row, "intermittent_event_count")?).map_err(|_| {
@@ -3513,11 +3442,9 @@ impl DbConnection for PostgresConnection {
                         consistency_db_err("`retry_exp_backoff_millis` must not be negative")
                     })?;
                 let executor_id: String = get(&row, "executor_id")?;
-                let executor_id = ExecutorId::from_str(&executor_id)
-                    .map_err(|err| consistency_db_err(err.to_string()))?;
+                let executor_id = ExecutorId::from_str(&executor_id)?;
                 let run_id: String = get(&row, "run_id")?;
-                let run_id =
-                    RunId::from_str(&run_id).map_err(|err| consistency_db_err(err.to_string()))?;
+                let run_id = RunId::from_str(&run_id)?;
 
                 Ok(ExpiredTimer::Lock(ExpiredLock {
                     execution_id,
@@ -3539,7 +3466,7 @@ impl DbConnection for PostgresConnection {
             }
         }
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
 
         if !expired_timers.is_empty() {
             debug!("get_expired_timers found {expired_timers:?}");
@@ -3553,14 +3480,11 @@ impl DbConnection for PostgresConnection {
         version: &Version,
     ) -> Result<ExecutionEvent, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorRead::from)?;
+        let tx = client_guard.transaction().await?;
 
         let event = get_execution_event(&tx, execution_id, version.0).await?;
 
-        tx.commit().await.map_err(DbErrorRead::from)?;
+        tx.commit().await?;
         Ok(event)
     }
 
@@ -3569,14 +3493,11 @@ impl DbConnection for PostgresConnection {
         execution_id: &ExecutionId,
     ) -> Result<ExecutionWithState, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorRead::from)?;
+        let tx = client_guard.transaction().await?;
 
         let combined_state = get_combined_state(&tx, execution_id).await?;
 
-        tx.commit().await.map_err(DbErrorRead::from)?;
+        tx.commit().await?;
         Ok(combined_state.execution_with_state)
     }
 }
@@ -3592,10 +3513,7 @@ impl DbExternalApi for PostgresConnection {
         debug!("get_backtrace");
 
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorRead::from)?;
+        let tx = client_guard.transaction().await?;
 
         let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
 
@@ -3631,27 +3549,20 @@ impl DbExternalApi for PostgresConnection {
         let params_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             params.iter().map(|p| p.as_ref() as _).collect();
 
-        let row = tx
-            .query_one(&sql, &params_refs)
-            .await
-            .map_err(DbErrorRead::from)?;
+        let row = tx.query_one(&sql, &params_refs).await?;
 
         let component_id: Json<ComponentId> = get(&row, "component_id")?;
         let component_id = component_id.0;
 
-        let version_min_including =
-            Version::try_from(get::<i64>(&row, "version_min_including")?)
-                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+        let version_min_including = Version::try_from(get::<i64>(&row, "version_min_including")?)?;
 
-        let version_max_excluding =
-            Version::try_from(get::<i64>(&row, "version_max_excluding")?)
-                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+        let version_max_excluding = Version::try_from(get::<i64>(&row, "version_max_excluding")?)?;
 
         // wasm_backtrace stored as JSONB
         let wasm_backtrace: Json<WasmBacktrace> = get(&row, "wasm_backtrace")?;
         let wasm_backtrace = wasm_backtrace.0;
 
-        tx.commit().await.map_err(DbErrorRead::from)?;
+        tx.commit().await?;
 
         Ok(BacktraceInfo {
             execution_id: execution_id.clone(),
@@ -3668,14 +3579,11 @@ impl DbExternalApi for PostgresConnection {
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let result = list_executions(&tx, filter, &pagination).await?;
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         Ok(result)
     }
 
@@ -3688,10 +3596,7 @@ impl DbExternalApi for PostgresConnection {
         include_backtrace_id: bool,
     ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorRead::from)?;
+        let tx = client_guard.transaction().await?;
 
         let result = list_execution_events(
             &tx,
@@ -3702,7 +3607,7 @@ impl DbExternalApi for PostgresConnection {
         )
         .await?;
 
-        tx.commit().await.map_err(DbErrorRead::from)?;
+        tx.commit().await?;
         Ok(result)
     }
 
@@ -3712,14 +3617,11 @@ impl DbExternalApi for PostgresConnection {
         pagination: Pagination<u32>,
     ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorRead::from)?;
+        let tx = client_guard.transaction().await?;
 
         let result = list_responses(&tx, execution_id, Some(pagination)).await?;
 
-        tx.commit().await.map_err(DbErrorRead::from)?;
+        tx.commit().await?;
         Ok(result)
     }
 
@@ -3730,14 +3632,11 @@ impl DbExternalApi for PostgresConnection {
         new: &InputContentDigest,
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         upgrade_execution_component(&tx, execution_id, old, new).await?;
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         Ok(())
     }
 }
@@ -3766,14 +3665,11 @@ impl concepts::storage::DbConnectionTest for PostgresConnection {
         };
 
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorGeneric::from)?;
+        let tx = client_guard.transaction().await?;
 
         let notifier = append_response(&tx, &execution_id, event).await?;
 
-        tx.commit().await.map_err(DbErrorGeneric::from)?;
+        tx.commit().await?;
         drop(client_guard);
 
         self.notify_all(vec![notifier], created_at);
@@ -3787,14 +3683,11 @@ impl concepts::storage::DbConnectionTest for PostgresConnection {
     ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
         trace!("get");
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard
-            .transaction()
-            .await
-            .map_err(DbErrorRead::from)?;
+        let tx = client_guard.transaction().await?;
 
         let res = get_execution_log(&tx, execution_id).await?;
 
-        tx.commit().await.map_err(DbErrorRead::from)?;
+        tx.commit().await?;
         Ok(res)
     }
 }

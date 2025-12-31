@@ -1,13 +1,12 @@
-use tokio_postgres::error::SqlState;
-use tracing::warn;
-
 use crate::storage::{
     DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
 };
+use tokio_postgres::error::SqlState;
+use tracing::{error, warn};
 
 impl From<tokio_postgres::Error> for DbErrorGeneric {
     fn from(err: tokio_postgres::Error) -> DbErrorGeneric {
-        warn!(backtrace = %std::backtrace::Backtrace::capture(), "Postgres error {err:?}");
+        error!(backtrace = %std::backtrace::Backtrace::capture(), "Postgres error {err:?}");
         DbErrorGeneric::Uncategorized(err.to_string().into())
     }
 }
@@ -46,6 +45,19 @@ impl From<tokio_postgres::Error> for DbErrorWrite {
             DbErrorWrite::NotFound
         } else {
             DbErrorWrite::from(DbErrorGeneric::Uncategorized(err.into()))
+        }
+    }
+}
+
+impl From<deadpool_postgres::PoolError> for DbErrorGeneric {
+    fn from(err: deadpool_postgres::PoolError) -> DbErrorGeneric {
+        match err {
+            deadpool_postgres::PoolError::Backend(err) => DbErrorGeneric::from(err),
+            deadpool_postgres::PoolError::Closed => DbErrorGeneric::Close,
+            other => {
+                warn!("Cannot get connection from pool: {other:?}");
+                DbErrorGeneric::Uncategorized(other.to_string().into())
+            }
         }
     }
 }
