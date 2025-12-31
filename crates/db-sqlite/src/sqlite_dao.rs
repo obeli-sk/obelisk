@@ -14,10 +14,11 @@ use concepts::{
         DbPool, DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT,
         HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedBy, LockedExecution,
-        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
-        PendingStateLocked, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
+        JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse, Locked, LockedBy,
+        LockedExecution, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor,
+        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
+        Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -1642,8 +1643,7 @@ impl SqlitePool {
 
     fn list_executions(
         read_tx: &Transaction,
-        ffqn: Option<&FunctionFqn>,
-        top_level_only: bool,
+        filter: &ListExecutionsFilter,
         pagination: &ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
         #[derive(Debug)]
@@ -1657,7 +1657,7 @@ impl SqlitePool {
         fn paginate<'a, T: rusqlite::ToSql + 'static>(
             pagination: &'a Pagination<Option<T>>,
             column: &str,
-            top_level_only: bool,
+            filter: &ListExecutionsFilter,
         ) -> Result<StatementModifier<'a>, DbErrorGeneric> {
             let mut where_vec: Vec<String> = vec![];
             let mut params: Vec<(&'static str, ToSqlOutput<'a>)> = vec![];
@@ -1681,7 +1681,7 @@ impl SqlitePool {
                 }
                 _ => {}
             }
-            if top_level_only {
+            if !filter.show_derived {
                 where_vec.push("is_top_level=true".to_string());
             }
             Ok(StatementModifier {
@@ -1694,15 +1694,15 @@ impl SqlitePool {
 
         let mut statement_mod = match pagination {
             ExecutionListPagination::CreatedBy(pagination) => {
-                paginate(pagination, "created_at", top_level_only)?
+                paginate(pagination, "created_at", filter)?
             }
             ExecutionListPagination::ExecutionId(pagination) => {
-                paginate(pagination, "execution_id", top_level_only)?
+                paginate(pagination, "execution_id", filter)?
             }
         };
 
         let ffqn_temporary;
-        if let Some(ffqn) = ffqn {
+        if let Some(ffqn) = &filter.ffqn {
             statement_mod.where_vec.push("ffqn = :ffqn".to_string());
             ffqn_temporary = ffqn.to_string();
             let ffqn = ffqn_temporary
@@ -3317,12 +3317,11 @@ impl DbExternalApi for SqlitePool {
 
     async fn list_executions(
         &self,
-        ffqn: Option<FunctionFqn>,
-        top_level_only: bool,
+        filter: ListExecutionsFilter,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
         self.transaction(
-            move |tx| Self::list_executions(tx, ffqn.as_ref(), top_level_only, &pagination),
+            move |tx| Self::list_executions(tx, &filter, &pagination),
             "list_executions",
         )
         .await

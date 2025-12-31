@@ -21,6 +21,7 @@ use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
+use concepts::storage::ListExecutionsFilter;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
@@ -363,17 +364,18 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         including_cursor: false,
                     },
                 ));
+
+        let filter = ListExecutionsFilter {
+            ffqn,
+            show_derived: !request.top_level_only,
+        };
         let conn = self
             .db_pool
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
         let executions: Vec<_> = conn
-            .list_executions(
-                ffqn,
-                request.top_level_only,
-                ExecutionListPagination::try_from(pagination)?,
-            )
+            .list_executions(filter, ExecutionListPagination::try_from(pagination)?)
             .await
             .to_status()?
             .into_iter()

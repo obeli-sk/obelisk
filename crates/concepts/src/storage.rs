@@ -861,6 +861,12 @@ pub enum AppendDelayResponseOutcome {
     AlreadyCancelled,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ListExecutionsFilter {
+    pub ffqn: Option<FunctionFqn>,
+    pub show_derived: bool,
+}
+
 #[async_trait]
 pub trait DbExternalApi: DbConnection {
     /// Get the latest backtrace if version is not set.
@@ -873,8 +879,7 @@ pub trait DbExternalApi: DbConnection {
     /// Returns executions sorted in descending order.
     async fn list_executions(
         &self,
-        ffqn: Option<FunctionFqn>,
-        top_level_only: bool,
+        filter: ListExecutionsFilter,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric>;
 

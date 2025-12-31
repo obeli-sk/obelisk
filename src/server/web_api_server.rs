@@ -17,8 +17,8 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
         self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
-        DbPool, ExecutionListPagination, ExecutionRequest, ExecutionWithState, Pagination,
-        PendingState, TimeoutOutcome, Version, VersionType,
+        DbPool, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ListExecutionsFilter, Pagination, PendingState, TimeoutOutcome, Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -122,7 +122,8 @@ async fn delay_cancel(
 struct ExecutionsListParams {
     ffqn: Option<FunctionFqn>,
     #[serde(default)]
-    show_nested: bool,
+    show_derived: bool,
+    // pagination
     cursor: Option<ExecutionListCursorDeser>,
     length: Option<u16>,
     #[serde(default)]
@@ -224,12 +225,13 @@ async fn executions_list(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
 
+    let filter = ListExecutionsFilter {
+        ffqn: params.ffqn,
+        show_derived: params.show_derived,
+    };
+
     let executions = conn
-        .list_executions(
-            params.ffqn,
-            !params.show_nested, // top level only
-            pagination,
-        )
+        .list_executions(filter, pagination)
         .await
         .map_err(|err| ErrorWrapper(err, accept))?;
     Ok(match accept {

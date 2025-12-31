@@ -14,10 +14,11 @@ use concepts::{
         DbPool, DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT,
         HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedBy, LockedExecution,
-        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
-        PendingStateLocked, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
+        JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse, Locked, LockedBy,
+        LockedExecution, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor,
+        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
+        Version, VersionType, WasmBacktrace,
     },
 };
 use deadpool_postgres::{Client, Config, ManagerConfig, Pool, RecyclingMethod};
@@ -1314,8 +1315,7 @@ async fn get_combined_state(
 
 async fn list_executions(
     read_tx: &Transaction<'_>,
-    ffqn: Option<&FunctionFqn>,
-    top_level_only: bool,
+    filter: &ListExecutionsFilter,
     pagination: &ExecutionListPagination,
 ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
     // Helper to manage dynamic WHERE clauses and positional parameters ($1, $2...)
@@ -1369,18 +1369,15 @@ async fn list_executions(
         }
     };
 
-    // 2. Top Level Filter
-    if top_level_only {
+    if !filter.show_derived {
         qb.add_where("is_top_level = true".to_string());
     }
 
-    // 3. FFQN Filter
-    if let Some(ffqn) = ffqn {
+    if let Some(ffqn) = &filter.ffqn {
         let placeholder = qb.add_param(ffqn.to_string());
         qb.add_where(format!("ffqn = {placeholder}"));
     }
 
-    // 4. Construct Query
     let where_str = if qb.where_clauses.is_empty() {
         String::new()
     } else {
@@ -3660,8 +3657,7 @@ impl DbExternalApi for PostgresConnection {
 
     async fn list_executions(
         &self,
-        ffqn: Option<FunctionFqn>,
-        top_level_only: bool,
+        filter: ListExecutionsFilter,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
         let mut client_guard = self.client.lock().await;
@@ -3670,7 +3666,7 @@ impl DbExternalApi for PostgresConnection {
             .await
             .map_err(DbErrorGeneric::from)?;
 
-        let result = list_executions(&tx, ffqn.as_ref(), top_level_only, &pagination).await?;
+        let result = list_executions(&tx, &filter, &pagination).await?;
 
         tx.commit().await.map_err(DbErrorGeneric::from)?;
         Ok(result)
