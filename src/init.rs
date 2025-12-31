@@ -91,6 +91,8 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
             // Code repetition because of https://github.com/tokio-rs/tracing/issues/575
             Some(match stdout.style {
                 LoggingStyle::Plain => tracing_subscriber::fmt::layer()
+                    .with_file(true)
+                    .with_line_number(true)
                     .with_target(stdout.common.target)
                     .with_span_events(stdout.common.span.into())
                     .with_ansi(std::io::stdout().is_terminal())
@@ -105,6 +107,8 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
                     .boxed(),
                 LoggingStyle::Json => tracing_subscriber::fmt::layer()
                     .json()
+                    .with_file(true)
+                    .with_line_number(true)
                     .with_target(stdout.common.target)
                     .with_span_events(stdout.common.span.into())
                     .with_filter(env_filter)
@@ -127,6 +131,8 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
             Some(match rolling.style {
                 LoggingStyle::Plain => tracing_subscriber::fmt::layer()
                     .with_writer(non_blocking)
+                    .with_file(true)
+                    .with_line_number(true)
                     .with_ansi(false)
                     .with_target(rolling.common.target)
                     .with_span_events(rolling.common.span.into())
@@ -142,6 +148,8 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
                     .boxed(),
                 LoggingStyle::Json => tracing_subscriber::fmt::layer()
                     .with_writer(non_blocking)
+                    .with_file(true)
+                    .with_line_number(true)
                     .json()
                     .with_target(rolling.common.target)
                     .with_span_events(rolling.common.span.into())
