@@ -213,7 +213,7 @@ exec.locking_strategy = "by_component_id"
 enabled = true
 ## Defaults:
 # level = "info,app=trace"
-# style = "plain" # One of "plain","plain_compact","json"
+# style = "plain_compact" # One of "plain","plain_compact","json"
 # span = "none" # One of "none","new","enter","exit","close","active","full"
 # target = false
 
