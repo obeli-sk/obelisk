@@ -1315,7 +1315,7 @@ async fn get_combined_state(
 
 async fn list_executions(
     read_tx: &Transaction<'_>,
-    filter: &ListExecutionsFilter,
+    filter: ListExecutionsFilter,
     pagination: &ExecutionListPagination,
 ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
     // Helper to manage dynamic WHERE clauses and positional parameters ($1, $2...)
@@ -1354,7 +1354,7 @@ async fn list_executions(
             let is_desc = p.is_desc();
             if let Some(cursor) = p.cursor() {
                 let placeholder = qb.add_param(*cursor);
-                qb.add_where(format!("created_at {} {}", p.rel(), placeholder));
+                qb.add_where(format!("created_at {} {placeholder}", p.rel()));
             }
             (limit, is_desc)
         }
@@ -1363,7 +1363,7 @@ async fn list_executions(
             let is_desc = p.is_desc();
             if let Some(cursor) = p.cursor() {
                 let placeholder = qb.add_param(cursor.to_string());
-                qb.add_where(format!("execution_id {} {}", p.rel(), placeholder));
+                qb.add_where(format!("execution_id {} {placeholder}", p.rel()));
             }
             (limit, is_desc)
         }
@@ -1373,9 +1373,16 @@ async fn list_executions(
         qb.add_where("is_top_level = true".to_string());
     }
 
-    if let Some(ffqn) = &filter.ffqn {
+    if let Some(ffqn) = filter.ffqn {
         let placeholder = qb.add_param(ffqn.to_string());
         qb.add_where(format!("ffqn = {placeholder}"));
+    }
+    if filter.hide_finished {
+        qb.add_where(format!("state != '{STATE_FINISHED}'"));
+    }
+    if let Some(prefix) = filter.prefix {
+        let placeholder = qb.add_param(prefix);
+        qb.add_where(format!("execution_id LIKE {placeholder} || %")); // concat %
     }
 
     let where_str = if qb.where_clauses.is_empty() {
@@ -3666,7 +3673,7 @@ impl DbExternalApi for PostgresConnection {
             .await
             .map_err(DbErrorGeneric::from)?;
 
-        let result = list_executions(&tx, &filter, &pagination).await?;
+        let result = list_executions(&tx, filter, &pagination).await?;
 
         tx.commit().await.map_err(DbErrorGeneric::from)?;
         Ok(result)

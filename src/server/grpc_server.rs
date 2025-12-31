@@ -368,6 +368,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let filter = ListExecutionsFilter {
             ffqn,
             show_derived: !request.top_level_only,
+            hide_finished: request.hide_finished,
+            prefix: request.prefix,
         };
         let conn = self
             .db_pool

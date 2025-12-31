@@ -1708,8 +1708,22 @@ impl SqlitePool {
             let ffqn = ffqn_temporary
                 .to_sql()
                 .expect("string conversion never fails");
-
             statement_mod.params.push((":ffqn", ffqn));
+        }
+
+        if filter.hide_finished {
+            statement_mod
+                .where_vec
+                .push(format!("state != '{STATE_FINISHED}'"));
+        }
+        if let Some(prefix) = &filter.prefix {
+            statement_mod
+                .where_vec
+                .push(format!("execution_id LIKE :prefix || %")); // concat %
+            statement_mod.params.push((
+                ":prefix",
+                prefix.to_sql().expect("string conversion never fails"),
+            ));
         }
 
         let where_str = if statement_mod.where_vec.is_empty() {

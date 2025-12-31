@@ -123,6 +123,9 @@ struct ExecutionsListParams {
     ffqn: Option<FunctionFqn>,
     #[serde(default)]
     show_derived: bool,
+    #[serde(default)]
+    hide_finished: bool,
+    prefix: Option<String>,
     // pagination
     cursor: Option<ExecutionListCursorDeser>,
     length: Option<u16>,
@@ -228,6 +231,8 @@ async fn executions_list(
     let filter = ListExecutionsFilter {
         ffqn: params.ffqn,
         show_derived: params.show_derived,
+        hide_finished: params.hide_finished,
+        prefix: params.prefix,
     };
 
     let executions = conn

@@ -865,6 +865,8 @@ pub enum AppendDelayResponseOutcome {
 pub struct ListExecutionsFilter {
     pub ffqn: Option<FunctionFqn>,
     pub show_derived: bool,
+    pub hide_finished: bool,
+    pub prefix: Option<String>,
 }
 
 #[async_trait]
