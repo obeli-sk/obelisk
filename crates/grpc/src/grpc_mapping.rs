@@ -14,7 +14,7 @@ use concepts::{
 };
 use concepts::{JoinSetId, JoinSetKind};
 use std::{borrow::Borrow, str::FromStr};
-use tracing::error;
+use tracing::warn;
 
 impl<T: Borrow<ExecutionId>> From<T> for grpc_gen::ExecutionId {
     fn from(value: T) -> Self {
@@ -110,7 +110,7 @@ impl TryFrom<grpc_gen::ContentDigest> for InputContentDigest {
 
     fn try_from(value: grpc_gen::ContentDigest) -> Result<Self, Self::Error> {
         let digest = Digest::from_str(&value.digest).map_err(|parse_err| {
-            error!("`Digest` cannot be parsed - {parse_err:?}");
+            warn!("`Digest` cannot be parsed - {parse_err:?}");
             tonic::Status::invalid_argument(format!("`Digest` cannot be parsed - {parse_err}"))
         })?;
         Ok(InputContentDigest(ContentDigest(digest)))
@@ -123,7 +123,7 @@ impl TryFrom<grpc_gen::ComponentId> for ComponentId {
     fn try_from(value: grpc_gen::ComponentId) -> Result<ComponentId, Self::Error> {
         let component_type =
             grpc_gen::ComponentType::try_from(value.component_type).map_err(|parse_err| {
-                error!("`component_type` cannot be parsed - {parse_err:?}");
+                warn!("`component_type` cannot be parsed - {parse_err:?}");
                 tonic::Status::invalid_argument(format!(
                     "`component_type` cannot be parsed - {parse_err}"
                 ))
@@ -136,7 +136,7 @@ impl TryFrom<grpc_gen::ComponentId> for ComponentId {
         };
         let input_digest = InputContentDigest::try_from(input_digest)?;
         ComponentId::new(component_type, value.name.into(), input_digest).map_err(|parse_err| {
-            error!("`name` is invalid - {parse_err:?}");
+            warn!("`name` is invalid - {parse_err:?}");
             tonic::Status::invalid_argument(format!("name cannot be parsed - {parse_err}"))
         })
     }
@@ -194,8 +194,8 @@ impl<T> TonicServerResultExt<T> for Result<T, DbErrorRead> {
 impl<T> TonicServerResultExt<T> for Result<T, DbErrorGeneric> {
     fn to_status(self) -> Result<T, tonic::Status> {
         self.map_err(|db_err| {
-            error!("Got db error {db_err:?}");
-            tonic::Status::internal(format!("database error: {db_err}"))
+            warn!("Got db error {db_err:?}");
+            tonic::Status::internal(format!("database error"))
         })
     }
 }
@@ -204,8 +204,8 @@ pub fn db_error_write_to_status(db_err: &DbErrorWrite) -> tonic::Status {
     if *db_err == DbErrorWrite::NotFound {
         tonic::Status::not_found("entity not found")
     } else {
-        error!("Got db error {db_err:?}");
-        tonic::Status::internal(format!("database error: {db_err}"))
+        warn!("Got db error {db_err:?}");
+        tonic::Status::internal(format!("database error"))
     }
 }
 
@@ -213,8 +213,8 @@ pub fn db_error_read_to_status(db_err: &DbErrorRead) -> tonic::Status {
     if *db_err == DbErrorRead::NotFound {
         tonic::Status::not_found("entity not found")
     } else {
-        error!("Got db error {db_err:?}");
-        tonic::Status::internal(format!("database error: {db_err}"))
+        warn!("Got db error {db_err:?}");
+        tonic::Status::internal(format!("database error"))
     }
 }
 
@@ -224,7 +224,7 @@ impl TryFrom<grpc_gen::FunctionName> for FunctionFqn {
     fn try_from(value: grpc_gen::FunctionName) -> Result<Self, Self::Error> {
         FunctionFqn::try_from_tuple(&value.interface_name, &value.function_name).map_err(
             |parse_err| {
-                error!("{parse_err:?}");
+                warn!("{parse_err:?}");
                 tonic::Status::invalid_argument(format!(
                     "FunctionName cannot be parsed - {parse_err}"
                 ))

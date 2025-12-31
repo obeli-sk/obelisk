@@ -17,8 +17,9 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
         self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
-        DbPool, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
-        ListExecutionsFilter, Pagination, PendingState, TimeoutOutcome, Version, VersionType,
+        DbErrorWriteNonRetriable, DbPool, ExecutionListPagination, ExecutionRequest,
+        ExecutionWithState, ListExecutionsFilter, Pagination, PendingState, TimeoutOutcome,
+        Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -1007,10 +1008,12 @@ impl IntoResponse for HttpResponse {
 }
 impl From<ErrorWrapper<DbErrorGeneric>> for HttpResponse {
     fn from(value: ErrorWrapper<DbErrorGeneric>) -> Self {
+        let err = value.0;
         let accept = value.1;
+        warn!("{err:?}");
         HttpResponse {
             status: StatusCode::SERVICE_UNAVAILABLE,
-            message: value.0.to_string(),
+            message: "database error".to_string(),
             accept,
         }
     }
@@ -1018,13 +1021,20 @@ impl From<ErrorWrapper<DbErrorGeneric>> for HttpResponse {
 impl From<ErrorWrapper<DbErrorRead>> for HttpResponse {
     fn from(value: ErrorWrapper<DbErrorRead>) -> Self {
         let accept = value.1;
-        let (status, message) = match value.0 {
-            DbErrorRead::NotFound => return HttpResponse::not_found(accept, None),
-            DbErrorRead::Generic(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
-        };
+        match value.0 {
+            DbErrorRead::NotFound => HttpResponse::not_found(accept, None),
+            DbErrorRead::Generic(err) => HttpResponse::from(ErrorWrapper(err, accept)),
+        }
+    }
+}
+impl From<ErrorWrapper<DbErrorWriteNonRetriable>> for HttpResponse {
+    fn from(value: ErrorWrapper<DbErrorWriteNonRetriable>) -> Self {
+        let err = value.0;
+        let accept = value.1;
+        warn!("{err:?}");
         HttpResponse {
-            status,
-            message,
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "database error".to_string(),
             accept,
         }
     }
@@ -1032,15 +1042,10 @@ impl From<ErrorWrapper<DbErrorRead>> for HttpResponse {
 impl From<ErrorWrapper<DbErrorWrite>> for HttpResponse {
     fn from(value: ErrorWrapper<DbErrorWrite>) -> Self {
         let accept = value.1;
-        let (status, message) = match value.0 {
-            DbErrorWrite::NotFound => return HttpResponse::not_found(accept, None),
-            DbErrorWrite::Generic(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
-            DbErrorWrite::NonRetriable(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-        };
-        HttpResponse {
-            status,
-            message,
-            accept,
+        match value.0 {
+            DbErrorWrite::NotFound => HttpResponse::not_found(accept, None),
+            DbErrorWrite::Generic(err) => HttpResponse::from(ErrorWrapper(err, accept)),
+            DbErrorWrite::NonRetriable(err) => HttpResponse::from(ErrorWrapper(err, accept)),
         }
     }
 }
