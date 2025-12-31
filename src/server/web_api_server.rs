@@ -250,8 +250,7 @@ async fn executions_list(
                     id = execution.execution_id,
                     ffqn = execution.ffqn,
                     pending_state = execution.pending_state,
-                    first_scheduled_at =
-                        humantime_fmt::format_relative(execution.first_scheduled_at.into()),
+                    first_scheduled_at = execution.first_scheduled_at,
                 )
                 .expect("writing to string");
             }
@@ -352,7 +351,7 @@ async fn execution_events(
                     &mut output,
                     "{version} `{created_at}` {event}",
                     version = event.version,
-                    created_at = humantime_fmt::format_relative(event.created_at.into()),
+                    created_at = event.created_at,
                     event = event.event,
                 )
                 .expect("writing to string");
@@ -403,7 +402,7 @@ async fn execution_responses(
                     &mut output,
                     "{cursor} `{created_at}` {join_set_id} {resp}",
                     cursor = response.cursor,
-                    created_at = humantime_fmt::format_relative(response.event.created_at.into()),
+                    created_at = response.event.created_at,
                     join_set_id = response.event.event.join_set_id,
                     resp = response.event.event.event,
                 )

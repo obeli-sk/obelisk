@@ -1886,15 +1886,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
 
 [[package]]
-name = "humantime_fmt"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a68bc6edd83d2d86a8570adb0cfeb96a0cc9add78ad0885c14148dbc9ee4b97"
-dependencies = [
- "chrono",
-]
-
-[[package]]
 name = "hyper"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2839,7 +2830,6 @@ dependencies = [
  "futures-util",
  "hashbrown 0.16.1",
  "http",
- "humantime_fmt",
  "itertools",
  "obeli-sk-concepts",
  "obeli-sk-db-postgres",
