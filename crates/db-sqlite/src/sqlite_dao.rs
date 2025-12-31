@@ -1702,9 +1702,9 @@ impl SqlitePool {
         };
 
         let ffqn_temporary;
-        if let Some(ffqn) = &filter.ffqn {
-            statement_mod.where_vec.push("ffqn = :ffqn".to_string());
-            ffqn_temporary = ffqn.to_string();
+        if let Some(ffqn_prefix) = &filter.ffqn_prefix {
+            statement_mod.where_vec.push("ffqn LIKE :ffqn".to_string());
+            ffqn_temporary = format!("{ffqn_prefix}%"); // added %
             let ffqn = ffqn_temporary
                 .to_sql()
                 .expect("string conversion never fails");
@@ -1717,7 +1717,7 @@ impl SqlitePool {
                 .push(format!("state != '{STATE_FINISHED}'"));
         }
         let prefix_temporary;
-        if let Some(prefix) = &filter.prefix {
+        if let Some(prefix) = &filter.execution_id_prefix {
             statement_mod
                 .where_vec
                 .push("execution_id LIKE :prefix".to_string());

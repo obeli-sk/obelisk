@@ -121,12 +121,12 @@ async fn delay_cancel(
 
 #[derive(Deserialize, Debug)]
 struct ExecutionsListParams {
-    ffqn: Option<FunctionFqn>,
+    ffqn_prefix: Option<String>,
     #[serde(default)]
     show_derived: bool,
     #[serde(default)]
     hide_finished: bool,
-    prefix: Option<String>,
+    execution_id_prefix: Option<String>,
     // pagination
     cursor: Option<ExecutionListCursorDeser>,
     length: Option<u16>,
@@ -230,10 +230,10 @@ async fn executions_list(
         .map_err(|e| ErrorWrapper(e, accept))?;
 
     let filter = ListExecutionsFilter {
-        ffqn: params.ffqn,
+        ffqn_prefix: params.ffqn_prefix,
         show_derived: params.show_derived,
         hide_finished: params.hide_finished,
-        prefix: params.prefix,
+        execution_id_prefix: params.execution_id_prefix,
     };
 
     let executions = conn

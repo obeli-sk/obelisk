@@ -1369,15 +1369,15 @@ async fn list_executions(
         qb.add_where("is_top_level = true".to_string());
     }
 
-    if let Some(ffqn) = filter.ffqn {
-        let placeholder = qb.add_param(ffqn.to_string());
-        qb.add_where(format!("ffqn = {placeholder}"));
+    if let Some(ffqn_prefix) = filter.ffqn_prefix {
+        let placeholder = qb.add_param(format!("{ffqn_prefix}%")); // added %
+        qb.add_where(format!("ffqn LIKE {placeholder}"));
     }
     if filter.hide_finished {
         qb.add_where(format!("state != '{STATE_FINISHED}'"));
     }
-    if let Some(prefix) = filter.prefix {
-        let placeholder = qb.add_param(format!("{prefix}%")); // concat %
+    if let Some(prefix) = filter.execution_id_prefix {
+        let placeholder = qb.add_param(format!("{prefix}%")); // added %
         qb.add_where(format!("execution_id LIKE {placeholder}"));
     }
 

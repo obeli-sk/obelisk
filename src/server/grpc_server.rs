@@ -349,11 +349,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         request: tonic::Request<grpc_gen::ListExecutionsRequest>,
     ) -> TonicRespResult<grpc_gen::ListExecutionsResponse> {
         let request = request.into_inner();
-        let ffqn = request
-            .function_name
-            .map(FunctionFqn::try_from)
-            .transpose()?;
-        tracing::Span::current().record("ffqn", tracing::field::debug(&ffqn));
+
         let pagination =
             request
                 .pagination
@@ -366,10 +362,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 ));
 
         let filter = ListExecutionsFilter {
-            ffqn,
             show_derived: !request.top_level_only,
             hide_finished: request.hide_finished,
-            prefix: request.prefix,
+            execution_id_prefix: request.execution_id_prefix,
+            ffqn_prefix: request.function_name_prefix,
         };
         let conn = self
             .db_pool
