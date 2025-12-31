@@ -1720,7 +1720,7 @@ impl SqlitePool {
         if let Some(prefix) = &filter.prefix {
             statement_mod
                 .where_vec
-                .push(format!("execution_id LIKE :prefix"));
+                .push("execution_id LIKE :prefix".to_string());
             prefix_temporary = format!("{prefix}%"); // concat %
             statement_mod.params.push((
                 ":prefix",

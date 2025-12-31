@@ -195,7 +195,7 @@ impl<T> TonicServerResultExt<T> for Result<T, DbErrorGeneric> {
     fn to_status(self) -> Result<T, tonic::Status> {
         self.map_err(|db_err| {
             warn!("Got db error {db_err:?}");
-            tonic::Status::internal(format!("database error"))
+            tonic::Status::internal("database error".to_string())
         })
     }
 }
@@ -205,7 +205,7 @@ pub fn db_error_write_to_status(db_err: &DbErrorWrite) -> tonic::Status {
         tonic::Status::not_found("entity not found")
     } else {
         warn!("Got db error {db_err:?}");
-        tonic::Status::internal(format!("database error"))
+        tonic::Status::internal("database error".to_string())
     }
 }
 
@@ -214,7 +214,7 @@ pub fn db_error_read_to_status(db_err: &DbErrorRead) -> tonic::Status {
         tonic::Status::not_found("entity not found")
     } else {
         warn!("Got db error {db_err:?}");
-        tonic::Status::internal(format!("database error"))
+        tonic::Status::internal("database error".to_string())
     }
 }
 
