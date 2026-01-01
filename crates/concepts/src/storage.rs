@@ -887,12 +887,28 @@ pub trait DbExternalApi: DbConnection {
         pagination: Pagination<u32>,
     ) -> Result<Vec<ResponseWithCursor>, DbErrorRead>;
 
+    async fn list_execution_events_responses(
+        &self,
+        execution_id: &ExecutionId,
+        req_since: &Version,
+        req_max_length: VersionType,
+        req_include_backtrace_id: bool,
+        resp_pagination: Pagination<u32>,
+    ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead>;
+
     async fn upgrade_execution_component(
         &self,
         execution_id: &ExecutionId,
         old: &InputContentDigest,
         new: &InputContentDigest,
     ) -> Result<(), DbErrorWrite>;
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionWithStateRequestsResponses {
+    pub execution_with_state: ExecutionWithState,
+    pub events: Vec<ExecutionEvent>,
+    pub responses: Vec<ResponseWithCursor>,
 }
 
 #[async_trait]
@@ -1447,7 +1463,7 @@ pub enum PendingStateFinishedError {
     #[display("execution terminated: {_0}")]
     ExecutionFailure(ExecutionFailureKind),
     #[display("execution completed with an error")]
-    FallibleError,
+    FallibleError, // Error
 }
 
 impl PendingState {

@@ -12,10 +12,10 @@ use concepts::{
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
         DbPool, DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT,
-        HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse, Locked, LockedBy,
-        LockedExecution, Pagination, PendingState, PendingStateFinished,
+        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse,
+        Locked, LockedBy, LockedExecution, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor,
         STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
         Version, VersionType, WasmBacktrace,
@@ -3598,7 +3598,7 @@ impl DbExternalApi for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        let result = list_execution_events(
+        let execution_events = list_execution_events(
             &tx,
             execution_id,
             since.0,
@@ -3608,7 +3608,7 @@ impl DbExternalApi for PostgresConnection {
         .await?;
 
         tx.commit().await?;
-        Ok(result)
+        Ok(execution_events)
     }
 
     async fn list_responses(
@@ -3619,10 +3619,43 @@ impl DbExternalApi for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        let result = list_responses(&tx, execution_id, Some(pagination)).await?;
+        let responses = list_responses(&tx, execution_id, Some(pagination)).await?;
 
         tx.commit().await?;
-        Ok(result)
+        Ok(responses)
+    }
+
+    async fn list_execution_events_responses(
+        &self,
+        execution_id: &ExecutionId,
+        req_since: &Version,
+        req_max_length: VersionType,
+        req_include_backtrace_id: bool,
+        resp_pagination: Pagination<u32>,
+    ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        let combined_state = get_combined_state(&tx, execution_id).await?;
+
+        let events = list_execution_events(
+            &tx,
+            execution_id,
+            req_since.0,
+            req_since.0 + req_max_length,
+            req_include_backtrace_id,
+        )
+        .await?;
+
+        let responses = list_responses(&tx, execution_id, Some(resp_pagination)).await?;
+
+        tx.commit().await?;
+
+        Ok(ExecutionWithStateRequestsResponses {
+            execution_with_state: combined_state.execution_with_state,
+            events,
+            responses,
+        })
     }
 
     async fn upgrade_execution_component(

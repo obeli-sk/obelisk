@@ -12,10 +12,10 @@ use concepts::{
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
         DbPool, DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT,
-        HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse, Locked, LockedBy,
-        LockedExecution, Pagination, PendingState, PendingStateFinished,
+        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse,
+        Locked, LockedBy, LockedExecution, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor,
         STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
         Version, VersionType,
@@ -3372,6 +3372,38 @@ impl DbExternalApi for SqlitePool {
         self.transaction(
             move |tx| Self::list_responses(tx, &execution_id, Some(pagination)),
             "list_responses",
+        )
+        .await
+    }
+
+    async fn list_execution_events_responses(
+        &self,
+        execution_id: &ExecutionId,
+        req_since: &Version,
+        req_max_length: VersionType,
+        req_include_backtrace_id: bool,
+        resp_pagination: Pagination<u32>,
+    ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead> {
+        let execution_id = execution_id.clone();
+        let req_since = req_since.0;
+        self.transaction(
+            move |tx| {
+                let combined_state = Self::get_combined_state(tx, &execution_id)?;
+                let events = Self::list_execution_events(
+                    tx,
+                    &execution_id,
+                    req_since,
+                    req_since + req_max_length,
+                    req_include_backtrace_id,
+                )?;
+                let responses = Self::list_responses(tx, &execution_id, Some(resp_pagination))?;
+                Ok(ExecutionWithStateRequestsResponses {
+                    execution_with_state: combined_state.execution_with_state,
+                    events,
+                    responses,
+                })
+            },
+            "list_execution_events_responses",
         )
         .await
     }

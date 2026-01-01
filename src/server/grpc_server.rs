@@ -479,24 +479,15 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
-        let events = conn
-            .list_execution_events(
+
+        let res = conn
+            .list_execution_events_responses(
                 &execution_id,
                 &Version::new(request.version_from),
                 VersionType::try_from(request.events_length).map_err(|_| {
                     tonic::Status::invalid_argument("`events_length` must be u16".to_string())
                 })?,
                 request.include_backtrace_id,
-            )
-            .await
-            .to_status()?
-            .into_iter()
-            .map(from_execution_event_to_grpc)
-            .collect();
-
-        let responses = conn
-            .list_responses(
-                &execution_id,
                 concepts::storage::Pagination::NewerThan {
                     length: convert_length(request.responses_length)?,
                     cursor: request.responses_cursor_from,
@@ -504,13 +495,28 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 },
             )
             .await
-            .to_status()?
+            .to_status()?;
+
+        let events = res
+            .events
+            .into_iter()
+            .map(from_execution_event_to_grpc)
+            .collect();
+
+        let responses = res
+            .responses
             .into_iter()
             .map(grpc_gen::ResponseWithCursor::from)
             .collect();
 
+        let current_status = grpc_gen::ExecutionStatus::from(&res.execution_with_state);
+
         Ok(tonic::Response::new(
-            grpc_gen::ListExecutionEventsAndResponsesResponse { events, responses },
+            grpc_gen::ListExecutionEventsAndResponsesResponse {
+                events,
+                responses,
+                current_status: Some(current_status),
+            },
         ))
     }
 

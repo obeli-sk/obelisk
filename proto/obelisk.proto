@@ -508,6 +508,7 @@ message ListExecutionEventsAndResponsesRequest {
 message ListExecutionEventsAndResponsesResponse {
     repeated ExecutionEvent events = 1;
     repeated ResponseWithCursor responses = 2;
+    ExecutionStatus current_status = 3;
 }
 
 message GetWitRequest {
