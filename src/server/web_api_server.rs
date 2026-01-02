@@ -508,7 +508,7 @@ async fn execution_stub(
 #[serde(rename_all = "snake_case")]
 enum RetVal {
     Ok(Option<WastVal>),
-    Error(Option<WastVal>),
+    Err(Option<WastVal>), // Mirrors `err` variant of WIT `result`.
     ExecutionError(FinishedExecutionError),
 }
 impl From<SupportedFunctionReturnValue> for RetVal {
@@ -518,7 +518,7 @@ impl From<SupportedFunctionReturnValue> for RetVal {
                 RetVal::Ok(val_with_type.map(|it| it.value))
             }
             SupportedFunctionReturnValue::Err { err: val_with_type } => {
-                RetVal::Error(val_with_type.map(|it| it.value))
+                RetVal::Err(val_with_type.map(|it| it.value))
             }
             SupportedFunctionReturnValue::ExecutionError(err) => RetVal::ExecutionError(err),
         }
