@@ -1006,6 +1006,7 @@ impl IntoResponse for HttpResponse {
     }
 }
 impl From<ErrorWrapper<DbErrorGeneric>> for HttpResponse {
+    #[track_caller]
     fn from(value: ErrorWrapper<DbErrorGeneric>) -> Self {
         let err = value.0;
         let accept = value.1;
@@ -1018,6 +1019,7 @@ impl From<ErrorWrapper<DbErrorGeneric>> for HttpResponse {
     }
 }
 impl From<ErrorWrapper<DbErrorRead>> for HttpResponse {
+    #[track_caller]
     fn from(value: ErrorWrapper<DbErrorRead>) -> Self {
         let accept = value.1;
         match value.0 {
@@ -1027,18 +1029,31 @@ impl From<ErrorWrapper<DbErrorRead>> for HttpResponse {
     }
 }
 impl From<ErrorWrapper<DbErrorWriteNonRetriable>> for HttpResponse {
+    #[track_caller]
     fn from(value: ErrorWrapper<DbErrorWriteNonRetriable>) -> Self {
         let err = value.0;
         let accept = value.1;
-        warn!("{err:?}");
-        HttpResponse {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: "database error".to_string(),
-            accept,
+        if err == DbErrorWriteNonRetriable::Conflict {
+            HttpResponse {
+                status: StatusCode::CONFLICT,
+                message: "conflict".to_string(),
+                accept,
+            }
+        } else {
+            let loc = std::panic::Location::caller();
+            let (loc_file, loc_line) = (loc.file(), loc.line());
+
+            warn!(loc_file, loc_line, "{err:?}");
+            HttpResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: "database error".to_string(),
+                accept,
+            }
         }
     }
 }
 impl From<ErrorWrapper<DbErrorWrite>> for HttpResponse {
+    #[track_caller]
     fn from(value: ErrorWrapper<DbErrorWrite>) -> Self {
         let accept = value.1;
         match value.0 {
@@ -1049,6 +1064,7 @@ impl From<ErrorWrapper<DbErrorWrite>> for HttpResponse {
     }
 }
 impl From<ErrorWrapper<SubmitError>> for HttpResponse {
+    #[track_caller]
     fn from(value: ErrorWrapper<SubmitError>) -> Self {
         let accept = value.1;
         match value.0 {
