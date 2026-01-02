@@ -54,7 +54,6 @@ use tracing::error;
 use tracing::info;
 use tracing::info_span;
 use tracing::instrument;
-use tracing::warn;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 
@@ -590,14 +589,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     }
                 }
             } else {
-                warn!(
+                debug!(
                     "Backtrace file mapping not found for {component_id}, src {}",
                     request.file
                 );
                 Err(tonic::Status::not_found("backtrace file mapping not found"))
             }
         } else {
-            warn!("Component {component_id} not found");
+            debug!("Component {component_id} not found");
             Err(tonic::Status::not_found("component not found"))
         }
     }
