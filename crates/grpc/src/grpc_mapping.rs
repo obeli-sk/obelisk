@@ -347,11 +347,9 @@ impl From<&PendingStateFinishedResultKind> for grpc_gen::ResultKind {
                     grpc_gen::ExecutionFailureKind::from(kind).into(),
                 )),
             },
-            PendingStateFinishedResultKind::Err(PendingStateFinishedError::FallibleError) => {
+            PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error) => {
                 grpc_gen::ResultKind {
-                    value: Some(result_kind::Value::FallibleError(
-                        result_kind::FallibleError {},
-                    )),
+                    value: Some(result_kind::Value::Error(result_kind::Error {})),
                 }
             }
         }
@@ -379,8 +377,8 @@ impl TryFrom<grpc_gen::ResultKind> for PendingStateFinishedResultKind {
                 )),
             )),
 
-            Some(Value::FallibleError(_)) => Ok(PendingStateFinishedResultKind::Err(
-                PendingStateFinishedError::FallibleError,
+            Some(Value::Error(_)) => Ok(PendingStateFinishedResultKind::Err(
+                PendingStateFinishedError::Error,
             )),
 
             None => Err(ResultKindConversionError::MissingValue),
@@ -508,7 +506,7 @@ impl From<SupportedFunctionReturnValue> for grpc_gen::ResultDetail {
     fn from(finished_result: SupportedFunctionReturnValue) -> Self {
         let value = match finished_result {
             SupportedFunctionReturnValue::Ok { ok: val_with_type } => {
-                grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
+                grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
                     return_value: val_with_type
                         .map(|val_with_type| {
                             to_any(
@@ -521,19 +519,17 @@ impl From<SupportedFunctionReturnValue> for grpc_gen::ResultDetail {
                 })
             }
             SupportedFunctionReturnValue::Err { err: val_with_type } => {
-                grpc_gen::result_detail::Value::FallibleError(
-                    grpc_gen::result_detail::FallibleError {
-                        return_value: val_with_type
-                            .map(|val_with_type| {
-                                to_any(
-                                    val_with_type.value,
-                                    "urn:obelisk:json:retval:TBD".to_string(),
-                                )
-                            })
-                            .transpose()
-                            .expect("SupportedFunctionReturnValue must be JSON-serializable"),
-                    },
-                )
+                grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
+                    return_value: val_with_type
+                        .map(|val_with_type| {
+                            to_any(
+                                val_with_type.value,
+                                "urn:obelisk:json:retval:TBD".to_string(),
+                            )
+                        })
+                        .transpose()
+                        .expect("SupportedFunctionReturnValue must be JSON-serializable"),
+                })
             }
             SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
                 kind,

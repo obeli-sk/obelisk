@@ -698,7 +698,7 @@ impl SupportedFunctionReturnValue {
         match self {
             SupportedFunctionReturnValue::Ok { ok: _ } => PendingStateFinishedResultKind::Ok,
             SupportedFunctionReturnValue::Err { err: _ } => {
-                PendingStateFinishedResultKind::Err(PendingStateFinishedError::FallibleError)
+                PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error)
             }
             SupportedFunctionReturnValue::ExecutionError(err) => {
                 PendingStateFinishedResultKind::Err(err.as_pending_state_finished_error())

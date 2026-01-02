@@ -1885,7 +1885,7 @@ pub(crate) mod tests {
             PendingState::Finished {
                 finished: PendingStateFinished {
                     result_kind: PendingStateFinishedResultKind::Err(
-                        PendingStateFinishedError::FallibleError
+                        PendingStateFinishedError::Error
                     ),
                     ..
                 },

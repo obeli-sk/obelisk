@@ -274,20 +274,18 @@ fn print_finished_status(
         .expect("`result_detail` is sent by the server")
         .value
     {
-        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
+        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
             return_value: Some(return_value),
         })) => {
             let return_value = String::from_utf8_lossy(&return_value.value);
             (format!("OK: {return_value}"), Ok(()))
         }
-        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
+        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
             return_value: None,
         })) => ("OK: (no return value)".to_string(), Ok(())),
-        Some(grpc_gen::result_detail::Value::FallibleError(
-            grpc_gen::result_detail::FallibleError {
-                return_value: Some(return_value),
-            },
-        )) => {
+        Some(grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
+            return_value: Some(return_value),
+        })) => {
             let return_value = String::from_utf8_lossy(&return_value.value);
             (format!("Err: {return_value}"), Err(AlreadyPrintedError))
         }
@@ -344,21 +342,19 @@ fn print_finished_status_json(
         .expect("`result_detail` is sent by the server")
         .value
     {
-        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
+        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
             return_value: Some(return_value),
         })) => {
             let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
                 .expect("return_value must be JSON encoded");
             (json!({"ok": return_value}), Ok(()))
         }
-        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::Ok {
+        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
             return_value: None,
         })) => (json!({"ok": null}), Ok(())),
-        Some(grpc_gen::result_detail::Value::FallibleError(
-            grpc_gen::result_detail::FallibleError {
-                return_value: Some(return_value),
-            },
-        )) => {
+        Some(grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
+            return_value: Some(return_value),
+        })) => {
             let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
                 .expect("return_value must be JSON encoded");
             (

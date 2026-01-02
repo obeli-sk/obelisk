@@ -1463,7 +1463,7 @@ pub enum PendingStateFinishedError {
     #[display("execution terminated: {_0}")]
     ExecutionFailure(ExecutionFailureKind),
     #[display("execution completed with an error")]
-    FallibleError, // Error
+    Error,
 }
 
 impl PendingState {
