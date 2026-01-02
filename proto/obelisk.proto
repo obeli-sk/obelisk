@@ -247,7 +247,7 @@ message FinishedStatus {
     google.protobuf.Timestamp created_at = 1;
     google.protobuf.Timestamp scheduled_at = 2;
     google.protobuf.Timestamp finished_at = 3;
-    ResultDetail result_detail = 4;
+    SupportedFunctionResult value = 4;
 }
 
 enum ExecutionFailureKind {
@@ -262,17 +262,13 @@ enum ExecutionFailureKind {
     UNCATEGORIZED = 4;
 }
 
-// Mirrors SupportedFunctionReturnValue
-message ResultDetail {
+message SupportedFunctionResult {
     message OkPayload {
         google.protobuf.Any return_value = 1;
     }
     message ErrorPayload {
-        // The top level JSON attribute "err" must be present.
         google.protobuf.Any return_value = 1;
     }
-
-
 
     // FinishedExecutionError
     message ExecutionFailure {
@@ -332,7 +328,7 @@ message ExecutionEvent {
     }
 
     message Finished {
-        ResultDetail result_detail = 1;
+        SupportedFunctionResult value = 1;
         repeated HttpClientTrace http_client_traces = 2;
     }
 
@@ -470,7 +466,7 @@ message JoinSetResponseEvent {
 
     message ChildExecutionFinished {
         ExecutionId child_execution_id = 1;
-        ResultDetail result_detail = 2;
+        SupportedFunctionResult value = 2;
     }
 
     google.protobuf.Timestamp created_at = 1;

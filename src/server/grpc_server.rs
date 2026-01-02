@@ -822,7 +822,7 @@ pub(crate) fn to_finished_status(
 ) -> grpc_gen::FinishedStatus {
     let result_detail = finished_result.into();
     grpc_gen::FinishedStatus {
-        result_detail: Some(result_detail),
+        value: Some(result_detail),
         created_at: Some(create_request.created_at.into()),
         scheduled_at: Some(create_request.scheduled_at.into()),
         finished_at: Some(finished_at.into()),

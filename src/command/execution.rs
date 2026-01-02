@@ -246,33 +246,37 @@ fn print_finished_status(
     );
 
     let (new_pending_status, res) = match finished_status
-        .result_detail
+        .value
         .expect("`result_detail` is sent by the server")
         .value
     {
-        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
-            return_value: Some(return_value),
-        })) => {
+        Some(grpc_gen::supported_function_result::Value::Ok(
+            grpc_gen::supported_function_result::OkPayload {
+                return_value: Some(return_value),
+            },
+        )) => {
             let return_value = String::from_utf8_lossy(&return_value.value);
             (format!("OK: {return_value}"), Ok(()))
         }
-        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
-            return_value: None,
-        })) => ("OK: (no return value)".to_string(), Ok(())),
-        Some(grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
-            return_value: Some(return_value),
-        })) => {
+        Some(grpc_gen::supported_function_result::Value::Ok(
+            grpc_gen::supported_function_result::OkPayload { return_value: None },
+        )) => ("OK: (no return value)".to_string(), Ok(())),
+        Some(grpc_gen::supported_function_result::Value::Error(
+            grpc_gen::supported_function_result::ErrorPayload {
+                return_value: Some(return_value),
+            },
+        )) => {
             let return_value = String::from_utf8_lossy(&return_value.value);
-            (format!("Err: {return_value}"), Err(AlreadyPrintedError))
+            (format!("Error: {return_value}"), Err(AlreadyPrintedError))
         }
-        Some(grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
-            return_value: None,
-        })) => (
-            "Err:(no return value)".to_string(),
+        Some(grpc_gen::supported_function_result::Value::Error(
+            grpc_gen::supported_function_result::ErrorPayload { return_value: None },
+        )) => (
+            "Error: (no return value)".to_string(),
             Err(AlreadyPrintedError),
         ),
-        Some(grpc_gen::result_detail::Value::ExecutionFailure(
-            grpc_gen::result_detail::ExecutionFailure {
+        Some(grpc_gen::supported_function_result::Value::ExecutionFailure(
+            grpc_gen::supported_function_result::ExecutionFailure {
                 kind,
                 reason,
                 detail,

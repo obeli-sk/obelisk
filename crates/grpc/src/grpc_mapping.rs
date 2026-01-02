@@ -502,48 +502,52 @@ pub fn to_any<T: serde::Serialize>(
     })
 }
 
-impl From<SupportedFunctionReturnValue> for grpc_gen::ResultDetail {
+impl From<SupportedFunctionReturnValue> for grpc_gen::SupportedFunctionResult {
     fn from(finished_result: SupportedFunctionReturnValue) -> Self {
         let value = match finished_result {
             SupportedFunctionReturnValue::Ok { ok: val_with_type } => {
-                grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
-                    return_value: val_with_type
-                        .map(|val_with_type| {
-                            to_any(
-                                val_with_type.value,
-                                "urn:obelisk:json:retval:TBD".to_string(),
-                            )
-                        })
-                        .transpose()
-                        .expect("SupportedFunctionReturnValue must be JSON-serializable"),
-                })
+                grpc_gen::supported_function_result::Value::Ok(
+                    grpc_gen::supported_function_result::OkPayload {
+                        return_value: val_with_type
+                            .map(|val_with_type| {
+                                to_any(
+                                    val_with_type.value,
+                                    "urn:obelisk:json:retval:TBD".to_string(),
+                                )
+                            })
+                            .transpose()
+                            .expect("SupportedFunctionReturnValue must be JSON-serializable"),
+                    },
+                )
             }
             SupportedFunctionReturnValue::Err { err: val_with_type } => {
-                grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
-                    return_value: val_with_type
-                        .map(|val_with_type| {
-                            to_any(
-                                val_with_type.value,
-                                "urn:obelisk:json:retval:TBD".to_string(),
-                            )
-                        })
-                        .transpose()
-                        .expect("SupportedFunctionReturnValue must be JSON-serializable"),
-                })
+                grpc_gen::supported_function_result::Value::Error(
+                    grpc_gen::supported_function_result::ErrorPayload {
+                        return_value: val_with_type
+                            .map(|val_with_type| {
+                                to_any(
+                                    val_with_type.value,
+                                    "urn:obelisk:json:retval:TBD".to_string(),
+                                )
+                            })
+                            .transpose()
+                            .expect("SupportedFunctionReturnValue must be JSON-serializable"),
+                    },
+                )
             }
             SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
                 kind,
                 reason,
                 detail,
-            }) => grpc_gen::result_detail::Value::ExecutionFailure(
-                grpc_gen::result_detail::ExecutionFailure {
+            }) => grpc_gen::supported_function_result::Value::ExecutionFailure(
+                grpc_gen::supported_function_result::ExecutionFailure {
                     reason,
                     detail,
                     kind: grpc_gen::ExecutionFailureKind::from(kind).into(),
                 },
             ),
         };
-        grpc_gen::ResultDetail { value: Some(value) }
+        grpc_gen::SupportedFunctionResult { value: Some(value) }
     }
 }
 
@@ -610,8 +614,8 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                     })
                 },
                 ExecutionRequest::Finished { result, http_client_traces } => grpc_gen::execution_event::Event::Finished(grpc_gen::execution_event::Finished {
-                    result_detail: Some(
-                        grpc_gen::ResultDetail::from(result)
+                    value: Some(
+                        grpc_gen::SupportedFunctionResult::from(result)
                     ),
                     http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc_gen::HttpClientTrace::from).collect(),
 
@@ -724,7 +728,7 @@ pub mod response {
                 } => grpc_gen::join_set_response_event::Response::ChildExecutionFinished(
                     grpc_gen::join_set_response_event::ChildExecutionFinished {
                         child_execution_id: Some(ExecutionId::Derived(child_execution_id).into()),
-                        result_detail: Some(result.into()),
+                        value: Some(result.into()),
                     },
                 ),
             };
