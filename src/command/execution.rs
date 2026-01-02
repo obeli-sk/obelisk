@@ -289,6 +289,12 @@ fn print_finished_status(
             let return_value = String::from_utf8_lossy(&return_value.value);
             (format!("Err: {return_value}"), Err(AlreadyPrintedError))
         }
+        Some(grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
+            return_value: None,
+        })) => (
+            "Err:(no return value)".to_string(),
+            Err(AlreadyPrintedError),
+        ),
         Some(grpc_gen::result_detail::Value::ExecutionFailure(
             grpc_gen::result_detail::ExecutionFailure {
                 kind,
@@ -362,6 +368,9 @@ fn print_finished_status_json(
                 Err(AlreadyPrintedError),
             )
         }
+        Some(grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
+            return_value: None,
+        })) => (json!({"err": null}), Err(AlreadyPrintedError)),
         Some(grpc_gen::result_detail::Value::ExecutionFailure(
             grpc_gen::result_detail::ExecutionFailure {
                 kind,
