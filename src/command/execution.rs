@@ -24,8 +24,6 @@ use grpc::grpc_gen::execution_status::Finished;
 use grpc::to_channel;
 use grpc_gen::execution_status::Status;
 use itertools::Either;
-use serde::Serialize;
-use serde_json::json;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::instrument;
@@ -38,16 +36,11 @@ impl args::Execution {
                 ffqn,
                 params,
                 follow,
-                json,
                 no_reconnect,
             } => {
                 let channel = to_channel(api_url).await?;
                 let client = get_execution_repository_client(channel.clone()).await?;
-                let opts = if json {
-                    SubmitOutputOpts::Json
-                } else {
-                    SubmitOutputOpts::Plain { no_reconnect }
-                };
+                let opts = SubmitOutputOpts::Plain { no_reconnect };
                 let component_client = get_fn_repository_client(channel).await?;
                 submit(
                     client,
@@ -81,14 +74,6 @@ impl args::Execution {
                 };
                 get_status(client, execution_id, opts).await
             }
-            args::Execution::GetJson {
-                follow,
-                execution_id,
-            } => {
-                let channel = to_channel(api_url).await?;
-                let client = get_execution_repository_client(channel).await?;
-                get_status_json(client, execution_id, follow, false).await
-            }
             args::Execution::Cancel(cancel_request) => cancel_request.execute(api_url).await,
         }
     }
@@ -96,7 +81,6 @@ impl args::Execution {
 
 #[derive(PartialEq)]
 pub(crate) enum SubmitOutputOpts {
-    Json,
     Plain { no_reconnect: bool },
 }
 
@@ -158,17 +142,9 @@ pub(crate) async fn submit(
             function_name: Some(grpc_gen::FunctionName::from(ffqn)),
         }))
         .await?;
-    if opts == SubmitOutputOpts::Json {
-        let json = json!(
-            {"submit": {"execution_id": execution_id }}
-        );
-        println!("[{json}");
-    } else {
-        println!("{execution_id}");
-    }
+    println!("{execution_id}");
     if follow {
         match opts {
-            SubmitOutputOpts::Json => get_status_json(client, execution_id, true, true).await?,
             SubmitOutputOpts::Plain { no_reconnect } => {
                 let opts = GetStatusOptions {
                     follow: true,
@@ -328,132 +304,6 @@ fn print_finished_status(
             .expect("must be non-negative")
     );
     res
-}
-
-fn print_finished_status_json(
-    finished_status: grpc_gen::FinishedStatus,
-) -> Result<(), AlreadyPrintedError> {
-    let created_at = finished_status
-        .created_at
-        .expect("`created_at` is sent by the server");
-    let scheduled_at = finished_status
-        .scheduled_at
-        .expect("`scheduled_at` is sent by the server");
-    let finished_at = finished_status
-        .finished_at
-        .expect("`finished_at` is sent by the server");
-
-    let (mut json, res) = match finished_status
-        .result_detail
-        .expect("`result_detail` is sent by the server")
-        .value
-    {
-        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
-            return_value: Some(return_value),
-        })) => {
-            let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
-                .expect("return_value must be JSON encoded");
-            (json!({"ok": return_value}), Ok(()))
-        }
-        Some(grpc_gen::result_detail::Value::Ok(grpc_gen::result_detail::OkPayload {
-            return_value: None,
-        })) => (json!({"ok": null}), Ok(())),
-        Some(grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
-            return_value: Some(return_value),
-        })) => {
-            let return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
-                .expect("return_value must be JSON encoded");
-            (
-                json!({"fallible_error": return_value}),
-                Err(AlreadyPrintedError),
-            )
-        }
-        Some(grpc_gen::result_detail::Value::Error(grpc_gen::result_detail::ErrorPayload {
-            return_value: None,
-        })) => (json!({"err": null}), Err(AlreadyPrintedError)),
-        Some(grpc_gen::result_detail::Value::ExecutionFailure(
-            grpc_gen::result_detail::ExecutionFailure {
-                kind,
-                reason,
-                detail,
-            },
-        )) => {
-            let kind = grpc_gen::ExecutionFailureKind::try_from(kind)
-                .expect("ExecutionFailureKind must be in sync with the server");
-            let kind = ExecutionFailureKind::from(kind);
-            #[expect(clippy::items_after_statements)]
-            #[derive(Serialize)]
-            struct Failure {
-                kind: String,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                reason: Option<String>,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                detail: Option<String>,
-            }
-            let ser = serde_json::to_value(Failure {
-                kind: kind.to_string(),
-                reason,
-                detail,
-            })
-            .expect("infallible JSON serialization");
-            (ser, Err(AlreadyPrintedError))
-        }
-        other => unreachable!("unexpected variant {other:?}"),
-    };
-    json["created_at"] = serde_json::Value::String(created_at.to_string());
-    json["scheduled_at"] = serde_json::Value::String(scheduled_at.to_string());
-    json["finished_at"] = serde_json::Value::String(finished_at.to_string());
-    print!("{json}");
-    res
-}
-
-pub(crate) async fn get_status_json(
-    mut client: ExecutionRepositoryClient,
-    execution_id: ExecutionId,
-    follow: bool,
-    mut json_output_started: bool, // true if `[{..}` was printed alraedy.
-) -> anyhow::Result<()> {
-    let mut stream = client
-        .get_status(tonic::Request::new(grpc_gen::GetStatusRequest {
-            execution_id: Some(grpc_gen::ExecutionId::from(execution_id.clone())),
-            follow,
-            send_finished_status: true,
-        }))
-        .await?
-        .into_inner();
-
-    if !json_output_started {
-        println!("[");
-    }
-    let mut res = Ok(());
-    while let Some(status) = stream.message().await? {
-        if json_output_started {
-            println!(",");
-        }
-        res = print_status_json(status);
-        if res.is_err() {
-            break;
-        }
-        json_output_started = true;
-    }
-    println!("\n]");
-    res.map_err(anyhow::Error::from)
-}
-
-fn print_status_json(response: grpc_gen::GetStatusResponse) -> Result<(), AlreadyPrintedError> {
-    use grpc_gen::get_status_response::Message;
-    let message = response.message.expect("message expected");
-
-    match message {
-        Message::Summary(_) | Message::CurrentStatus(_) => {
-            print!(
-                "{}",
-                serde_json::to_string(&message).expect("must be serializable")
-            );
-            Ok(())
-        }
-        Message::FinishedStatus(finished_sattus) => print_finished_status_json(finished_sattus),
-    }
 }
 
 #[derive(Debug, thiserror::Error)]

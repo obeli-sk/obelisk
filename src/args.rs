@@ -169,11 +169,8 @@ pub(crate) enum Execution {
         #[arg(short, long)]
         follow: bool,
         /// Do not attempt to reconnect on connection error while following the status stream.
-        #[arg(long, requires = "follow", conflicts_with = "json")]
+        #[arg(long, requires = "follow")]
         no_reconnect: bool,
-        /// Print output as JSON
-        #[arg(long)]
-        json: bool, // TODO: output=json|jsonl|plain
         /// Accepted Parameter Formats:
         ///
         /// - JSON array string, e.g. '["first", "second", null, 1]'
@@ -197,12 +194,6 @@ pub(crate) enum Execution {
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long, requires = "follow")]
         no_reconnect: bool,
-    },
-    GetJson {
-        /// Follow the stream of events until the execution finishes.
-        #[arg(short, long)]
-        follow: bool,
-        execution_id: ExecutionId,
     },
     Cancel(CancelCommand),
 }
