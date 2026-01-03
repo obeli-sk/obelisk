@@ -6,6 +6,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0](https://github.com/obeli-sk/obelisk/compare/v0.32.1...v0.33.0)
+
+This release adds major UI improvements.
+CLI support for JSON output was removed because of the duplicity with the WebAPI.
+
+### Added
+- *(grpc,webapi)* Allow filtering executions by prefix and unfinished status - ([f4abc08](https://github.com/obeli-sk/obelisk/commit/f4abc0807e9ebfbb30fa76a735313f5e5442fba7))
+- *(grpc,webapi)* Allow searching by FFQN prefix - ([5c7ccc0](https://github.com/obeli-sk/obelisk/commit/5c7ccc07b8fc128eef0ba3ae9b757f06cc0fefda))
+- *(webapi)* Add PUT `/v1/executions/{id}/upgrade` - ([788bcb3](https://github.com/obeli-sk/obelisk/commit/788bcb3727b2e92d0d3bd09237348b22ebb61e7a))
+- WebUI has been refreshed:
+    - Execution log detail page has been redesigned, showing color-coded join sets, rail lines between submissions and awaits.
+    - Debug view now allows stepping out to submission and awaits.
+    - Pending status including join set name is now shown everywhere where status component is used.
+    - Tracing view now has and "Autoload child executions" and "Hide finished" checkboxes.
+    - Execution list page allows showing derived executions, searching by FFQN prefix and Execution ID prefix.
+
+
+### Removed
+- *(cli)* [**breaking**] Remove JSON output - ([0706188](https://github.com/obeli-sk/obelisk/commit/0706188756b8996b3ecda086cd2f4dd78ca4ba89))
+
+### Fixed
+
+- *(serde)* Do not report "expected Bool" on empty `result` variant - ([6370986](https://github.com/obeli-sk/obelisk/commit/6370986a31adb2d944a7f72ac8cea384a317e124))
+
+### Changed
+
+- *(grpc)* [**breaking**] Rename `ResultDetail` to `SupportedFunctionResult` - ([ac81af6](https://github.com/obeli-sk/obelisk/commit/ac81af6f344d41dfdbbc949cc73f834bfaf83faf))
+- *(grpc)* [**breaking**] Rename `FallibleError` to `Error` - ([83f7c89](https://github.com/obeli-sk/obelisk/commit/83f7c89efc197698c250ee7c53d3c8afda5555d8))
+- *(grpc)* Add `component_digest` to `ExecutionSummary` - ([a8f0073](https://github.com/obeli-sk/obelisk/commit/a8f007368008be6092fe0ffb4168f00fe6cde399))
+- *(toml)* Change the default level of `app` logs from `trace` to `debug` - ([25e3493](https://github.com/obeli-sk/obelisk/commit/25e349328850ead93fbc66d288933c7a9b317752))
+- *(webapi)* Rename `show_nested` to `show_derived` - ([87f22c3](https://github.com/obeli-sk/obelisk/commit/87f22c397840199066f07ac6716807978faa1ae7))
+- *(webapi)* [**breaking**] Move digest from pending state to `ExecutionWithState` - ([aa8b417](https://github.com/obeli-sk/obelisk/commit/aa8b4174ed6cbce0bc3fd1c558af3ba2a4fd0134))
+- *(webapi)* [**breaking**] Change format of `/v1/components` JSON, add fns to plain text output - ([2591900](https://github.com/obeli-sk/obelisk/commit/2591900b8bedb5cb4e769ed54b5df3485e3e0af5))
+- *(webapi)* [**breaking**] Rename `get_component_id_input_digest` to `input_digest` - ([1afe1b1](https://github.com/obeli-sk/obelisk/commit/1afe1b1670e57c8fe0ea561a5e94d1165dcee000))
+- Log errors when SQL query fails or database contains invalid data - ([5ae287a](https://github.com/obeli-sk/obelisk/commit/5ae287ad1e48090ece550dd610e1fcba1b95db49))
+- Hide database errors from external API endpoints - ([f3695aa](https://github.com/obeli-sk/obelisk/commit/f3695aa5214dd85f1190ea06122264a0f9ad55d9))
+- *(wit)* Correct join set charset restriction - ([3bb9185](https://github.com/obeli-sk/obelisk/commit/3bb918524cefd22df80cf80bde4f4eb1b8a61501))
+- *(toml)* Adjust the default out stlye to `plain_compact` - ([42407bf](https://github.com/obeli-sk/obelisk/commit/42407bf3d64c76fab1a6e42412add4e7a60ec021))
+
+
 ## [0.32.1](https://github.com/obeli-sk/obelisk/compare/v0.32.0...v0.32.1)
 
 ### Fixed

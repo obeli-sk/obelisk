@@ -69,7 +69,7 @@ commit_parsers = [
     { message = "^perf", group = "<!-- 3 -->⚡ Performance" },
     { body = ".*security", group = "<!-- 5 -->🛡️ Security" },
     { message = "^revert", group = "<!-- 6 -->◀️ Revert" },
-    { message = "^refactor", group = "<!-- 7 -->🚜 Refactor" },
+    { message = "^refactor|^r", group = "<!-- 7 -->🚜 Refactor" },
     { message = "^test", skip = true },
     { message = "^style", skip = true },
     { message = "^chore", skip = true },
