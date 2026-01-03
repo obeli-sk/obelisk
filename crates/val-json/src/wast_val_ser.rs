@@ -929,6 +929,18 @@ mod tests {
     }
 
     #[test]
+    fn serde_result_err_none_invalid_string() {
+        let json = r#"
+            {"type":{"result":{"err":null,"ok":null}},"value":{"err": "str"}}
+            "#;
+        let actual = serde_json::from_str::<WastValWithType>(json).unwrap_err();
+        assert_eq!(
+            "invalid result value, expected null at line 2 column 74",
+            actual.to_string()
+        );
+    }
+
+    #[test]
     fn serde_result_ok_some() {
         let expected = WastValWithType {
             r#type: TypeWrapper::Result {
