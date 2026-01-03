@@ -392,13 +392,12 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                                 let ok = map.next_value_seed(WastValDeserialize(ok))?;
                                 Ok(WastVal::Result(Ok(Some(ok.into()))))
                             } else {
-                                let dummy_seed = TypeWrapper::Option(TypeWrapper::Bool.into());
-                                let value_seed = WastValDeserialize(&dummy_seed);
-                                let value = map.next_value_seed(value_seed)?;
-                                if matches!(value, WastVal::Option(None)) {
-                                    Ok(WastVal::Result(Ok(None)))
-                                } else {
-                                    Err(Error::custom("invalid result value, expected null"))
+                                let val = map.next_value::<Option<()>>();
+                                match val {
+                                    Err(_) | Ok(Some(())) => {
+                                        Err(Error::custom("invalid result value, expected null"))
+                                    }
+                                    Ok(None) => Ok(WastVal::Result(Ok(None))),
                                 }
                             }
                         } else if ok_or_err == "err" {
@@ -406,13 +405,12 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                                 let err = map.next_value_seed(WastValDeserialize(err))?;
                                 Ok(WastVal::Result(Err(Some(err.into()))))
                             } else {
-                                let dummy_seed = TypeWrapper::Option(TypeWrapper::Bool.into());
-                                let value_seed = WastValDeserialize(&dummy_seed);
-                                let value = map.next_value_seed(value_seed)?;
-                                if matches!(value, WastVal::Option(None)) {
-                                    Ok(WastVal::Result(Err(None)))
-                                } else {
-                                    Err(Error::custom("invalid result value, expected null"))
+                                let val = map.next_value::<Option<()>>();
+                                match val {
+                                    Err(_) | Ok(Some(())) => {
+                                        Err(Error::custom("invalid result value, expected null"))
+                                    }
+                                    Ok(None) => Ok(WastVal::Result(Err(None))),
                                 }
                             }
                         } else {
@@ -905,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn serde_result_ok_none_invalid() {
+    fn serde_result_ok_none_invalid_bool() {
         let json = r#"
             {"type":{"result":{"err":null,"ok":null}},"value":{"ok":true}}
             "#;
@@ -917,7 +915,19 @@ mod tests {
     }
 
     #[test]
-    fn serde_result_err_none_invalid() {
+    fn serde_result_ok_none_invalid_string_value() {
+        let json = r#"
+            {"type":{"result":{"err":null,"ok":null}},"value":{"ok": "str"}}
+            "#;
+        let actual = serde_json::from_str::<WastValWithType>(json).unwrap_err();
+        assert_eq!(
+            "invalid result value, expected null at line 2 column 75",
+            actual.to_string()
+        );
+    }
+
+    #[test]
+    fn serde_result_err_none_invalid_bool() {
         let json = r#"
             {"type":{"result":{"err":null,"ok":null}},"value":{"err":true}}
             "#;
@@ -935,7 +945,7 @@ mod tests {
             "#;
         let actual = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid result value, expected null at line 2 column 74",
+            "invalid result value, expected null at line 2 column 76",
             actual.to_string()
         );
     }
