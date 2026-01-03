@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.1](https://github.com/obeli-sk/obelisk/compare/v0.33.0...v0.33.1)
+Re-release because Garnix cache did not register the release 0.33.0.
+
+
 ## [0.33.0](https://github.com/obeli-sk/obelisk/compare/v0.32.1...v0.33.0)
 
 This release adds major UI improvements.
