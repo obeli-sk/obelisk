@@ -1144,7 +1144,7 @@ pub async fn cancel_delay(
         })
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BacktraceFilter {
     First,
     Last,

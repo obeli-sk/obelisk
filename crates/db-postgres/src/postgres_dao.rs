@@ -2975,6 +2975,7 @@ impl DbExecutor for PostgresConnection {
         }
     }
 
+    #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
     async fn wait_for_pending_by_component_id(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
@@ -3215,6 +3216,7 @@ impl DbConnection for PostgresConnection {
         res
     }
 
+    #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
@@ -3504,7 +3506,7 @@ impl DbConnection for PostgresConnection {
 
 #[async_trait]
 impl DbExternalApi for PostgresConnection {
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(skip(self))]
     async fn get_backtrace(
         &self,
         execution_id: &ExecutionId,
@@ -3573,6 +3575,7 @@ impl DbExternalApi for PostgresConnection {
         })
     }
 
+    #[instrument(skip(self))]
     async fn list_executions(
         &self,
         filter: ListExecutionsFilter,
@@ -3587,7 +3590,7 @@ impl DbExternalApi for PostgresConnection {
         Ok(result)
     }
 
-    #[instrument(level = Level::DEBUG, skip(self))]
+    #[instrument(skip(self))]
     async fn list_execution_events(
         &self,
         execution_id: &ExecutionId,
@@ -3611,6 +3614,7 @@ impl DbExternalApi for PostgresConnection {
         Ok(execution_events)
     }
 
+    #[instrument(skip(self))]
     async fn list_responses(
         &self,
         execution_id: &ExecutionId,
@@ -3625,6 +3629,7 @@ impl DbExternalApi for PostgresConnection {
         Ok(responses)
     }
 
+    #[instrument(skip(self))]
     async fn list_execution_events_responses(
         &self,
         execution_id: &ExecutionId,
@@ -3658,6 +3663,7 @@ impl DbExternalApi for PostgresConnection {
         })
     }
 
+    #[instrument(skip(self))]
     async fn upgrade_execution_component(
         &self,
         execution_id: &ExecutionId,

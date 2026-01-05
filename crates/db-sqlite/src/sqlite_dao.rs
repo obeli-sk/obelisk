@@ -44,7 +44,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
-use tracing::{Level, debug, error, info, instrument, trace, warn};
+use tracing::{Level, Span, debug, error, info, instrument, trace, warn};
 
 #[derive(Debug, thiserror::Error)]
 #[error("initialization error")]
@@ -3201,6 +3201,7 @@ impl DbExecutor for SqlitePool {
 
     // Supports only one subscriber (executor) per component id.
     // A new subscriber replaces the old one, which will eventually time out, which is fine.
+    #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
     async fn wait_for_pending_by_component_id(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
@@ -3280,7 +3281,7 @@ impl DbExecutor for SqlitePool {
 
 #[async_trait]
 impl DbExternalApi for SqlitePool {
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(skip(self))]
     async fn get_backtrace(
         &self,
         execution_id: &ExecutionId,
@@ -3326,6 +3327,7 @@ impl DbExternalApi for SqlitePool {
         ).await
     }
 
+    #[instrument(skip(self))]
     async fn list_executions(
         &self,
         filter: ListExecutionsFilter,
@@ -3338,7 +3340,7 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
-    #[instrument(level = Level::DEBUG, skip(self))]
+    #[instrument(skip(self))]
     async fn list_execution_events(
         &self,
         execution_id: &ExecutionId,
@@ -3363,6 +3365,7 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
+    #[instrument(skip(self))]
     async fn list_responses(
         &self,
         execution_id: &ExecutionId,
@@ -3376,6 +3379,7 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
+    #[instrument(skip(self))]
     async fn list_execution_events_responses(
         &self,
         execution_id: &ExecutionId,
@@ -3408,6 +3412,7 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
+    #[instrument(skip(self))]
     async fn upgrade_execution_component(
         &self,
         execution_id: &ExecutionId,
@@ -3585,6 +3590,7 @@ impl DbConnection for SqlitePool {
     }
 
     // Supports multiple subscribers.
+    #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
     async fn wait_for_finished_result(
         &self,
         execution_id: &ExecutionId,
