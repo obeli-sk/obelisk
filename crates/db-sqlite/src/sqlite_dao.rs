@@ -1,4 +1,4 @@
-use crate::histograms::Histograms;
+use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -32,6 +32,7 @@ use std::{
     collections::VecDeque,
     fmt::Debug,
     ops::DerefMut,
+    panic::Location,
     path::Path,
     sync::{
         Arc, Mutex,
@@ -243,8 +244,15 @@ CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (
 enum RusqliteError {
     #[error("not found")]
     NotFound,
-    #[error("generic: {0}")]
-    Generic(StrVariant),
+    #[error("generic: {reason}")]
+    Generic {
+        reason: StrVariant,
+        context: SpanTrace,
+        source: Option<Arc<dyn std::error::Error + Send + Sync>>,
+        loc: &'static Location<'static>,
+    },
+    #[error("close")]
+    Close,
 }
 
 mod conversions {
@@ -258,34 +266,48 @@ mod conversions {
         ToSql,
         types::{FromSql, FromSqlError},
     };
-    use std::fmt::Debug;
+    use std::{fmt::Debug, panic::Location, sync::Arc};
     use tracing::error;
+    use tracing_error::SpanTrace;
 
     impl From<rusqlite::Error> for RusqliteError {
+        // The LTX returns this, capture inner location.
+        #[track_caller]
         fn from(err: rusqlite::Error) -> Self {
             if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
                 RusqliteError::NotFound
             } else {
-                error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
-                RusqliteError::Generic(err.to_string().into())
+                RusqliteError::Generic {
+                    reason: err.to_string().into(),
+                    context: SpanTrace::capture(),
+                    source: Some(Arc::new(err)),
+                    loc: Location::caller(),
+                }
             }
         }
     }
 
-    impl From<RusqliteError> for DbErrorGeneric {
-        fn from(err: RusqliteError) -> DbErrorGeneric {
-            match err {
-                RusqliteError::NotFound => DbErrorGeneric::Uncategorized("not found".into()),
-                RusqliteError::Generic(str) => DbErrorGeneric::Uncategorized(str),
+    // Manual conversion, as this function ignores the NotFound.
+    #[track_caller]
+    pub fn to_generic_error(err: RusqliteError) -> DbErrorGeneric {
+        if let RusqliteError::Close = err {
+            DbErrorGeneric::Close
+        } else {
+            DbErrorGeneric::Uncategorized {
+                reason: err.to_string().into(),
+                context: SpanTrace::capture(),
+                source: Some(Arc::new(err)),
+                loc: Location::caller(),
             }
         }
     }
+
     impl From<RusqliteError> for DbErrorRead {
         fn from(err: RusqliteError) -> Self {
             if matches!(err, RusqliteError::NotFound) {
                 Self::NotFound
             } else {
-                Self::from(DbErrorGeneric::from(err))
+                to_generic_error(err).into()
             }
         }
     }
@@ -299,7 +321,7 @@ mod conversions {
             if matches!(err, RusqliteError::NotFound) {
                 Self::NotFound
             } else {
-                Self::from(DbErrorGeneric::from(err))
+                to_generic_error(err).into()
             }
         }
     }
@@ -350,16 +372,29 @@ mod conversions {
 
     // Used as a wrapper for `FromSqlError::Other`
     #[derive(Debug, thiserror::Error)]
-    #[error("{0}")]
-    pub(crate) struct OtherError(&'static str);
-    // Every call to this function must be preceded by an `error!` statement.
-    pub(crate) fn consistency_rusqlite(input: &'static str) -> rusqlite::Error {
-        FromSqlError::other(OtherError(input)).into()
+    #[error("{reason}")]
+    pub(crate) struct OtherError {
+        reason: &'static str,
+        loc: &'static Location<'static>,
     }
 
-    // Every call to this function must be preceded by an `error!` statement.
-    pub(crate) fn consistency_db_err(err: impl Into<StrVariant>) -> DbErrorGeneric {
-        DbErrorGeneric::Uncategorized(err.into())
+    #[track_caller]
+    pub(crate) fn consistency_rusqlite(reason: &'static str) -> rusqlite::Error {
+        FromSqlError::other(OtherError {
+            reason,
+            loc: Location::caller(),
+        })
+        .into()
+    }
+
+    #[track_caller]
+    pub(crate) fn consistency_db_err(reason: impl Into<StrVariant>) -> DbErrorGeneric {
+        DbErrorGeneric::Uncategorized {
+            reason: reason.into(),
+            context: SpanTrace::capture(),
+            source: None,
+            loc: Location::caller(),
+        }
     }
 }
 
@@ -1074,7 +1109,7 @@ impl SqlitePool {
     where
         F: FnMut(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
         T: Send + 'static,
-        E: From<DbErrorGeneric> + From<RusqliteError> + Send + 'static,
+        E: From<RusqliteError> + Send + 'static,
     {
         let fn_res: Arc<std::sync::Mutex<Option<_>>> = Arc::default();
         let (commit_ack_sender, commit_ack_receiver) = oneshot::channel();
@@ -1096,7 +1131,7 @@ impl SqlitePool {
             .command_tx
             .send(thread_command_func)
             .await
-            .map_err(|_send_err| DbErrorGeneric::Close)?;
+            .map_err(|_send_err| RusqliteError::Close)?;
 
         // Wait for commit ack, then get the retval from the mutex.
         match commit_ack_receiver.await {
@@ -1105,7 +1140,7 @@ impl SqlitePool {
                 std::mem::take(guard.deref_mut()).expect("ltx must have been run at least once")
             }
             Ok(Err(rusqlite_err)) => Err(E::from(rusqlite_err)),
-            Err(_) => Err(E::from(DbErrorGeneric::Close)),
+            Err(_) => Err(E::from(RusqliteError::Close)),
         }
     }
 
@@ -1294,7 +1329,12 @@ impl SqlitePool {
                 WHERE execution_id = :execution_id
             ",
             )
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+            .map_err(|err| DbErrorGeneric::Uncategorized {
+                reason: err.to_string().into(),
+                context: SpanTrace::capture(),
+                source: Some(Arc::new(err)),
+                loc: Location::caller(),
+            })?;
         let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id,
@@ -1302,7 +1342,12 @@ impl SqlitePool {
                 ":pending_expires_finished": scheduled_at,
                 ":state": STATE_PENDING_AT,
             })
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+            .map_err(|err| DbErrorGeneric::Uncategorized {
+                reason: err.to_string().into(),
+                context: SpanTrace::capture(),
+                source: Some(Arc::new(err)),
+                loc: Location::caller(),
+            })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
         }
@@ -1329,9 +1374,8 @@ impl SqlitePool {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
         // If response idx is unknown, use 0. This distinguishes the two paths.
         // JoinNext will always send an actual idx.
-        let mut stmt = tx
-            .prepare_cached(
-                r"
+        let mut stmt = tx.prepare_cached(
+            r"
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
@@ -1348,8 +1392,7 @@ impl SqlitePool {
                     result_kind = NULL
                 WHERE execution_id = :execution_id;
             ",
-            )
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        )?;
         let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id.to_string(),
@@ -1358,7 +1401,7 @@ impl SqlitePool {
                 ":state": STATE_PENDING_AT,
                 ":intermittent_delta": i32::from(intermittent_failure) // 0 or 1
             })
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+            .map_err(DbErrorWrite::from)?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
         }
@@ -1386,12 +1429,18 @@ impl SqlitePool {
         retry_config: ComponentRetryConfig,
     ) -> Result<u32, DbErrorWrite> {
         debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
-        let backoff_millis = i64::try_from(retry_config.retry_exp_backoff.as_millis())
-            .map_err(|_| DbErrorGeneric::Uncategorized("backoff too big".into()))?; // Keep equal to Postgres' BIGINT = i64
+        let backoff_millis =
+            i64::try_from(retry_config.retry_exp_backoff.as_millis()).map_err(|err| {
+                DbErrorGeneric::Uncategorized {
+                    reason: "backoff too big".into(),
+                    context: SpanTrace::capture(),
+                    source: Some(Arc::new(err)),
+                    loc: Location::caller(),
+                }
+            })?; // Keep equal to Postgres' BIGINT = i64
         let execution_id_str = execution_id.to_string();
-        let mut stmt = tx
-            .prepare_cached(
-                r"
+        let mut stmt = tx.prepare_cached(
+            r"
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
@@ -1411,20 +1460,17 @@ impl SqlitePool {
                     result_kind = NULL
                 WHERE execution_id = :execution_id
             ",
-            )
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
-        let updated = stmt
-            .execute(named_params! {
-                ":execution_id": execution_id_str,
-                ":appending_version": appending_version.0,
-                ":pending_expires_finished": lock_expires_at,
-                ":state": STATE_LOCKED,
-                ":max_retries": retry_config.max_retries,
-                ":retry_exp_backoff_millis": backoff_millis,
-                ":executor_id": executor_id.to_string(),
-                ":run_id": run_id.to_string(),
-            })
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        )?;
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id_str,
+            ":appending_version": appending_version.0,
+            ":pending_expires_finished": lock_expires_at,
+            ":state": STATE_LOCKED,
+            ":max_retries": retry_config.max_retries,
+            ":retry_exp_backoff_millis": backoff_millis,
+            ":executor_id": executor_id.to_string(),
+            ":run_id": run_id.to_string(),
+        })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
         }
@@ -1442,8 +1488,7 @@ impl SqlitePool {
                     let intermittent_event_count = row.get("intermittent_event_count")?;
                     Ok(intermittent_event_count)
                 },
-            )
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+            )?;
 
         Ok(intermittent_event_count)
     }
@@ -1645,7 +1690,7 @@ impl SqlitePool {
         read_tx: &Transaction,
         filter: &ListExecutionsFilter,
         pagination: &ExecutionListPagination,
-    ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
+    ) -> Result<Vec<ExecutionWithState>, RusqliteError> {
         #[derive(Debug)]
         struct StatementModifier<'a> {
             where_vec: Vec<String>,
@@ -1658,7 +1703,7 @@ impl SqlitePool {
             pagination: &'a Pagination<Option<T>>,
             column: &str,
             filter: &ListExecutionsFilter,
-        ) -> Result<StatementModifier<'a>, DbErrorGeneric> {
+        ) -> Result<StatementModifier<'a>, RusqliteError> {
             let mut where_vec: Vec<String> = vec![];
             let mut params: Vec<(&'static str, ToSqlOutput<'a>)> = vec![];
             let limit = pagination.length();
@@ -1675,7 +1720,12 @@ impl SqlitePool {
                     where_vec.push(format!("{column} {rel} :cursor", rel = pagination.rel()));
                     let cursor = cursor.to_sql().map_err(|err| {
                         error!("Possible program error - cannot convert cursor to sql - {err:?}");
-                        DbErrorGeneric::Uncategorized("cannot convert cursor to sql".into())
+                        RusqliteError::Generic {
+                            reason: "cannot convert cursor to sql".into(),
+                            context: SpanTrace::capture(),
+                            source: Some(Arc::new(err)),
+                            loc: Location::caller(),
+                        }
                     })?;
                     params.push((":cursor", cursor));
                 }
@@ -1946,7 +1996,12 @@ impl SqlitePool {
             VALUES \
             (:execution_id, :created_at, :json_value, :version, :variant)",
             )
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+            .map_err(|err| DbErrorGeneric::Uncategorized {
+                reason: err.to_string().into(),
+                context: SpanTrace::capture(),
+                source: Some(Arc::new(err)),
+                loc: Location::caller(),
+            })?;
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
             ":created_at": created_at,
@@ -1955,10 +2010,11 @@ impl SqlitePool {
             ":variant": event.variant(),
         })
         .map_err(|err| {
-            warn!("Cannot lock execution - {err:?}");
             DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState {
                 reason: "cannot lock".into(),
                 context: SpanTrace::capture(),
+                source: Some(Arc::new(err)),
+                loc: Location::caller(),
             })
         })?;
 
@@ -2019,7 +2075,6 @@ impl SqlitePool {
             ..
         }) = events.pop_front().map(|outer| outer.event)
         else {
-            error!("Execution log must contain at least `Created` event");
             return Err(consistency_db_err("execution log must contain `Created` event").into());
         };
 
@@ -2029,7 +2084,6 @@ impl SqlitePool {
                 if let ExecutionRequest::HistoryEvent { event } = event {
                     Ok((event, version))
                 } else {
-                    error!("Rows can only contain `Created` and `HistoryEvent` event kinds");
                     Err(consistency_db_err(
                         "rows can only contain `Created` and `HistoryEvent` event kinds",
                     ))
@@ -2158,6 +2212,8 @@ impl SqlitePool {
                 DbErrorWriteNonRetriable::IllegalState {
                     reason: "already finished".into(),
                     context: SpanTrace::capture(),
+                    source: None,
+                    loc: Location::caller(),
                 },
             ));
         }
@@ -2737,21 +2793,19 @@ impl SqlitePool {
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: &[FunctionFqn],
-    ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
+    ) -> Result<Vec<(ExecutionId, Version)>, RusqliteError> {
         let batch_size = usize::try_from(batch_size).expect("16 bit systems are unsupported");
         let mut execution_ids_versions = Vec::with_capacity(batch_size);
         for ffqn in ffqns {
             // Select executions in PendingAt.
-            let stmt = conn
-                .prepare_cached(&format!(
-                    r#"
+            let stmt = conn.prepare_cached(&format!(
+                r#"
                     SELECT execution_id, corresponding_version FROM t_state WHERE
                     state = "{STATE_PENDING_AT}" AND
                     pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
                     ORDER BY pending_expires_finished LIMIT :batch_size
                     "#
-                ))
-                .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+            ))?;
 
             if let Ok(execs_and_versions) = Self::get_pending_of_single_ffqn(
                 stmt,
@@ -2776,18 +2830,16 @@ impl SqlitePool {
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         input_digest: &InputContentDigest,
-    ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
-        let mut stmt = conn
-            .prepare_cached(&format!(
-                r#"
+    ) -> Result<Vec<(ExecutionId, Version)>, RusqliteError> {
+        let mut stmt = conn.prepare_cached(&format!(
+            r#"
                 SELECT execution_id, corresponding_version FROM t_state WHERE
                 state = "{STATE_PENDING_AT}" AND
                 pending_expires_finished <= :pending_expires_finished AND
                 component_id_input_digest = :component_id_input_digest
                 ORDER BY pending_expires_finished LIMIT :batch_size
                 "#
-            ))
-            .map_err(|err| DbErrorGeneric::Uncategorized(err.to_string().into()))?;
+        ))?;
 
         stmt.query_map(
             named_params! {
@@ -2803,7 +2855,7 @@ impl SqlitePool {
             },
         )?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(DbErrorGeneric::from)
+        .map_err(RusqliteError::from)
     }
 
     // Must be called after write transaction for a correct happens-before relationship.
@@ -2921,7 +2973,8 @@ impl DbExecutor for SqlitePool {
                 },
                 "lock_pending_by_ffqns_get",
             )
-            .await?;
+            .await
+            .map_err(to_generic_error)?;
         if execution_ids_versions.is_empty() {
             Ok(vec![])
         } else {
@@ -2953,6 +3006,7 @@ impl DbExecutor for SqlitePool {
                 "lock_pending_by_ffqns_one",
             )
             .await
+            .map_err(to_generic_error)
         }
     }
 
@@ -2984,7 +3038,8 @@ impl DbExecutor for SqlitePool {
                 },
                 "lock_pending_by_component_id_get",
             )
-            .await?;
+            .await
+            .map_err(to_generic_error)?;
         if execution_ids_versions.is_empty() {
             Ok(vec![])
         } else {
@@ -3016,6 +3071,7 @@ impl DbExecutor for SqlitePool {
                 "lock_pending_by_component_id_one",
             )
             .await
+            .map_err(to_generic_error)
         }
     }
 
@@ -3342,12 +3398,12 @@ impl DbExternalApi for SqlitePool {
         filter: ListExecutionsFilter,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
-        println!("list_executions {}", SpanTrace::capture());
         self.transaction(
             move |tx| Self::list_executions(tx, &filter, &pagination),
             "list_executions",
         )
         .await
+        .map_err(to_generic_error)
     }
 
     #[instrument(skip(self))]
@@ -3715,9 +3771,12 @@ impl DbConnection for SqlitePool {
                 match delay_success {
                     Some(true) => Ok(AppendDelayResponseOutcome::AlreadyFinished),
                     Some(false) => Ok(AppendDelayResponseOutcome::AlreadyCancelled),
-                    None => Err(DbErrorWrite::Generic(DbErrorGeneric::Uncategorized(
-                        "insert failed yet select did not find the response".into(),
-                    ))),
+                    None => Err(DbErrorWrite::Generic(DbErrorGeneric::Uncategorized {
+                        reason: "insert failed yet select did not find the response".into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    })),
                 }
             }
             Err(err) => Err(err),
@@ -3816,6 +3875,7 @@ impl DbConnection for SqlitePool {
             }, "get_expired_timers"
         )
         .await
+        .map_err(to_generic_error)
     }
 
     async fn get_execution_event(

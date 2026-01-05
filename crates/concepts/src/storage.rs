@@ -23,12 +23,12 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::debug;
-use tracing::error;
 use tracing::instrument;
 use tracing_error::SpanTrace;
 
@@ -530,10 +530,20 @@ pub enum JoinSetRequest {
 }
 
 /// Error that is not specific to an execution.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, derive_more::PartialEq, derive_more::Eq)]
 pub enum DbErrorGeneric {
-    #[error("database error: {0}")]
-    Uncategorized(StrVariant),
+    #[error("database error: {reason}")]
+    Uncategorized {
+        reason: StrVariant,
+        #[eq(skip)]
+        #[partial_eq(skip)]
+        context: SpanTrace,
+        #[eq(skip)]
+        #[partial_eq(skip)]
+        #[source]
+        source: Option<Arc<dyn std::error::Error + Send + Sync>>,
+        loc: &'static Location<'static>,
+    },
     #[error("database was closed")]
     Close,
 }
@@ -550,6 +560,11 @@ pub enum DbErrorWriteNonRetriable {
         #[eq(skip)]
         #[partial_eq(skip)]
         context: SpanTrace,
+        #[eq(skip)]
+        #[partial_eq(skip)]
+        #[source]
+        source: Option<Arc<dyn std::error::Error + Send + Sync>>,
+        loc: &'static Location<'static>,
     },
     #[error("version conflict: expected: {expected}, got: {requested}")]
     VersionConflict {
@@ -957,6 +972,7 @@ pub trait DbConnection: DbExecutor {
         version: &Version,
     ) -> Result<ExecutionEvent, DbErrorRead>;
 
+    #[instrument(skip(self))]
     async fn get_create_request(
         &self,
         execution_id: &ExecutionId,
@@ -986,10 +1002,12 @@ pub trait DbConnection: DbExecutor {
                 scheduled_by,
             })
         } else {
-            error!(%execution_id, "Execution log must start with creation");
-            Err(DbErrorRead::Generic(DbErrorGeneric::Uncategorized(
-                "execution log must start with creation".into(),
-            )))
+            Err(DbErrorRead::Generic(DbErrorGeneric::Uncategorized {
+                reason: "execution log must start with creation".into(),
+                context: SpanTrace::capture(),
+                source: None,
+                loc: Location::caller(),
+            }))
         }
     }
 
@@ -1122,6 +1140,8 @@ pub async fn stub_execution(
                 DbErrorWriteNonRetriable::IllegalState {
                     reason: "unexpected execution event at stubbed execution".into(),
                     context: SpanTrace::capture(),
+                    source: None,
+                    loc: Location::caller(),
                 },
             )),
         }
@@ -1529,16 +1549,22 @@ impl PendingState {
                     Err(DbErrorWriteNonRetriable::IllegalState {
                         reason: "cannot lock, already locked".into(),
                         context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
                     })
                 }
             }
             PendingState::BlockedByJoinSet { .. } => Err(DbErrorWriteNonRetriable::IllegalState {
                 reason: "cannot append Locked event when in BlockedByJoinSet state".into(),
                 context: SpanTrace::capture(),
+                source: None,
+                loc: Location::caller(),
             }),
             PendingState::Finished { .. } => Err(DbErrorWriteNonRetriable::IllegalState {
                 reason: "already finished".into(),
                 context: SpanTrace::capture(),
+                source: None,
+                loc: Location::caller(),
             }),
         }
     }

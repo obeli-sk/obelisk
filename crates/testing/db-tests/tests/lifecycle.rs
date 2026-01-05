@@ -185,7 +185,7 @@ async fn append_after_finish_should_not_be_possible(
 
         let msg = assert_matches!(
             err,
-            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState{reason, context:_})
+            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState{reason, ..})
             => reason
         );
         assert_eq!("already finished", msg.as_ref());

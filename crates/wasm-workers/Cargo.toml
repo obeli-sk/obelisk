@@ -37,6 +37,7 @@ strum.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-error.workspace = true
 ulid.workspace = true
 wasmtime-wasi-http.workspace = true
 wasmtime-wasi-io.workspace = true

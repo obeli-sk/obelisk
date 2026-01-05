@@ -49,6 +49,7 @@ use indexmap::IndexMap;
 use indexmap::indexmap;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::panic::Location;
 use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
@@ -57,6 +58,7 @@ use tracing::Span;
 use tracing::info;
 use tracing::instrument;
 use tracing::{debug, error, trace};
+use tracing_error::SpanTrace;
 use val_json::wast_val::WastVal;
 use wasmtime::component::Val;
 
@@ -687,18 +689,26 @@ impl EventHistory {
                             WastVal::String(String::from_utf8(value.clone()).map_err(|err| {
                                 error!("Persisted string must be UTF-8 - {err:?}");
                                 ApplyError::DbError(DbErrorWrite::from(
-                                    DbErrorGeneric::Uncategorized(StrVariant::from(format!(
-                                        "persisted string must be UTF-8 - {err:?}"
-                                    ))),
+                                    DbErrorGeneric::Uncategorized {
+                                        reason: StrVariant::from(format!(
+                                            "persisted string must be UTF-8 - {err:?}"
+                                        )),
+                                        context: SpanTrace::capture(),
+                                        source: Some(Arc::new(err)),
+                                        loc: Location::caller(),
+                                    },
                                 ))
                             })?)
                         }
                         PersistKind::RandomU64 { .. } => {
                             if value.len() != 8 {
                                 return Err(ApplyError::DbError(DbErrorWrite::from(
-                                    DbErrorGeneric::Uncategorized(
-                                        "value cannot be deserialized to u64".into(),
-                                    ),
+                                    DbErrorGeneric::Uncategorized {
+                                        reason: "value cannot be deserialized to u64".into(),
+                                        context: SpanTrace::capture(),
+                                        source: None,
+                                        loc: Location::caller(),
+                                    },
                                 )));
                             }
                             let value: [u8; 8] = value[..8].try_into().expect("size checked above");

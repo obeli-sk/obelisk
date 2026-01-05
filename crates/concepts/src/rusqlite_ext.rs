@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use crate::{
     ContentDigest, ExecutionId, FunctionFqn, JoinSetId,
     component_id::{Digest, InputContentDigest},
@@ -12,7 +10,9 @@ use rusqlite::{
     ErrorCode, ToSql,
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
 };
+use std::{panic::Location, str::FromStr, sync::Arc};
 use tracing::error;
+use tracing_error::SpanTrace;
 
 impl ToSql for ExecutionId {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
@@ -136,49 +136,61 @@ impl FromSql for InputContentDigest {
     }
 }
 
-impl From<rusqlite::Error> for DbErrorGeneric {
-    #[track_caller]
-    fn from(err: rusqlite::Error) -> DbErrorGeneric {
-        let loc = std::panic::Location::caller();
-        let (loc_file, loc_line) = (loc.file(), loc.line());
-        error!(loc_file, loc_line, "Sqlite error {err:?}");
-        DbErrorGeneric::Uncategorized(err.to_string().into())
-    }
-}
 impl From<rusqlite::Error> for DbErrorRead {
+    #[track_caller]
     fn from(err: rusqlite::Error) -> Self {
         if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
             Self::NotFound
         } else {
-            Self::from(DbErrorGeneric::from(err))
+            DbErrorGeneric::Uncategorized {
+                reason: err.to_string().into(),
+                context: SpanTrace::capture(),
+                source: Some(Arc::new(err)),
+                loc: Location::caller(),
+            }
+            .into()
         }
     }
 }
 impl From<rusqlite::Error> for DbErrorReadWithTimeout {
+    #[track_caller]
     fn from(err: rusqlite::Error) -> Self {
         Self::from(DbErrorRead::from(err))
     }
 }
 impl From<rusqlite::Error> for DbErrorWrite {
+    #[track_caller]
     fn from(err: rusqlite::Error) -> Self {
         if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
             Self::NotFound
         } else if err.sqlite_error().map(|err| err.code) == Some(ErrorCode::ConstraintViolation) {
             DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
         } else {
-            Self::from(DbErrorGeneric::from(err))
+            DbErrorGeneric::Uncategorized {
+                reason: err.to_string().into(),
+                context: SpanTrace::capture(),
+                source: Some(Arc::new(err)),
+                loc: Location::caller(),
+            }
+            .into()
         }
     }
 }
 
 impl FromSql for FunctionFqn {
+    #[track_caller]
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value {
             ValueRef::Text(ffqn) => {
                 let ffqn = String::from_utf8_lossy(ffqn);
                 let ffqn = FunctionFqn::from_str(&ffqn).map_err(|err| {
-                    error!("Cannot deserialize ffqn - {err:?}");
-                    FromSqlError::Other(Box::from(format!("cannot deserialize ffqn - {err}")))
+                    let err = DbErrorGeneric::Uncategorized {
+                        reason: "Cannot deserialize ffqn".into(),
+                        context: SpanTrace::capture(),
+                        source: Some(Arc::new(err)),
+                        loc: Location::caller(),
+                    };
+                    FromSqlError::Other(Box::from(err))
                 })?;
                 Ok(ffqn)
             }

@@ -23,6 +23,7 @@ use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
+use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -626,9 +627,12 @@ impl DbPool for InMemoryPool {
     }
 
     async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric> {
-        Err(DbErrorGeneric::Uncategorized(
-            "external_api_conn not implemented for in-memory DB".into(),
-        ))
+        Err(DbErrorGeneric::Uncategorized {
+            reason: "external_api_conn not implemented for in-memory DB".into(),
+            context: SpanTrace::capture(),
+            source: None,
+            loc: Location::caller(),
+        })
     }
 
     #[cfg(feature = "test")]
@@ -771,6 +775,8 @@ impl DbHolder {
                 DbErrorWriteNonRetriable::IllegalState {
                     reason: "execution already exists with the same id".into(),
                     context: SpanTrace::capture(),
+                    source: None,
+                    loc: Location::caller(),
                 },
             ));
         }

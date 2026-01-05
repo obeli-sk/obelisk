@@ -23,8 +23,8 @@ use concepts::{
 };
 use deadpool_postgres::{Client, Config, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
-use std::fmt::Write as _;
 use std::{collections::VecDeque, pin::Pin, str::FromStr as _, sync::Arc, time::Duration};
+use std::{fmt::Write as _, panic::Location};
 use tokio::sync::{mpsc, oneshot};
 use tokio_postgres::{
     NoTls, Row, Transaction,
@@ -520,12 +520,13 @@ impl PostgresPool {
 }
 
 #[track_caller]
-fn consistency_db_err(err: impl Into<StrVariant>) -> DbErrorGeneric {
-    let loc = std::panic::Location::caller();
-    let (loc_file, loc_line) = (loc.file(), loc.line());
-    let err = err.into();
-    error!(loc_file, loc_line, "Consistency error: {err}");
-    DbErrorGeneric::Uncategorized(err)
+fn consistency_db_err(reason: impl Into<StrVariant>) -> DbErrorGeneric {
+    DbErrorGeneric::Uncategorized {
+        reason: reason.into(),
+        context: SpanTrace::capture(),
+        source: None,
+        loc: Location::caller(),
+    }
 }
 
 #[derive(Debug)]
@@ -1013,10 +1014,14 @@ async fn update_state_locked_get_intermittent_event_count(
 ) -> Result<u32, DbErrorWrite> {
     debug!("Setting t_state to Locked(`{lock_expires_at:?}`)");
     let backoff_millis =
-        i64::try_from(retry_config.retry_exp_backoff.as_millis()).map_err(|_| {
+        i64::try_from(retry_config.retry_exp_backoff.as_millis()).map_err(|err| {
             // BIGINT = i64
-            error!("Backoff too big");
-            DbErrorGeneric::Uncategorized("backoff too big".into())
+            DbErrorGeneric::Uncategorized {
+                reason: "backoff too big".into(),
+                context: SpanTrace::capture(),
+                source: Some(Arc::new(err)),
+                loc: Location::caller(),
+            }
         })?;
 
     let execution_id_str = execution_id.to_string();
@@ -1690,10 +1695,11 @@ async fn lock_single_execution(
     )
     .await
     .map_err(|err| {
-        warn!("Cannot lock execution - {err:?}");
         DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState {
             reason: "cannot lock".into(),
             context: SpanTrace::capture(),
+            source: Some(Arc::new(err)),
+            loc: Location::caller(),
         })
     })?;
 
@@ -1899,6 +1905,8 @@ async fn append(
             DbErrorWriteNonRetriable::IllegalState {
                 reason: "already finished".into(),
                 context: SpanTrace::capture(),
+                source: None,
+                loc: Location::caller(),
             },
         ));
     }
@@ -3336,12 +3344,9 @@ impl DbConnection for PostgresConnection {
                 match delay_success {
                     Some(true) => Ok(AppendDelayResponseOutcome::AlreadyFinished),
                     Some(false) => Ok(AppendDelayResponseOutcome::AlreadyCancelled),
-                    None => {
-                        error!("Insert failed yet select did not find the response");
-                        Err(DbErrorWrite::Generic(DbErrorGeneric::Uncategorized(
-                            "insert failed yet select did not find the response".into(),
-                        )))
-                    }
+                    None => Err(DbErrorWrite::Generic(consistency_db_err(
+                        "insert failed yet select did not find the response",
+                    ))),
                 }
             }
             Err(err) => {
