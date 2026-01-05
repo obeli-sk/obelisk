@@ -30,6 +30,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 use tracing::instrument;
+use tracing_error::SpanTrace;
 
 pub struct InMemoryDbConnection(Arc<std::sync::Mutex<DbHolder>>);
 
@@ -767,9 +768,10 @@ impl DbHolder {
     fn create(&mut self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         if self.journals.contains_key(&req.execution_id) {
             return Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::IllegalState(
-                    "execution already exists with the same id".into(),
-                ),
+                DbErrorWriteNonRetriable::IllegalState {
+                    reason: "execution already exists with the same id".into(),
+                    context: SpanTrace::capture(),
+                },
             ));
         }
         let subscription = self.ffqn_to_pending_subscription.get(&req.ffqn);

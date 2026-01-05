@@ -201,7 +201,7 @@ impl<T> TonicServerResultExt<T> for Result<T, DbErrorGeneric> {
 }
 
 pub fn db_error_write_to_status(db_err: &DbErrorWrite) -> tonic::Status {
-    if *db_err == DbErrorWrite::NotFound {
+    if matches!(*db_err, DbErrorWrite::NotFound) {
         tonic::Status::not_found("entity not found")
     } else {
         warn!("Got db error {db_err:?}");

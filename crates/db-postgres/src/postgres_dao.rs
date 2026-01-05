@@ -31,6 +31,7 @@ use tokio_postgres::{
     types::{FromSql, Json, ToSql},
 };
 use tracing::{Level, debug, error, info, instrument, trace, warn};
+use tracing_error::SpanTrace;
 
 fn get<'a, T: FromSql<'a>>(row: &'a Row, name: &str) -> Result<T, DbErrorGeneric> {
     row.try_get(name)
@@ -1690,7 +1691,10 @@ async fn lock_single_execution(
     .await
     .map_err(|err| {
         warn!("Cannot lock execution - {err:?}");
-        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState("cannot lock".into()))
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState {
+            reason: "cannot lock".into(),
+            context: SpanTrace::capture(),
+        })
     })?;
 
     // Update t_state
@@ -1892,7 +1896,10 @@ async fn append(
     {
         debug!("Execution is already finished");
         return Err(DbErrorWrite::NonRetriable(
-            DbErrorWriteNonRetriable::IllegalState("already finished".into()),
+            DbErrorWriteNonRetriable::IllegalState {
+                reason: "already finished".into(),
+                context: SpanTrace::capture(),
+            },
         ));
     }
 

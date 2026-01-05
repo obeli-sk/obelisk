@@ -45,6 +45,7 @@ use tokio::{
     time::Instant,
 };
 use tracing::{Level, Span, debug, error, info, instrument, trace, warn};
+use tracing_error::SpanTrace;
 
 #[derive(Debug, thiserror::Error)]
 #[error("initialization error")]
@@ -1903,7 +1904,7 @@ impl SqlitePool {
         })
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %run_id, %executor_id))]
+    #[instrument(level = Level::TRACE, skip(tx))]
     #[expect(clippy::too_many_arguments)]
     fn lock_single_execution(
         tx: &Transaction,
@@ -1955,7 +1956,10 @@ impl SqlitePool {
         })
         .map_err(|err| {
             warn!("Cannot lock execution - {err:?}");
-            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState("cannot lock".into()))
+            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState {
+                reason: "cannot lock".into(),
+                context: SpanTrace::capture(),
+            })
         })?;
 
         // Update `t_state`
@@ -2102,7 +2106,7 @@ impl SqlitePool {
             .map_err(DbErrorRead::from)
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(%execution_id))]
+    #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %appending_version))]
     #[expect(clippy::needless_return)]
     fn append(
         tx: &Transaction,
@@ -2151,7 +2155,10 @@ impl SqlitePool {
         {
             debug!("Execution is already finished");
             return Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::IllegalState("already finished".into()),
+                DbErrorWriteNonRetriable::IllegalState {
+                    reason: "already finished".into(),
+                    context: SpanTrace::capture(),
+                },
             ));
         }
 
@@ -3335,6 +3342,7 @@ impl DbExternalApi for SqlitePool {
         filter: ListExecutionsFilter,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
+        println!("list_executions {}", SpanTrace::capture());
         self.transaction(
             move |tx| Self::list_executions(tx, &filter, &pagination),
             "list_executions",

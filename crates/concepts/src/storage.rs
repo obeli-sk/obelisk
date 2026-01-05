@@ -29,6 +29,8 @@ use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::debug;
 use tracing::error;
+use tracing::instrument;
+use tracing_error::SpanTrace;
 
 pub const STATE_PENDING_AT: &str = "PendingAt";
 pub const STATE_BLOCKED_BY_JOIN_SET: &str = "BlockedByJoinSet";
@@ -528,7 +530,7 @@ pub enum JoinSetRequest {
 }
 
 /// Error that is not specific to an execution.
-#[derive(Debug, Clone, thiserror::Error, PartialEq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum DbErrorGeneric {
     #[error("database error: {0}")]
     Uncategorized(StrVariant),
@@ -536,14 +538,19 @@ pub enum DbErrorGeneric {
     Close,
 }
 
-#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
+#[derive(thiserror::Error, Clone, Debug, derive_more::PartialEq, derive_more::Eq)]
 pub enum DbErrorWriteNonRetriable {
     #[error("validation failed: {0}")]
     ValidationFailed(StrVariant),
     #[error("conflict")]
     Conflict,
-    #[error("illegal state: {0}")]
-    IllegalState(StrVariant),
+    #[error("illegal state: {reason}")]
+    IllegalState {
+        reason: StrVariant,
+        #[eq(skip)]
+        #[partial_eq(skip)]
+        context: SpanTrace,
+    },
     #[error("version conflict: expected: {expected}, got: {requested}")]
     VersionConflict {
         expected: Version,
@@ -552,7 +559,7 @@ pub enum DbErrorWriteNonRetriable {
 }
 
 /// Write error tied to an execution
-#[derive(Debug, Clone, thiserror::Error, PartialEq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum DbErrorWrite {
     #[error("cannot write - row not found")]
     NotFound,
@@ -1055,6 +1062,7 @@ pub enum CancelOutcome {
     AlreadyFinished,
 }
 
+#[instrument(skip(db_connection))]
 pub async fn stub_execution(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionIdDerived,
@@ -1111,9 +1119,10 @@ pub async fn stub_execution(
                 DbErrorWriteNonRetriable::Conflict,
             )),
             _other => Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::IllegalState(
-                    "unexpected execution event at stubbed execution".into(),
-                ),
+                DbErrorWriteNonRetriable::IllegalState {
+                    reason: "unexpected execution event at stubbed execution".into(),
+                    context: SpanTrace::capture(),
+                },
             )),
         }
     } else {
@@ -1467,6 +1476,7 @@ pub enum PendingStateFinishedError {
 }
 
 impl PendingState {
+    #[instrument(skip(self))]
     pub fn can_append_lock(
         &self,
         created_at: DateTime<Utc>,
@@ -1516,17 +1526,20 @@ impl PendingState {
                     // Original executor is extending the lock.
                     Ok(LockKind::Extending)
                 } else {
-                    Err(DbErrorWriteNonRetriable::IllegalState(
-                        "cannot lock, already locked".into(),
-                    ))
+                    Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason: "cannot lock, already locked".into(),
+                        context: SpanTrace::capture(),
+                    })
                 }
             }
-            PendingState::BlockedByJoinSet { .. } => Err(DbErrorWriteNonRetriable::IllegalState(
-                "cannot append Locked event when in BlockedByJoinSet state".into(),
-            )),
-            PendingState::Finished { .. } => Err(DbErrorWriteNonRetriable::IllegalState(
-                "already finished".into(),
-            )),
+            PendingState::BlockedByJoinSet { .. } => Err(DbErrorWriteNonRetriable::IllegalState {
+                reason: "cannot append Locked event when in BlockedByJoinSet state".into(),
+                context: SpanTrace::capture(),
+            }),
+            PendingState::Finished { .. } => Err(DbErrorWriteNonRetriable::IllegalState {
+                reason: "already finished".into(),
+                context: SpanTrace::capture(),
+            }),
         }
     }
 

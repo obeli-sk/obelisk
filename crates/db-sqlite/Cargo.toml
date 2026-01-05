@@ -29,6 +29,7 @@ tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-error.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

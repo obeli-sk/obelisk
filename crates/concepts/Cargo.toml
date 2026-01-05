@@ -36,6 +36,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing-opentelemetry.workspace = true
 tracing.workspace = true
+tracing-error.workspace = true
 ulid.workspace = true
 wasmtime.workspace = true
 wasmtime-environ.workspace = true

@@ -3,6 +3,7 @@ use rand::{Rng as _, SeedableRng as _};
 use std::str::FromStr;
 use std::{env::VarError, fmt};
 use tracing::{Event, Subscriber};
+use tracing_error::ErrorLayer;
 use tracing_subscriber::fmt::{
     FmtContext, FormattedFields,
     format::{self, FormatEvent, FormatFields},
@@ -78,6 +79,7 @@ pub fn set_up() {
         let fmt_layer = tracing_subscriber::fmt::layer().event_format(MessageFirstFormatter);
 
         let builder = tracing_subscriber::registry()
+            .with(ErrorLayer::default())
             .with(fmt_layer)
             .with(tracing_subscriber::EnvFilter::from_default_env());
 

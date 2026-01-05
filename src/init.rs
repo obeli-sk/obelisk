@@ -2,6 +2,7 @@ use std::io::IsTerminal as _;
 
 use crate::config::toml::{ConfigToml, log::LoggingStyle};
 use tracing::warn;
+use tracing_error::ErrorLayer;
 use tracing_subscriber::Layer;
 use utils::panic_hook::tracing_panic_hook;
 
@@ -160,6 +161,7 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
         _ => None,
     };
     tracing_subscriber::registry()
+        .with(ErrorLayer::default())
         .with(tokio_console_layer())
         .with(tokio_tracing_otlp(config)?)
         .with(rolling_file_layer) // Must be before `out_layer`: https://github.com/tokio-rs/tracing/issues/3116

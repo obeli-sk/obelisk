@@ -65,6 +65,7 @@ tower.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
+tracing-error.workspace = true
 wasmtime.workspace = true
 
 # Optional deps:
@@ -78,6 +79,7 @@ tracing-opentelemetry.workspace = true
 
 ## tokio-console
 console-subscriber = { workspace = true, optional = true }
+
 
 [dev-dependencies]
 rstest.workspace = true
@@ -213,6 +215,7 @@ derive_more = { version = "2.1.1", features = [
     "debug",
     "deref",
     "display",
+    "eq",
     "from_str",
     "into",
 ] }
@@ -291,6 +294,7 @@ tower = "0.5.2"
 tower-http = { version = "0.6.8", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.4"
+tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 ulid = { version = "=1.1.4", features = ["serde"] }
 url = "2.5.7"

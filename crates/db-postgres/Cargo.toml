@@ -26,6 +26,7 @@ rand.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-error.workspace = true
 
 [features]
 test = ["concepts/test"]
