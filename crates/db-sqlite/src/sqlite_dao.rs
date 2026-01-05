@@ -1077,10 +1077,12 @@ impl SqlitePool {
     {
         let fn_res: Arc<std::sync::Mutex<Option<_>>> = Arc::default();
         let (commit_ack_sender, commit_ack_receiver) = oneshot::channel();
+        let current_span = Span::current();
         let thread_command_func = {
             let fn_res = fn_res.clone();
             ThreadCommand::LogicalTx(LogicalTx {
                 func: Box::new(move |tx| {
+                    let _guard = current_span.enter();
                     let func_res = func(tx);
                     *fn_res.lock().unwrap() = Some(func_res);
                 }),
