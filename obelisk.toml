@@ -120,6 +120,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Map from frame symbol file names to corresponding file paths on local filesystem. Supports path path prefixes on both sides.
 ## If frame symbol path starts with `...`, only the suffix will be used to find the matching source file.
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
+# backtrace.ignore_component_digest = false # If set to true, sha256 digest of the requested component will not be compared to the loaded component's digset.
 
 # Stub WASI CLI world imports. Only needed for workflows authored in TinyGo.
 # stub_wasi = false # Default is false.
@@ -155,6 +156,10 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
 # env_vars = ["ENV1", "ENV2=somevalue"]
+
+# backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
+# backtrace.ignore_component_digest = false # If set to true, sha256 digest of the requested component will not be compared to the loaded component's digset.
+
 
 [[http_server]]
 name = "external_webhook"

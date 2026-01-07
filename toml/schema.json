@@ -357,6 +357,25 @@
       },
       "additionalProperties": false
     },
+    "ComponentBacktraceConfig": {
+      "type": "object",
+      "properties": {
+        "ignore_component_digest": {
+          "type": "boolean"
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "ignore_component_digest"
+      ]
+    },
     "ComponentLocation": {
       "oneOf": [
         {
@@ -1022,7 +1041,7 @@
       "type": "object",
       "properties": {
         "backtrace": {
-          "$ref": "#/$defs/WorkflowComponentBacktraceConfig"
+          "$ref": "#/$defs/ComponentBacktraceConfig"
         },
         "env_vars": {
           "type": "array",
@@ -1089,26 +1108,11 @@
         "route"
       ]
     },
-    "WorkflowComponentBacktraceConfig": {
-      "type": "object",
-      "properties": {
-        "sources": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "sources"
-      ]
-    },
     "WorkflowComponentConfigToml": {
       "type": "object",
       "properties": {
         "backtrace": {
-          "$ref": "#/$defs/WorkflowComponentBacktraceConfig"
+          "$ref": "#/$defs/ComponentBacktraceConfig"
         },
         "blocking_strategy": {
           "$ref": "#/$defs/BlockingStrategyConfigToml"

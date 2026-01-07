@@ -13,6 +13,7 @@ use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
+use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
@@ -21,7 +22,6 @@ use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::StdOutput;
 use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
-use crate::config::toml::WorkflowComponentBacktraceConfig;
 use crate::config::toml::WorkflowComponentConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::webhook;
@@ -32,6 +32,7 @@ use crate::init;
 use crate::init::Guard;
 use crate::project_dirs;
 use crate::server::grpc_server::GrpcServer;
+use crate::server::grpc_server::IGNORING_COMPONENT_DIGEST;
 use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
 use anyhow::Context;
@@ -714,7 +715,7 @@ impl ServerVerified {
                     key: "TARGET_URL".to_string(),
                     val: Some(format!("http://{}", config.api.listening_addr)),
                 }],
-                backtrace: WorkflowComponentBacktraceConfig::default(),
+                backtrace: ComponentBacktraceConfig::default(),
             });
         }
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
@@ -758,14 +759,24 @@ impl ServerVerified {
         let component_source_map = {
             let mut map = hashbrown::HashMap::new();
             for workflow in &mut config.workflows {
-                let inner_map = std::mem::take(&mut workflow.frame_files_to_sources);
+                let inner_map =
+                    std::mem::take(&mut workflow.backtrace_config.frame_files_to_sources);
                 let matchable_source_map = MatchableSourceMap::new(inner_map);
-                map.insert(workflow.component_id().clone(), matchable_source_map);
+                let mut component_id = workflow.component_id().clone();
+                if workflow.backtrace_config.ignore_component_digest {
+                    component_id.input_digest = IGNORING_COMPONENT_DIGEST;
+                }
+                map.insert(component_id, matchable_source_map);
             }
             for webhook in &mut config.webhooks_by_names.values_mut() {
-                let inner_map = std::mem::take(&mut webhook.frame_files_to_sources);
+                let inner_map =
+                    std::mem::take(&mut webhook.backtrace_config.frame_files_to_sources);
                 let matchable_source_map = MatchableSourceMap::new(inner_map);
-                map.insert(webhook.component_id.clone(), matchable_source_map);
+                let mut component_id = webhook.component_id.clone();
+                if webhook.backtrace_config.ignore_component_digest {
+                    component_id.input_digest = IGNORING_COMPONENT_DIGEST;
+                }
+                map.insert(component_id, matchable_source_map);
             }
             map
         };

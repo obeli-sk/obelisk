@@ -12,6 +12,7 @@ use concepts::{
 };
 use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
+use hashbrown::HashMap;
 use log::{LoggingConfig, LoggingStyle};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -751,7 +752,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     #[serde(default = "default_convert_core_module")]
     pub(crate) convert_core_module: bool,
     #[serde(default)]
-    pub(crate) backtrace: WorkflowComponentBacktraceConfig,
+    pub(crate) backtrace: ComponentBacktraceConfig,
     #[serde(default)]
     pub(crate) stub_wasi: bool,
     #[serde(default = "default_lock_extension")]
@@ -812,35 +813,23 @@ impl From<BlockingStrategyConfigToml> for JoinNextBlockingStrategy {
         }
     }
 }
-
-type BacktraceFrameFilesToSourcesUnverified = hashbrown::HashMap<String, String>;
-type BacktraceFrameFilesToSourcesVerified = hashbrown::HashMap<String, PathBuf>;
-
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowComponentBacktraceConfig {
+pub(crate) struct ComponentBacktraceConfig {
     #[serde(rename = "sources")]
     #[schemars(with = "std::collections::HashMap<String, String>")]
-    pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesUnverified,
+    pub(crate) frame_files_to_sources: HashMap<String, String>,
+    #[serde(default)]
+    pub(crate) ignore_component_digest: bool,
 }
-
-#[derive(Debug)]
-pub(crate) struct WorkflowConfigVerified {
-    pub(crate) wasm_path: PathBuf,
-    pub(crate) workflow_config: WorkflowConfig,
-    pub(crate) exec_config: executor::executor::ExecConfig,
-    pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesVerified,
-}
-
-fn verify_frame_files_to_sources(
-    frame_files_to_sources: BacktraceFrameFilesToSourcesUnverified,
-    path_prefixes: &PathPrefixes,
-) -> BacktraceFrameFilesToSourcesVerified {
-    frame_files_to_sources
-        .into_iter()
-        .filter_map(|(key, value)| {
-            // Remove all entries where destination file is not found.
-            match path_prefixes
+impl ComponentBacktraceConfig {
+    fn verify(self, path_prefixes: &PathPrefixes) -> ComponentBacktraceConfigVerified {
+        let frame_files_to_sources = self
+            .frame_files_to_sources
+            .into_iter()
+            .filter_map(|(key, value)| {
+                // Remove all entries where destination file is not found.
+                match path_prefixes
                 .replace_file_prefix_verify_exists(&value)
                 .map(|value| (path_prefixes.replace_file_prefix_no_verify(&key), value)) // the key points to source path found in WASM
             {
@@ -850,8 +839,28 @@ fn verify_frame_files_to_sources(
                     None
                 }
             }
-        })
-        .collect()
+            })
+            .collect();
+
+        ComponentBacktraceConfigVerified {
+            frame_files_to_sources,
+            ignore_component_digest: self.ignore_component_digest,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ComponentBacktraceConfigVerified {
+    pub(crate) frame_files_to_sources: HashMap<String, PathBuf>,
+    pub(crate) ignore_component_digest: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct WorkflowConfigVerified {
+    pub(crate) wasm_path: PathBuf,
+    pub(crate) workflow_config: WorkflowConfig,
+    pub(crate) exec_config: executor::executor::ExecConfig,
+    pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
 }
 
 impl WorkflowConfigVerified {
@@ -907,8 +916,7 @@ impl WorkflowComponentConfigToml {
             lock_extension: self.lock_extension.into(),
             subscription_interruption,
         };
-        let frame_files_to_sources =
-            verify_frame_files_to_sources(self.backtrace.frame_files_to_sources, &path_prefixes);
+        let backtrace_config = self.backtrace.verify(&path_prefixes);
         let retry_config = ComponentRetryConfig {
             max_retries: None,
             retry_exp_backoff,
@@ -921,7 +929,7 @@ impl WorkflowComponentConfigToml {
                 global_executor_instance_limiter,
                 retry_config,
             ),
-            frame_files_to_sources,
+            backtrace_config,
         })
     }
 }
@@ -1220,10 +1228,11 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 
 pub(crate) mod webhook {
     use super::{
-        BacktraceFrameFilesToSourcesVerified, ComponentCommon, ConfigName, StdOutput,
-        WorkflowComponentBacktraceConfig, resolve_env_vars, verify_frame_files_to_sources,
+        ComponentBacktraceConfig, ComponentCommon, ConfigName, StdOutput, resolve_env_vars,
     };
-    use crate::config::{config_holder::PathPrefixes, env_var::EnvVarConfig};
+    use crate::config::{
+        config_holder::PathPrefixes, env_var::EnvVarConfig, toml::ComponentBacktraceConfigVerified,
+    };
     use anyhow::Context;
     use concepts::{ComponentId, ComponentType, StrVariant, component_id::InputContentDigest};
     use schemars::JsonSchema;
@@ -1259,7 +1268,7 @@ pub(crate) mod webhook {
         #[serde(default)]
         pub(crate) env_vars: Vec<EnvVarConfig>,
         #[serde(default)]
-        pub(crate) backtrace: WorkflowComponentBacktraceConfig,
+        pub(crate) backtrace: ComponentBacktraceConfig,
     }
 
     impl WebhookComponentConfigToml {
@@ -1277,10 +1286,7 @@ pub(crate) mod webhook {
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
                 .await?;
-            let frame_files_to_sources = verify_frame_files_to_sources(
-                self.backtrace.frame_files_to_sources,
-                &path_prefixes,
-            );
+            let backtrace_config = self.backtrace.verify(&path_prefixes);
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(common.name.clone()),
@@ -1299,7 +1305,7 @@ pub(crate) mod webhook {
                     forward_stdout: self.forward_stdout.into(),
                     forward_stderr: self.forward_stderr.into(),
                     env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
-                    frame_files_to_sources,
+                    backtrace_config,
                     subscription_interruption,
                 },
             ))
@@ -1336,7 +1342,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) env_vars: Arc<[EnvVar]>,
-        pub(crate) frame_files_to_sources: BacktraceFrameFilesToSourcesVerified,
+        pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
         pub(crate) subscription_interruption: Option<Duration>,
     }
 
