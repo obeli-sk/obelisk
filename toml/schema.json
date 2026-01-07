@@ -361,7 +361,8 @@
       "type": "object",
       "properties": {
         "ignore_component_digest": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": false
         },
         "sources": {
           "type": "object",
@@ -372,8 +373,7 @@
       },
       "additionalProperties": false,
       "required": [
-        "sources",
-        "ignore_component_digest"
+        "sources"
       ]
     },
     "ComponentLocation": {
