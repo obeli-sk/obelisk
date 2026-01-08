@@ -13,7 +13,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": "string",
           "err": "string"
@@ -34,7 +34,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": "string",
           "err": "string"
@@ -49,7 +49,7 @@ expression: exports
     "ffqn": "testing:http-workflow/workflow.get-stargazers",
     "parameter_types": [],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": null,
           "err": null
@@ -70,7 +70,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": "string",
           "err": "string"
@@ -93,7 +93,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": {
             "list": "string"
@@ -121,7 +121,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": {
             "list": "string"

@@ -7,7 +7,7 @@ expression: imports
     "ffqn": "obelisk:workflow/workflow-support@4.0.0.join-set-create",
     "parameter_types": [],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": "own",
         "wit_type": "join-set"
       }
@@ -25,7 +25,7 @@ expression: imports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -103,7 +103,7 @@ expression: imports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -125,7 +125,7 @@ expression: imports
       }
     ],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null

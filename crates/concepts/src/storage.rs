@@ -27,16 +27,15 @@ use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use strum::IntoStaticStr;
 use tracing::debug;
 use tracing::instrument;
 use tracing_error::SpanTrace;
 
-pub const STATE_PENDING_AT: &str = "PendingAt";
-pub const STATE_BLOCKED_BY_JOIN_SET: &str = "BlockedByJoinSet";
-pub const STATE_LOCKED: &str = "Locked";
-pub const STATE_FINISHED: &str = "Finished";
-pub const HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "JoinNext";
+pub const STATE_PENDING_AT: &str = "pending_at";
+pub const STATE_BLOCKED_BY_JOIN_SET: &str = "blocked_by_join_set";
+pub const STATE_LOCKED: &str = "locked";
+pub const STATE_FINISHED: &str = "finished";
+pub static HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "join_next";
 
 /// Remote client representation of the execution journal.
 #[derive(Debug, PartialEq, Eq)]
@@ -236,7 +235,7 @@ pub struct JoinSetResponseEvent {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum JoinSetResponse {
     #[display("delay {}: {delay_id}", if result.is_ok() { "finished" } else { "cancelled"})]
     DelayFinished {
@@ -272,17 +271,10 @@ pub const DUMMY_HISTORY_EVENT: ExecutionRequest = ExecutionRequest::HistoryEvent
 };
 
 #[derive(
-    Clone,
-    derive_more::Debug,
-    derive_more::Display,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    IntoStaticStr,
+    Clone, derive_more::Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-#[allow(clippy::large_enum_variant)]
+#[serde(rename_all = "snake_case")]
 pub enum ExecutionRequest {
     #[display("Created({ffqn}, `{scheduled_at}`)")]
     Created {
@@ -353,8 +345,16 @@ impl ExecutionRequest {
     }
 
     #[must_use]
-    pub fn variant(&self) -> &'static str {
-        Into::<&'static str>::into(self)
+    pub const fn variant(&self) -> &'static str {
+        match self {
+            ExecutionRequest::Created { .. } => "created",
+            ExecutionRequest::Locked(_) => "locked",
+            ExecutionRequest::Unlocked { .. } => "unlocked",
+            ExecutionRequest::TemporarilyFailed { .. } => "temporarily_failed",
+            ExecutionRequest::TemporarilyTimedOut { .. } => "temporarily_timed_out",
+            ExecutionRequest::Finished { .. } => "finished",
+            ExecutionRequest::HistoryEvent { .. } => "history_event",
+        }
     }
 
     #[must_use]
@@ -392,7 +392,7 @@ pub struct Locked {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum PersistKind {
     #[display("RandomU64({min}, {max_inclusive})")]
     RandomU64 { min: u64, max_inclusive: u64 },
@@ -417,7 +417,7 @@ pub fn from_bytes_to_u64(bytes: [u8; 8]) -> u64 {
     derive_more::Debug, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "snake_case")]
 /// Must be created by the executor in [`PendingState::Locked`].
 pub enum HistoryEvent {
     /// Persist a generated pseudorandom value.
@@ -476,6 +476,7 @@ pub enum HistoryEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
+#[serde(rename_all = "snake_case")]
 pub enum HistoryEventScheduleAt {
     Now,
     #[display("At(`{_0}`)")]
@@ -510,7 +511,7 @@ impl HistoryEventScheduleAt {
 
 #[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum JoinSetRequest {
     // Must be created by the executor in `PendingState::Locked`.
     #[display("DelayRequest({delay_id}, expires_at: `{expires_at}`, schedule_at: `{schedule_at}`)")]
@@ -1413,7 +1414,7 @@ pub struct ExpiredDelay {
 }
 
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
-#[serde(tag = "status")]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum PendingState {
     Locked(PendingStateLocked),
     #[display("PendingAt(`{scheduled_at}`)")]
@@ -1488,6 +1489,7 @@ impl From<&SupportedFunctionReturnValue> for PendingStateFinishedResultKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
+#[serde(rename_all = "snake_case")]
 pub enum PendingStateFinishedError {
     #[display("execution terminated: {_0}")]
     ExecutionFailure(ExecutionFailureKind),

@@ -529,6 +529,7 @@ impl From<TypeWrapperTopLevel> for TypeWrapper {
 }
 
 #[derive(Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SupportedFunctionReturnValue {
     Ok {
         #[debug(skip)]
@@ -1823,18 +1824,7 @@ impl JoinSetId {
 pub const CHARSET_ALPHANUMERIC: &str =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    derive_more::Display,
-    Serialize,
-    Deserialize,
-    strum::EnumIter,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, strum::EnumIter)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[display("{}", self.as_code())]
 pub enum JoinSetKind {
@@ -1919,6 +1909,7 @@ const EXECUTION_FAILED_STRING_OR_VARIANT: &str = "execution-failed";
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
 )]
+#[serde(rename_all = "snake_case")]
 pub enum ReturnType {
     Extendable(ReturnTypeExtendable), // Execution failures can be converted to this return type, e.g. result<_, string>
     NonExtendable(ReturnTypeNonExtendable), // e.g. -submit returns ExecutionId

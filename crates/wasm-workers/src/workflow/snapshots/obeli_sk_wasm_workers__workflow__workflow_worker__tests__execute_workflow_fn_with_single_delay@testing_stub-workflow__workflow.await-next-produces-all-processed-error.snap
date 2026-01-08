@@ -8,7 +8,7 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "Created": {
+        "created": {
           "ffqn": "testing:stub-workflow/workflow.await-next-produces-all-processed-error",
           "params": [],
           "parent": null,
@@ -27,7 +27,7 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "Locked": {
+        "locked": {
           "component_id": {
             "component_type": "workflow",
             "name": "",
@@ -50,9 +50,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinSetCreate",
+            "type": "join_set_create",
             "join_set_id": "g:1"
           }
         }
@@ -62,9 +62,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinNextTooMany",
+            "type": "join_next_too_many",
             "join_set_id": "g:1",
             "requested_ffqn": "testing:stub-activity/activity.foo"
           }
@@ -75,9 +75,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "Finished": {
+        "finished": {
           "result": {
-            "Ok": {
+            "ok": {
               "ok": null
             }
           },
@@ -90,7 +90,7 @@ expression: execution_log
   "responses": [],
   "next_version": 4,
   "pending_state": {
-    "status": "Finished",
+    "status": "finished",
     "version": 4,
     "finished_at": "1970-01-01T00:00:00Z",
     "result_kind": "ok"

@@ -48,11 +48,9 @@ use hashbrown::HashMap;
 use indexmap::IndexMap;
 use indexmap::indexmap;
 use std::fmt::Debug;
-use std::fmt::Display;
 use std::panic::Location;
 use std::sync::Arc;
 use std::time::Duration;
-use strum::IntoStaticStr;
 use tracing::Level;
 use tracing::Span;
 use tracing::info;
@@ -242,7 +240,7 @@ impl EventHistory {
 
     /// Apply the event and wait if new, replay if already in the event history, or
     /// apply with an interrupt.
-    #[instrument(skip_all, fields(otel.name = format!("apply {event_call}"), ?event_call))]
+    #[instrument(skip_all, fields(?event_call))]
     async fn apply_inner(
         &mut self,
         event_call: EventCall,
@@ -1830,13 +1828,13 @@ impl JoinNextVariant {
     }
 }
 
-#[derive(derive_more::Debug, Clone, IntoStaticStr)]
+#[derive(derive_more::Debug, Clone)]
 pub(crate) enum EventCall {
     Blocking(EventCallBlocking),
     NonBlocking(EventCallNonBlocking),
 }
 
-#[derive(derive_more::Debug, Clone, IntoStaticStr)]
+#[derive(derive_more::Debug, Clone)]
 pub(crate) enum EventCallBlocking {
     /// foo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, ?>, await-next-extension-error>;
     JoinNextRequestingFfqn(JoinNextRequestingFfqn),
@@ -1845,7 +1843,7 @@ pub(crate) enum EventCallBlocking {
     OneOffDelayRequest(OneOffDelayRequest),                   // blocking sleep
 }
 
-#[derive(derive_more::Debug, Clone, IntoStaticStr)]
+#[derive(derive_more::Debug, Clone)]
 pub(crate) enum EventCallNonBlocking {
     JoinSetCreate(JoinSetCreate),
     SubmitChildExecution(SubmitChildExecution),
@@ -2329,15 +2327,6 @@ impl Persist {
             .await?;
         let value = assert_matches!(value, ChildReturnValue::WastVal(WastVal::U64(value)) => value);
         Ok(value)
-    }
-}
-
-impl Display for EventCall {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EventCall::Blocking(inner) => write!(f, "{}", <&str>::from(inner)),
-            EventCall::NonBlocking(inner) => write!(f, "{}", <&str>::from(inner)),
-        }
     }
 }
 

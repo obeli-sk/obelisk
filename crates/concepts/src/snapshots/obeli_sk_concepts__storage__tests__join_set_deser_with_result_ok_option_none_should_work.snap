@@ -2,4 +2,4 @@
 source: crates/concepts/src/storage.rs
 expression: json
 ---
-{"Ok":{"ok":{"type":{"result":{"ok":{"option":"string"},"err":"string"}},"value":{"ok":null}}}}
+{"ok":{"ok":{"type":{"result":{"ok":{"option":"string"},"err":"string"}},"value":{"ok":null}}}}

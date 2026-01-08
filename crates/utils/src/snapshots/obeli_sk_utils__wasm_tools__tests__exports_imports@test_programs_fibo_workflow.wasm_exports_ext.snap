@@ -13,7 +13,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -86,7 +86,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -163,7 +163,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -237,7 +237,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -263,7 +263,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -337,7 +337,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -359,7 +359,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -436,7 +436,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "result": {
             "ok": {
@@ -510,7 +510,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -561,7 +561,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -612,7 +612,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -663,7 +663,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "NonExtendable": {
+      "non_extendable": {
         "type_wrapper": {
           "record": {
             "id": "string"
@@ -690,7 +690,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -716,7 +716,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null
@@ -742,7 +742,7 @@ expression: exports
       }
     ],
     "return_type": {
-      "Extendable": {
+      "extendable": {
         "type_wrapper_tl": {
           "ok": "u64",
           "err": null

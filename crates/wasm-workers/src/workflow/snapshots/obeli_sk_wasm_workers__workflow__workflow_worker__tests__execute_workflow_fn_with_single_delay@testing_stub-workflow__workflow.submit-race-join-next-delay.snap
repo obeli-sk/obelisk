@@ -8,7 +8,7 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "Created": {
+        "created": {
           "ffqn": "testing:stub-workflow/workflow.submit-race-join-next-delay",
           "params": [],
           "parent": null,
@@ -27,7 +27,7 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "Locked": {
+        "locked": {
           "component_id": {
             "component_type": "workflow",
             "name": "",
@@ -50,9 +50,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinSetCreate",
+            "type": "join_set_create",
             "join_set_id": "g:1"
           }
         }
@@ -62,12 +62,12 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinSetRequest",
+            "type": "join_set_request",
             "join_set_id": "g:1",
             "request": {
-              "type": "ChildExecutionRequest",
+              "type": "child_execution_request",
               "child_execution_id": "E_00000000000000000000000000.g:1_1",
               "target_ffqn": "testing:stub-activity/activity.foo",
               "params": [
@@ -82,16 +82,16 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinSetRequest",
+            "type": "join_set_request",
             "join_set_id": "g:1",
             "request": {
-              "type": "DelayRequest",
+              "type": "delay_request",
               "delay_id": "Delay_00000000000000000000000000.g:1_0",
               "expires_at": "1970-01-01T00:00:00.010Z",
               "schedule_at": {
-                "In": {
+                "in": {
                   "secs": 0,
                   "nanos": 10000000
                 }
@@ -105,9 +105,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinNext",
+            "type": "join_next",
             "join_set_id": "g:1",
             "run_expires_at": "1970-01-01T00:00:00Z",
             "requested_ffqn": null,
@@ -120,7 +120,7 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
-        "Locked": {
+        "locked": {
           "component_id": {
             "component_type": "workflow",
             "name": "",
@@ -143,9 +143,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinNext",
+            "type": "join_next",
             "join_set_id": "g:1",
             "run_expires_at": "1970-01-01T00:00:00.010Z",
             "requested_ffqn": null,
@@ -158,7 +158,7 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
-        "Locked": {
+        "locked": {
           "component_id": {
             "component_type": "workflow",
             "name": "",
@@ -181,9 +181,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
-        "Finished": {
+        "finished": {
           "result": {
-            "Ok": {
+            "ok": {
               "ok": null
             }
           },
@@ -199,7 +199,7 @@ expression: execution_log
       "event": {
         "join_set_id": "g:1",
         "event": {
-          "type": "DelayFinished",
+          "type": "delay_finished",
           "delay_id": "Delay_00000000000000000000000000.g:1_0",
           "result": {
             "Ok": null
@@ -212,11 +212,11 @@ expression: execution_log
       "event": {
         "join_set_id": "g:1",
         "event": {
-          "type": "ChildExecutionFinished",
+          "type": "child_execution_finished",
           "child_execution_id": "E_00000000000000000000000000.g:1_1",
           "finished_version": 1,
           "result": {
-            "ExecutionError": {
+            "execution_error": {
               "kind": "cancelled"
             }
           }
@@ -226,7 +226,7 @@ expression: execution_log
   ],
   "next_version": 9,
   "pending_state": {
-    "status": "Finished",
+    "status": "finished",
     "version": 9,
     "finished_at": "1970-01-01T00:00:00.010Z",
     "result_kind": "ok"

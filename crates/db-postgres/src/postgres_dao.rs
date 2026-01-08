@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS t_execution_log (
     version BIGINT NOT NULL CHECK (version >= 0),
     variant TEXT NOT NULL,
     join_set_id TEXT,
-    history_event_type TEXT GENERATED ALWAYS AS (json_value #>> '{HistoryEvent,event,type}') STORED,
+    history_event_type TEXT GENERATED ALWAYS AS (json_value #>> '{history_event,event,type}') STORED,
     PRIMARY KEY (execution_id, version)
 );
 ";

@@ -8,7 +8,7 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "Created": {
+        "created": {
           "ffqn": "testing:sleep-workflow/workflow.join-next-produces-all-processed-error",
           "params": [],
           "parent": null,
@@ -27,7 +27,7 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "Locked": {
+        "locked": {
           "component_id": {
             "component_type": "workflow",
             "name": "",
@@ -50,9 +50,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinSetCreate",
+            "type": "join_set_create",
             "join_set_id": "g:1"
           }
         }
@@ -62,16 +62,16 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinSetRequest",
+            "type": "join_set_request",
             "join_set_id": "g:1",
             "request": {
-              "type": "DelayRequest",
+              "type": "delay_request",
               "delay_id": "Delay_00000000000000000000000000.g:1_0",
               "expires_at": "1970-01-01T00:00:00.010Z",
               "schedule_at": {
-                "In": {
+                "in": {
                   "secs": 0,
                   "nanos": 10000000
                 }
@@ -85,9 +85,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinNext",
+            "type": "join_next",
             "join_set_id": "g:1",
             "run_expires_at": "1970-01-01T00:00:00Z",
             "requested_ffqn": null,
@@ -100,7 +100,7 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
-        "Locked": {
+        "locked": {
           "component_id": {
             "component_type": "workflow",
             "name": "",
@@ -123,9 +123,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
-        "HistoryEvent": {
+        "history_event": {
           "event": {
-            "type": "JoinNextTooMany",
+            "type": "join_next_too_many",
             "join_set_id": "g:1",
             "requested_ffqn": null
           }
@@ -136,9 +136,9 @@ expression: execution_log
     {
       "created_at": "1970-01-01T00:00:00.010Z",
       "event": {
-        "Finished": {
+        "finished": {
           "result": {
-            "Ok": {
+            "ok": {
               "ok": null
             }
           },
@@ -154,7 +154,7 @@ expression: execution_log
       "event": {
         "join_set_id": "g:1",
         "event": {
-          "type": "DelayFinished",
+          "type": "delay_finished",
           "delay_id": "Delay_00000000000000000000000000.g:1_0",
           "result": {
             "Ok": null
@@ -165,7 +165,7 @@ expression: execution_log
   ],
   "next_version": 7,
   "pending_state": {
-    "status": "Finished",
+    "status": "finished",
     "version": 7,
     "finished_at": "1970-01-01T00:00:00.010Z",
     "result_kind": "ok"
