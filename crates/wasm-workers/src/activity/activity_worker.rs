@@ -144,55 +144,6 @@ pub struct ActivityWorker<C: ClockFn, S: Sleep> {
 }
 
 impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
-    pub fn new_with_config(
-        runnable_component: RunnableComponent,
-        config: ActivityConfig,
-        engine: Arc<Engine>,
-        clock_fn: C,
-        sleep: S,
-        cancel_registry: CancelRegistry,
-    ) -> Result<Self, WasmFileError> {
-        let linking_err = |err: wasmtime::Error| WasmFileError::linking_error("linking error", err);
-
-        let mut linker = wasmtime::component::Linker::new(&engine);
-        // wasi
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(linking_err)?;
-        // wasi-http
-        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(linking_err)?;
-        // obelisk:log
-        log_activities::obelisk::log::log::add_to_linker::<_, ActivityCtx<C>>(&mut linker, |x| x)
-            .map_err(linking_err)?;
-        match config
-            .directories_config
-            .as_ref()
-            .and_then(|dir| dir.process_provider.as_ref())
-        {
-            Some(ProcessProvider::Native) => {
-                process_support::add_to_linker::<_, ActivityCtx<C>>(&mut linker, |x| x)
-                    .map_err(linking_err)?;
-            }
-            None => {}
-        }
-        // Attempt to pre-instantiate to catch missing imports
-        let instance_pre = linker
-            .instantiate_pre(&runnable_component.wasmtime_component)
-            .map_err(linking_err)?;
-
-        let exported_ffqn_to_index = runnable_component
-            .index_exported_functions()
-            .map_err(WasmFileError::DecodeError)?;
-        Ok(Self {
-            engine,
-            exim: runnable_component.wasm_component.exim,
-            clock_fn,
-            sleep,
-            exported_ffqn_to_index,
-            config,
-            instance_pre,
-            cancel_registry,
-        })
-    }
-
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(true)
     }
@@ -577,15 +528,15 @@ pub(crate) mod tests {
             compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm);
         (
             Arc::new(
-                ActivityWorker::new_with_config(
+                ActivityWorkerCompiled::new_with_config(
                     wasm_component,
                     config_fn(component_id.clone()),
                     engine,
                     clock_fn,
                     sleep,
-                    cancel_registry,
                 )
-                .unwrap(),
+                .unwrap()
+                .into_worker(cancel_registry),
             ),
             component_id,
         )

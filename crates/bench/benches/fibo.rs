@@ -23,7 +23,7 @@ mod bench {
     use std::time::Duration;
     use tokio::runtime::Handle;
     use wasm_workers::RunnableComponent;
-    use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorker};
+    use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorkerCompiled};
     use wasm_workers::activity::cancel_registry::CancelRegistry;
     use wasm_workers::engines::{EngineConfig, Engines, PoolingConfig};
     use wasm_workers::testing_fn_registry::TestingFnRegistry;
@@ -119,15 +119,15 @@ mod bench {
         let (wasm_component, component_id) = compile_activity_with_engine(wasm_path, &engine);
         (
             Arc::new(
-                ActivityWorker::new_with_config(
+                ActivityWorkerCompiled::new_with_config(
                     wasm_component,
                     config_fn(component_id.clone()),
                     engine,
                     clock_fn,
                     sleep,
-                    cancel_registry,
                 )
-                .unwrap(),
+                .unwrap()
+                .into_worker(cancel_registry),
             ),
             component_id,
         )
