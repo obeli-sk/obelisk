@@ -2729,6 +2729,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "tracing-error",
  "wasmparser 0.243.0",
  "wit-component 0.243.0",
  "wit-parser 0.243.0",

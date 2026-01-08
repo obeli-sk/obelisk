@@ -967,7 +967,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::linking_error("linking resource join-set", err))?;
+            .map_err(|err| WasmFileError::linking_error("cannot link resource join-set", err))?;
 
         // id: func() -> string;
         inst_join_set_ifc
@@ -980,7 +980,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Ok((id,))
                 },
             )
-            .map_err(|err| WasmFileError::linking_error("linking function id", err))?;
+            .map_err(|err| WasmFileError::linking_error("cannot link function id", err))?;
 
         // submit-delay: func(timeout: schedule-at) -> delay-id
         inst_join_set_ifc
@@ -1004,7 +1004,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 },
             )
             .map_err(|err| WasmFileError::linking_error(
-                "linking function submit-delay",
+                "cannot link function submit-delay",
                 err
             ))?;
 
@@ -1023,7 +1023,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::linking_error("linking function join-next", err))?;
+            .map_err(|err| WasmFileError::linking_error("cannot link function join-next", err))?;
 
         Ok(())
     }
@@ -1031,7 +1031,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
     fn add_to_linker_workflow_support(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
         let mut inst_workflow_support = linker
             .instance(IFC_FQN_WORKFLOW_SUPPORT_4)
-            .map_err(|err| WasmFileError::linking_error(IFC_FQN_WORKFLOW_SUPPORT_4, err))?;
+            .map_err(|err| WasmFileError::linking_error("cannot link workflow support", err))?;
 
         inst_workflow_support
             .func_wrap_async(
@@ -1047,7 +1047,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::linking_error("linking function random-u64", err))?;
+            .map_err(|err| WasmFileError::linking_error("cannot link function random-u64", err))?;
 
         inst_workflow_support
             .func_wrap_async(

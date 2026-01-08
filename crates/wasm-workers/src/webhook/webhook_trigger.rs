@@ -117,10 +117,10 @@ impl WebhookEndpointCompiled {
         let mut linker = Linker::new(engine);
         // Link wasi
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
-            .map_err(|err| WasmFileError::linking_error("linking `wasmtime_wasi`", err))?;
+            .map_err(|err| WasmFileError::linking_error("cannot link `wasmtime_wasi`", err))?;
         // Link wasi-http
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
-            .map_err(|err| WasmFileError::linking_error("linking `wasmtime_wasi_http`", err))?;
+            .map_err(|err| WasmFileError::linking_error("cannot link `wasmtime_wasi_http`", err))?;
         // Link log and types
         WebhookEndpointCtx::add_to_linker(&mut linker)?;
 
@@ -739,13 +739,13 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
             linker,
             |x| x,
         )
-        .map_err(|err| WasmFileError::linking_error("linking log activities", err))?;
+        .map_err(|err| WasmFileError::linking_error("cannot link log activities", err))?;
         // link obelisk:types
         types_v4_0_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C, S>>(
             linker,
             |x| x,
         )
-        .map_err(|err| WasmFileError::linking_error("linking obelisk:types", err))?;
+        .map_err(|err| WasmFileError::linking_error("cannot link obelisk:types", err))?;
         Ok(())
     }
 

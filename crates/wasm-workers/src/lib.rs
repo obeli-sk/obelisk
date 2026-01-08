@@ -1,6 +1,6 @@
 use concepts::{ComponentType, FunctionFqn, FunctionMetadata, StrVariant};
 use std::{error::Error, fmt::Debug, path::Path};
-use tracing::{debug, error, trace};
+use tracing::{debug, trace};
 use tracing_error::SpanTrace;
 use utils::wasm_tools::{self, DecodeError, WasmComponent};
 
@@ -17,8 +17,6 @@ pub mod workflow;
 
 #[derive(thiserror::Error, Debug)]
 pub enum WasmFileError {
-    #[error("cannot read WASM file: {0}")]
-    CannotReadComponent(#[source] wasmtime::Error),
     #[error("cannot decode: {0}")]
     DecodeError(
         #[from]
@@ -74,8 +72,10 @@ impl RunnableComponent {
             let stopwatch = std::time::Instant::now();
             let wasmtime_component = wasmtime::component::Component::from_file(engine, wasm_path)
                 .map_err(|err| {
-                error!("Cannot parse {wasm_path:?} using wasmtime - {err:?}");
-                DecodeError::CannotReadComponent { source: err }
+                DecodeError::new_with_source(
+                    format!("cannot parse {wasm_path:?} using wasmtime"),
+                    err,
+                )
             })?;
             debug!("Parsed with wasmtime in {:?}", stopwatch.elapsed());
             wasmtime_component
@@ -98,19 +98,17 @@ impl RunnableComponent {
                 .wasmtime_component
                 .get_export_index(None, &ffqn.ifc_fqn)
             else {
-                error!("Cannot find exported interface `{}`", ffqn.ifc_fqn);
-                return Err(DecodeError::CannotReadComponentWithReason {
-                    reason: format!("cannot find exported interface {ffqn}"),
-                });
+                return Err(DecodeError::new_without_source(format!(
+                    "cannot find exported interface {ffqn}"
+                )));
             };
             let Some(fn_export_index) = self
                 .wasmtime_component
                 .get_export_index(Some(&ifc_export_index), &ffqn.function_name)
             else {
-                error!("Cannot find exported function {ffqn}");
-                return Err(DecodeError::CannotReadComponentWithReason {
-                    reason: format!("cannot find exported function {ffqn}"),
-                });
+                return Err(DecodeError::new_without_source(format!(
+                    "cannot find exported function {ffqn}"
+                )));
             };
             exported_ffqn_to_index.insert(ffqn.clone(), fn_export_index);
         }

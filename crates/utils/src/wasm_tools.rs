@@ -9,12 +9,14 @@ use concepts::{
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
+    fmt::Display,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use strum::IntoEnumIterator as _;
-use tracing::{debug, error, info, trace, warn};
-use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
+use tracing::{debug, error, info, instrument, trace, warn};
+use tracing_error::SpanTrace;
+use val_json::type_wrapper::TypeWrapper;
 use wit_component::{ComponentEncoder, WitPrinter};
 use wit_parser::{InterfaceId, PackageId, Resolve, World, WorldKey, decoding::DecodedWasm};
 
@@ -109,7 +111,12 @@ impl WasmComponent {
 
         let exim = ExIm::decode(exim_lite, component_type)?;
         let (resolve, main_pkg_id) = crate::wit::rebuild_resolve(&exim, resolve, main_pkg_id)
-            .map_err(DecodeError::RebuildResolveError)?;
+            .map_err(|err| {
+                DecodeError::new_with_source(
+                    format!("cannot rebuild resolve from {wasm_path:?}"),
+                    err,
+                )
+            })?;
         Ok(Self {
             exim,
             resolve,
@@ -121,20 +128,34 @@ impl WasmComponent {
         path: impl AsRef<Path>,
         component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
+        let path = path.as_ref();
         let mut resolve = Resolve::default();
-        let (main_pkg_id, _) = resolve
-            .push_dir(path)
-            .map_err(|source| DecodeError::WitDirectoryParsingError { source })?;
+        let (main_pkg_id, _) = resolve.push_dir(path).map_err(|source| {
+            DecodeError::new_with_source(
+                format!("cannot parse the WIT directory of {path:?}"),
+                source,
+            )
+        })?;
         let world_id = resolve
             .select_world(&[main_pkg_id], None)
-            .map_err(|source| DecodeError::WorldSelectionError { source })?;
-        let world = resolve.worlds.get(world_id).expect("world must exist");
+            .map_err(|source| {
+                DecodeError::new_with_source(
+                    format!("cannot select the default world of {path:?}"),
+                    source,
+                )
+            })?;
+        let world = resolve
+            .worlds
+            .get(world_id)
+            .expect("world was found by wit-parser");
         let exim_lite =
             Self::create_exim_lite(&resolve, world, has_submittable_exports(component_type))?;
 
         let exim = ExIm::decode(exim_lite, component_type)?;
         let (resolve, main_pkg_id) = crate::wit::rebuild_resolve(&exim, resolve, main_pkg_id)
-            .map_err(DecodeError::RebuildResolveError)?;
+            .map_err(|err| {
+                DecodeError::new_with_source(format!("cannot rebuild resolve from {path:?}"), err)
+            })?;
         Ok(Self {
             exim,
             resolve,
@@ -202,6 +223,7 @@ impl WasmComponent {
         Self::decode_using_wit_parser_inner(wasm_path, has_submittable_exports(component_type))
     }
 
+    #[instrument]
     fn decode_using_wit_parser_inner(
         wasm_path: &Path,
         submittable_exports: bool, // whether exported functions + `-schedule` extensions should be submittable
@@ -211,22 +233,22 @@ impl WasmComponent {
         let wasm_file = std::fs::File::open(wasm_path)
             .with_context(|| format!("cannot open {wasm_path:?}"))
             .map_err(|err| {
-                error!("Cannot read the file {wasm_path:?} - {err:?}");
-                DecodeError::CannotReadComponent { source: err }
+                DecodeError::new_with_source(format!("cannot read {wasm_path:?}"), err)
             })?;
         let stopwatch = std::time::Instant::now();
         let decoded = wit_parser::decoding::decode_reader(wasm_file).map_err(|err| {
-            error!("Cannot read {wasm_path:?} using wit_parser - {err:?}");
-            DecodeError::CannotReadComponent { source: err }
+            DecodeError::new_with_source(format!("cannot read {wasm_path:?} using wit_parser"), err)
         })?;
         let main_package = decoded.package();
         let DecodedWasm::Component(resolve, world_id) = decoded else {
-            error!("Input file must be a WASM Component");
-            return Err(DecodeError::CannotReadComponentWithReason {
-                reason: "must be a WASM Component".to_string(),
-            });
+            return Err(DecodeError::new_without_source(format!(
+                "{wasm_path:?} must be a WASM Component"
+            )));
         };
-        let world = resolve.worlds.get(world_id).expect("world must exist");
+        let world = resolve
+            .worlds
+            .get(world_id)
+            .expect("world was found by wit-parser");
         let exim_lite = Self::create_exim_lite(&resolve, world, submittable_exports)?;
         debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
         trace!("{exim_lite:?}");
@@ -282,41 +304,41 @@ fn has_submittable_exports(component_type: ComponentType) -> bool {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum DecodeError {
-    #[error("cannot read the WASM Component")]
-    CannotReadComponent {
-        #[source]
-        source: anyhow::Error,
-    },
-    #[error("cannot read the WASM Component - {reason}")]
-    CannotReadComponentWithReason { reason: String },
-    #[error("multi-value result is not supported in {0}")]
-    MultiValueResultNotSupported(FunctionFqn),
-    #[error("unsupported type in {ffqn} - {err}")]
-    TypeNotSupported {
-        err: TypeConversionError,
-        ffqn: FunctionFqn,
-    },
-    #[error("parameter cardinality mismatch in {0}")]
-    ParameterCardinalityMismatch(FunctionFqn),
-    #[error("invalid package `{0}`, {SUFFIX_PKG_EXT} is reserved")]
-    ReservedPackageSuffix(String),
-    #[error("cannot parse the WIT directory")]
-    WitDirectoryParsingError {
-        #[source]
-        source: anyhow::Error,
-    },
-    #[error("cannot select the default world")]
-    WorldSelectionError {
-        #[source]
-        source: anyhow::Error,
-    },
-    #[error("cannot rebuild resolve - {0}")]
-    RebuildResolveError(anyhow::Error),
-    #[error("component is exporting obelisk extended package `{0}`")]
-    ExportingExt(String),
-    #[error("wrong extension import {0}")]
-    WrongExtImport(FunctionFqn),
+pub struct DecodeError {
+    reason: StrVariant,
+    #[source]
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    #[allow(dead_code)] // context is needed for debug output
+    context: SpanTrace,
+}
+impl DecodeError {
+    pub fn new_with_source(
+        reason: impl Into<StrVariant>,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        DecodeError {
+            reason: reason.into(),
+            source: Some(source.into()),
+            context: SpanTrace::capture(),
+        }
+    }
+
+    pub fn new_without_source(reason: impl Into<StrVariant>) -> Self {
+        DecodeError {
+            reason: reason.into(),
+            source: None,
+            context: SpanTrace::capture(),
+        }
+    }
+}
+impl Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.reason)?;
+        if let Some(source) = &self.source {
+            write!(f, " - {source}")?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -357,9 +379,10 @@ impl ExIm {
                 "the list must not be enriched with extensions yet"
             );
             if ifc_fqn.is_extension() {
-                return Err(DecodeError::ReservedPackageSuffix(
-                    ifc_fqn.package_name().to_string(),
-                ));
+                return Err(DecodeError::new_without_source(format!(
+                    "invalid package `{}`, {SUFFIX_PKG_EXT} is reserved",
+                    ifc_fqn.package_name()
+                )));
             }
         }
 
@@ -782,7 +805,9 @@ fn populate_ifcs_with_compatible_fns(
         };
         let package_ext = pkg_fqn.split_ext().map(|(_, pkg_ext)| pkg_ext);
         if processing_kind.is_export() && package_ext.is_some() {
-            return Err(DecodeError::ExportingExt(pkg_fqn.to_string()));
+            return Err(DecodeError::new_without_source(format!(
+                "component is exporting obelisk extended package {pkg_fqn}"
+            )));
         }
         let ifc_fqn = if let Some(version) = &package.version {
             format!(
@@ -809,7 +834,10 @@ fn populate_ifcs_with_compatible_fns(
                     match TypeWrapper::from_wit_parser_type(resolve, &return_type) {
                         Ok(ok) => ok,
                         Err(err) => {
-                            return Err(DecodeError::TypeNotSupported { err, ffqn });
+                            return Err(DecodeError::new_with_source(
+                                format!("unsupported type in {ffqn}"),
+                                err,
+                            ));
                         }
                     },
                     wit_type,
@@ -835,7 +863,10 @@ fn populate_ifcs_with_compatible_fns(
                                 ) {
                                     Ok(ok) => ok,
                                     Err(err) => {
-                                        return Err(DecodeError::TypeNotSupported { err, ffqn });
+                                        return Err(DecodeError::new_with_source(
+                                            format!("unsupported type in {ffqn}"),
+                                            err,
+                                        ));
                                     }
                                 },
                                 name: StrVariant::from(param_name.clone()),
@@ -864,7 +895,11 @@ fn populate_ifcs_with_compatible_fns(
                                     (Some(pkg_ext), Some(fn_ext)) if fn_ext.belongs_to(pkg_ext) => {
                                         Some(fn_ext)
                                     }
-                                    _ => return Err(DecodeError::WrongExtImport(ffqn)),
+                                    _ => {
+                                        return Err(DecodeError::new_without_source(format!(
+                                            "wrong extension import {ffqn}"
+                                        )));
+                                    }
                                 }
                             },
                             ffqn,
