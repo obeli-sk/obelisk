@@ -195,7 +195,14 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
             .all_exports()
             .iter()
             // Skip already linked functions to avoid unexpected behavior and security issues.
-            .filter(|import| !import.ifc_fqn.is_namespace_obelisk())
+            .filter(|import| {
+                if import.ifc_fqn.is_namespace_obelisk() {
+                    warn!("Skipping mocked import {}", import.ifc_fqn); // FIXME: only if imported
+                    false
+                } else {
+                    true
+                }
+            })
         {
             trace!(
                 ifc_fqn = %import.ifc_fqn,
