@@ -18,12 +18,17 @@ pub mod workflow;
 #[derive(thiserror::Error, Debug)]
 pub enum WasmFileError {
     #[error("cannot read WASM file: {0}")]
-    CannotReadComponent(wasmtime::Error),
+    CannotReadComponent(#[source] wasmtime::Error),
     #[error("cannot decode: {0}")]
-    DecodeError(#[from] wasm_tools::DecodeError),
+    DecodeError(
+        #[from]
+        #[source]
+        wasm_tools::DecodeError,
+    ),
     #[error("linking error - {reason}, details: {err}")]
     LinkingError {
         reason: StrVariant,
+        #[source]
         err: Box<dyn Error + Send + Sync>,
         context: SpanTrace,
     },

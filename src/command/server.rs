@@ -1619,7 +1619,7 @@ impl WorkerCompiled {
         )
     }
 
-    #[instrument(skip_all, fields(component_id = %self.exec_config.component_id), err)]
+    #[instrument(skip_all, fields(component_id = %self.exec_config.component_id))]
     fn link(self, fn_registry: &Arc<dyn FunctionRegistry>) -> Result<WorkerLinked, anyhow::Error> {
         Ok(WorkerLinked {
             worker: match self.worker {
