@@ -128,7 +128,9 @@ impl PathPrefixes {
 
                 PathBuf::from(dir)
             };
-        tokio::fs::create_dir_all(&path).await?;
+        tokio::fs::create_dir_all(&path)
+            .await
+            .with_context(|| format!("cannot create directory {path:?}"))?;
         Ok(path)
     }
 }
