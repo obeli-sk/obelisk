@@ -11,11 +11,15 @@ use clap::Parser;
 use directories::ProjectDirs;
 use grpc::{grpc_gen, injector::TracingInjector};
 use tonic::{codec::CompressionEncoding, transport::Channel};
+use tracing::error;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     match Args::parse().command {
-        Subcommand::Server(server) => server.run().await,
+        Subcommand::Server(server) => server
+            .run()
+            .await
+            .inspect_err(|err| error!("Server error: {err:#?}")),
         Subcommand::Client(Client {
             api_url,
             command: ClientSubcommand::Component(component),
