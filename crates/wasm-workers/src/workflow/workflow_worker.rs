@@ -270,12 +270,10 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                         }
                     });
                     if let Err(err) = res {
-                        return Err(WasmFileError::LinkingError {
-                            context: StrVariant::Arc(Arc::from(format!(
-                                "cannot add mock for imported function {ffqn}"
-                            ))),
-                            err: err.into(),
-                        });
+                        return Err(WasmFileError::linking_error(
+                            format!("cannot add mock for imported function {ffqn}"),
+                            err,
+                        ));
                     }
                 }
             } else {
@@ -286,10 +284,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
         // Pre-instantiate to catch missing imports
         let instance_pre = linker
             .instantiate_pre(&self.wasmtime_component)
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("preinstantiation error"),
-                err: err.into(),
-            })?;
+            .map_err(|err| WasmFileError::linking_error("preinstantiation error", err))?;
 
         Ok(WorkflowWorkerLinked {
             config: self.config,
@@ -1019,7 +1014,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "LinkingError { context: preinstantiation error")]
+    #[should_panic(expected = "preinstantiation error")]
     async fn fibo_workflow_with_missing_imports_should_fail() {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, _db_close) = Database::Memory.set_up().await;

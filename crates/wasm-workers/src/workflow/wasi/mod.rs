@@ -6,7 +6,7 @@ mod sockets;
 
 use super::workflow_ctx::WorkflowCtx;
 use crate::WasmFileError;
-use concepts::{StrVariant, time::ClockFn};
+use concepts::time::ClockFn;
 use wasmtime::component::Linker;
 
 wasmtime::component::bindgen!({
@@ -28,10 +28,8 @@ wasmtime::component::bindgen!({
 pub(crate) fn add_to_linker_async<C: ClockFn>(
     linker: &mut Linker<WorkflowCtx<C>>,
 ) -> Result<(), WasmFileError> {
-    let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
-        context: StrVariant::Static("linking error"),
-        err: err.into(),
-    };
+    let linking_err =
+        |err: wasmtime::Error| WasmFileError::linking_error("cannot link wasi stubs", err);
     let options = LinkOptions::default();
 
     wasi::clocks::monotonic_clock::add_to_linker::<_, WorkflowCtx<C>>(linker, |x| x)

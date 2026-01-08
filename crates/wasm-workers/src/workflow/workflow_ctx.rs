@@ -926,21 +926,16 @@ impl<C: ClockFn> WorkflowCtx<C> {
         linker: &mut Linker<Self>,
         stub_wasi: bool,
     ) -> Result<(), WasmFileError> {
-        let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking error"),
-            err: err.into(),
-        };
-
         log_activities::obelisk::log::log::add_to_linker::<_, WorkflowCtx<C>>(
             linker,
             |state: &mut Self| state,
         )
-        .map_err(linking_err)?;
+        .map_err(|err| WasmFileError::linking_error("cannot link obelisk::log", err))?;
         // link obelisk:types/execution
         types_4_0_0::execution::add_to_linker::<_, WorkflowCtx<C>>(linker, |state: &mut Self| {
             state
         })
-        .map_err(linking_err)?;
+        .map_err(|err| WasmFileError::linking_error("cannot link obelisk:types/execution", err))?;
 
         // link obelisk:workflow/workflow-support interface
         Self::add_to_linker_workflow_support(linker)?;
@@ -954,13 +949,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     fn add_to_linker_join_set(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
         const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@4.0.0";
-        let mut inst_join_set_ifc =
-            linker
-                .instance(IFC_FQN_JOIN_SET)
-                .map_err(|err| WasmFileError::LinkingError {
-                    context: StrVariant::Static(IFC_FQN_JOIN_SET),
-                    err: err.into(),
-                })?;
+        let mut inst_join_set_ifc = linker
+            .instance(IFC_FQN_JOIN_SET)
+            .map_err(|err| WasmFileError::linking_error(IFC_FQN_JOIN_SET, err))?;
 
         inst_join_set_ifc
             .resource_async(
@@ -976,10 +967,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking resource join-set"),
-                err: err.into(),
-            })?;
+            .map_err(|err| WasmFileError::linking_error("linking resource join-set", err))?;
 
         // id: func() -> string;
         inst_join_set_ifc
@@ -992,10 +980,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     Ok((id,))
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function id"),
-                err: err.into(),
-            })?;
+            .map_err(|err| WasmFileError::linking_error("linking function id", err))?;
 
         // submit-delay: func(timeout: schedule-at) -> delay-id
         inst_join_set_ifc
@@ -1018,10 +1003,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function submit-delay"),
-                err: err.into(),
-            })?;
+            .map_err(|err| WasmFileError::linking_error(
+                "linking function submit-delay",
+                err
+            ))?;
 
         // join-next: func() -> result<tuple<response-id, result>, join-next-error>
         inst_join_set_ifc
@@ -1038,22 +1023,15 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function join-next"),
-                err: err.into(),
-            })?;
+            .map_err(|err| WasmFileError::linking_error("linking function join-next", err))?;
 
         Ok(())
     }
 
     fn add_to_linker_workflow_support(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        let mut inst_workflow_support =
-            linker.instance(IFC_FQN_WORKFLOW_SUPPORT_4).map_err(|err| {
-                WasmFileError::LinkingError {
-                    context: StrVariant::Static(IFC_FQN_WORKFLOW_SUPPORT_4),
-                    err: err.into(),
-                }
-            })?;
+        let mut inst_workflow_support = linker
+            .instance(IFC_FQN_WORKFLOW_SUPPORT_4)
+            .map_err(|err| WasmFileError::linking_error(IFC_FQN_WORKFLOW_SUPPORT_4, err))?;
 
         inst_workflow_support
             .func_wrap_async(
@@ -1069,10 +1047,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function random-u64"),
-                err: err.into(),
-            })?;
+            .map_err(|err| WasmFileError::linking_error("linking function random-u64", err))?;
 
         inst_workflow_support
             .func_wrap_async(
@@ -1089,9 +1064,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function random-u64-inclusive"),
-                err: err.into(),
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function random-u64-inclusive", err)
             })?;
 
         inst_workflow_support
@@ -1109,10 +1083,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function random-string"),
-                err: err.into(),
-            })?;
+            .map_err(|err| WasmFileError::linking_error("linking function random-string", err))?;
 
         inst_workflow_support
             .func_wrap_async(
@@ -1128,10 +1099,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function sleep"),
-                err: err.into(),
-            })?;
+            .map_err(|err| WasmFileError::linking_error("linking function sleep", err))?;
 
         inst_workflow_support
             .func_wrap_async(
@@ -1146,9 +1114,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function join-set-creat-named"),
-                err: err.into(),
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function join-set-creat-named", err)
             })?;
 
         inst_workflow_support
@@ -1163,10 +1130,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function join-set-create"),
-                err: err.into(),
-            })?;
+            .map_err(|err| WasmFileError::linking_error("linking function join-set-create", err))?;
 
         inst_workflow_support
             .func_wrap_async(
@@ -1183,9 +1147,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     })
                 },
             )
-            .map_err(|err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking function new-join-set-generated"),
-                err: err.into(),
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function new-join-set-generated", err)
             })?;
 
         Ok(())

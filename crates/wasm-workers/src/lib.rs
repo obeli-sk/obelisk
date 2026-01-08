@@ -1,6 +1,7 @@
 use concepts::{ComponentType, FunctionFqn, FunctionMetadata, StrVariant};
 use std::{error::Error, fmt::Debug, path::Path};
 use tracing::{debug, error, trace};
+use tracing_error::SpanTrace;
 use utils::wasm_tools::{self, DecodeError, WasmComponent};
 
 pub mod activity;
@@ -20,11 +21,24 @@ pub enum WasmFileError {
     CannotReadComponent(wasmtime::Error),
     #[error("cannot decode: {0}")]
     DecodeError(#[from] wasm_tools::DecodeError),
-    #[error("linking error - {context}, details: {err}")]
+    #[error("linking error - {reason}, details: {err}")]
     LinkingError {
-        context: StrVariant,
+        reason: StrVariant,
         err: Box<dyn Error + Send + Sync>,
+        context: SpanTrace,
     },
+}
+impl WasmFileError {
+    pub fn linking_error(
+        reason: impl Into<StrVariant>,
+        error: impl Into<Box<dyn Error + Send + Sync>>,
+    ) -> WasmFileError {
+        WasmFileError::LinkingError {
+            reason: reason.into(),
+            err: error.into(),
+            context: SpanTrace::capture(),
+        }
+    }
 }
 
 pub mod envvar {

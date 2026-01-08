@@ -116,19 +116,11 @@ impl WebhookEndpointCompiled {
     ) -> Result<WebhookEndpointInstance<C, S>, WasmFileError> {
         let mut linker = Linker::new(engine);
         // Link wasi
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|err| {
-            WasmFileError::LinkingError {
-                context: StrVariant::Static("linking `wasmtime_wasi`"),
-                err: err.into(),
-            }
-        })?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(|err| WasmFileError::linking_error("linking `wasmtime_wasi`", err))?;
         // Link wasi-http
-        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(|err| {
-            WasmFileError::LinkingError {
-                context: StrVariant::Static("linking `wasmtime_wasi_http`"),
-                err: err.into(),
-            }
-        })?;
+        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
+            .map_err(|err| WasmFileError::linking_error("linking `wasmtime_wasi_http`", err))?;
         // Link log and types
         WebhookEndpointCtx::add_to_linker(&mut linker)?;
 
@@ -186,12 +178,10 @@ impl WebhookEndpointCompiled {
                         }
                     });
                     if let Err(err) = res {
-                        return Err(WasmFileError::LinkingError {
-                            context: StrVariant::Arc(Arc::from(format!(
-                                "cannot add mock for imported function {ffqn}"
-                            ))),
-                            err: err.into(),
-                        });
+                        return Err(WasmFileError::linking_error(
+                            format!("cannot add mock for imported function {ffqn}"),
+                            err,
+                        ));
                     }
                 }
             } else {
@@ -202,15 +192,11 @@ impl WebhookEndpointCompiled {
         // Pre-instantiate to catch missing imports
         let proxy_pre = linker
             .instantiate_pre(&self.runnable_component.wasmtime_component)
-            .map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking error while creating instantiate_pre"),
-                err: err.into(),
+            .map_err(|err: wasmtime::Error| {
+                WasmFileError::linking_error("linking error while creating instantiate_pre", err)
             })?;
         let proxy_pre = Arc::new(ProxyPre::new(proxy_pre).map_err(|err: wasmtime::Error| {
-            WasmFileError::LinkingError {
-                context: StrVariant::Static("linking error while creating ProxyPre instance"),
-                err: err.into(),
-            }
+            WasmFileError::linking_error("linking error while creating ProxyPre instance", err)
         })?);
 
         Ok(WebhookEndpointInstance {
@@ -753,19 +739,13 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
             linker,
             |x| x,
         )
-        .map_err(|err| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking log activities"),
-            err: err.into(),
-        })?;
+        .map_err(|err| WasmFileError::linking_error("linking log activities", err))?;
         // link obelisk:types
         types_v4_0_0::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<C, S>>(
             linker,
             |x| x,
         )
-        .map_err(|err| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking obelisk:types"),
-            err: err.into(),
-        })?;
+        .map_err(|err| WasmFileError::linking_error("linking obelisk:types", err))?;
         Ok(())
     }
 

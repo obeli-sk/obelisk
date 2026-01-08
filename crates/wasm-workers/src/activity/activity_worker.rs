@@ -7,10 +7,10 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
+use concepts::FunctionMetadata;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue, TrapKind};
-use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
@@ -63,34 +63,33 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
         clock_fn: C,
         sleep: S,
     ) -> Result<Self, WasmFileError> {
-        let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking error"),
-            err: err.into(),
-        };
-
         let mut linker = wasmtime::component::Linker::new(&engine);
         // wasi
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(linking_err)?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(|err| WasmFileError::linking_error("cannot link wasi", err))?;
         // wasi-http
-        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(linking_err)?;
+        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
+            .map_err(|err| WasmFileError::linking_error("cannot link wasi-http", err))?;
         // obelisk:log
         log_activities::obelisk::log::log::add_to_linker::<_, ActivityCtx<C>>(&mut linker, |x| x)
-            .map_err(linking_err)?;
+            .map_err(|err| WasmFileError::linking_error("cannot link obelisk:log", err))?;
+        // obelisk:activity/process
         match config
             .directories_config
             .as_ref()
             .and_then(|dir| dir.process_provider.as_ref())
         {
             Some(ProcessProvider::Native) => {
-                process_support::add_to_linker::<_, ActivityCtx<C>>(&mut linker, |x| x)
-                    .map_err(linking_err)?;
+                process_support::add_to_linker::<_, ActivityCtx<C>>(&mut linker, |x| x).map_err(
+                    |err| WasmFileError::linking_error("cannot link process support", err),
+                )?;
             }
             None => {}
         }
         // Attempt to pre-instantiate to catch missing imports
         let instance_pre = linker
             .instantiate_pre(&runnable_component.wasmtime_component)
-            .map_err(linking_err)?;
+            .map_err(|err| WasmFileError::linking_error("cannot link activity", err))?;
 
         let exported_ffqn_to_index = runnable_component
             .index_exported_functions()
@@ -153,10 +152,7 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
         sleep: S,
         cancel_registry: CancelRegistry,
     ) -> Result<Self, WasmFileError> {
-        let linking_err = |err: wasmtime::Error| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking error"),
-            err: err.into(),
-        };
+        let linking_err = |err: wasmtime::Error| WasmFileError::linking_error("linking error", err);
 
         let mut linker = wasmtime::component::Linker::new(&engine);
         // wasi
