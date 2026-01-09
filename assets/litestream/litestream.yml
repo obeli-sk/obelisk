@@ -1,0 +1,6 @@
+dbs:
+  - path: "/obelisk-sqlite/obelisk.sqlite"
+    replica:
+      url: "s3://litestream-bucket.127.0.0.1:9000/litestream/obelisk"
+      access-key-id: "minioadmin"
+      secret-access-key: "minioadmin"

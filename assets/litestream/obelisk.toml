@@ -1,0 +1,16 @@
+api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
+webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
+database.sqlite.directory = "/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
+log.stdout.enabled = true
+
+[[activity_wasm]]
+name = "test_programs_fibo_activity"
+location.oci = "docker.io/getobelisk/test_programs_fibo_activity:2025-12-08@sha256:a05d32fb111b8ac142393a97c36c411816dddf94839db5ff16633e1d3270f702"
+max_retries = 0
+
+[[workflow]]
+name = "test_programs_fibo_workflow"
+location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-12-08@sha256:3b171d325a832ad58c86ec1c2a33eac468ed951b57aaa9284a99dbc58abf1245"
+exec.lock_expiry.seconds = 2
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
+
