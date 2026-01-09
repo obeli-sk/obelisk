@@ -4,7 +4,8 @@ use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
 use std::path::Path;
 use std::path::PathBuf;
-use tracing::{debug, warn};
+use tracing::info;
+use tracing::warn;
 
 // release: Include real file
 #[cfg(not(debug_assertions))]
@@ -186,7 +187,7 @@ impl ConfigHolder {
             config
         } else {
             let found = Self::guess_obelisk_toml(project_dirs.as_ref())?;
-            debug!("Using obelisk.toml: {:?}", found);
+            info!("Using configuration file {:?}", found);
             found
         };
         Ok(Self {
