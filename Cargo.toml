@@ -234,11 +234,11 @@ http-body-util = "0.1"
 hyper = "1.8.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.2.1"
-indexmap = { version = "2.12", features = ["serde"] }
-insta = { version = "1.45.1", features = ["json"] }
+indexmap = { version = "2.13", features = ["serde"] }
+insta = { version = "1.46.0", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
-libc = "0.2.178"
+libc = "0.2.180"
 oci-client = { version = "0.15.0", default-features = false, features = [
     "rustls-tls",
 ] }
@@ -264,7 +264,7 @@ rusqlite = { version = "0.38.0", features = [
 schemars = "1.2.0"
 semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.148"
+serde_json = "1.0.149"
 serde_with = "3.16.1"
 sha2 = "0.10.9"
 syn = { version = "2", features = ["full"] }
@@ -283,8 +283,8 @@ tokio = { version = "1", features = [
     "time",
     "tracing",
 ] }
-tokio-stream = "0.1.17"
-toml = { version = "0.9.10", features = ["preserve_order"] }
+tokio-stream = "0.1.18"
+toml = { version = "0.9.11", features = ["preserve_order"] }
 tonic = { version = "0.14.2", default-features = false }
 tonic-prost = "0.14.2"
 tonic-reflection = "0.14.2"
@@ -297,15 +297,15 @@ tracing-appender = "0.2.4"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 ulid = { version = "=1.1.4", features = ["serde"] }
-url = "2.5.7"
+url = "2.5.8"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "40.0.0", features = ["memory-protection-keys"] }
-wasmtime-wasi = "40.0.0"
-wasmtime-wasi-io = "40.0.0"
-wasmtime-wasi-http = "40.0.0"
-wasmtime-environ = "40.0.0"
+wasmtime = { version = "40.0.1", features = ["memory-protection-keys"] }
+wasmtime-wasi = "40.0.1"
+wasmtime-wasi-io = "40.0.1"
+wasmtime-wasi-http = "40.0.1"
+wasmtime-environ = "40.0.1"
 # wasm-tools
 wast = "243.0.0"
 wit-parser = "0.243.0"
@@ -315,7 +315,7 @@ wit-component = "0.243.0"
 # testing components
 wasip2 = "1.0.1"
 wit-bindgen = "0.50.0"
-wstd = "0.6.3"
+wstd = "0.6.4"
 
 # otlp
 opentelemetry = "0.31.0"
