@@ -30,6 +30,7 @@ pub enum WastVal {
     Option(Option<Box<WastVal>>),
     Result(Result<Option<Box<WastVal>>, Option<Box<WastVal>>>),
     Flags(Vec<String>),
+    // TODO: Add Map(IndexMap<MapKey, WastVal>), when wasmtime supports it
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
