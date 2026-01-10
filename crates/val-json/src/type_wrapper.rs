@@ -33,7 +33,6 @@ pub enum TypeWrapper {
         err: Option<Box<TypeWrapper>>,
     },
     Flags(IndexSet<Box<str>>),
-    Map(MapKeyType, Box<TypeWrapper>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -120,10 +119,6 @@ impl PartialEq for TypeWrapper {
             (Self::Result { .. }, _) => false,
             (Self::Flags(l0), Self::Flags(r0)) => l0 == r0,
             (Self::Flags(_), _) => false,
-            (Self::Map(left_key, left_val), Self::Map(right_key, right_val)) => {
-                left_key == right_key && left_val == right_val
-            }
-            (Self::Map(_, _), _) => false,
         }
     }
 }
@@ -173,11 +168,6 @@ impl Debug for TypeWrapper {
             Self::Flags(flags) => f.debug_tuple("Flags").field(flags).finish(),
             Self::Own => f.debug_tuple("Own").finish(),
             Self::Borrow => f.debug_tuple("Borrow").finish(),
-            Self::Map(key_type, val_type) => f
-                .debug_tuple("Map")
-                .field(key_type)
-                .field(val_type)
-                .finish(),
         }
     }
 }
@@ -384,12 +374,9 @@ impl TypeWrapper {
                     TypeDefKind::List(inner) => Ok(TypeWrapper::List(Box::new(
                         TypeWrapper::from_wit_parser_type(resolve, inner)?,
                     ))),
-                    TypeDefKind::Map(key_type, value_type) => Ok(TypeWrapper::Map(
-                        MapKeyType::from_wit_parser_type(key_type)?,
-                        TypeWrapper::from_wit_parser_type(resolve, value_type).map(Box::new)?,
-                    )),
+                    TypeDefKind::Map(_, _) => Err(TypeConversionError::UnsupportedType("Map")),
                     TypeDefKind::FixedSizeList(_inner, _size) => {
-                        Err(TypeConversionError::UnsupportedType("FixedSizeList")) // TODO
+                        Err(TypeConversionError::UnsupportedType("FixedSizeList"))
                     }
                     TypeDefKind::Type(inner) => TypeWrapper::from_wit_parser_type(resolve, inner),
                     TypeDefKind::Future(_) => Err(TypeConversionError::UnsupportedType("Future")),
