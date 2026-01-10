@@ -22,8 +22,8 @@ pub enum TypeWrapper {
     String,
     Own,
     Borrow,
-    Record(IndexMap<Box<str>, TypeWrapper>), // TODO: indexmap, ordering of keys matter!
-    Variant(IndexMap<Box<str>, Option<TypeWrapper>>), // TODO: indexmap, ordering of keys matter!
+    Record(IndexMap<Box<str>, TypeWrapper>), // TODO: use ordermap, ordering of keys matter!
+    Variant(IndexMap<Box<str>, Option<TypeWrapper>>), // TODO: use ordermap, ordering of keys matter!
     List(Box<TypeWrapper>),
     Tuple(Box<[TypeWrapper]>),
     Enum(IndexSet<Box<str>>),
@@ -33,6 +33,23 @@ pub enum TypeWrapper {
         err: Option<Box<TypeWrapper>>,
     },
     Flags(IndexSet<Box<str>>),
+    Map(MapKeyType, Box<TypeWrapper>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum MapKeyType {
+    Bool,
+    S8,
+    U8,
+    S16,
+    U16,
+    S32,
+    U32,
+    S64,
+    U64,
+    Char,
+    String,
 }
 
 impl PartialEq for TypeWrapper {
@@ -103,6 +120,10 @@ impl PartialEq for TypeWrapper {
             (Self::Result { .. }, _) => false,
             (Self::Flags(l0), Self::Flags(r0)) => l0 == r0,
             (Self::Flags(_), _) => false,
+            (Self::Map(left_key, left_val), Self::Map(right_key, right_val)) => {
+                left_key == right_key && left_val == right_val
+            }
+            (Self::Map(_, _), _) => false,
         }
     }
 }
@@ -152,6 +173,11 @@ impl Debug for TypeWrapper {
             Self::Flags(flags) => f.debug_tuple("Flags").field(flags).finish(),
             Self::Own => f.debug_tuple("Own").finish(),
             Self::Borrow => f.debug_tuple("Borrow").finish(),
+            Self::Map(key_type, val_type) => f
+                .debug_tuple("Map")
+                .field(key_type)
+                .field(val_type)
+                .finish(),
         }
     }
 }
@@ -160,6 +186,8 @@ impl Debug for TypeWrapper {
 pub enum TypeConversionError {
     #[error("unsupported type {0}")]
     UnsupportedType(&'static str),
+    #[error("{0}")]
+    Invalid(String),
 }
 
 #[cfg(feature = "wasmtime")]
@@ -228,6 +256,30 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
             Type::Future(_) => Err(TypeConversionError::UnsupportedType("future")),
             Type::Stream(_) => Err(TypeConversionError::UnsupportedType("stream")),
             Type::ErrorContext => Err(TypeConversionError::UnsupportedType("error-context")),
+        }
+    }
+}
+
+#[cfg(feature = "wit-parser")]
+impl MapKeyType {
+    pub fn from_wit_parser_type(ty: &wit_parser::Type) -> Result<MapKeyType, TypeConversionError> {
+        use wit_parser::Type;
+
+        match ty {
+            Type::Bool => Ok(MapKeyType::Bool),
+            Type::U8 => Ok(MapKeyType::U8),
+            Type::U16 => Ok(MapKeyType::U16),
+            Type::U32 => Ok(MapKeyType::U32),
+            Type::U64 => Ok(MapKeyType::U64),
+            Type::S8 => Ok(MapKeyType::S8),
+            Type::S16 => Ok(MapKeyType::S16),
+            Type::S32 => Ok(MapKeyType::S32),
+            Type::S64 => Ok(MapKeyType::S64),
+            Type::Char => Ok(MapKeyType::Char),
+            Type::String => Ok(MapKeyType::String),
+            other => Err(TypeConversionError::Invalid(format!(
+                "invalid map key type {other:?}"
+            ))),
         }
     }
 }
@@ -332,6 +384,10 @@ impl TypeWrapper {
                     TypeDefKind::List(inner) => Ok(TypeWrapper::List(Box::new(
                         TypeWrapper::from_wit_parser_type(resolve, inner)?,
                     ))),
+                    TypeDefKind::Map(key_type, value_type) => Ok(TypeWrapper::Map(
+                        MapKeyType::from_wit_parser_type(key_type)?,
+                        TypeWrapper::from_wit_parser_type(resolve, value_type).map(Box::new)?,
+                    )),
                     TypeDefKind::FixedSizeList(_inner, _size) => {
                         Err(TypeConversionError::UnsupportedType("FixedSizeList")) // TODO
                     }
