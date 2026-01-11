@@ -60,9 +60,6 @@ backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/tes
 forward_stdout="stderr"
 forward_stderr="stderr"
 
-[log.stdout]
-enabled = true
-
 [log.file]
 enabled = true
 target = true

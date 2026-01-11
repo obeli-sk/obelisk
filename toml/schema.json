@@ -227,7 +227,8 @@
       "type": "object",
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": true
         },
         "level": {
           "$ref": "#/$defs/EnvFilter"
@@ -243,10 +244,7 @@
           "default": false
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "enabled"
-      ]
+      "additionalProperties": false
     },
     "AppenderRollingFile": {
       "type": "object",
@@ -650,14 +648,7 @@
           ]
         },
         "stdout": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AppenderOut"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/AppenderOut"
         }
       },
       "additionalProperties": false

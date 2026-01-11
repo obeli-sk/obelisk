@@ -1092,6 +1092,8 @@ impl From<DurationConfigOptional> for Option<Duration> {
     }
 }
 pub(crate) mod log {
+    use crate::config::toml::default_out_enabled;
+
     use super::{Deserialize, JsonSchema, default_out_style};
     use serde_with::serde_as;
     use std::str::FromStr;
@@ -1102,7 +1104,7 @@ pub(crate) mod log {
         #[serde(default)]
         pub(crate) file: Option<AppenderRollingFile>,
         #[serde(default)]
-        pub(crate) stdout: Option<AppenderOut>,
+        pub(crate) stdout: AppenderOut,
     }
 
     #[derive(Debug, Deserialize, JsonSchema, Default, Copy, Clone)]
@@ -1182,11 +1184,21 @@ pub(crate) mod log {
     #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderOut {
+        #[serde(default = "default_out_enabled")]
         pub(crate) enabled: bool,
         #[serde(flatten, default)]
         pub(crate) common: AppenderCommon,
         #[serde(default = "default_out_style")]
         pub(crate) style: LoggingStyle,
+    }
+    impl Default for AppenderOut {
+        fn default() -> Self {
+            Self {
+                enabled: default_out_enabled(),
+                common: AppenderCommon::default(),
+                style: default_out_style(),
+            }
+        }
     }
 
     #[derive(Debug, Deserialize, JsonSchema)]
@@ -1523,7 +1535,9 @@ const fn default_lock_extension() -> DurationConfig {
 const fn default_subscription_interruption() -> DurationConfigOptional {
     DurationConfigOptional::Seconds(1)
 }
-
+fn default_out_enabled() -> bool {
+    true
+}
 fn default_out_style() -> LoggingStyle {
     LoggingStyle::PlainCompact
 }
