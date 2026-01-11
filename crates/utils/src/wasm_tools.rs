@@ -88,7 +88,7 @@ impl WasmComponent {
             })
             .inspect_err(|err| error!("{err:?}"))?;
         info!(
-            "Transformed Core WASM Module to WASM Component {output_file:?} in {:?}",
+            "Transformed Core WASM Module {wasm_path:?} to WASM Component {output_file:?} in {:?}",
             stopwatch.elapsed()
         );
         Ok(Some(output_file))
