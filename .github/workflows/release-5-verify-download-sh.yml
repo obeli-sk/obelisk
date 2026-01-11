@@ -47,7 +47,7 @@ jobs:
           cd temp
           curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
           ./obelisk --version | grep $VERSION
-          ./obelisk server generate-config
+          ./obelisk generate config obelisk.toml
           ./obelisk server verify
         env:
           VERSION: ${{ steps.git-info.outputs.version }}
@@ -83,7 +83,7 @@ jobs:
             RUN apk add curl
             RUN curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | sh
             RUN ./obelisk --version | grep $VERSION
-            RUN ./obelisk server generate-config
+            RUN ./obelisk generate config obelisk.toml
             RUN ./obelisk server verify
           EOF
         env:

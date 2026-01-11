@@ -60,5 +60,5 @@ jobs:
           mkdir tmp # Avoid conflict with existing obelisk.toml
           cd tmp
           obelisk --version
-          obelisk server generate-config
+          obelisk generate config obelisk.toml
           obelisk server verify
