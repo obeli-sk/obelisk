@@ -401,7 +401,7 @@ async fn verify_internal(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
-    info!("Verifying server configuration, compiling WASM components");
+    info!("Verifying configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
 
     let wasm_cache_dir = config
@@ -453,7 +453,7 @@ async fn verify_internal(
     let compiled_and_linked =
         ServerCompiledLinked::new(server_verified, termination_watcher).await?;
     info!(
-        "Server configuration was verified{}",
+        "Obelisk configuration was verified{}",
         if compiled_and_linked.supressed_errors.is_some() {
             " with supressed errors"
         } else {
