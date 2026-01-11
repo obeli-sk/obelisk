@@ -25,6 +25,7 @@ location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-
 exec.lock_expiry.seconds = 2
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 exec.locking_strategy = "by_component_id"
+backtrace.ignore_component_digest = true
 
 [[workflow]]
 name = "test_programs_fibo_workflow_outer"
@@ -32,6 +33,7 @@ location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-
 exec.lock_expiry.seconds = 2
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow-outer/src/lib.rs" }
 exec.locking_strategy = "by_component_id"
+backtrace.ignore_component_digest = true
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
@@ -50,6 +52,7 @@ forward_stderr = "stderr"
 name = "test_programs_http_get_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_http_get_workflow.wasm"
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
+backtrace.ignore_component_digest = true
 
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
@@ -61,6 +64,7 @@ name = "test_programs_sleep_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_sleep_workflow.wasm"
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
 exec.locking_strategy = "by_component_id"
+backtrace.ignore_component_digest = true
 
 [[webhook_endpoint]]
 name = "test_programs_sleep_webhook"
@@ -107,3 +111,4 @@ location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/r
 name = "test_programs_stub_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_stub_workflow.wasm"
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/stub/workflow/src/lib.rs" }
+backtrace.ignore_component_digest = true
