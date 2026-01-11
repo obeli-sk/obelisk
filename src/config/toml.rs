@@ -482,11 +482,11 @@ pub(crate) struct ComponentCommon {
 }
 
 impl ComponentCommon {
-    /// Fetch wasm file, calculate its content digest, optionally compare with the expected `content_digest`.
+    /// Fetch wasm file, calculate its content digest.
     ///
     /// Read wasm file either from local fs or pull from an OCI registry and cache it.
-    /// Backfill the `content_digest`. File is not converted from Core to Component format.
-    async fn fetch_and_verify(
+    /// Calculate the `content_digest`. File is not converted from Core to Component format.
+    async fn fetch(
         self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
@@ -635,7 +635,7 @@ impl ActivityStubExtComponentConfigToml {
     ) -> Result<ActivityStubExtConfigVerified, anyhow::Error> {
         let (common, wasm_path) = self
             .common
-            .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+            .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
         let component_id = ComponentId::new(
             component_type,
@@ -705,7 +705,7 @@ impl ActivityWasmComponentConfigToml {
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let (common, wasm_path) = self
             .common
-            .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+            .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
 
         let env_vars = resolve_env_vars(self.env_vars, ignore_missing_env_vars)?;
@@ -907,7 +907,7 @@ impl WorkflowComponentConfigToml {
         }
         let (common, wasm_path) = self
             .common
-            .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+            .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
         let (wasm_path, _transformed_digest) = if self.convert_core_module {
             // TODO: Avoid this by maintainig a mapping file if necessary.
@@ -1300,7 +1300,7 @@ pub(crate) mod webhook {
         {
             let (common, wasm_path) = self
                 .common
-                .fetch_and_verify(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+                .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
                 .await?;
             let backtrace_config = self.backtrace.verify(&path_prefixes);
             let component_id = ComponentId::new(
