@@ -6,6 +6,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0](https://github.com/obeli-sk/obelisk/compare/v0.33.1...v0.34.0)
+
+This release changes serialization format in the database. Error reporting has been improved.
+
+The most notable change is the ability to generate exported WIT packages of activities and workflows directly from the TOML configuration:
+```sh
+obelisk generate wit-deps some.toml dstpath
+```
+
+### Added
+
+- *(cli)* Generate all importable WITs from a TOML - ([8958cb9](https://github.com/obeli-sk/obelisk/commit/8958cb933ba68f210820ab7de226c1387a6dad87))
+- *(toml)* Make `out` logging enabled by default - ([0afe30b](https://github.com/obeli-sk/obelisk/commit/0afe30bf73525536324f65a4b3d650eae897e3e6))
+- *(toml)* Allow ignoring component's digest when requesting sources - ([5d5d6ee](https://github.com/obeli-sk/obelisk/commit/5d5d6eed63a34742b862bcde8838ca899e61dcf7))
+- Allow running without exposing API server - ([3311497](https://github.com/obeli-sk/obelisk/commit/33114972a54e9a47e4519c9d897de360cf40467a))
+- Add Litestream sample config - ([020a2dd](https://github.com/obeli-sk/obelisk/commit/020a2dd73cc0f72a00f5d5a495442e0429f8f75d))
+- Print content digest in `inspect` - ([cf84e45](https://github.com/obeli-sk/obelisk/commit/cf84e454437503a4d717d884ce4e5edf70d71d72))
+
+### Changed
+
+- *(cli)* [**breaking**] Rename `generate extensions` to `generate wit-extensions` - ([7151ef9](https://github.com/obeli-sk/obelisk/commit/7151ef964cc71389250e88592f79ddaaacb751bd))
+- *(db)* [**breaking**] Serialize all enum variants as `snake_case` - ([c1adb34](https://github.com/obeli-sk/obelisk/commit/c1adb34de89f12789595110648268b655b3ac8e9))
+- *(cli)* Move `server generate-config` to `generate config` - ([869f7e5](https://github.com/obeli-sk/obelisk/commit/869f7e54af4c600f49e134178125653e3871267d))
+
+### Removed
+- Stop transforming core modules on `push` - ([f2058ad](https://github.com/obeli-sk/obelisk/commit/f2058ad2779019cf99acbedbd84d3221ea6b9b25))
+- *(cli)* Enable `config-schema` only in debug builds - ([2799995](https://github.com/obeli-sk/obelisk/commit/27999953f0e4eacf8d175c91ed678f4d114eb61b))
+
+
 ## [0.33.1](https://github.com/obeli-sk/obelisk/compare/v0.33.0...v0.33.1)
 Re-release because Garnix cache did not register the release 0.33.0.
 
