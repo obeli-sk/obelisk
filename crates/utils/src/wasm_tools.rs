@@ -27,6 +27,10 @@ pub struct WasmComponent {
 }
 
 impl WasmComponent {
+    /// Convert input WASM file to a Component.
+    /// Return `Ok(Some(output_path))` if conversion was successful. Output path will be constructed as {`output_parent}/sha256`_{`input_digest}.wasm` .
+    /// If the output path already exists, the conversion is skipped as it is assumed that `output_parent` is only written to by Obelisk.
+    /// Return Ok(None) if the input file is a Component.
     pub async fn convert_core_module_to_component(
         wasm_path: &Path,
         output_parent: &Path,
@@ -36,10 +40,7 @@ impl WasmComponent {
         let stopwatch = std::time::Instant::now();
         let mut wasm_file = tokio::fs::File::open(wasm_path)
             .await
-            .with_context(|| format!("cannot open {wasm_path:?}"))
-            .inspect_err(|err| {
-                error!("{err:?}");
-            })?;
+            .with_context(|| format!("cannot open {wasm_path:?}"))?;
 
         let mut header_vec = Vec::new();
         loop {

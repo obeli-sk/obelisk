@@ -9,6 +9,7 @@ use concepts::{FunctionFqn, FunctionMetadata};
 use grpc::grpc_gen;
 use grpc::to_channel;
 use std::path::PathBuf;
+use utils::sha256sum::calculate_sha256_file;
 use utils::wasm_tools::WasmComponent;
 
 impl args::Component {
@@ -72,12 +73,20 @@ pub(crate) async fn inspect(
         let output_parent = wasm_path
             .parent()
             .expect("direct parent of a file is never None");
-        WasmComponent::convert_core_module_to_component(&wasm_path, output_parent)
-            .await?
-            .unwrap_or(wasm_path)
+        let transformed =
+            WasmComponent::convert_core_module_to_component(&wasm_path, output_parent).await?;
+        if let Some(transformed) = transformed {
+            println!("Transformed Core WASM component");
+            transformed
+        } else {
+            wasm_path
+        }
     } else {
         wasm_path
     };
+
+    let content_digest = calculate_sha256_file(&wasm_path).await?;
+    println!("Content digest: {content_digest}");
 
     let wasm_component = WasmComponent::new(wasm_path, component_type)?;
 

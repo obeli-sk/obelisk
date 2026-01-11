@@ -910,10 +910,9 @@ impl WorkflowComponentConfigToml {
             .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
         let wasm_path = if self.convert_core_module {
-            // TODO: Avoid this by maintainig a mapping file if necessary.
             WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
                 .await?
-                .unwrap_or(wasm_path)
+                .unwrap_or(wasm_path) // None means the original is already Component
         } else {
             wasm_path
         };
