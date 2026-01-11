@@ -2,20 +2,14 @@ pub(crate) mod config_holder;
 pub(crate) mod env_var;
 pub(crate) mod toml;
 
-use crate::oci;
-use anyhow::Context;
 use concepts::ComponentId;
 use concepts::ContentDigest;
 use concepts::FunctionMetadata;
 use concepts::PackageIfcFns;
-use config_holder::PathPrefixes;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_with::serde_as;
-use std::path::{Path, PathBuf};
 use toml::ConfigName;
-use tracing::instrument;
-use utils::sha256sum::calculate_sha256_file;
 
 /// Holds information about components, used for gRPC services like `ListComponents`
 #[derive(Debug, Clone)]
@@ -50,30 +44,4 @@ pub(crate) enum ComponentLocation {
         #[schemars(with = "String")]
         oci_client::Reference,
     ),
-}
-
-impl ComponentLocation {
-    #[instrument(skip_all)]
-    pub(crate) async fn obtain_wasm(
-        &self,
-        wasm_cache_dir: &Path,
-        metadata_dir: &Path,
-        path_prefixes: &PathPrefixes,
-    ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
-        match self {
-            ComponentLocation::Path(wasm_path) => {
-                let wasm_path = path_prefixes.replace_file_prefix_verify_exists(wasm_path)?;
-                // Future optimization: If the content digest is specified in TOML and wasm is already in the cache dir, do not recalculate it.
-                let content_digest = calculate_sha256_file(&wasm_path)
-                    .await
-                    .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
-                Ok((content_digest, wasm_path))
-            }
-            ComponentLocation::Oci(image) => {
-                oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
-                    .await
-                    .context("try cleaning the cache directory with `--clean-cache`")
-            }
-        }
-    }
 }
