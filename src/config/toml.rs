@@ -909,13 +909,13 @@ impl WorkflowComponentConfigToml {
             .common
             .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
-        let (wasm_path, _transformed_digest) = if self.convert_core_module {
+        let wasm_path = if self.convert_core_module {
             // TODO: Avoid this by maintainig a mapping file if necessary.
             WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
                 .await?
-                .unwrap_or((wasm_path, common.content_digest.clone()))
+                .unwrap_or(wasm_path)
         } else {
-            (wasm_path, common.content_digest.clone())
+            wasm_path
         };
         let component_id = ComponentId::new(
             ComponentType::Workflow,

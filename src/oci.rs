@@ -143,7 +143,6 @@ pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<()
             .expect("direct parent of a file is never None");
         WasmComponent::convert_core_module_to_component(&wasm_path, output_parent)
             .await?
-            .map(|(wasm_path, _modified_content_digest)| wasm_path)
             .context(
                 "input file is not a WASM Component, and conversion from core module failed",
             )?;
