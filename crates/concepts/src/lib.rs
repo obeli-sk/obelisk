@@ -19,7 +19,7 @@ pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
 use std::{
     borrow::Borrow,
-    fmt::{Debug, Display},
+    fmt::{Debug, Display, Write},
     hash::Hash,
     marker::PhantomData,
     ops::Deref,
@@ -308,19 +308,30 @@ impl PkgFqn {
             || package_name.ends_with(SUFFIX_PKG_SCHEDULE)
             || package_name.ends_with(SUFFIX_PKG_STUB)
     }
-}
-impl Display for PkgFqn {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+
+    fn fmt(&self, f: &mut dyn Write, delimiter: &'static str) -> std::fmt::Result {
         let PkgFqn {
             namespace,
             package_name,
             version,
         } = self;
         if let Some(version) = version {
-            write!(f, "{namespace}:{package_name}@{version}")
+            write!(f, "{namespace}{delimiter}{package_name}@{version}")
         } else {
-            write!(f, "{namespace}:{package_name}")
+            write!(f, "{namespace}{delimiter}{package_name}")
         }
+    }
+
+    #[must_use]
+    pub fn as_file_name(&self) -> String {
+        let mut buffer = String::new();
+        self.fmt(&mut buffer, "_").expect("writing to string");
+        buffer
+    }
+}
+impl Display for PkgFqn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.fmt(f, ":")
     }
 }
 
@@ -330,6 +341,35 @@ pub struct IfcFqnMarker;
 pub type IfcFqnName = Name<IfcFqnMarker>; // namespace:name/ifc_name OR namespace:name/ifc_name@version
 
 impl IfcFqnName {
+    #[must_use]
+    pub fn from_parts(
+        namespace: &str,
+        package_name: &str,
+        ifc_name: &str,
+        version: Option<&str>,
+    ) -> Self {
+        let mut str = format!("{namespace}:{package_name}/{ifc_name}");
+        if let Some(version) = version {
+            str += "@";
+            str += version;
+        }
+        Self::new_arc(Arc::from(str))
+    }
+
+    #[must_use]
+    pub fn from_pkg_fqn(pkg_fqn: &PkgFqn, ifc_name: &str) -> Self {
+        let mut str = format!(
+            "{namespace}:{package_name}/{ifc_name}",
+            namespace = pkg_fqn.namespace,
+            package_name = pkg_fqn.package_name
+        );
+        if let Some(version) = &pkg_fqn.version {
+            str += "@";
+            str += version;
+        }
+        Self::new_arc(Arc::from(str))
+    }
+
     #[must_use]
     pub fn namespace(&self) -> &str {
         self.deref().split_once(':').unwrap().0
@@ -365,21 +405,6 @@ impl IfcFqnName {
         after_slash
             .split_once('@')
             .map_or(after_slash, |(ifc, _)| ifc)
-    }
-
-    #[must_use]
-    pub fn from_parts(
-        namespace: &str,
-        package_name: &str,
-        ifc_name: &str,
-        version: Option<&str>,
-    ) -> Self {
-        let mut str = format!("{namespace}:{package_name}/{ifc_name}");
-        if let Some(version) = version {
-            str += "@";
-            str += version;
-        }
-        Self::new_arc(Arc::from(str))
     }
 
     #[must_use]

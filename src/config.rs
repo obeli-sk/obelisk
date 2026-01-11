@@ -21,7 +21,7 @@ pub(crate) struct ComponentConfig {
 }
 
 #[derive(Debug, Clone)]
-// Workflows or Activities (WASM, stub), but not Webhooks
+// Workflows or Activities (WASM, stub, external), but not Webhooks
 pub(crate) struct ComponentConfigImportable {
     pub(crate) exports_ext: Vec<FunctionMetadata>,
     pub(crate) exports_hierarchy_ext: Vec<PackageIfcFns>,

@@ -389,7 +389,7 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
 }
 
 #[instrument(skip_all, name = "verify")]
-async fn verify_internal(
+pub(crate) async fn verify_internal(
     config: ConfigToml,
     path_prefixes: Arc<PathPrefixes>,
     params: VerifyParams,
@@ -798,9 +798,9 @@ impl ServerVerified {
     }
 }
 
-struct ServerCompiledLinked {
+pub(crate) struct ServerCompiledLinked {
     engines: Engines,
-    component_registry_ro: ComponentConfigRegistryRO,
+    pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     compiled_components: LinkedComponents,
     parent_preopen_dir: Option<Arc<Path>>,
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
@@ -1903,6 +1903,7 @@ impl ComponentConfigRegistryRO {
             })
     }
 
+    /// List comopnents. When `extensions` is set to true, exteded functions are stripped from exports in each component.
     pub fn list(&self, extensions: bool) -> Vec<ComponentConfig> {
         self.inner
             .ids_to_components
@@ -1915,6 +1916,9 @@ impl ComponentConfigRegistryRO {
                     importable
                         .exports_ext
                         .retain(|fn_metadata| !fn_metadata.ffqn.ifc_fqn.is_extension());
+                    importable
+                        .exports_hierarchy_ext
+                        .retain(|ifc_fns| !ifc_fns.extension);
                 }
                 component
             })

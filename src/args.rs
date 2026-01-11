@@ -58,6 +58,16 @@ pub(crate) enum Generate {
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
     },
+    /// Generate WIT dependency folder based on activities and workflows found in provided TOML configuration.
+    WitDeps {
+        /// Path to the TOML configuration.
+        config: PathBuf,
+        /// Directory where folders and WIT files will be written to.
+        output_directory: PathBuf,
+        /// Overwrite existing files.
+        #[arg(long, short)]
+        overwrite: bool,
+    },
     Config {
         /// Filename to write the TOML to, defaults to <stdout>.
         output: Option<PathBuf>,

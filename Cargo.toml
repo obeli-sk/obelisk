@@ -67,6 +67,8 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 tracing-error.workspace = true
 wasmtime.workspace = true
+wit-component.workspace = true
+wit-parser.workspace = true
 
 # Optional deps:
 

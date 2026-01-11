@@ -1,15 +1,24 @@
 use crate::args::Generate;
+use crate::command::generate::wit_highlighter::{OutputToFile, process_pkg_with_deps};
+use crate::command::server::{VerifyParams, verify_internal};
+use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
+use crate::init::{self};
+use crate::project_dirs;
 use crate::{args::shadow::PKG_VERSION, config::toml::ConfigToml};
 use anyhow::Context;
 use concepts::{ComponentType, ExecutionId};
+use directories::{BaseDirs, ProjectDirs};
+use hashbrown::HashSet;
 use schemars::schema_for;
+use std::sync::Arc;
 use std::{
     borrow::Cow,
     fs::File,
     io::{BufWriter, Write as _, stdout},
     path::PathBuf,
 };
+use tokio::sync::watch;
 use utils::{wasm_tools::WasmComponent, wit};
 
 impl Generate {
@@ -39,6 +48,20 @@ impl Generate {
                 component_type,
                 output_directory,
             } => generate_support_wits(component_type, output_directory).await,
+            Generate::WitDeps {
+                config,
+                output_directory,
+                overwrite,
+            } => {
+                generate_wit_deps(
+                    project_dirs(),
+                    BaseDirs::new(),
+                    config,
+                    output_directory,
+                    overwrite,
+                )
+                .await
+            }
             Generate::ExecutionId => {
                 println!("{}", ExecutionId::generate());
                 Ok(())
@@ -168,4 +191,275 @@ pub(crate) async fn generate_support_wits(
         }
     }
     Ok(())
+}
+
+pub(crate) async fn generate_wit_deps(
+    project_dirs: Option<ProjectDirs>,
+    base_dirs: Option<BaseDirs>,
+    config: PathBuf,
+    output_directory: PathBuf,
+    overwrite: bool,
+) -> Result<(), anyhow::Error> {
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(config))?;
+    let mut config = config_holder.load_config().await?;
+    let _guard = init::init(&mut config)?;
+    let (termination_sender, mut termination_watcher) = watch::channel(());
+    tokio::spawn(async move { termination_notifier(termination_sender).await });
+    let (compiled_and_linked, _component_source_map) = Box::pin(verify_internal(
+        config,
+        Arc::new(config_holder.path_prefixes),
+        VerifyParams {
+            ignore_missing_env_vars: true,
+            clean_cache: false,
+            clean_codegen_cache: false,
+        },
+        &mut termination_watcher,
+    ))
+    .await?;
+    tokio::fs::create_dir_all(&output_directory)
+        .await
+        .with_context(|| format!("cannot create the output directory {output_directory:?}"))?;
+    let include_exports = true;
+    let mut output = OutputToFile::default();
+    for component in &compiled_and_linked
+        .component_registry_ro
+        .list(include_exports)
+    {
+        if let Some(wit) = &component.wit
+            && let Some(importable) = &component.workflow_or_activity_config
+        {
+            assert!(
+                component.component_id.component_type.is_activity()
+                    || component.component_id.component_type == ComponentType::Workflow
+            );
+            let mut already_processed_packages = HashSet::new();
+
+            let packages: HashSet<_> = importable
+                .exports_hierarchy_ext
+                .iter()
+                .map(|ifc_fqns| ifc_fqns.ifc_fqn.pkg_fqn_name())
+                .collect();
+
+            for pkg in packages {
+                output = process_pkg_with_deps(wit, &pkg, &mut already_processed_packages, output)
+                    .await?;
+            }
+        }
+    }
+    output.write(&output_directory, overwrite).await?;
+    Ok(())
+}
+
+mod wit_highlighter {
+    use anyhow::{Context, bail};
+    use concepts::PkgFqn;
+    use hashbrown::{HashMap, HashSet};
+    use std::path::{Path, PathBuf};
+    use tokio::{fs::OpenOptions, io::AsyncWriteExt};
+    use tracing::{debug, info};
+    use wit_component::{Output, WitPrinter};
+    use wit_parser::{PackageName, Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
+
+    pub async fn process_pkg_with_deps(
+        wit: &str,
+        pkg: &PkgFqn,
+        already_processed_packages: &mut HashSet<PkgFqn>,
+        output: OutputToFile,
+    ) -> Result<OutputToFile, anyhow::Error> {
+        let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
+        let mut resolve = Resolve::new();
+        let _main_id = resolve.push_group(group)?;
+        let mut printer = WitPrinter::new(output);
+
+        process_pkg_inner(&mut printer, &resolve, pkg, already_processed_packages)?;
+        Ok(printer.output)
+    }
+
+    fn process_pkg_inner(
+        printer: &mut WitPrinter<OutputToFile>,
+        resolve: &Resolve,
+        pkg: &PkgFqn,
+        already_processed_packages: &mut HashSet<PkgFqn>,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(package) = resolve.packages.iter().find_map(|(_, package)| {
+            let pkg_fqn = package_name_to_pkg_fqn(&package.name);
+            if pkg_fqn == *pkg { Some(package) } else { None }
+        }) {
+            {
+                let is_new = already_processed_packages.insert(pkg.clone());
+                if !is_new {
+                    return Ok(());
+                }
+            }
+            printer.output.change_current_pkg(pkg.clone());
+
+            printer
+                .print_package_outer(package)
+                .with_context(|| format!("cannot print {pkg}"))?;
+
+            printer.output.semicolon();
+            printer.output.newline();
+
+            let mut dependent_packages = HashSet::new();
+
+            for (ifc_name, ifc_id) in &package.interfaces {
+                let ifc_id = *ifc_id;
+                printer
+                    .print_interface_outer(resolve, ifc_id, ifc_name)
+                    .with_context(|| format!("cannot print {ifc_name}"))?;
+                printer.output.indent_start();
+                let interface = &resolve.interfaces[ifc_id];
+                printer.print_interface(resolve, ifc_id)?;
+                printer.output.indent_end();
+
+                // Look up imported types and print their packages recursively,
+                let requested_pkg_owner = TypeOwner::Interface(ifc_id);
+                for (_name, ty_id) in &interface.types {
+                    let ty = &resolve.types[*ty_id];
+                    if let TypeDefKind::Type(Type::Id(other)) = ty.kind {
+                        let other = &resolve.types[other];
+
+                        if requested_pkg_owner != other.owner {
+                            let ifc_id = match other.owner {
+                                TypeOwner::Interface(id) => id,
+                                other => bail!("unsupported type import from {other:?}"),
+                            };
+                            let iface = &resolve.interfaces[ifc_id];
+                            if let Some(imported_pkg_id) = iface.package
+                                && let imported_pkg = &resolve.packages[imported_pkg_id]
+                                && let pkg_fqn = package_name_to_pkg_fqn(&imported_pkg.name)
+                                && !already_processed_packages.contains(&pkg_fqn)
+                            {
+                                dependent_packages.insert(pkg_fqn);
+                            }
+                        }
+                    }
+                }
+            }
+            printer.output.finish_pkg();
+
+            for next_pkg in dependent_packages {
+                process_pkg_inner(printer, resolve, &next_pkg, already_processed_packages)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn package_name_to_pkg_fqn(value: &PackageName) -> PkgFqn {
+        PkgFqn {
+            namespace: value.namespace.clone(),
+            package_name: value.name.clone(),
+            version: value.version.as_ref().map(std::string::ToString::to_string),
+        }
+    }
+
+    #[derive(Default)]
+    pub struct OutputToFile {
+        current_pkg: Option<PkgFqn>,
+        indent: usize,
+        output: String,
+        // set to true after newline, then to false after first item is indented.
+        needs_indent: bool,
+        all_pkgs: HashMap<PkgFqn, String>,
+    }
+
+    impl OutputToFile {
+        fn change_current_pkg(&mut self, pkg_fqn: PkgFqn) {
+            debug!("Setting current package to {pkg_fqn}");
+            assert!(
+                self.current_pkg.is_none(),
+                "last package was not finished properly"
+            );
+            self.current_pkg = Some(pkg_fqn);
+        }
+
+        fn finish_pkg(&mut self) {
+            if let Some(old_pkg) = self.current_pkg.take() {
+                debug!("Finishing package {old_pkg}");
+                let output = std::mem::take(&mut self.output);
+                let conflict = self.all_pkgs.insert(old_pkg, output.clone());
+                if let Some(conflict) = conflict
+                    && conflict != output
+                {
+                    println!("Conflict: old: {conflict}");
+                    println!("Conflict: new: {output}");
+                }
+                self.indent = 0;
+                self.needs_indent = false;
+            }
+        }
+
+        pub(crate) async fn write(
+            self,
+            output_directory: &Path,
+            overwrite: bool,
+        ) -> Result<(), anyhow::Error> {
+            for (pkg_fqn, contents) in self.all_pkgs {
+                let pkg_file_name = pkg_fqn.as_file_name();
+                let directory = output_directory.join(&pkg_file_name);
+                tokio::fs::create_dir_all(&directory)
+                    .await
+                    .with_context(|| format!("cannot create the output directory {directory:?}"))?;
+
+                let target_wit = directory.join(format!("{pkg_file_name}.wit"));
+                info!("Writing {target_wit:?}");
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .create_new(!overwrite) // true == only allow new file creation
+                    .open(&target_wit)
+                    .await
+                    .with_context(|| format!("cannot open {target_wit:?} for writing"))?;
+
+                file.write_all(contents.as_bytes())
+                    .await
+                    .with_context(|| format!("cannot write to {target_wit:?}"))?;
+            }
+            Ok(())
+        }
+    }
+
+    impl Output for OutputToFile {
+        fn push_str(&mut self, src: &str) {
+            self.output.push_str(src);
+        }
+
+        fn indent_if_needed(&mut self) -> bool {
+            if self.needs_indent {
+                for _ in 0..self.indent {
+                    // Indenting by two spaces.
+                    self.output.push_str("  ");
+                }
+                self.needs_indent = false;
+                true
+            } else {
+                false
+            }
+        }
+
+        fn indent_start(&mut self) {
+            assert!(
+                !self.needs_indent,
+                "`indent_start` is never called after newline"
+            );
+            self.output.push_str(" {");
+            self.indent += 1;
+            self.newline();
+        }
+
+        fn indent_end(&mut self) {
+            // Note that a `saturating_sub` is used here to prevent a panic
+            // here in the case of invalid code being generated in debug
+            // mode. It's typically easier to debug those issues through
+            // looking at the source code rather than getting a panic.
+            self.indent = self.indent.saturating_sub(1);
+            self.indent_if_needed();
+            self.output.push('}');
+            self.newline();
+        }
+
+        fn newline(&mut self) {
+            self.output.push('\n');
+            self.needs_indent = true;
+        }
+    }
 }
