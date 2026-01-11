@@ -21,7 +21,7 @@ impl Generate {
                 ConfigHolder::generate_default_config(output.as_deref()).await
             }
 
-            Generate::Extensions {
+            Generate::WitExtensions {
                 component_type,
                 input_wit_directory,
                 output_directory,

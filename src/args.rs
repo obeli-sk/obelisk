@@ -41,7 +41,7 @@ pub(crate) enum Generate {
     },
     /// Generate extension WIT files that are automatically implemented by Obelisk
     /// based on the exported interfaces of the component.
-    Extensions {
+    WitExtensions {
         #[arg(long, short)]
         force: bool,
         /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
