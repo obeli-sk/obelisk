@@ -135,20 +135,20 @@ pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<()
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
     }
-    let wasm_path = {
-        // Attempt to convert the core module to a component if needed.
+    // Sanity check: Is it really a WASM Component?
+    if WasmComponent::verify_wasm(&wasm_path).is_err() {
+        // Attempt to convert the core module to a component
         let output_parent = wasm_path
             .parent()
             .expect("direct parent of a file is never None");
         WasmComponent::convert_core_module_to_component(&wasm_path, output_parent)
             .await?
-            .map(|(wasm_path, _content_digest)| wasm_path)
-            .unwrap_or(wasm_path)
-    };
-    // Sanity check: Is it really a WASM Component?
-    WasmComponent::verify_wasm(&wasm_path)?;
+            .map(|(wasm_path, _modified_content_digest)| wasm_path)
+            .context(
+                "input file is not a WASM Component, and conversion from core module failed",
+            )?;
+    }
     debug!("Pushing...");
-
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let (conf, layer) = WasmConfig::from_component(&wasm_path, None)
         .await

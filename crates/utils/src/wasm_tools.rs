@@ -34,6 +34,7 @@ impl WasmComponent {
     ) -> Result<Option<(PathBuf, ContentDigest)>, anyhow::Error> {
         use tokio::io::AsyncReadExt;
 
+        let stopwatch = std::time::Instant::now();
         let mut wasm_file = tokio::fs::File::open(wasm_path)
             .await
             .with_context(|| format!("cannot open {wasm_path:?}"))
@@ -58,8 +59,7 @@ impl WasmComponent {
             return Ok(None);
         }
         if !wasmparser::Parser::is_core_wasm(&header_vec) {
-            error!("Not a WASM Component or a Core WASM Module: {wasm_file:?}");
-            anyhow::bail!("not a WASM Component or a Core WASM Module");
+            anyhow::bail!("not a WASM Component or a Core WASM Module: {wasm_file:?}");
         }
         let content_digest = calculate_sha256_file(wasm_path).await?;
         let output_file = output_parent.join(format!("{}.wasm", content_digest.with_infix("_"),));
@@ -87,7 +87,10 @@ impl WasmComponent {
                 format!("cannot write the transformed WASM Component to {output_file:?}")
             })
             .inspect_err(|err| error!("{err:?}"))?;
-        info!("Transformed Core WASM Module to WASM Component {output_file:?}");
+        info!(
+            "Transformed Core WASM Module to WASM Component {output_file:?} in {:?}",
+            stopwatch.elapsed()
+        );
         Ok(Some((output_file, content_digest)))
     }
 
