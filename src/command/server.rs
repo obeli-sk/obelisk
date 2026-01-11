@@ -769,9 +769,8 @@ impl ServerVerified {
         debug!("Verified config: {config:#?}");
         let component_source_map = {
             let mut map = hashbrown::HashMap::new();
-            for workflow in &mut config.workflows {
-                let inner_map =
-                    std::mem::take(&mut workflow.backtrace_config.frame_files_to_sources);
+            for workflow in &config.workflows {
+                let inner_map = workflow.backtrace_config.frame_files_to_sources.clone();
                 let matchable_source_map = MatchableSourceMap::new(inner_map);
                 let mut component_id = workflow.component_id().clone();
                 if workflow.backtrace_config.ignore_component_digest {
@@ -779,9 +778,8 @@ impl ServerVerified {
                 }
                 map.insert(component_id, matchable_source_map);
             }
-            for webhook in &mut config.webhooks_by_names.values_mut() {
-                let inner_map =
-                    std::mem::take(&mut webhook.backtrace_config.frame_files_to_sources);
+            for webhook in config.webhooks_by_names.values_mut() {
+                let inner_map = webhook.backtrace_config.frame_files_to_sources.clone();
                 let matchable_source_map = MatchableSourceMap::new(inner_map);
                 let mut component_id = webhook.component_id.clone();
                 if webhook.backtrace_config.ignore_component_digest {
