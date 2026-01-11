@@ -36,7 +36,7 @@ pub(crate) enum Generate {
     /// Generate the Obelisk configuration schema in JSON schema format.
     #[cfg(debug_assertions)]
     ConfigSchema {
-        /// Filename to write the schema to, defaults to `<stdout>`.
+        /// Filename to write the schema to, defaults to <stdout>.
         output: Option<PathBuf>,
     },
     /// Generate extension WIT files that are automatically implemented by Obelisk
@@ -58,6 +58,10 @@ pub(crate) enum Generate {
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
     },
+    Config {
+        /// Filename to write the TOML to, defaults to <stdout>.
+        output: Option<PathBuf>,
+    },
     ExecutionId,
 }
 
@@ -77,7 +81,6 @@ pub(crate) enum Server {
         #[arg(long, short)]
         config: Option<PathBuf>,
     },
-    GenerateConfig,
     /// Read the configuration, compile the components, verify their imports and exit
     Verify {
         /// Clean the codegen and OCI cache directories

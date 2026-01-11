@@ -144,12 +144,6 @@ impl Server {
                 ))
                 .await
             }
-            Server::GenerateConfig => {
-                let obelisk_toml = PathBuf::from("obelisk.toml");
-                ConfigHolder::generate_default_config(&obelisk_toml).await?;
-                println!("Generated {obelisk_toml:?}");
-                Ok(())
-            }
             Server::Verify {
                 clean_cache,
                 clean_codegen_cache,

@@ -9,9 +9,9 @@ use tracing::warn;
 
 // release: Include real file
 #[cfg(not(debug_assertions))]
-const EXAMPLE_TOML: &[u8] = include_bytes!("../../obelisk.toml");
+const OBELISK_TOML: &str = include_str!("../../obelisk.toml");
 #[cfg(debug_assertions)]
-const EXAMPLE_TOML: &[u8] = b"not available in debug builds";
+const OBELISK_TOML: &str = "not available in debug builds";
 
 // Path prefixes
 const HOME_DIR_PREFIX: &str = "~/";
@@ -142,11 +142,18 @@ pub(crate) struct ConfigHolder {
 }
 
 impl ConfigHolder {
-    pub(crate) async fn generate_default_config(obelisk_toml: &Path) -> Result<(), anyhow::Error> {
-        if obelisk_toml.try_exists()? {
-            bail!("file already exists: {obelisk_toml:?}");
+    pub(crate) async fn generate_default_config(
+        obelisk_toml: Option<&Path>,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(obelisk_toml) = obelisk_toml {
+            if obelisk_toml.try_exists()? {
+                bail!("file already exists: {obelisk_toml:?}");
+            }
+            tokio::fs::write(obelisk_toml, OBELISK_TOML).await?;
+            println!("Generated {obelisk_toml:?}");
+        } else {
+            println!("{OBELISK_TOML}");
         }
-        tokio::fs::write(obelisk_toml, EXAMPLE_TOML).await?;
         Ok(())
     }
 

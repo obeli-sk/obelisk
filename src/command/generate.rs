@@ -1,4 +1,5 @@
 use crate::args::Generate;
+use crate::config::config_holder::ConfigHolder;
 use crate::{args::shadow::PKG_VERSION, config::toml::ConfigToml};
 use anyhow::Context;
 use concepts::{ComponentType, ExecutionId};
@@ -16,6 +17,10 @@ impl Generate {
         match self {
             #[cfg(debug_assertions)]
             Generate::ConfigSchema { output } => generate_toml_schema(output),
+            Generate::Config { output } => {
+                ConfigHolder::generate_default_config(output.as_deref()).await
+            }
+
             Generate::Extensions {
                 component_type,
                 input_wit_directory,
