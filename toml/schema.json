@@ -78,9 +78,6 @@
     }
   },
   "additionalProperties": false,
-  "required": [
-    "api"
-  ],
   "$defs": {
     "ActivitiesDirectoriesCleanupConfigToml": {
       "type": "object",
@@ -218,13 +215,13 @@
       "type": "object",
       "properties": {
         "listening_addr": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "listening_addr"
-      ]
+      "additionalProperties": false
     },
     "AppenderOut": {
       "type": "object",

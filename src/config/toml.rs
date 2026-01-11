@@ -51,6 +51,7 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigToml {
+    #[serde(default)]
     pub(crate) api: ApiConfig,
     #[serde(default)]
     pub(crate) database: DatabaseConfigToml,
@@ -85,10 +86,10 @@ pub(crate) struct ConfigToml {
     pub(crate) webhooks: Vec<WebhookComponentConfigToml>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ApiConfig {
-    pub(crate) listening_addr: SocketAddr,
+    pub(crate) listening_addr: Option<SocketAddr>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]

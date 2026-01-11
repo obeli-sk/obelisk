@@ -619,21 +619,27 @@ async fn run_internal(
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
 
-    let listener = TcpListener::bind(api_listening_addr)
-        .await
-        .with_context(|| format!("cannot bind to {api_listening_addr}"))?;
+    if let Some(api_listening_addr) = api_listening_addr {
+        let listener = TcpListener::bind(api_listening_addr)
+            .await
+            .with_context(|| format!("cannot bind to {api_listening_addr}"))?;
 
-    axum::serve(listener, app_svc)
-        .with_graceful_shutdown(async move {
-            info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
-            info!("Server is ready");
-            let _: Result<_, _> = termination_watcher.changed().await;
-            server_init.close().await; // must be closed here, otherwise HTTP/gRPC streams will not be terminated and server will not exit `serve`.
-        })
-        .await
-        .with_context(|| format!("server error listening on {api_listening_addr}"))?;
-    // Normally Axum blocks before this point until all clients are disconnected.
-    debug!("Server {api_listening_addr} has been closed");
+        axum::serve(listener, app_svc)
+            .with_graceful_shutdown(async move {
+                info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
+                info!("Obelisk is ready");
+                let _: Result<_, _> = termination_watcher.changed().await;
+                server_init.close().await; // must be closed here, otherwise HTTP/gRPC streams will not be terminated and server will not exit `serve`.
+            })
+            .await
+            .with_context(|| format!("server error listening on {api_listening_addr}"))?;
+        // Normally Axum blocks before this point until all clients are disconnected.
+        debug!("Server {api_listening_addr} has been closed");
+    } else {
+        info!("Obeliskg is ready");
+        let _: Result<_, _> = termination_watcher.changed().await;
+        server_init.close().await;
+    }
     Ok(())
 }
 
@@ -713,7 +719,12 @@ impl ServerVerified {
                 forward_stderr: StdOutput::default(),
                 env_vars: vec![EnvVarConfig {
                     key: "TARGET_URL".to_string(),
-                    val: Some(format!("http://{}", config.api.listening_addr)),
+                    val: Some(format!(
+                        "http://{}",
+                        config.api.listening_addr.context(
+                            "cannot expose webui without configuring `api.listening_addr`"
+                        )?
+                    )),
                 }],
                 backtrace: ComponentBacktraceConfig::default(),
             });
