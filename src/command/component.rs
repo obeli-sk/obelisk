@@ -64,11 +64,6 @@ pub(crate) async fn inspect(
     extensions: bool,
     convert_core_module: bool,
 ) -> anyhow::Result<()> {
-    if std::env::var("OBELISK_LOG").is_ok() {
-        tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_env("OBELISK_LOG"))
-            .init();
-    }
     let wasm_path = if convert_core_module {
         let output_parent = wasm_path
             .parent()
