@@ -14,6 +14,7 @@ use utils::{wasm_tools::WasmComponent, wit};
 impl Generate {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
+            #[cfg(debug_assertions)]
             Generate::ConfigSchema { output } => generate_toml_schema(output),
             Generate::Extensions {
                 component_type,
@@ -41,6 +42,7 @@ impl Generate {
     }
 }
 
+#[cfg(debug_assertions)]
 pub(crate) fn generate_toml_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     let schema = schema_for!(ConfigToml);
     if let Some(output) = output {
