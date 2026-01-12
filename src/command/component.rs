@@ -68,10 +68,15 @@ pub(crate) async fn inspect(
         let output_parent = wasm_path
             .parent()
             .expect("direct parent of a file is never None");
-        let transformed =
-            WasmComponent::convert_core_module_to_component(&wasm_path, output_parent).await?;
+        let input_digest = calculate_sha256_file(&wasm_path).await?;
+        let transformed = WasmComponent::convert_core_module_to_component(
+            &wasm_path,
+            &input_digest,
+            output_parent,
+        )
+        .await?;
         if let Some(transformed) = transformed {
-            println!("Transformed Core WASM component");
+            println!("Transformed Core WASM {wasm_path:?} to Component {transformed:?}");
             transformed
         } else {
             wasm_path

@@ -141,7 +141,8 @@ pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<()
         let output_parent = wasm_path
             .parent()
             .expect("direct parent of a file is never None");
-        WasmComponent::convert_core_module_to_component(&wasm_path, output_parent)
+        let input_digest = calculate_sha256_file(&wasm_path).await?;
+        WasmComponent::convert_core_module_to_component(&wasm_path, &input_digest, output_parent)
             .await?
             .context(
                 "input file is not a WASM Component, and conversion from core module failed",

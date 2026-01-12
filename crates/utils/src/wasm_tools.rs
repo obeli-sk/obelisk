@@ -1,10 +1,11 @@
-use crate::{sha256sum::calculate_sha256_file, wit::from_wit_package_name_to_pkg_fqn};
+use crate::wit::from_wit_package_name_to_pkg_fqn;
 use anyhow::Context;
 use concepts::{
-    ComponentType, FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName,
-    PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType, ReturnTypeNonExtendable,
-    SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT,
-    SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
+    ComponentType, ContentDigest, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
+    IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType,
+    ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE,
+    SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB,
+    StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -34,6 +35,7 @@ impl WasmComponent {
     /// Return Ok(None) if the input file is a Component.
     pub async fn convert_core_module_to_component(
         wasm_path: &Path,
+        input_content_digest: &ContentDigest,
         output_parent: &Path,
     ) -> Result<Option<PathBuf>, anyhow::Error> {
         use tokio::io::AsyncReadExt;
@@ -62,7 +64,7 @@ impl WasmComponent {
         if !wasmparser::Parser::is_core_wasm(&header_vec) {
             anyhow::bail!("not a WASM Component or a Core WASM Module: {wasm_file:?}");
         }
-        let input_content_digest = calculate_sha256_file(wasm_path).await?;
+
         let output_file = output_parent.join(format!(
             "{}_transformed.wasm",
             input_content_digest.with_infix("_"),

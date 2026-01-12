@@ -911,16 +911,20 @@ impl WorkflowComponentConfigToml {
             .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
         let wasm_path = if self.convert_core_module {
-            WasmComponent::convert_core_module_to_component(&wasm_path, &wasm_cache_dir)
-                .await?
-                .unwrap_or(wasm_path) // None means the original is already Component
+            WasmComponent::convert_core_module_to_component(
+                &wasm_path,
+                &common.content_digest,
+                &wasm_cache_dir,
+            )
+            .await?
+            .unwrap_or(wasm_path) // None means the original is already Component
         } else {
             wasm_path
         };
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(common.name),
-            InputContentDigest(common.content_digest),
+            InputContentDigest(common.content_digest), // NB: content digest belongs to the original (untransformed) file.
         )?;
 
         let workflow_config = WorkflowConfig {
