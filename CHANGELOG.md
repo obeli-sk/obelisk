@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.1](https://github.com/obeli-sk/obelisk/compare/v0.34.0...v0.34.1)
+
+This release contains a fix for transforming Core WASM workflows to WASM Components which was skipped in 0.34.0 if the WASM file was pulled from an OCI registry.
+
+### Fixed
+
+- Output transformed file as `sha256_{input_digest}_transformed.wasm` - ([941f52d](https://github.com/obeli-sk/obelisk/commit/941f52d38f3b246f56d555b4865d889ab5ba5b8d))
+
+
 ## [0.34.0](https://github.com/obeli-sk/obelisk/compare/v0.33.1...v0.34.0)
 
 This release changes serialization format in the database. Error reporting has been improved.
