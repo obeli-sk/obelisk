@@ -28,8 +28,9 @@ pub struct WasmComponent {
 
 impl WasmComponent {
     /// Convert input WASM file to a Component.
-    /// Return `Ok(Some(output_path))` if conversion was successful. Output path will be constructed as {`output_parent}/sha256`_{`input_digest}.wasm` .
-    /// If the output path already exists, the conversion is skipped as it is assumed that `output_parent` is only written to by Obelisk.
+    /// Return `Ok(Some(output_path))` if conversion was successful. Output path is constructed as
+    /// `{output_parent}/sha256_{input_digest}_transformed.wasm` .
+    /// If the output path already exists, the conversion is skipped as it is assumed that Obelisk has made the transformation.
     /// Return Ok(None) if the input file is a Component.
     pub async fn convert_core_module_to_component(
         wasm_path: &Path,
@@ -61,8 +62,11 @@ impl WasmComponent {
         if !wasmparser::Parser::is_core_wasm(&header_vec) {
             anyhow::bail!("not a WASM Component or a Core WASM Module: {wasm_file:?}");
         }
-        let content_digest = calculate_sha256_file(wasm_path).await?;
-        let output_file = output_parent.join(format!("{}.wasm", content_digest.with_infix("_"),));
+        let input_content_digest = calculate_sha256_file(wasm_path).await?;
+        let output_file = output_parent.join(format!(
+            "{}_transformed.wasm",
+            input_content_digest.with_infix("_"),
+        ));
         // already transformed?
         if output_file.exists() {
             debug!("Found the transformed WASM Component {output_file:?}");
