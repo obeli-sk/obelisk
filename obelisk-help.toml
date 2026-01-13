@@ -189,12 +189,11 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # directory = "."
 # prefix = "obelisk_server_daily" # File name prefix
 
-[log.file]
-enabled = true
-target = true
-directory = "."
-prefix = "obelisk.log"
-
+# [log.file]
+# enabled = true
+# target = true
+# directory = "."
+# prefix = "obelisk.log"
 
 ## Appendix: Supported path prefixes:
 # | Prefix               | Default path           | Details
@@ -208,48 +207,3 @@ prefix = "obelisk.log"
 ## Appendix: Environment variable interpolation
 # Keys that support environment variable interpolation can use `${SOME}` to get the value of environment variable `SOME`.
 
-
-## ~~~ Testing components
-
-[[http_server]]
-name = "external_webhook"
-listening_addr = "127.0.0.1:9090"
-
-[[activity_wasm]]
-name = "test_programs_fibo_activity"
-location.oci = "docker.io/getobelisk/test_programs_fibo_activity:2025-12-08@sha256:a05d32fb111b8ac142393a97c36c411816dddf94839db5ff16633e1d3270f702"
-max_retries = 0
-
-[[workflow]]
-name = "test_programs_fibo_workflow"
-location.oci = "docker.io/getobelisk/test_programs_fibo_workflow:2025-12-08@sha256:3b171d325a832ad58c86ec1c2a33eac468ed951b57aaa9284a99dbc58abf1245"
-exec.lock_expiry.seconds = 2
-backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
-
-[[webhook_endpoint]]
-name = "test_programs_fibo_webhook"
-location.oci = "docker.io/getobelisk/test_programs_fibo_webhook:2025-12-08@sha256:d48247d9f5c538c4c584c6f149f896a26a6f51efdc39ae73d6194b10f8cf0c12"
-http_server = "external_webhook"
-routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
-
-[[activity_wasm]]
-name = "test_programs_http_get_activity"
-location.oci = "docker.io/getobelisk/test_programs_http_get_activity:2025-12-08@sha256:135a686ea62a9f15289b2783af26fb1ee300140b38c1eb64a7f82377d3756b51"
-forward_stdout = "stderr"
-forward_stderr = "stderr"
-
-[[workflow]]
-name = "test_programs_http_get_workflow"
-location.oci = "docker.io/getobelisk/test_programs_http_get_workflow:2025-12-08@sha256:5256f3dbec47cdcc8e76dbf9fc81ed90e8c16a409c14a34ffc1bae35fd291d20"
-backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
-
-[[activity_wasm]]
-name = "test_programs_sleep_activity"
-location.oci = "docker.io/getobelisk/test_programs_sleep_activity:2025-12-08@sha256:05b4882412b3fbe1949954c5948aab273fce5d627ac81483908ec02edf887ae7"
-exec.lock_expiry.seconds = 10
-
-[[workflow]]
-name = "test_programs_sleep_workflow"
-location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2025-12-08@sha256:b833454a0c4befaa2767957ed1ddbcd4210510c7075ebf9d22ca7e2f14445ff4"
-backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
-exec.locking_strategy = "by_component_id"

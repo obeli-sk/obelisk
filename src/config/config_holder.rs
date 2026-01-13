@@ -4,14 +4,13 @@ use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
 use std::path::Path;
 use std::path::PathBuf;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt as _;
 use tracing::info;
 use tracing::warn;
 
-// release: Include real file
-#[cfg(not(debug_assertions))]
-const OBELISK_TOML: &str = include_str!("../../obelisk.toml");
-#[cfg(debug_assertions)]
-const OBELISK_TOML: &str = "not available in debug builds";
+const OBELISK_HELP_TOML: &str = include_str!("../../obelisk-help.toml");
+const OBELISK_GEN_TOML: &str = include_str!("../../obelisk-generate.toml");
 
 // Path prefixes
 const HOME_DIR_PREFIX: &str = "~/";
@@ -143,16 +142,35 @@ pub(crate) struct ConfigHolder {
 
 impl ConfigHolder {
     pub(crate) async fn generate_default_config(
-        obelisk_toml: Option<&Path>,
+        dst: Option<&Path>,
+        overwrite: bool,
     ) -> Result<(), anyhow::Error> {
-        if let Some(obelisk_toml) = obelisk_toml {
-            if obelisk_toml.try_exists()? {
-                bail!("file already exists: {obelisk_toml:?}");
-            }
-            tokio::fs::write(obelisk_toml, OBELISK_TOML).await?;
-            println!("Generated {obelisk_toml:?}");
+        let contents = format!("{OBELISK_HELP_TOML}\n{OBELISK_GEN_TOML}");
+
+        if let Some(dst) = dst {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true) // Always allow creating new files.
+                .truncate(true) // Truncate existing files.
+                .create_new(!overwrite) // if true, `create` is ignored, and only new file creation is allowed, meaning overwriting is disabled.
+                .open(dst)
+                .await
+                .with_context(|| {
+                    format!(
+                        "cannot open {dst:?} for writing{}",
+                        if !overwrite {
+                            ", try using `--overwrite`"
+                        } else {
+                            ""
+                        }
+                    )
+                })?;
+            file.write_all(contents.as_bytes())
+                .await
+                .with_context(|| format!("cannot write to {dst:?}"))?;
+            println!("Generated {dst:?}");
         } else {
-            println!("{OBELISK_TOML}");
+            println!("{contents}");
         }
         Ok(())
     }
