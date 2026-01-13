@@ -5,6 +5,7 @@ use crate::args::params::parse_params;
 use crate::get_execution_repository_client;
 use crate::get_fn_repository_client;
 use crate::server::web_api_server::ExecutionSubmitPayload;
+use anyhow::Context as _;
 use anyhow::bail;
 use chrono::DateTime;
 use concepts::ExecutionFailureKind;
@@ -41,7 +42,10 @@ impl args::Execution {
                 json,
             } => {
                 let opts = if json {
-                    SubmitOutputOpts::Json { follow }
+                    SubmitOutputOpts::Json {
+                        follow,
+                        no_reconnect,
+                    }
                 } else {
                     SubmitOutputOpts::Plain {
                         follow,
@@ -79,7 +83,7 @@ impl args::Execution {
 #[derive(PartialEq)]
 pub(crate) enum SubmitOutputOpts {
     Plain { follow: bool, no_reconnect: bool },
-    Json { follow: bool },
+    Json { follow: bool, no_reconnect: bool },
 }
 
 #[instrument(skip_all)]
@@ -155,20 +159,71 @@ pub(crate) async fn submit(
                 get_status(client, execution_id, opts).await?;
             }
         }
-        SubmitOutputOpts::Json { follow } => {
-            let client = reqwest::Client::builder().build()?;
-            let resp = client
-                .put(format!(
-                    "{api_url}/v1/executions/{execution_id}?follow={follow}"
-                ))
-                .header(ACCEPT, "application/json")
-                .json(&ExecutionSubmitPayload { ffqn, params })
-                .send()
-                .await?
-                .error_for_status()?;
-            let resp = resp.json::<serde_json::Value>().await?;
-            let resp = serde_json::to_string_pretty(&resp)?;
-            println!("{resp}");
+        SubmitOutputOpts::Json {
+            follow,
+            no_reconnect,
+        } => {
+            let client = reqwest::Client::builder()
+                .build()
+                .context("failed to build HTTP client")?;
+
+            let url = format!("{api_url}/v1/executions/{execution_id}?follow={follow}");
+
+            loop {
+                let request = client.put(&url).header(ACCEPT, "application/json").json(
+                    &ExecutionSubmitPayload {
+                        ffqn: ffqn.clone(),
+                        params: params.clone(),
+                    },
+                );
+                match request.send().await {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        if status.is_success() {
+                            // Execution was submitted. If following, response will be streamed later.
+                            // Connection drop here means we can retry.
+                            match resp.json::<serde_json::Value>().await {
+                                Ok(resp_json) => {
+                                    let output = serde_json::to_string_pretty(&resp_json)
+                                        .context("failed to format JSON output")?;
+                                    println!("{output}");
+                                    break; // Success!
+                                }
+                                Err(e) => {
+                                    // If we can't read the body, the server probably died mid-response
+                                    if no_reconnect {
+                                        return Err(e).context("failed to parse JSON response");
+                                    }
+                                    eprintln!("failed to read response body: {e:#}. retrying...");
+                                    // Fall through to sleep & retry
+                                }
+                            }
+                        } else {
+                            // Handle 4xx/5xx errors. No retry here as 5xx might indicate a serious problem,
+                            // for example in database connection.
+                            // We try to read the error text, but that might also fail if connection dropped.
+                            match resp.text().await {
+                                Ok(error_body) => {
+                                    return Err(anyhow::anyhow!(
+                                        "server returned status {status}: {error_body}"
+                                    ));
+                                }
+                                Err(e) => {
+                                    return Err(e).context("failed to read error body");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Handle connection refused / timeout
+                        if no_reconnect {
+                            return Err(e).context("failed to send execution request");
+                        }
+                        eprintln!("connection failed: {e:#}. retrying...");
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
         }
     }
     Ok(())
