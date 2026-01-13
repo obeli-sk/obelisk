@@ -9,7 +9,7 @@
 # see ./fly/activity-fly-http/obelisk-oci.toml
 # [[activity_wasm]]
 # name = "activity_fly_http"
-# location.oci = "docker.io/getobelisk/components_fly_activity_fly_http:2026-01-13@sha256:7529010fffc625e2aa7ce21d421248b8e7df80daed790713ff63a992c7d632bb"
+# location.oci = "docker.io/getobelisk/components_fly_activity_fly_http:2026-01-13-1@sha256:7b39b252793821b0b7a1cfb4c330fa41c869a8895cfd0ee69c9a9b7e2d3d1b9d"
 # exec.lock_expiry.seconds = 15
 # env_vars = ["FLY_API_TOKEN"]
 # forward_stdout = "stderr"
