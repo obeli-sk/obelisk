@@ -559,10 +559,10 @@ async fn execution_get_retval(
     }
 }
 
-#[derive(Deserialize, Debug)]
-struct ExecutionSubmitPayload {
-    ffqn: FunctionFqn,
-    params: Vec<serde_json::Value>,
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ExecutionSubmitPayload {
+    pub(crate) ffqn: FunctionFqn,
+    pub(crate) params: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug)]

@@ -42,6 +42,7 @@ oci-wasm.workspace = true
 prost-wkt-types.workspace = true
 prost.workspace = true
 rand.workspace = true
+reqwest.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
 serde_with.workspace = true

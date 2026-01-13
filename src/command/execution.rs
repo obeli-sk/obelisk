@@ -1,10 +1,10 @@
 use crate::ExecutionRepositoryClient;
-use crate::FunctionRepositoryClient;
 use crate::args;
 use crate::args::CancelCommand;
 use crate::args::params::parse_params;
 use crate::get_execution_repository_client;
 use crate::get_fn_repository_client;
+use crate::server::web_api_server::ExecutionSubmitPayload;
 use anyhow::bail;
 use chrono::DateTime;
 use concepts::ExecutionFailureKind;
@@ -23,6 +23,7 @@ use grpc::grpc_gen::execution_status::BlockedByJoinSet;
 use grpc::grpc_gen::execution_status::Finished;
 use grpc::to_channel;
 use grpc_gen::execution_status::Status;
+use http::header::ACCEPT;
 use itertools::Either;
 use std::str::FromStr;
 use std::time::Duration;
@@ -37,21 +38,17 @@ impl args::Execution {
                 params,
                 follow,
                 no_reconnect,
+                json,
             } => {
-                let channel = to_channel(api_url).await?;
-                let client = get_execution_repository_client(channel.clone()).await?;
-                let opts = SubmitOutputOpts::Plain { no_reconnect };
-                let component_client = get_fn_repository_client(channel).await?;
-                submit(
-                    client,
-                    component_client,
-                    execution_id,
-                    ffqn,
-                    parse_params(params)?,
-                    follow,
-                    opts,
-                )
-                .await
+                let opts = if json {
+                    SubmitOutputOpts::Json { follow }
+                } else {
+                    SubmitOutputOpts::Plain {
+                        follow,
+                        no_reconnect,
+                    }
+                };
+                submit(api_url, execution_id, ffqn, parse_params(params)?, opts).await
             }
             args::Execution::Stub(args::Stub {
                 execution_id,
@@ -81,19 +78,21 @@ impl args::Execution {
 
 #[derive(PartialEq)]
 pub(crate) enum SubmitOutputOpts {
-    Plain { no_reconnect: bool },
+    Plain { follow: bool, no_reconnect: bool },
+    Json { follow: bool },
 }
 
 #[instrument(skip_all)]
 pub(crate) async fn submit(
-    mut client: ExecutionRepositoryClient,
-    mut component_client: FunctionRepositoryClient,
+    api_url: &str,
     execution_id: Option<ExecutionId>,
     ffqn: FunctionFqn,
-    params: Vec<u8>,
-    follow: bool,
+    params: Vec<serde_json::Value>,
     opts: SubmitOutputOpts,
 ) -> anyhow::Result<()> {
+    let channel = to_channel(api_url).await?;
+    let mut client = get_execution_repository_client(channel.clone()).await?;
+    let mut component_client = get_fn_repository_client(channel).await?;
     let ffqn = if let Some(ifc_name) = ffqn.ifc_fqn.strip_prefix(".../") {
         // Guess function
         let components = component_client
@@ -132,26 +131,44 @@ pub(crate) async fn submit(
         ffqn
     };
     let execution_id = execution_id.unwrap_or_else(ExecutionId::generate);
-    client
-        .submit(tonic::Request::new(grpc_gen::SubmitRequest {
-            execution_id: Some(execution_id.clone().into()),
-            params: Some(prost_wkt_types::Any {
-                type_url: format!("urn:obelisk:json:params:{ffqn}"),
-                value: params,
-            }),
-            function_name: Some(grpc_gen::FunctionName::from(ffqn)),
-        }))
-        .await?;
-    println!("{execution_id}");
-    if follow {
-        match opts {
-            SubmitOutputOpts::Plain { no_reconnect } => {
+    match opts {
+        SubmitOutputOpts::Plain {
+            follow,
+            no_reconnect,
+        } => {
+            client
+                .submit(tonic::Request::new(grpc_gen::SubmitRequest {
+                    execution_id: Some(execution_id.clone().into()),
+                    params: Some(prost_wkt_types::Any {
+                        type_url: format!("urn:obelisk:json:params:{ffqn}"),
+                        value: serde_json::Value::Array(params).to_string().into_bytes(),
+                    }),
+                    function_name: Some(grpc_gen::FunctionName::from(ffqn)),
+                }))
+                .await?;
+            println!("{execution_id}");
+            if follow {
                 let opts = GetStatusOptions {
                     follow: true,
                     no_reconnect,
                 };
                 get_status(client, execution_id, opts).await?;
             }
+        }
+        SubmitOutputOpts::Json { follow } => {
+            let client = reqwest::Client::builder().build()?;
+            let resp = client
+                .put(format!(
+                    "{api_url}/v1/executions/{execution_id}?follow={follow}"
+                ))
+                .header(ACCEPT, "application/json")
+                .json(&ExecutionSubmitPayload { ffqn, params })
+                .send()
+                .await?
+                .error_for_status()?;
+            let resp = resp.json::<serde_json::Value>().await?;
+            let resp = serde_json::to_string_pretty(&resp)?;
+            println!("{resp}");
         }
     }
     Ok(())

@@ -185,6 +185,9 @@ pub(crate) enum Execution {
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long, requires = "follow")]
         no_reconnect: bool,
+        /// Output JSON in Web API format.
+        #[arg(short, long)]
+        json: bool,
         /// Accepted Parameter Formats:
         ///
         /// - JSON array string, e.g. '["first", "second", null, 1]'
@@ -216,9 +219,9 @@ pub(crate) mod params {
     use clap::error::ErrorKind;
     use serde_json::Value;
 
-    pub(crate) fn parse_params(params: Vec<String>) -> Result<Vec<u8>, clap::Error> {
+    pub(crate) fn parse_params(params: Vec<String>) -> Result<Vec<serde_json::Value>, clap::Error> {
         if params.is_empty() {
-            Ok("[]".to_string().into_bytes()) // no params, does not matter if `--` was present.
+            Ok(vec![]) // no params, does not matter if `--` was present.
         } else if params.len() == 1 && !dashdash() {
             let mut params = params;
             let json_array = params.pop().expect("checked that len == 1");
@@ -241,13 +244,13 @@ pub(crate) mod params {
                     format!("Invalid JSON array for parameters: {err}"),
                 )
             })?;
-            let Value::Array(_) = &json_value else {
+            let Value::Array(params) = json_value else {
                 return Err(clap::Error::raw(
                     ErrorKind::ValueValidation,
                     "Parameter provided as JSON must be a JSON array.",
                 ));
             };
-            Ok(json_value.to_string().into_bytes())
+            Ok(params)
         } else {
             // Fallback to raw arguments. Each argument is interpreted as a JSON value or a file starting with `@` that contains the JSON.
             let mut parsed_params: Vec<Value> = Vec::new();
@@ -276,7 +279,7 @@ pub(crate) mod params {
                 })?;
                 parsed_params.push(json);
             }
-            Ok(Value::Array(parsed_params).to_string().into_bytes())
+            Ok(parsed_params)
         }
     }
 
