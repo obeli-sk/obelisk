@@ -406,10 +406,21 @@ mod wit_highlighter {
                 info!("Writing {target_wit:?}");
                 let mut file = OpenOptions::new()
                     .write(true)
-                    .create_new(!overwrite) // true == only allow new file creation
+                    .create(true) // Always allow creating new files.
+                    .truncate(true) // Truncate existing files.
+                    .create_new(!overwrite) // if true, `create` is ignored, and only new file creation is allowed, meaning overwriting is disabled.
                     .open(&target_wit)
                     .await
-                    .with_context(|| format!("cannot open {target_wit:?} for writing"))?;
+                    .with_context(|| {
+                        format!(
+                            "cannot open {target_wit:?} for writing{}",
+                            if !overwrite {
+                                ", try using `--overwrite`"
+                            } else {
+                                ""
+                            }
+                        )
+                    })?;
 
                 file.write_all(contents.as_bytes())
                     .await
