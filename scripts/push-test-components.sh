@@ -6,7 +6,6 @@ set -exuo pipefail
 cd "$(dirname "$0")/.."
 
 TAG="$1"
-TOML_FILE="obelisk.toml"
 PREFIX="docker.io/getobelisk/"
 
 cargo check --workspace # starts build.rs of each -builder
@@ -19,7 +18,8 @@ push() {
     OUTPUT=$(cargo run -- client component push "$RELATIVE_PATH" "$OCI_LOCATION")
 
     # Replace the old location with the actual OCI location
-    sed -i -E "/name = \"${FILE_NAME_WITHOUT_EXT}\"/{n;s|location\.oci = \".*\"|location.oci = \"${OUTPUT}\"|}" "$TOML_FILE"
+    sed -i -E "/name = \"${FILE_NAME_WITHOUT_EXT}\"/{n;s|location\.oci = \".*\"|location.oci = \"${OUTPUT}\"|}" obelisk-testing-sqlite-oci.toml
+    sed -i -E "/name = \"${FILE_NAME_WITHOUT_EXT}\"/{n;s|location\.oci = \".*\"|location.oci = \"${OUTPUT}\"|}" obelisk-testing-postgres-oci.toml
 }
 
 # Make sure all components are fresh
