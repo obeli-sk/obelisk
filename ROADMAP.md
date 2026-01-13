@@ -46,6 +46,9 @@ Could be used to monitor MQTT, UDP etc.
 ## fix: Migrate logging to wasi
 Use wasi:logging/logging@0.1.0-draft
 
+## feat: Allow setting retry config, timeouts during execution creation using an extension function
+Change `-submit` extension signature to accept a config record.
+
 ## Future ideas
 * Optional caching of activity executions with a TTL - serve cached response if parameters are the same
 * External activities gRPC API
@@ -59,7 +62,6 @@ Use wasi:logging/logging@0.1.0-draft
 * Optional stdout,stderr persistence / forwarding
 * Smart dependency routing from a caller via an interface import to one of many components that export it.
 * Smart retries - Retry budget, disabling retries when the activity is failing certain % of requests
-* Allow setting retry config during execution creation using an extension function
 * Configurable jitter added to retries
 * Workflow memory snapshots for faster replay
 * Ability to hotfix a set of workflows, with an approval system when non determinism is detected - forking the execution log
