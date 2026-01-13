@@ -12,7 +12,6 @@ pub use crate::component_id::{
 };
 use ::serde::{Deserialize, Serialize};
 use assert_matches::assert_matches;
-pub use indexmap;
 use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
