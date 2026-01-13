@@ -328,6 +328,7 @@ pub(crate) async fn submit(
     }
 }
 
+#[expect(clippy::struct_excessive_bools)]
 pub(crate) struct RunParams {
     pub(crate) clean_cache: bool,
     pub(crate) clean_codegen_cache: bool,
@@ -358,6 +359,7 @@ pub(crate) async fn run(
 }
 
 #[derive(Debug, Default, Clone)]
+#[expect(clippy::struct_excessive_bools)]
 pub(crate) struct VerifyParams {
     pub(crate) clean_cache: bool,
     pub(crate) clean_codegen_cache: bool,
