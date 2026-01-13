@@ -212,6 +212,7 @@ pub(crate) async fn generate_wit_deps(
             ignore_missing_env_vars: true,
             clean_cache: false,
             clean_codegen_cache: false,
+            suppress_type_checking_errors: true, // Just extracting WITs, not running components
         },
         &mut termination_watcher,
     ))

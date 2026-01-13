@@ -131,15 +131,17 @@ impl Server {
                 clean_cache,
                 clean_codegen_cache,
                 config,
+                suppress_type_checking_errors,
             } => {
                 Box::pin(run(
                     project_dirs(),
                     BaseDirs::new(),
                     config,
                     RunParams {
-                        clean_sqlite_directory,
                         clean_cache,
                         clean_codegen_cache,
+                        clean_sqlite_directory,
+                        suppress_type_checking_errors,
                     },
                 ))
                 .await
@@ -149,6 +151,7 @@ impl Server {
                 clean_codegen_cache,
                 config,
                 ignore_missing_env_vars,
+                suppress_type_checking_errors,
             } => {
                 verify(
                     project_dirs(),
@@ -158,6 +161,7 @@ impl Server {
                         clean_cache,
                         clean_codegen_cache,
                         ignore_missing_env_vars,
+                        suppress_type_checking_errors,
                     },
                 )
                 .await
@@ -325,9 +329,10 @@ pub(crate) async fn submit(
 }
 
 pub(crate) struct RunParams {
-    pub(crate) clean_sqlite_directory: bool,
     pub(crate) clean_cache: bool,
     pub(crate) clean_codegen_cache: bool,
+    pub(crate) clean_sqlite_directory: bool,
+    pub(crate) suppress_type_checking_errors: bool,
 }
 
 pub(crate) async fn run(
@@ -357,6 +362,7 @@ pub(crate) struct VerifyParams {
     pub(crate) clean_cache: bool,
     pub(crate) clean_codegen_cache: bool,
     pub(crate) ignore_missing_env_vars: bool,
+    pub(crate) suppress_type_checking_errors: bool,
 }
 
 pub(crate) async fn verify(
@@ -444,16 +450,17 @@ pub(crate) async fn verify_internal(
         termination_watcher,
     )
     .await?;
-    let compiled_and_linked =
-        ServerCompiledLinked::new(server_verified, termination_watcher).await?;
-    info!(
-        "Obelisk configuration was verified{}",
-        if compiled_and_linked.supressed_errors.is_some() {
-            " with supressed errors"
-        } else {
-            ""
-        }
-    );
+    let compiled_and_linked = ServerCompiledLinked::new(
+        server_verified,
+        termination_watcher,
+        params.suppress_type_checking_errors,
+    )
+    .await?;
+    if compiled_and_linked.supressed_errors.is_none() {
+        info!("Obelisk configuration was verified");
+    } else {
+        warn!("Obelisk configuration was verified with supressed errors");
+    }
     Ok((compiled_and_linked, component_source_map))
 }
 
@@ -481,6 +488,7 @@ async fn run_internal(
             clean_cache: params.clean_cache,
             clean_codegen_cache: params.clean_codegen_cache,
             ignore_missing_env_vars: false,
+            suppress_type_checking_errors: params.suppress_type_checking_errors,
         },
         &mut termination_watcher,
     ))
@@ -812,6 +820,7 @@ impl ServerCompiledLinked {
     async fn new(
         server_verified: ServerVerified,
         termination_watcher: &mut watch::Receiver<()>,
+        suppress_type_checking_errors: bool,
     ) -> Result<Self, anyhow::Error> {
         let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
@@ -826,6 +835,9 @@ impl ServerCompiledLinked {
             termination_watcher,
         )
         .await?;
+        if !suppress_type_checking_errors && supressed_errors.is_some() {
+            bail!("type checking errors detected");
+        }
         Ok(Self {
             compiled_components,
             component_registry_ro,
@@ -2054,9 +2066,7 @@ mod tests {
             &mut termination_watcher,
         )
         .await?;
-        let compiled_and_linked =
-            ServerCompiledLinked::new(server_verified, &mut termination_watcher).await?;
-        assert_eq!(compiled_and_linked.supressed_errors, None);
+        ServerCompiledLinked::new(server_verified, &mut termination_watcher, false).await?;
         Ok(())
     }
 }

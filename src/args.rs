@@ -90,6 +90,9 @@ pub(crate) enum Server {
         /// Path to the TOML configuration
         #[arg(long, short)]
         config: Option<PathBuf>,
+        /// Ignore type checking errors
+        #[arg(long, short)]
+        suppress_type_checking_errors: bool,
     },
     /// Read the configuration, compile the components, verify their imports and exit
     Verify {
@@ -105,6 +108,9 @@ pub(crate) enum Server {
         /// Do not verify existence of environment variables
         #[arg(long, short)]
         ignore_missing_env_vars: bool,
+        /// Ignore type checking errors
+        #[arg(long, short)]
+        suppress_type_checking_errors: bool,
     },
 }
 
