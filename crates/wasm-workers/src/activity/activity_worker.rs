@@ -1,6 +1,6 @@
 use super::activity_ctx::{self, ActivityCtx};
 use super::activity_ctx_process::process_support_outer::v1_0_0::obelisk::activity::process as process_support;
-use crate::activity::activity_ctx::{ActivityPreopenIoError, HttpClientTracesContainer};
+use crate::activity::activity_ctx::ActivityPreopenIoError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
@@ -168,7 +168,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());
-        let http_client_traces = HttpClientTracesContainer::default();
         let cancelation_token = self
             .cancel_registry
             .obtain_cancellation_token(ctx.execution_id.clone());
@@ -179,10 +178,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
             tracing::field::display(&ctx.locked_event.lock_expires_at),
         );
 
-        let (mut store, deadline_duration) = match self
-            .create_store(&ctx, http_client_traces.clone(), started_at)
-            .await
-        {
+        let (mut store, deadline_duration) = match self.create_store(&ctx, started_at).await {
             Ok(store) => store,
             Err(err) => return WorkerResult::Err(err),
         };
@@ -219,10 +215,8 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                         now = %self.clock_fn.now(),
                         "Timed out")
                     );
-                let http_client_traces = Some(http_client_traces
-                    .lock()
-                    .unwrap()
-                    .drain(..)
+                let http_client_traces = Some(activity_ctx.http_client_traces
+                    .into_iter()
                         .map(|(req, mut resp)| HttpClientTrace {
                             req,
                             resp: resp.try_recv().ok(),
@@ -234,9 +228,8 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                 });
             }
             cancel_res = cancelation_token => {
-                let activity_ctx = store.into_data();
-                assert!(cancel_res.is_ok(), "only closed channels are dropped");
                 // TODO: Add http traces
+                assert!(cancel_res.is_ok(), "only closed channels are dropped");
                 return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, ctx.version));
             }
         }
@@ -253,7 +246,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
     async fn create_store(
         &self,
         ctx: &WorkerContext,
-        http_client_traces: HttpClientTracesContainer,
         started_at: DateTime<Utc>,
     ) -> Result<(Store<ActivityCtx<C>>, Duration /* deadline duration*/), WorkerError> {
         let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
@@ -299,7 +291,6 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
             &self.config,
             ctx.worker_span.clone(),
             self.clock_fn.clone(),
-            http_client_traces,
             preopened_dir,
         ) {
             Ok(store) => store,
@@ -441,9 +432,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
         let http_client_traces = Some(
             activity_ctx
                 .http_client_traces
-                .lock()
-                .unwrap()
-                .drain(..)
+                .into_iter()
                 .map(|(req, mut resp)| HttpClientTrace {
                     req,
                     resp: resp.try_recv().ok(),

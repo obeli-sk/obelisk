@@ -7,7 +7,7 @@ use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
 use hyper::body::Body;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span, debug, info_span};
 use wasmtime::Engine;
@@ -24,8 +24,7 @@ use wasmtime_wasi_http::types::{
 use wasmtime_wasi_http::{HttpResult, WasiHttpCtx, WasiHttpView};
 use wasmtime_wasi_io::IoView;
 
-pub type HttpClientTracesContainer =
-    Arc<Mutex<Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>>>;
+pub type HttpClientTracesContainer = Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>;
 
 pub struct ActivityCtx<C: ClockFn> {
     table: ResourceTable,
@@ -95,10 +94,7 @@ impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
             method: request.method().to_string(),
         };
         let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
-        self.http_client_traces
-            .lock()
-            .unwrap()
-            .push((req, resp_trace_rx));
+        self.http_client_traces.push((req, resp_trace_rx));
         let clock_fn = self.clock_fn.clone();
         span.in_scope(|| debug!("Sending {request:?}"));
         let handle = wasmtime_wasi::runtime::spawn(
@@ -131,7 +127,6 @@ pub(crate) fn store<C: ClockFn>(
     config: &ActivityConfig,
     worker_span: Span,
     clock_fn: C,
-    http_client_traces: HttpClientTracesContainer,
     preopened_dir: Option<PathBuf>,
 ) -> Result<Store<ActivityCtx<C>>, ActivityPreopenIoError> {
     let mut wasi_ctx = WasiCtxBuilder::new();
@@ -179,7 +174,7 @@ pub(crate) fn store<C: ClockFn>(
         wasi_ctx: wasi_ctx.build(),
         http_ctx: WasiHttpCtx::new(),
         component_logger: ComponentLogger { span: worker_span },
-        http_client_traces,
+        http_client_traces: HttpClientTracesContainer::default(),
         clock_fn,
         preopened_dir: preopened_dir.map(Arc::from),
         process_provider: config
