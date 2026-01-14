@@ -916,7 +916,7 @@ pub trait DbExternalApi: DbConnection {
         req_since: &Version,
         req_max_length: VersionType,
         req_include_backtrace_id: bool,
-        resp_pagination: Pagination<u32>,
+        resp_pagination: Pagination<VersionType>,
     ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead>;
 
     async fn upgrade_execution_component(
@@ -925,6 +925,20 @@ pub trait DbExternalApi: DbConnection {
         old: &InputContentDigest,
         new: &InputContentDigest,
     ) -> Result<(), DbErrorWrite>;
+
+    async fn list_logs(
+        &self,
+        execution_id: &ExecutionId,
+        filter: LogFilter,
+        pagination: Pagination<u32>,
+    ) -> Result<Vec<LogInfoRow>, DbErrorRead>;
+}
+
+#[derive(Debug)]
+pub struct LogFilter {
+    pub run_id: Option<RunId>,
+    // if set, return only logs (not streams) with the spefcified level or higher.
+    pub min_level: Option<LogLevel>,
 }
 
 #[derive(Debug, Clone)]
@@ -1053,6 +1067,57 @@ pub trait DbConnection: DbExecutor {
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite>;
 
     async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite>;
+
+    async fn append_log(
+        &self,
+        execution_id: &ExecutionId,
+        run_id: &RunId,
+        log_info: LogInfo,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_log_batch(
+        &self,
+        execution_id: &ExecutionId,
+        run_id: &RunId,
+        log_info: Vec<LogInfo>,
+    ) -> Result<(), DbErrorWrite>;
+}
+
+pub struct LogInfoRow {
+    pub cursor: u32,
+    pub run_id: RunId,
+    pub log_info: LogInfo,
+}
+
+#[derive(Debug, Clone)]
+pub enum LogInfo {
+    Log {
+        created_at: DateTime<Utc>,
+        level: LogLevel,
+        message: String,
+    },
+    Stream {
+        created_at: DateTime<Utc>,
+        payload: Vec<u8>,
+        stream_type: LogStreamType,
+    },
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
+#[try_from(repr)]
+#[repr(u8)]
+pub enum LogLevel {
+    Trace = 1,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
+#[try_from(repr)]
+#[repr(u8)]
+pub enum LogStreamType {
+    StdOut = 1,
+    StdErr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

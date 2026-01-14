@@ -221,6 +221,7 @@ derive_more = { version = "2.1.1", features = [
     "eq",
     "from_str",
     "into",
+    "try_from",
 ] }
 derive-where = "1.6.0"
 divan = { version = "3.0.5", package = "codspeed-divan-compat" }

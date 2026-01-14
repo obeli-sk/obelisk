@@ -1,6 +1,6 @@
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
-use crate::std_output_stream::{LogStream, StdOutput};
+use crate::std_output_stream::{LogStream, StdOutputConfig};
 use crate::webhook::webhook_trigger::types_v4_0_0::obelisk::types::join_set::JoinNextError;
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
@@ -342,8 +342,8 @@ pub async fn server<C: ClockFn + 'static, S: Sleep>(
 #[derive(Debug, Clone)]
 pub struct WebhookEndpointConfig {
     pub component_id: ComponentId,
-    pub forward_stdout: Option<StdOutput>,
-    pub forward_stderr: Option<StdOutput>,
+    pub forward_stdout: Option<StdOutputConfig>,
+    pub forward_stderr: Option<StdOutputConfig>,
     pub env_vars: Arc<[EnvVar]>,
     pub fuel: Option<u64>,
     pub backtrace_persist: bool,

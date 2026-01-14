@@ -15,10 +15,10 @@ use concepts::{
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
         ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse,
-        Locked, LockedBy, LockedExecution, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Version, VersionType, WasmBacktrace,
+        Locked, LockedBy, LockedExecution, LogFilter, LogInfo, LogInfoRow, LogLevel, LogStreamType,
+        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
+        PendingStateLocked, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
     },
 };
 use deadpool_postgres::{Client, Config, ManagerConfig, Pool, RecyclingMethod};
@@ -192,6 +192,24 @@ CREATE TABLE IF NOT EXISTS t_backtrace (
 
     pub const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (execution_id, version_min_including, version_max_excluding);
+";
+    pub const CREATE_TABLE_T_LOG: &str = r"
+CREATE TABLE IF NOT EXISTS t_log (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    execution_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    level INTEGER,
+    message TEXT,
+    stream_type INTEGER,
+    payload BYTEA
+);
+";
+    pub const IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_run_id_created_at ON t_log (execution_id, run_id, created_at);
+";
+    pub const IDX_T_LOG_EXECUTION_ID_CREATED_AT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_created_at ON t_log (execution_id, created_at);
 ";
 }
 
@@ -451,6 +469,9 @@ impl PostgresPool {
             ddl::CREATE_TABLE_T_DELAY,
             ddl::CREATE_TABLE_T_BACKTRACE,
             ddl::IDX_T_BACKTRACE_EXECUTION_ID_VERSION,
+            ddl::CREATE_TABLE_T_LOG,
+            ddl::IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT,
+            ddl::IDX_T_LOG_EXECUTION_ID_CREATED_AT,
         ];
 
         // Combine into one batch execution for atomicity per round-trip (or efficiency)
@@ -525,6 +546,18 @@ fn consistency_db_err(reason: impl Into<StrVariant>) -> DbErrorGeneric {
         reason: reason.into(),
         context: SpanTrace::capture(),
         source: None,
+        loc: Location::caller(),
+    }
+}
+#[track_caller]
+fn consistency_db_err_src(
+    reason: impl Into<StrVariant>,
+    source: Arc<dyn std::error::Error + Send + Sync>,
+) -> DbErrorGeneric {
+    DbErrorGeneric::Uncategorized {
+        reason: reason.into(),
+        context: SpanTrace::capture(),
+        source: Some(source),
         loc: Location::caller(),
     }
 }
@@ -1574,6 +1607,128 @@ async fn list_responses(
     Ok(results)
 }
 
+async fn list_logs_tx(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    filter: &LogFilter,
+    pagination: &Pagination<u32>,
+) -> Result<Vec<LogInfoRow>, DbErrorRead> {
+    let mut param_index = 1;
+    let mut query = format!(
+        "SELECT id, run_id, created_at, level, message, stream_type, payload
+         FROM t_log
+         WHERE execution_id = ${param_index}",
+    );
+    param_index += 1;
+
+    let execution_id = execution_id.to_string();
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&execution_id];
+
+    let run_id_temporary;
+    if let Some(run_id) = &filter.run_id {
+        write!(&mut query, " AND run_id = ${param_index}").expect("writing to string");
+        run_id_temporary = run_id.to_string();
+        params.push(&run_id_temporary);
+        param_index += 1;
+    }
+
+    let min_level_val_temporary;
+    if let Some(min_level) = filter.min_level {
+        write!(
+            &mut query,
+            " AND level IS NOT NULL AND level >= ${param_index}"
+        )
+        .expect("writing to string");
+        min_level_val_temporary = i32::from(min_level as u8);
+        params.push(&min_level_val_temporary);
+        param_index += 1;
+    }
+
+    // Pagination
+    write!(&mut query, " AND id {} ${param_index}", pagination.rel()).expect("writing to string");
+    let cursor_val: i64 = (*pagination.cursor()).into();
+    params.push(&cursor_val);
+    param_index += 1;
+
+    // Ordering and limit
+    write!(
+        &mut query,
+        " ORDER BY id {} LIMIT ${}",
+        if pagination.is_desc() { "DESC" } else { "ASC" },
+        param_index
+    )
+    .expect("writing to string");
+    let length_val: i64 = i64::from(pagination.length());
+    params.push(&length_val);
+
+    let rows = tx.query(&query, &params[..]).await?;
+
+    let mut logs = Vec::with_capacity(rows.len());
+
+    for row in rows {
+        let cursor: u32 = get(&row, "id")?;
+        let created_at: chrono::DateTime<chrono::Utc> = get(&row, "created_at")?;
+        let run_id: String = get(&row, "run_id")?;
+        let run_id = RunId::from_str(&run_id).map_err(|parse_err| {
+            consistency_db_err_src(
+                format!("cannot convert RunId {run_id}, id: {cursor}"),
+                Arc::from(parse_err),
+            )
+        })?;
+
+        let level: Option<i32> = get(&row, "level")?;
+        let message: Option<String> = get(&row, "message")?;
+        let stream_type: Option<i32> = get(&row, "stream_type")?;
+        let payload: Option<Vec<u8>> = get(&row, "payload")?;
+
+        let log_info = match (level, message, stream_type, payload) {
+            (Some(lvl), Some(msg), None, None) => {
+                let map_err = |err| {
+                    consistency_db_err_src(
+                        format!("cannot convert {lvl} to LogLevel , id: {cursor}"),
+                        err,
+                    )
+                };
+                LogInfo::Log {
+                    created_at,
+                    level: u8::try_from(lvl)
+                        .map(|lvl| LogLevel::try_from(lvl).map_err(|err| map_err(Arc::from(err))))
+                        .map_err(|err| map_err(Arc::from(err)))??,
+                    message: msg,
+                }
+            }
+            (None, None, Some(stype), Some(pl)) => {
+                let map_err = |err| {
+                    consistency_db_err_src(
+                        format!("cannot convert {stype} to LogStreamType , id: {cursor}"),
+                        err,
+                    )
+                };
+                LogInfo::Stream {
+                    created_at,
+                    stream_type: u8::try_from(stype)
+                        .map(|stype| {
+                            LogStreamType::try_from(stype).map_err(|err| map_err(Arc::from(err)))
+                        })
+                        .map_err(|err| map_err(Arc::from(err)))??,
+                    payload: pl,
+                }
+            }
+            _ => {
+                return Err(consistency_db_err(format!("invalid t_log row id:{cursor}")).into());
+            }
+        };
+
+        logs.push(LogInfoRow {
+            cursor,
+            run_id,
+            log_info,
+        });
+    }
+
+    Ok(logs)
+}
+
 fn parse_response_with_cursor(
     row: &tokio_postgres::Row,
 ) -> Result<ResponseWithCursor, DbErrorRead> {
@@ -2209,6 +2364,62 @@ async fn append_backtrace(
             ],
         )
         .await?;
+
+    Ok(())
+}
+
+async fn append_log(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    run_id: &RunId,
+    info: &LogInfo,
+) -> Result<(), DbErrorWrite> {
+    let (level, message, stream_type, payload, created_at) = match info {
+        LogInfo::Log {
+            created_at,
+            level,
+            message,
+        } => (
+            Some(*level as i32),
+            Some(message.as_str()),
+            None::<i32>,
+            None::<&[u8]>,
+            created_at,
+        ),
+        LogInfo::Stream {
+            created_at,
+            payload,
+            stream_type,
+        } => (
+            None::<i32>,
+            None::<&str>,
+            Some(*stream_type as i32),
+            Some(payload.as_slice()),
+            created_at,
+        ),
+    };
+
+    tx.execute(
+        "INSERT INTO t_log (
+            execution_id,
+            run_id,
+            created_at,
+            level,
+            message,
+            stream_type,
+            payload
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        &[
+            &execution_id.to_string(),
+            &run_id.to_string(),
+            &created_at,
+            &level,
+            &message,
+            &stream_type,
+            &payload,
+        ],
+    )
+    .await?;
 
     Ok(())
 }
@@ -3382,6 +3593,47 @@ impl DbConnection for PostgresConnection {
         Ok(())
     }
 
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn append_log(
+        &self,
+        execution_id: &ExecutionId,
+        run_id: &RunId,
+        append: LogInfo,
+    ) -> Result<(), DbErrorWrite> {
+        trace!("append_log");
+        let execution_id = execution_id.clone();
+        let run_id = *run_id;
+
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        append_log(&tx, &execution_id, &run_id, &append).await?;
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn append_log_batch(
+        &self,
+        execution_id: &ExecutionId,
+        run_id: &RunId,
+        batch: Vec<LogInfo>,
+    ) -> Result<(), DbErrorWrite> {
+        trace!("append_log_batch");
+        let execution_id = execution_id.clone();
+        let run_id = *run_id;
+
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        for append in batch {
+            append_log(&tx, &execution_id, &run_id, &append).await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Get currently expired delays and locks.
     #[instrument(level = Level::TRACE, skip(self))]
     async fn get_expired_timers(
@@ -3689,6 +3941,20 @@ impl DbExternalApi for PostgresConnection {
 
         tx.commit().await?;
         Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn list_logs(
+        &self,
+        execution_id: &ExecutionId,
+        filter: LogFilter,
+        pagination: Pagination<u32>,
+    ) -> Result<Vec<LogInfoRow>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let responses = list_logs_tx(&tx, execution_id, &filter, &pagination).await?;
+        tx.commit().await?;
+        Ok(responses)
     }
 }
 

@@ -84,7 +84,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # Activities are retried on timeouts and traps.
 # Moreover, with `retry_on_err`, a function that returns the `err` variant will be retried as well.
 # retry_on_err = true # default is true
-## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
+## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".
 # forward_stdout="stderr" # forwards stdout to host's stderr
 # forward_stderr="stderr" # forwards stderr to host's stderr
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
@@ -150,7 +150,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## For details about the matching engine please see https://docs.rs/route-recognizer/latest/route_recognizer/
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]
 
-## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
+## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".
 # forward_stdout="stderr" # forwards stdout to host's stderr
 # forward_stderr="stderr" # forwards stderr to host's stderr
 

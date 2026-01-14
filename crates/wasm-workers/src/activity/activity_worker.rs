@@ -4,7 +4,7 @@ use crate::activity::activity_ctx::{ActivityPreopenIoError, HttpClientTracesCont
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
-use crate::std_output_stream::StdOutput;
+use crate::std_output_stream::StdOutputConfig;
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use concepts::FunctionMetadata;
@@ -25,8 +25,8 @@ use wasmtime::{Engine, component::Val};
 #[derive(Clone, Debug)]
 pub struct ActivityConfig {
     pub component_id: ComponentId,
-    pub forward_stdout: Option<StdOutput>,
-    pub forward_stderr: Option<StdOutput>,
+    pub forward_stdout: Option<StdOutputConfig>,
+    pub forward_stderr: Option<StdOutputConfig>,
     pub env_vars: Arc<[EnvVar]>,
     pub retry_on_err: bool,
     pub directories_config: Option<ActivityDirectoriesConfig>,
@@ -1495,8 +1495,8 @@ pub(crate) mod tests {
                 TokioSleep,
                 move |component_id| ActivityConfig {
                     component_id,
-                    forward_stdout: Some(StdOutput::Stderr),
-                    forward_stderr: Some(StdOutput::Stderr),
+                    forward_stdout: Some(StdOutputConfig::Stderr),
+                    forward_stderr: Some(StdOutputConfig::Stderr),
                     env_vars: Arc::default(),
                     retry_on_err: true,
                     directories_config: Some(ActivityDirectoriesConfig {
@@ -1648,8 +1648,8 @@ pub(crate) mod tests {
                 TokioSleep,
                 move |component_id| ActivityConfig {
                     component_id,
-                    forward_stdout: Some(StdOutput::Stderr),
-                    forward_stderr: Some(StdOutput::Stderr),
+                    forward_stdout: Some(StdOutputConfig::Stderr),
+                    forward_stderr: Some(StdOutputConfig::Stderr),
                     env_vars: Arc::default(),
                     retry_on_err: false,
                     directories_config: None,
@@ -1707,8 +1707,8 @@ pub(crate) mod tests {
                 TokioSleep,
                 move |component_id| ActivityConfig {
                     component_id,
-                    forward_stdout: Some(StdOutput::Stderr),
-                    forward_stderr: Some(StdOutput::Stderr),
+                    forward_stdout: Some(StdOutputConfig::Stderr),
+                    forward_stderr: Some(StdOutputConfig::Stderr),
                     env_vars: Arc::default(),
                     retry_on_err: false,
                     directories_config: None,

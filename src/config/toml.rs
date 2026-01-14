@@ -31,6 +31,7 @@ use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
     envvar::EnvVar,
+    std_output_stream::StdOutputConfig,
     workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
     },
@@ -1247,13 +1248,15 @@ pub(crate) enum StdOutput {
     None,
     Stdout,
     Stderr,
+    Db,
 }
-impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
+impl From<StdOutput> for Option<StdOutputConfig> {
     fn from(value: StdOutput) -> Self {
         match value {
             StdOutput::None => None,
-            StdOutput::Stdout => Some(wasm_workers::std_output_stream::StdOutput::Stdout),
-            StdOutput::Stderr => Some(wasm_workers::std_output_stream::StdOutput::Stderr),
+            StdOutput::Stdout => Some(StdOutputConfig::Stdout),
+            StdOutput::Stderr => Some(StdOutputConfig::Stderr),
+            StdOutput::Db => Some(StdOutputConfig::Db),
         }
     }
 }
@@ -1276,7 +1279,7 @@ pub(crate) mod webhook {
         time::Duration,
     };
     use tracing::instrument;
-    use wasm_workers::envvar::EnvVar;
+    use wasm_workers::{envvar::EnvVar, std_output_stream::StdOutputConfig};
 
     #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -1371,8 +1374,8 @@ pub(crate) mod webhook {
         pub(crate) component_id: ComponentId,
         pub(crate) wasm_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,
-        pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,
-        pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
+        pub(crate) forward_stdout: Option<StdOutputConfig>,
+        pub(crate) forward_stderr: Option<StdOutputConfig>,
         pub(crate) env_vars: Arc<[EnvVar]>,
         pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
         pub(crate) subscription_interruption: Option<Duration>,

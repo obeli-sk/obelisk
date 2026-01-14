@@ -1,4 +1,5 @@
 // Based on https://github.com/bytecodealliance/wasmtime/blob/v36.0.1/src/commands/serve.rs#L874
+use chrono::{DateTime, Utc};
 use std::{
     pin::Pin,
     sync::{
@@ -11,18 +12,46 @@ use tokio::io::AsyncWrite;
 use wasmtime_wasi::p2::{StreamError, StreamResult};
 
 #[derive(Clone, Copy, Debug)]
+pub enum StdOutputConfig {
+    Stdout,
+    Stderr,
+    Db,
+}
+
+#[derive(Clone, Debug)]
 pub enum StdOutput {
     Stdout,
     Stderr,
+    Db {
+        buffer: Vec<(DateTime<Utc>, Vec<u8>)>,
+    },
 }
 
-impl StdOutput {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutOrErr {
+    Stdout,
+    Stderr,
+}
+impl OutOrErr {
     fn write_all(&self, buf: &[u8]) -> Result<(), std::io::Error> {
         use std::io::Write;
 
         match self {
-            StdOutput::Stdout => std::io::stdout().write_all(buf),
-            StdOutput::Stderr => std::io::stderr().write_all(buf),
+            OutOrErr::Stdout => std::io::stdout().write_all(&buf),
+            OutOrErr::Stderr => std::io::stderr().write_all(&buf),
+        }
+    }
+}
+
+impl StdOutput {
+    fn write_all(&mut self, buf: bytes::Bytes) -> Result<(), std::io::Error> {
+        match self {
+            StdOutput::Stdout => OutOrErr::Stdout.write_all(&buf),
+            StdOutput::Stderr => OutOrErr::Stderr.write_all(&buf),
+            StdOutput::Db { buffer } => {
+                buffer.push((Utc::now(), Vec::from(buf)));
+                Ok(())
+            }
         }
     }
 }
@@ -39,9 +68,9 @@ struct LogStreamState {
 }
 
 impl LogStream {
-    pub(crate) fn new(prefix: String, output: StdOutput) -> LogStream {
+    pub(crate) fn new(prefix: String, output_config: StdOutputConfig) -> LogStream {
         LogStream {
-            output,
+            output: StdOutput::from(output_config),
             state: Arc::new(LogStreamState {
                 prefix,
                 needs_prefix_on_next_write: AtomicBool::new(true),
@@ -64,6 +93,7 @@ impl wasmtime_wasi::cli::IsTerminal for LogStream {
         match &self.output {
             StdOutput::Stdout => std::io::stdout().is_terminal(),
             StdOutput::Stderr => std::io::stderr().is_terminal(),
+            StdOutput::Db { buffer: _ } => false,
         }
     }
 }
@@ -71,7 +101,7 @@ impl wasmtime_wasi::cli::IsTerminal for LogStream {
 impl wasmtime_wasi::p2::OutputStream for LogStream {
     fn write(&mut self, bytes: bytes::Bytes) -> StreamResult<()> {
         self.output
-            .write_all(&bytes)
+            .write_all(bytes)
             .map_err(|e| StreamError::LastOperationFailed(e.into()))?;
         Ok(())
     }
@@ -87,13 +117,22 @@ impl wasmtime_wasi::p2::OutputStream for LogStream {
 
 impl LogStream {
     fn write_all(&mut self, mut bytes: &[u8]) -> std::io::Result<()> {
+        let our_or_err = match &mut self.output {
+            StdOutput::Db { buffer } => {
+                buffer.push((Utc::now(), Vec::from(bytes)));
+                return Ok(());
+            }
+            StdOutput::Stdout => OutOrErr::Stdout,
+            StdOutput::Stderr => OutOrErr::Stderr,
+        };
+        // write with prefix
         while !bytes.is_empty() {
             if self
                 .state
                 .needs_prefix_on_next_write
                 .load(Ordering::Relaxed)
             {
-                self.output.write_all(self.state.prefix.as_bytes())?;
+                our_or_err.write_all(self.state.prefix.as_bytes())?;
                 self.state
                     .needs_prefix_on_next_write
                     .store(false, Ordering::Relaxed);
@@ -101,16 +140,15 @@ impl LogStream {
             if let Some(i) = bytes.iter().position(|b| *b == b'\n') {
                 let (a, b) = bytes.split_at(i + 1);
                 bytes = b;
-                self.output.write_all(a)?;
+                our_or_err.write_all(a)?;
                 self.state
                     .needs_prefix_on_next_write
                     .store(true, Ordering::Relaxed);
             } else {
-                self.output.write_all(bytes)?;
+                our_or_err.write_all(bytes)?;
                 break;
             }
         }
-
         Ok(())
     }
 }

@@ -15,10 +15,10 @@ use concepts::{
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
         ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse,
-        Locked, LockedBy, LockedExecution, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Version, VersionType,
+        Locked, LockedBy, LockedExecution, LogFilter, LogInfo, LogInfoRow, LogLevel, LogStreamType,
+        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
+        PendingStateLocked, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -240,6 +240,28 @@ const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (execution_id, version_min_including, version_max_excluding);
 ";
 
+/// Stores logs and std stream output of execution runs. Append only.
+/// Logs have `level` and `message` null.
+/// Std streams have `stream_type`, `payload` not null.
+const CREATE_TABLE_T_LOG: &str = r"
+CREATE TABLE IF NOT EXISTS t_log (
+    id INTEGER PRIMARY KEY,
+    execution_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    level INTEGER,
+    message TEXT,
+    stream_type INTEGER,
+    payload BLOB
+) STRICT
+";
+const IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_run_id_created_at ON t_log (execution_id, run_id, created_at);
+";
+const IDX_T_LOG_EXECUTION_ID_CREATED_AT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_created_at ON t_log (execution_id, created_at);
+";
+
 #[derive(Debug, thiserror::Error, Clone)]
 enum RusqliteError {
     #[error("not found")]
@@ -374,14 +396,14 @@ mod conversions {
     #[derive(Debug, thiserror::Error)]
     #[error("{reason}")]
     pub(crate) struct OtherError {
-        reason: &'static str,
+        reason: StrVariant,
         loc: &'static Location<'static>,
     }
 
     #[track_caller]
-    pub(crate) fn consistency_rusqlite(reason: &'static str) -> rusqlite::Error {
+    pub(crate) fn consistency_rusqlite(reason: impl Into<StrVariant>) -> rusqlite::Error {
         FromSqlError::other(OtherError {
-            reason,
+            reason: reason.into(),
             loc: Location::caller(),
         })
         .into()
@@ -914,6 +936,10 @@ impl SqlitePool {
         // t_backtrace
         conn_execute(&conn, CREATE_TABLE_T_BACKTRACE, [])?;
         conn_execute(&conn, IDX_T_BACKTRACE_EXECUTION_ID_VERSION, [])?;
+        // t_log
+        conn_execute(&conn, CREATE_TABLE_T_LOG, [])?;
+        conn_execute(&conn, IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT, [])?;
+        conn_execute(&conn, IDX_T_LOG_EXECUTION_ID_CREATED_AT, [])?;
         Ok(conn)
     }
 
@@ -2510,6 +2536,68 @@ impl SqlitePool {
         Ok(())
     }
 
+    fn append_log(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        run_id: &RunId,
+        info: &LogInfo,
+    ) -> Result<(), DbErrorWrite> {
+        let mut stmt = tx.prepare(
+            "INSERT INTO t_log (
+            execution_id,
+            run_id,
+            created_at,
+            level,
+            message,
+            stream_type,
+            payload
+        ) VALUES (
+            :execution_id,
+            :run_id,
+            :created_at,
+            :level,
+            :message,
+            :stream_type,
+            :payload
+        )",
+        )?;
+
+        match info {
+            LogInfo::Log {
+                created_at,
+                level,
+                message,
+            } => {
+                stmt.execute(named_params! {
+                    ":execution_id": execution_id,
+                    ":run_id": run_id,
+                    ":created_at": created_at,
+                    ":level": *level as u8,
+                    ":message": message,
+                    ":stream_type": Option::<u8>::None,
+                    ":payload": Option::<Vec<u8>>::None,
+                })?;
+            }
+            LogInfo::Stream {
+                created_at,
+                payload,
+                stream_type,
+            } => {
+                stmt.execute(named_params! {
+                    ":execution_id": execution_id,
+                    ":run_id": run_id,
+                    ":created_at": created_at,
+                    ":level": Option::<u8>::None,
+                    ":message": Option::<String>::None,
+                    ":stream_type": *stream_type as u8,
+                    ":payload": payload,
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
     #[cfg(feature = "test")]
     fn get(
         tx: &Transaction,
@@ -2948,6 +3036,96 @@ impl SqlitePool {
             return Err(DbErrorWrite::NotFound);
         }
         Ok(())
+    }
+
+    fn list_logs_tx(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        filter: &LogFilter,
+        pagination: &Pagination<u32>,
+    ) -> Result<Vec<LogInfoRow>, DbErrorRead> {
+        let mut query = String::from(
+            "SELECT id, run_id, created_at, level, message, stream_type, payload
+         FROM t_log
+         WHERE execution_id = :execution_id",
+        );
+
+        let length = pagination.length();
+        let mut params = vec![
+            (":execution_id", &execution_id as &dyn rusqlite::ToSql),
+            (":cursor", pagination.cursor() as &dyn rusqlite::ToSql),
+            (":length", &length as &dyn rusqlite::ToSql),
+        ];
+
+        if let Some(run_id) = &filter.run_id {
+            query.push_str(" AND run_id = :run_id");
+            params.push((":run_id", run_id));
+        }
+
+        // Filter by min_level (logs only)
+        let min_level_temporary;
+        if let Some(min_level) = filter.min_level {
+            query.push_str(" AND level IS NOT NULL AND level >= :min_level");
+            min_level_temporary = min_level as u8;
+            params.push((":min_level", &min_level_temporary));
+        }
+
+        // Pagination
+        write!(&mut query, " AND id {} :cursor", pagination.rel()).expect("writing to string");
+
+        // Ordering
+        query.push_str(" ORDER BY id ");
+        query.push_str(if pagination.is_desc() { "DESC" } else { "ASC" });
+
+        // Limit
+        query.push_str(" LIMIT :length");
+
+        let mut stmt = tx.prepare(&query)?;
+
+        let logs = stmt
+            .query_map(params.as_slice(), |row| {
+                let cursor = row.get("id")?;
+                let created_at: DateTime<Utc> = row.get("created_at")?;
+                let run_id = row.get("run_id")?;
+                let level: Option<u8> = row.get("level")?;
+                let message: Option<String> = row.get("message")?;
+                let stream_type: Option<u8> = row.get("stream_type")?;
+                let payload: Option<Vec<u8>> = row.get("payload")?;
+
+                let log_info = match (level, message, stream_type, payload) {
+                    (Some(lvl), Some(msg), None, None) => LogInfo::Log {
+                        created_at,
+                        level: LogLevel::try_from(lvl).map_err(|_| {
+                            consistency_rusqlite(format!(
+                                "cannot convert {lvl} to LogLevel , id: {cursor}"
+                            ))
+                        })?,
+                        message: msg,
+                    },
+                    (None, None, Some(stype), Some(pl)) => LogInfo::Stream {
+                        created_at,
+                        stream_type: LogStreamType::try_from(stype).map_err(|_| {
+                            consistency_rusqlite(format!(
+                                "cannot convert {stype} to LogStreamType , id: {cursor}"
+                            ))
+                        })?,
+                        payload: pl,
+                    },
+                    _ => {
+                        return Err(consistency_rusqlite(format!(
+                            "invalid t_log row id:{cursor}"
+                        )));
+                    }
+                };
+                Ok(LogInfoRow {
+                    cursor,
+                    run_id,
+                    log_info,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(logs)
     }
 }
 
@@ -3494,6 +3672,21 @@ impl DbExternalApi for SqlitePool {
         )
         .await
     }
+
+    #[instrument(skip(self))]
+    async fn list_logs(
+        &self,
+        execution_id: &ExecutionId,
+        filter: LogFilter,
+        pagination: Pagination<u32>,
+    ) -> Result<Vec<LogInfoRow>, DbErrorRead> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| Self::list_logs_tx(tx, &execution_id, &filter, &pagination),
+            "list_logs",
+        )
+        .await
+    }
 }
 
 #[async_trait]
@@ -3785,7 +3978,7 @@ impl DbConnection for SqlitePool {
 
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite> {
-        debug!("append_backtrace");
+        trace!("append_backtrace");
         self.transaction(
             move |tx| Self::append_backtrace(tx, &append),
             "append_backtrace",
@@ -3795,7 +3988,7 @@ impl DbConnection for SqlitePool {
 
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite> {
-        debug!("append_backtrace_batch");
+        trace!("append_backtrace_batch");
         self.transaction(
             move |tx| {
                 for append in &batch {
@@ -3803,7 +3996,46 @@ impl DbConnection for SqlitePool {
                 }
                 Ok(())
             },
-            "append_backtrace",
+            "append_backtrace_batch",
+        )
+        .await
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn append_log(
+        &self,
+        execution_id: &ExecutionId,
+        run_id: &RunId,
+        append: LogInfo,
+    ) -> Result<(), DbErrorWrite> {
+        trace!("append_log");
+        let execution_id = execution_id.clone();
+        let run_id = *run_id;
+        self.transaction(
+            move |tx| Self::append_log(tx, &execution_id, &run_id, &append),
+            "append_log",
+        )
+        .await
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn append_log_batch(
+        &self,
+        execution_id: &ExecutionId,
+        run_id: &RunId,
+        batch: Vec<LogInfo>,
+    ) -> Result<(), DbErrorWrite> {
+        trace!("append_log_batch");
+        let execution_id = execution_id.clone();
+        let run_id = *run_id;
+        self.transaction(
+            move |tx| {
+                for append in &batch {
+                    Self::append_log(tx, &execution_id, &run_id, append)?;
+                }
+                Ok(())
+            },
+            "append_log_batch",
         )
         .await
     }
