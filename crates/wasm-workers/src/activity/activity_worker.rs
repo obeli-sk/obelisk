@@ -7,6 +7,7 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutputConfig;
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use concepts::FunctionMetadata;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
@@ -15,12 +16,13 @@ use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
 use std::path::Path;
+use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 use utils::wasm_tools::ExIm;
-use wasmtime::UpdateDeadline;
-use wasmtime::component::{ComponentExportIndex, InstancePre};
+use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
 use wasmtime::{Engine, component::Val};
+use wasmtime::{Store, UpdateDeadline};
 
 #[derive(Clone, Debug)]
 pub struct ActivityConfig {
@@ -171,253 +173,50 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
             .cancel_registry
             .obtain_cancellation_token(ctx.execution_id.clone());
 
-        let call_function = {
-            let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
-                let preopened_dir = directories_config
-                    .parent_preopen_dir
-                    .join(ctx.execution_id.to_string());
-                if !directories_config.reuse_on_retry {
-                    // Attempt to `rm -rf` before (re)creating the directory.
-                    match tokio::fs::remove_dir_all(&preopened_dir).await {
-                        Ok(()) => {}
-                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(err) => {
-                            error!(
-                                "Cannot remove old preopened directory that is in the way - {err:?}"
-                            );
-                            return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
-                                reason: format!(
-                                    "cannot remove old preopened directory that is in the way - {err}"
-                                ),
-                                detail: format!("{err:?}"),
-                                version: ctx.version,
-                            });
-                        }
-                    }
-                }
-                let res = tokio::fs::create_dir_all(&preopened_dir).await;
-                if let Err(err) = res {
-                    error!("cannot create preopened directory - {err:?}");
-                    return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
-                        reason: format!("cannot create preopened directory - {err}"),
-                        detail: format!("{err:?}"),
-                        version: ctx.version,
-                    });
-                }
-                Some(preopened_dir)
-            } else {
-                None
-            };
-
-            let mut store = match activity_ctx::store(
-                &self.engine,
-                &ctx.execution_id,
-                &self.config,
-                ctx.worker_span.clone(),
-                self.clock_fn.clone(),
-                http_client_traces.clone(),
-                preopened_dir,
-            ) {
-                Ok(store) => store,
-                Err(ActivityPreopenIoError { err }) => {
-                    return WorkerResult::Err(WorkerError::ActivityPreopenedDirError {
-                        reason: format!(
-                            "not found although preopened directory was just created - {err}"
-                        ),
-                        detail: format!("{err:?}"),
-                        version: ctx.version,
-                    });
-                }
-            };
-
-            // Set fuel.
-            if let Some(fuel) = self.config.fuel {
-                store
-                    .set_fuel(fuel)
-                    .expect("engine must have `consume_fuel` enabled");
-            }
-
-            // Configure epoch callback before running the initialization to avoid interruption
-            store.epoch_deadline_callback(|_store_ctx| {
-                Ok(UpdateDeadline::YieldCustom(
-                    1,
-                    Box::pin(tokio::task::yield_now()),
-                ))
-            });
-
-            let instance = match self.instance_pre.instantiate_async(&mut store).await {
-                Ok(instance) => instance,
-                Err(err) => {
-                    let reason = err.to_string();
-                    if reason.starts_with("maximum concurrent") {
-                        return WorkerResult::Err(WorkerError::LimitReached {
-                            reason,
-                            version: ctx.version,
-                        });
-                    }
-                    return WorkerResult::Err(WorkerError::FatalError(
-                        FatalError::CannotInstantiate {
-                            reason: format!("{err}"),
-                            detail: format!("{err:?}"),
-                        },
-                        ctx.version,
-                    ));
-                }
-            };
-            let func = {
-                let fn_export_index = self
-                    .exported_ffqn_to_index
-                    .get(&ctx.ffqn)
-                    .expect("executor only calls `run` with ffqns that are exported");
-                instance
-                    .get_func(&mut store, fn_export_index)
-                    .expect("exported function must be found")
-            };
-
-            let component_func = func.ty(&store);
-            let params = match ctx.params.as_vals(component_func.params()) {
-                Ok(params) => params,
-                Err(err) => {
-                    return WorkerResult::Err(WorkerError::FatalError(
-                        FatalError::ParamsParsingError(err),
-                        ctx.version,
-                    ));
-                }
-            };
-            let result_types = component_func.results().collect::<Vec<_>>(); // TODO: investigate using the iterator directly.
-            let mut results = vec![Val::Bool(false); result_types.len()];
-            let retry_on_err = self.config.retry_on_err;
-            let worker_span = ctx.worker_span.clone();
-            let http_client_traces = http_client_traces.clone();
-            let version = ctx.version.clone();
-            let assigned_fuel = self.config.fuel;
-            async move {
-                let res = func.call_async(&mut store, &params, &mut results).await;
-                let http_client_traces = Some(
-                    http_client_traces
-                        .lock()
-                        .unwrap()
-                        .drain(..)
-                        .map(|(req, mut resp)| HttpClientTrace {
-                            req,
-                            resp: resp.try_recv().ok(),
-                        })
-                        .collect_vec(),
-                );
-                if let Err(err) = res {
-                    return WorkerResult::Err(
-                        if let Some(trap) = err
-                            .source()
-                            .and_then(|source| source.downcast_ref::<wasmtime::Trap>())
-                        {
-                            if *trap == wasmtime::Trap::OutOfFuel {
-                                WorkerError::ActivityTrap {
-                                    reason: format!(
-                                        "total fuel consumed: {}",
-                                        assigned_fuel.expect(
-                                            "must have been set as it was the reason of trap"
-                                        )
-                                    ),
-                                    detail: None,
-                                    trap_kind: TrapKind::OutOfFuel,
-                                    version,
-                                    http_client_traces,
-                                }
-                            } else {
-                                WorkerError::ActivityTrap {
-                                    reason: trap.to_string(),
-                                    detail: Some(format!("{err:?}")),
-                                    trap_kind: TrapKind::Trap,
-                                    version,
-                                    http_client_traces,
-                                }
-                            }
-                        } else {
-                            WorkerError::ActivityTrap {
-                                reason: err.to_string(),
-                                trap_kind: TrapKind::HostFunctionError,
-                                detail: Some(format!("{err:?}")),
-                                version,
-                                http_client_traces,
-                            }
-                        },
-                    );
-                }
-                let result = match SupportedFunctionReturnValue::new(
-                    results.into_iter().zip(result_types),
-                ) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        return WorkerResult::Err(WorkerError::FatalError(
-                            FatalError::ResultParsingError(err),
-                            version,
-                        ));
-                    }
-                };
-
-                if let Err(err) = func.post_return_async(&mut store).await {
-                    return WorkerResult::Err(WorkerError::ActivityTrap {
-                        reason: err.to_string(),
-                        trap_kind: TrapKind::PostReturnTrap,
-                        detail: Some(format!("{err:?}")),
-                        version,
-                        http_client_traces,
-                    });
-                }
-
-                if retry_on_err {
-                    // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
-                    if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
-                        if ctx.can_be_retried {
-                            let detail = serde_json::to_string(result_err).expect(
-                                "SupportedFunctionReturnValue should be serializable to JSON",
-                            );
-                            return WorkerResult::Err(WorkerError::ActivityReturnedError {
-                                detail: Some(detail),
-                                version,
-                                http_client_traces,
-                            });
-                        }
-                        // else: log and pass the retval as is to be stored.
-                        worker_span.in_scope(|| {
-                            info!("Execution returned `error()`, not able to retry");
-                        });
-                    }
-                }
-                WorkerResult::Ok(result, version, http_client_traces)
-            }
-        };
         let started_at = self.clock_fn.now();
-        let deadline_delta = ctx.locked_event.lock_expires_at - started_at;
-        let Ok(deadline_duration) = deadline_delta.to_std() else {
-            ctx.worker_span.in_scope(|| {
-                info!(execution_deadline = %ctx.locked_event.lock_expires_at, %started_at,
-                    "Timed out - started_at later than execution_deadline");
-            });
-            return WorkerResult::Err(WorkerError::TemporaryTimeout {
-                http_client_traces: None,
-                version: ctx.version,
-            });
+        ctx.worker_span.record(
+            "execution_deadline",
+            tracing::field::display(&ctx.locked_event.lock_expires_at),
+        );
+
+        let (mut store, deadline_duration) = match self
+            .create_store(&ctx, http_client_traces.clone(), started_at)
+            .await
+        {
+            Ok(store) => store,
+            Err(err) => return WorkerResult::Err(err),
         };
+
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
+
+        let call_function = {
+            let call_func_params = match self.call_func_params(&ctx, &mut store).await {
+                Ok(ok) => ok,
+                Err(err) => return WorkerResult::Err(err),
+            };
+            self.call_func(&mut store, call_func_params)
+        };
 
         tokio::select! { // future's liveness: Dropping the loser immediately.
             res = call_function => {
-                ctx.worker_span
-                    .in_scope(||{
-                if let WorkerResult::Err(err) = &res {
-                    info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.locked_event.lock_expires_at,
-                    "Finished with an error");
-                } else {
-                    info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration,  execution_deadline = %ctx.locked_event.lock_expires_at,
-                    "Finished");
-                }});
+                let activity_ctx = store.into_data();
+                let res = self.process_res(res, &ctx, activity_ctx);
+                ctx.worker_span.in_scope(|| {
+                    if let WorkerResult::Err(err) = &res {
+                        info!(%err, duration = ?stopwatch_for_reporting.elapsed(),
+                        "Finished with an error");
+                    } else {
+                        info!(duration = ?stopwatch_for_reporting.elapsed(),
+                        "Finished");
+                    }
+                });
                 return res;
             },
             ()  = self.sleep.sleep(deadline_duration) => {
+                let activity_ctx = store.into_data();
                 ctx.worker_span.in_scope(||
-                        info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at, ?deadline_duration,
-                        execution_deadline = %ctx.locked_event.lock_expires_at, now = %self.clock_fn.now(),
+                        info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at,
+                        now = %self.clock_fn.now(),
                         "Timed out")
                     );
                 let http_client_traces = Some(http_client_traces
@@ -435,10 +234,292 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
                 });
             }
             cancel_res = cancelation_token => {
+                let activity_ctx = store.into_data();
                 assert!(cancel_res.is_ok(), "only closed channels are dropped");
                 // TODO: Add http traces
                 return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, ctx.version));
             }
+        }
+    }
+}
+
+struct CallFuncParams {
+    func: wasmtime::component::Func,
+    params: Arc<[Val]>,
+    result_type: Type,
+}
+
+impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
+    async fn create_store(
+        &self,
+        ctx: &WorkerContext,
+        http_client_traces: HttpClientTracesContainer,
+        started_at: DateTime<Utc>,
+    ) -> Result<(Store<ActivityCtx<C>>, Duration /* deadline duration*/), WorkerError> {
+        let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
+            let preopened_dir = directories_config
+                .parent_preopen_dir
+                .join(ctx.execution_id.to_string());
+            if !directories_config.reuse_on_retry {
+                // Attempt to `rm -rf` before (re)creating the directory.
+                match tokio::fs::remove_dir_all(&preopened_dir).await {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => {
+                        error!(
+                            "Cannot remove old preopened directory that is in the way - {err:?}"
+                        );
+                        return Err(WorkerError::ActivityPreopenedDirError {
+                            reason: format!(
+                                "cannot remove old preopened directory that is in the way - {err}"
+                            ),
+                            detail: format!("{err:?}"),
+                            version: ctx.version.clone(),
+                        });
+                    }
+                }
+            }
+            let res = tokio::fs::create_dir_all(&preopened_dir).await;
+            if let Err(err) = res {
+                error!("cannot create preopened directory - {err:?}");
+                return Err(WorkerError::ActivityPreopenedDirError {
+                    reason: format!("cannot create preopened directory - {err}"),
+                    detail: format!("{err:?}"),
+                    version: ctx.version.clone(),
+                });
+            }
+            Some(preopened_dir)
+        } else {
+            None
+        };
+
+        let mut store = match activity_ctx::store(
+            &self.engine,
+            &ctx.execution_id,
+            &self.config,
+            ctx.worker_span.clone(),
+            self.clock_fn.clone(),
+            http_client_traces,
+            preopened_dir,
+        ) {
+            Ok(store) => store,
+            Err(ActivityPreopenIoError { err }) => {
+                return Err(WorkerError::ActivityPreopenedDirError {
+                    reason: format!(
+                        "not found although preopened directory was just created - {err}"
+                    ),
+                    detail: format!("{err:?}"),
+                    version: ctx.version.clone(),
+                });
+            }
+        };
+
+        // Set fuel.
+        if let Some(fuel) = self.config.fuel {
+            store
+                .set_fuel(fuel)
+                .expect("engine must have `consume_fuel` enabled");
+        }
+
+        // Configure epoch callback before running the initialization to avoid interruption
+        store.epoch_deadline_callback(|_store_ctx| {
+            Ok(UpdateDeadline::YieldCustom(
+                1,
+                Box::pin(tokio::task::yield_now()),
+            ))
+        });
+        let deadline_delta = ctx.locked_event.lock_expires_at - started_at;
+        let Ok(deadline_duration) = deadline_delta.to_std() else {
+            ctx.worker_span.in_scope(|| {
+                info!(execution_deadline = %ctx.locked_event.lock_expires_at, %started_at,
+                    "Timed out - started_at later than execution_deadline");
+            });
+            return Err(WorkerError::TemporaryTimeout {
+                http_client_traces: None,
+                version: ctx.version.clone(),
+            });
+        };
+        ctx.worker_span.record(
+            "deadline_duration",
+            tracing::field::debug(&deadline_duration),
+        );
+        Ok((store, deadline_duration))
+    }
+
+    async fn call_func_params(
+        &self,
+        ctx: &WorkerContext,
+        store: &mut Store<ActivityCtx<C>>,
+    ) -> Result<CallFuncParams, WorkerError> {
+        let instance = match self.instance_pre.instantiate_async(&mut *store).await {
+            Ok(instance) => instance,
+            Err(err) => {
+                let reason = err.to_string();
+                if reason.starts_with("maximum concurrent") {
+                    return Err(WorkerError::LimitReached {
+                        reason,
+                        version: ctx.version.clone(),
+                    });
+                }
+                return Err(WorkerError::FatalError(
+                    FatalError::CannotInstantiate {
+                        reason: format!("{err}"),
+                        detail: format!("{err:?}"),
+                    },
+                    ctx.version.clone(),
+                ));
+            }
+        };
+        let func = {
+            let fn_export_index = self
+                .exported_ffqn_to_index
+                .get(&ctx.ffqn)
+                .expect("executor only calls `run` with ffqns that are exported");
+            instance
+                .get_func(&mut *store, fn_export_index)
+                .expect("exported function must be found")
+        };
+
+        let component_func = func.ty(store);
+        let params = match ctx.params.as_vals(component_func.params()) {
+            Ok(params) => params,
+            Err(err) => {
+                return Err(WorkerError::FatalError(
+                    FatalError::ParamsParsingError(err),
+                    ctx.version.clone(),
+                ));
+            }
+        };
+
+        let result_types = component_func.results().collect::<Vec<_>>(); // TODO: investigate using the iterator directly.
+        assert!(
+            result_types.len() == 1,
+            "multi-value and void results are not supported, must have been checked in function registry"
+        );
+
+        Ok(CallFuncParams {
+            func,
+            params,
+            result_type: result_types
+                .into_iter()
+                .next()
+                .expect("just checked that size == 1"),
+        })
+    }
+
+    async fn call_func(
+        &self,
+        store: &mut Store<ActivityCtx<C>>,
+        CallFuncParams {
+            func,
+            params,
+            result_type,
+        }: CallFuncParams,
+    ) -> Result<(Val, Type), wasmtime::Error> {
+        let mut results = vec![Val::Bool(false)];
+        let res = func
+            .call_async(&mut *store, &params, &mut results)
+            .await
+            .map(|()| {
+                (
+                    results.into_iter().next().expect("results size is 1"),
+                    result_type,
+                )
+            });
+        if let Err(err) = func.post_return_async(store).await {
+            warn!("Error in `post_return_async - {err:?}");
+        }
+        res
+    }
+
+    fn process_res(
+        &self,
+        res: Result<(Val, Type), wasmtime::Error>,
+        ctx: &WorkerContext,
+        activity_ctx: ActivityCtx<C>,
+    ) -> WorkerResult {
+        let http_client_traces = Some(
+            activity_ctx
+                .http_client_traces
+                .lock()
+                .unwrap()
+                .drain(..)
+                .map(|(req, mut resp)| HttpClientTrace {
+                    req,
+                    resp: resp.try_recv().ok(),
+                })
+                .collect_vec(),
+        );
+        match res {
+            Ok((val, ty)) => {
+                let result = match SupportedFunctionReturnValue::new(val, ty) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        return WorkerResult::Err(WorkerError::FatalError(
+                            FatalError::ResultParsingError(err),
+                            ctx.version.clone(),
+                        ));
+                    }
+                };
+
+                if self.config.retry_on_err {
+                    // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
+                    if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
+                        if ctx.can_be_retried {
+                            let detail = serde_json::to_string(result_err).expect(
+                                "SupportedFunctionReturnValue should be serializable to JSON",
+                            );
+                            return WorkerResult::Err(WorkerError::ActivityReturnedError {
+                                detail: Some(detail),
+                                version: ctx.version.clone(),
+                                http_client_traces,
+                            });
+                        }
+                        // else: log and pass the retval as is to be stored.
+                        ctx.worker_span.in_scope(|| {
+                            info!("Execution returned `error()`, not able to retry");
+                        });
+                    }
+                }
+                WorkerResult::Ok(result, ctx.version.clone(), http_client_traces)
+            }
+            Err(err) => WorkerResult::Err(
+                if let Some(trap) = err
+                    .source()
+                    .and_then(|source| source.downcast_ref::<wasmtime::Trap>())
+                {
+                    if *trap == wasmtime::Trap::OutOfFuel {
+                        WorkerError::ActivityTrap {
+                            reason: format!(
+                                "total fuel consumed: {}",
+                                self.config
+                                    .fuel
+                                    .expect("must have been set as it was the reason of trap")
+                            ),
+                            detail: None,
+                            trap_kind: TrapKind::OutOfFuel,
+                            version: ctx.version.clone(),
+                            http_client_traces,
+                        }
+                    } else {
+                        WorkerError::ActivityTrap {
+                            reason: trap.to_string(),
+                            detail: Some(format!("{err:?}")),
+                            trap_kind: TrapKind::Trap,
+                            version: ctx.version.clone(),
+                            http_client_traces,
+                        }
+                    }
+                } else {
+                    WorkerError::ActivityTrap {
+                        reason: err.to_string(),
+                        trap_kind: TrapKind::HostFunctionError,
+                        detail: Some(format!("{err:?}")),
+                        version: ctx.version.clone(),
+                        http_client_traces,
+                    }
+                },
+            ),
         }
     }
 }
