@@ -417,8 +417,10 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
                     result_type,
                 )
             });
-        if let Err(err) = func.post_return_async(store).await {
-            warn!("Error in `post_return_async - {err:?}");
+        if res.is_ok() {
+            if let Err(err) = func.post_return_async(store).await {
+                warn!("Error in `post_return_async - {err:?}");
+            }
         }
         res
     }
