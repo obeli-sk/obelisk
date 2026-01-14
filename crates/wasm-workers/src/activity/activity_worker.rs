@@ -8,10 +8,10 @@ use crate::std_output_stream::StdOutputConfig;
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::FunctionMetadata;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue, TrapKind};
+use concepts::{FunctionMetadata, ResultParsingError};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
@@ -406,7 +406,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
             params,
             result_type,
         }: CallFuncParams,
-    ) -> Result<(Val, Type), wasmtime::Error> {
+    ) -> Result<Result<SupportedFunctionReturnValue, ResultParsingError>, wasmtime::Error> {
         let mut results = vec![Val::Bool(false)];
         let res = func
             .call_async(&mut *store, &params, &mut results)
@@ -417,17 +417,22 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
                     result_type,
                 )
             });
-        if res.is_ok() {
-            if let Err(err) = func.post_return_async(store).await {
-                warn!("Error in `post_return_async - {err:?}");
+        match res {
+            Ok((val, r#type)) => {
+                let result = SupportedFunctionReturnValue::new(val, r#type);
+                // post_return is only called if `call` succeeds, after the return value has been processed.
+                if let Err(err) = func.post_return_async(store).await {
+                    warn!("Error in `post_return_async - {err:?}");
+                }
+                Ok(result)
             }
+            Err(err) => Err(err),
         }
-        res
     }
 
     fn process_res(
         &self,
-        res: Result<(Val, Type), wasmtime::Error>,
+        res: Result<Result<SupportedFunctionReturnValue, ResultParsingError>, wasmtime::Error>,
         ctx: &WorkerContext,
         activity_ctx: ActivityCtx<C>,
     ) -> WorkerResult {
@@ -442,17 +447,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
                 .collect_vec(),
         );
         match res {
-            Ok((val, ty)) => {
-                let result = match SupportedFunctionReturnValue::new(val, ty) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        return WorkerResult::Err(WorkerError::FatalError(
-                            FatalError::ResultParsingError(err),
-                            ctx.version.clone(),
-                        ));
-                    }
-                };
-
+            Ok(Ok(result)) => {
                 if self.config.retry_on_err {
                     // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
                     if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
@@ -474,6 +469,10 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
                 }
                 WorkerResult::Ok(result, ctx.version.clone(), http_client_traces)
             }
+            Ok(Err(result_parsing_err)) => WorkerResult::Err(WorkerError::FatalError(
+                FatalError::ResultParsingError(result_parsing_err),
+                ctx.version.clone(),
+            )),
             Err(err) => WorkerResult::Err(
                 if let Some(trap) = err
                     .source()
