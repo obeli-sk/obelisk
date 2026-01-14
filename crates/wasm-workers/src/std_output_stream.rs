@@ -18,13 +18,30 @@ pub enum StdOutputConfig {
     Db,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum StdOutput {
     Stdout,
     Stderr,
-    Db {
-        buffer: Vec<(DateTime<Utc>, Vec<u8>)>,
-    },
+    Db(DbOutput),
+}
+
+#[derive(Clone, Default)]
+pub struct DbOutput {
+    pub events: Vec<OutputEvent>,
+}
+impl DbOutput {
+    fn write(&mut self, buf: &[u8]) {
+        self.events.push(OutputEvent {
+            buf: Vec::from(buf),
+            created_at: Utc::now(),
+        });
+    }
+}
+
+#[derive(Clone)]
+pub struct OutputEvent {
+    pub buf: Vec<u8>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -48,8 +65,8 @@ impl StdOutput {
         match self {
             StdOutput::Stdout => OutOrErr::Stdout.write_all(&buf),
             StdOutput::Stderr => OutOrErr::Stderr.write_all(&buf),
-            StdOutput::Db { buffer } => {
-                buffer.push((Utc::now(), Vec::from(buf)));
+            StdOutput::Db(db_output) => {
+                db_output.write(&buf);
                 Ok(())
             }
         }
@@ -68,9 +85,9 @@ struct LogStreamState {
 }
 
 impl LogStream {
-    pub(crate) fn new(prefix: String, output_config: StdOutputConfig) -> LogStream {
+    pub(crate) fn new(prefix: String, output: StdOutput) -> LogStream {
         LogStream {
-            output: StdOutput::from(output_config),
+            output,
             state: Arc::new(LogStreamState {
                 prefix,
                 needs_prefix_on_next_write: AtomicBool::new(true),
@@ -93,7 +110,7 @@ impl wasmtime_wasi::cli::IsTerminal for LogStream {
         match &self.output {
             StdOutput::Stdout => std::io::stdout().is_terminal(),
             StdOutput::Stderr => std::io::stderr().is_terminal(),
-            StdOutput::Db { buffer: _ } => false,
+            StdOutput::Db { .. } => false,
         }
     }
 }
@@ -118,8 +135,8 @@ impl wasmtime_wasi::p2::OutputStream for LogStream {
 impl LogStream {
     fn write_all(&mut self, mut bytes: &[u8]) -> std::io::Result<()> {
         let our_or_err = match &mut self.output {
-            StdOutput::Db { buffer } => {
-                buffer.push((Utc::now(), Vec::from(bytes)));
+            StdOutput::Db(db_output) => {
+                db_output.write(bytes);
                 return Ok(());
             }
             StdOutput::Stdout => OutOrErr::Stdout,

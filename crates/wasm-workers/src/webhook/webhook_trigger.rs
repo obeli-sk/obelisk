@@ -1,6 +1,6 @@
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
-use crate::std_output_stream::{LogStream, StdOutputConfig};
+use crate::std_output_stream::{DbOutput, LogStream, StdOutput, StdOutputConfig};
 use crate::webhook::webhook_trigger::types_v4_0_0::obelisk::types::join_set::JoinNextError;
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
@@ -765,23 +765,31 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
         server_termination_watcher: watch::Receiver<()>,
     ) -> Store<WebhookEndpointCtx<C, S>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
-        if let Some(stdout) = config.forward_stdout {
+        if let Some(std_config) = config.forward_stdout {
             let stdout = LogStream::new(
                 format!(
                     "[{component_id} {execution_id} stdout]",
                     component_id = config.component_id
                 ),
-                stdout,
+                match std_config {
+                    StdOutputConfig::Stdout => StdOutput::Stdout,
+                    StdOutputConfig::Stderr => StdOutput::Stderr,
+                    StdOutputConfig::Db => StdOutput::Db(DbOutput::default()),
+                },
             );
             wasi_ctx.stdout(stdout);
         }
-        if let Some(stderr) = config.forward_stderr {
+        if let Some(std_config) = config.forward_stderr {
             let stderr = LogStream::new(
                 format!(
                     "[{component_id} {execution_id} stderr]",
                     component_id = config.component_id
                 ),
-                stderr,
+                match std_config {
+                    StdOutputConfig::Stdout => StdOutput::Stdout,
+                    StdOutputConfig::Stderr => StdOutput::Stderr,
+                    StdOutputConfig::Db => StdOutput::Db(DbOutput::default()),
+                },
             );
             wasi_ctx.stderr(stderr);
         }
@@ -954,7 +962,7 @@ struct RequestHandler<C: ClockFn + 'static, S: Sleep> {
     server_termination_watcher: watch::Receiver<()>,
 }
 
-fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
+fn respond(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
     let body = UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
         http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
         |_| unreachable!(),
@@ -979,42 +987,46 @@ impl<C: ClockFn + 'static, S: Sleep> RequestHandler<C, S> {
         };
         let Ok(http_request_guard) = http_request_guard else {
             debug!(method = %req.method(), uri = %req.uri(), "Too many requests");
-            return Ok::<_, hyper::Error>(resp("Out of permits", StatusCode::TOO_MANY_REQUESTS));
+            return Ok::<_, hyper::Error>(respond("Out of permits", StatusCode::TOO_MANY_REQUESTS));
         };
 
-        self.handle_request_inner(req, http_request_guard, Span::current())
-            .await
-            .or_else(|err| {
+        let res = self
+            .handle_request_inner(req, http_request_guard, Span::current())
+            .await;
+        match res {
+            Ok(body) => Ok(body),
+            Err(err) => {
                 debug!("{err:?}");
                 Ok(match err {
-                    HandleRequestError::IncomingRequestError(err) => resp(
+                    HandleRequestError::IncomingRequestError(err) => respond(
                         &format!("Incoming request error: {err}"),
                         StatusCode::BAD_REQUEST,
                     ),
-                    HandleRequestError::ResponseCreationError(err) => resp(
+                    HandleRequestError::ResponseCreationError(err) => respond(
                         &format!("Cannot create response: {err}"),
                         StatusCode::INTERNAL_SERVER_ERROR,
                     ),
-                    HandleRequestError::InstantiationError(err) => resp(
+                    HandleRequestError::InstantiationError(err) => respond(
                         &format!("Cannot instantiate: {err}"),
                         StatusCode::SERVICE_UNAVAILABLE,
                     ),
-                    HandleRequestError::ErrorCode(code) => resp(
+                    HandleRequestError::ErrorCode(code) => respond(
                         &format!("Error code: {code}"),
                         StatusCode::INTERNAL_SERVER_ERROR,
                     ),
                     HandleRequestError::ExecutionError(_) => {
-                        resp("Component Error", StatusCode::INTERNAL_SERVER_ERROR)
+                        respond("Component Error", StatusCode::INTERNAL_SERVER_ERROR)
                     }
                     HandleRequestError::RouteNotFound => {
-                        resp("Route not found", StatusCode::NOT_FOUND)
+                        respond("Route not found", StatusCode::NOT_FOUND)
                     }
-                    HandleRequestError::Timeout => resp("Timeout", StatusCode::REQUEST_TIMEOUT),
+                    HandleRequestError::Timeout => respond("Timeout", StatusCode::REQUEST_TIMEOUT),
                     HandleRequestError::InstanceLimitReached => {
-                        resp("Instance limit reached", StatusCode::SERVICE_UNAVAILABLE)
+                        respond("Instance limit reached", StatusCode::SERVICE_UNAVAILABLE)
                     }
                 })
-            })
+            }
+        }
     }
 
     async fn handle_request_inner(

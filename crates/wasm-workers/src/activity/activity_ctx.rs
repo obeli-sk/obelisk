@@ -1,6 +1,6 @@
 use super::activity_worker::{ActivityConfig, ProcessProvider};
 use crate::component_logger::{ComponentLogger, log_activities};
-use crate::std_output_stream::LogStream;
+use crate::std_output_stream::{DbOutput, LogStream, StdOutput, StdOutputConfig};
 use bytes::Bytes;
 use concepts::ExecutionId;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
@@ -33,7 +33,7 @@ pub struct ActivityCtx<C: ClockFn> {
     http_ctx: WasiHttpCtx,
     component_logger: ComponentLogger,
     clock_fn: C,
-    http_client_traces: HttpClientTracesContainer,
+    pub(crate) http_client_traces: HttpClientTracesContainer,
     pub(crate) preopened_dir: Option<Arc<Path>>,
     pub(crate) process_provider: Option<ProcessProvider>,
 }
@@ -135,23 +135,31 @@ pub(crate) fn store<C: ClockFn>(
     preopened_dir: Option<PathBuf>,
 ) -> Result<Store<ActivityCtx<C>>, ActivityPreopenIoError> {
     let mut wasi_ctx = WasiCtxBuilder::new();
-    if let Some(stdout) = config.forward_stdout {
+    if let Some(std_config) = config.forward_stdout {
         let stdout = LogStream::new(
             format!(
                 "[{component_id} {execution_id} stdout]",
                 component_id = config.component_id
             ),
-            stdout,
+            match std_config {
+                StdOutputConfig::Stdout => StdOutput::Stdout,
+                StdOutputConfig::Stderr => StdOutput::Stderr,
+                StdOutputConfig::Db => StdOutput::Db(DbOutput::default()),
+            },
         );
         wasi_ctx.stdout(stdout);
     }
-    if let Some(stderr) = config.forward_stderr {
+    if let Some(std_config) = config.forward_stderr {
         let stderr = LogStream::new(
             format!(
                 "[{component_id} {execution_id} stderr]",
                 component_id = config.component_id
             ),
-            stderr,
+            match std_config {
+                StdOutputConfig::Stdout => StdOutput::Stdout,
+                StdOutputConfig::Stderr => StdOutput::Stderr,
+                StdOutputConfig::Db => StdOutput::Db(DbOutput::default()),
+            },
         );
         wasi_ctx.stderr(stderr);
     }

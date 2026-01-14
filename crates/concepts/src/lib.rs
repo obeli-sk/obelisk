@@ -600,7 +600,7 @@ pub enum ResultParsingErrorFromVal {
 }
 
 impl SupportedFunctionReturnValue {
-    pub fn new<
+    pub fn new_from_iterator<
         I: ExactSizeIterator<Item = (wasmtime::component::Val, wasmtime::component::Type)>,
     >(
         mut iter: I,
@@ -616,6 +616,16 @@ impl SupportedFunctionReturnValue {
         } else {
             Err(ResultParsingError::MultiValue)
         }
+    }
+
+    pub fn new(
+        val: wasmtime::component::Val,
+        r#type: wasmtime::component::Type,
+    ) -> Result<Self, ResultParsingError> {
+        let r#type =
+            TypeWrapper::try_from(r#type).map_err(ResultParsingError::TypeConversionError)?;
+        Self::from_val_and_type_wrapper(val, r#type)
+            .map_err(ResultParsingError::ResultParsingErrorFromVal)
     }
 
     #[expect(clippy::result_unit_err)]

@@ -496,7 +496,9 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
 
         match func_call_result {
             Ok(()) => {
-                match SupportedFunctionReturnValue::new(results.into_iter().zip(result_types)) {
+                match SupportedFunctionReturnValue::new_from_iterator(
+                    results.into_iter().zip(result_types),
+                ) {
                     Ok(result) => Ok((result, workflow_ctx)),
                     Err(err) => Err(RunError::ResultParsingError(err, workflow_ctx)),
                 }
