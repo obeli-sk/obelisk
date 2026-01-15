@@ -27,6 +27,7 @@ pub enum StdOutputConfigWithSender {
     },
 }
 impl StdOutputConfigWithSender {
+    #[must_use]
     pub fn new(
         config: Option<StdOutputConfig>,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
@@ -42,6 +43,7 @@ impl StdOutputConfigWithSender {
         })
     }
 
+    #[must_use]
     pub fn build(&self, execution_id: &ExecutionId, run_id: RunId) -> StdOutput {
         match self {
             StdOutputConfigWithSender::Stdout => StdOutput::Stdout,
@@ -85,7 +87,7 @@ impl DbOutput {
     fn write(&mut self, buf: &[u8]) {
         let res = self.sender.try_send(LogInfoAppendRow {
             execution_id: self.execution_id.clone(),
-            run_id: self.run_id.clone(),
+            run_id: self.run_id,
             log_info: LogInfo::Stream {
                 created_at: Utc::now(),
                 payload: Vec::from(buf),
@@ -114,19 +116,19 @@ impl OutOrErr {
         use std::io::Write;
 
         match self {
-            OutOrErr::Stdout => std::io::stdout().write_all(&buf),
-            OutOrErr::Stderr => std::io::stderr().write_all(&buf),
+            OutOrErr::Stdout => std::io::stdout().write_all(buf),
+            OutOrErr::Stderr => std::io::stderr().write_all(buf),
         }
     }
 }
 
 impl StdOutput {
-    fn write_all(&mut self, buf: bytes::Bytes) -> Result<(), std::io::Error> {
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), std::io::Error> {
         match self {
-            StdOutput::Stdout => OutOrErr::Stdout.write_all(&buf),
-            StdOutput::Stderr => OutOrErr::Stderr.write_all(&buf),
+            StdOutput::Stdout => OutOrErr::Stdout.write_all(buf),
+            StdOutput::Stderr => OutOrErr::Stderr.write_all(buf),
             StdOutput::Db(db_output) => {
-                db_output.write(&buf);
+                db_output.write(buf);
                 Ok(())
             }
         }
@@ -178,7 +180,7 @@ impl wasmtime_wasi::cli::IsTerminal for LogStream {
 impl wasmtime_wasi::p2::OutputStream for LogStream {
     fn write(&mut self, bytes: bytes::Bytes) -> StreamResult<()> {
         self.output
-            .write_all(bytes)
+            .write_all(&bytes)
             .map_err(|e| StreamError::LastOperationFailed(e.into()))?;
         Ok(())
     }

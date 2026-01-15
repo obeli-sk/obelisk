@@ -212,18 +212,19 @@ pub struct WebhookEndpointInstanceLinked<C: ClockFn, S: Sleep> {
     config: WebhookEndpointConfig,
 }
 impl<C: ClockFn, S: Sleep> WebhookEndpointInstanceLinked<C, S> {
+    #[must_use]
     pub fn build(
         self,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
     ) -> WebhookEndpointInstance<C, S> {
         let stdout = StdOutputConfigWithSender::new(
             self.config.forward_stdout,
-            &log_forwarder_sender,
+            log_forwarder_sender,
             LogStreamType::StdOut,
         );
         let stderr = StdOutputConfigWithSender::new(
             self.config.forward_stderr,
-            &log_forwarder_sender,
+            log_forwarder_sender,
             LogStreamType::StdErr,
         );
         WebhookEndpointInstance {

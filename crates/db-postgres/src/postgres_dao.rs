@@ -3606,7 +3606,7 @@ impl DbConnection for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         for row in batch {
-            append_log(&tx, &row).await?;
+            append_log(&tx, row).await?;
         }
         tx.commit().await?;
         Ok(())

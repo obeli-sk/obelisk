@@ -121,6 +121,7 @@ pub(crate) struct ActivityPreopenIoError {
     pub err: wasmtime::Error,
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn store<C: ClockFn>(
     engine: &Engine,
     execution_id: &ExecutionId,

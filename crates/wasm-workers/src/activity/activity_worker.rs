@@ -128,12 +128,12 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
     ) -> ActivityWorker<C, S> {
         let stdout = StdOutputConfigWithSender::new(
             self.config.forward_stdout,
-            &log_forwarder_sender,
+            log_forwarder_sender,
             LogStreamType::StdOut,
         );
         let stderr = StdOutputConfigWithSender::new(
             self.config.forward_stderr,
-            &log_forwarder_sender,
+            log_forwarder_sender,
             LogStreamType::StdErr,
         );
         ActivityWorker {

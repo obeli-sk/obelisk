@@ -4011,7 +4011,7 @@ impl DbConnection for SqlitePool {
         self.transaction(
             move |tx| {
                 for row in &batch {
-                    Self::append_log(tx, &row)?;
+                    Self::append_log(tx, row)?;
                 }
                 Ok(())
             },
