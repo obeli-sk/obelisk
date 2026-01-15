@@ -1070,9 +1070,10 @@ pub trait DbConnection: DbExecutor {
 
     async fn append_log(&self, row: LogInfoAppendRow) -> Result<(), DbErrorWrite>;
 
-    async fn append_log_batch(&self, batch: Vec<LogInfoAppendRow>) -> Result<(), DbErrorWrite>;
+    async fn append_log_batch(&self, batch: &[LogInfoAppendRow]) -> Result<(), DbErrorWrite>;
 }
 
+#[derive(Clone, Debug)]
 pub struct LogInfoAppendRow {
     pub execution_id: ExecutionId,
     pub run_id: RunId,

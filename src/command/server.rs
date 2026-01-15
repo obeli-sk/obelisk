@@ -58,6 +58,7 @@ use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
+use concepts::storage::LogInfoAppendRow;
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
@@ -84,6 +85,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tonic::codec::CompressionEncoding;
 use tonic::service::RoutesBuilder;
@@ -106,12 +108,13 @@ use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
+use wasm_workers::log_db_forwarder;
 use wasm_workers::preopens_cleaner::PreopensCleaner;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointCompiled;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointConfig;
-use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstance;
+use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstanceLinked;
 use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
@@ -927,12 +930,20 @@ async fn spawn_tasks_and_threads(
             })
             .collect()
     };
+
+    // Spawn Log -> Db Forwarder
+    let (log_forwarder_sender, log_db_forarder) = {
+        let (log_forwarder_sender, receiver) = mpsc::channel(1000); // TODO: make configurable
+        let log_db_forarder = log_db_forwarder::spawn_new(db_pool.clone(), receiver);
+        (log_forwarder_sender, log_db_forarder)
+    };
+
     // Spawn executors
     let exec_join_handles = server_compiled_linked
         .compiled_components
         .workers_linked
         .into_iter()
-        .map(|pre_spawn| pre_spawn.spawn(&db_pool, cancel_registry.clone()))
+        .map(|pre_spawn| pre_spawn.spawn(&db_pool, cancel_registry.clone(), &log_forwarder_sender))
         .collect();
 
     // Start webhook HTTP servers
@@ -943,10 +954,12 @@ async fn spawn_tasks_and_threads(
         Arc::from(server_compiled_linked.component_registry_ro.clone()),
         global_webhook_instance_limiter.clone(),
         termination_watcher,
+        &log_forwarder_sender,
     )
     .await?;
+
     let server_init = ServerInit {
-        db_pool: db_pool.clone(),
+        db_pool,
         db_close,
         exec_join_handles,
         timers_watcher,
@@ -954,6 +967,7 @@ async fn spawn_tasks_and_threads(
         http_servers_handles,
         epoch_ticker,
         preopens_cleaner,
+        log_db_forarder,
     };
     Ok((server_init, server_compiled_linked.component_registry_ro))
 }
@@ -967,6 +981,7 @@ struct ServerInit {
     http_servers_handles: Vec<AbortOnDropHandle>,
     epoch_ticker: EpochTicker,
     preopens_cleaner: Option<AbortOnDropHandle>,
+    log_db_forarder: AbortOnDropHandle,
 }
 impl ServerInit {
     async fn close(self) {
@@ -981,8 +996,9 @@ impl ServerInit {
             http_servers_handles,
             epoch_ticker,
             preopens_cleaner,
+            log_db_forarder,
         } = self;
-        // Explicit drop! Using inner scope won't work, fields would be dropped at the end of the async function.
+        // Explicit drop to avoid the pattern match footgun.
         drop(db_pool);
         drop(timers_watcher);
         drop(cancel_watcher);
@@ -994,12 +1010,13 @@ impl ServerInit {
         for exec_join_handle in exec_join_handles {
             exec_join_handle.close().await;
         }
+        drop(log_db_forarder); // Some incoming messages might not be stored.
         db_close.await;
     }
 }
 
 type WebhookInstancesAndRoutes = (
-    WebhookEndpointInstance<Now, TokioSleep>,
+    WebhookEndpointInstanceLinked<Now, TokioSleep>,
     Vec<WebhookRouteVerified>,
 );
 
@@ -1010,18 +1027,27 @@ async fn start_http_servers(
     fn_registry: Arc<dyn FunctionRegistry>,
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     termination_watcher: &watch::Receiver<()>,
+    log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
     let engine = &engines.webhook_engine;
     for (http_server, webhooks) in http_servers_to_webhooks {
         let mut router = MethodAwareRouter::default();
-        for (webhook_instance, routes) in webhooks {
+        for (webhook_instance_linked, routes) in webhooks {
             for route in routes {
                 if route.methods.is_empty() {
-                    router.add(None, &route.route, webhook_instance.clone());
+                    router.add(
+                        None,
+                        &route.route,
+                        webhook_instance_linked.clone().build(log_forwarder_sender),
+                    );
                 } else {
                     for method in route.methods {
-                        router.add(Some(method), &route.route, webhook_instance.clone());
+                        router.add(
+                            Some(method),
+                            &route.route,
+                            webhook_instance_linked.clone().build(log_forwarder_sender),
+                        );
                     }
                 }
             }
@@ -1666,10 +1692,11 @@ impl WorkerLinked {
         self,
         db_pool: &Arc<dyn DbPool>,
         cancel_registry: CancelRegistry,
+        log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
     ) -> ExecutorTaskHandle {
         let worker: Arc<dyn Worker> = match self.worker {
             Either::Left(activity_compiled) => {
-                Arc::from(activity_compiled.into_worker(cancel_registry))
+                Arc::from(activity_compiled.into_worker(cancel_registry, log_forwarder_sender))
             }
             Either::Right(workflow_linked) => Arc::from(workflow_linked.worker.into_worker(
                 db_pool.clone(),

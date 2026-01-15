@@ -396,7 +396,7 @@ impl DbConnection for InMemoryDbConnection {
         Ok(())
     }
 
-    async fn append_log_batch(&self, _batch: Vec<LogInfoAppendRow>) -> Result<(), DbErrorWrite> {
+    async fn append_log_batch(&self, _batch: &[LogInfoAppendRow]) -> Result<(), DbErrorWrite> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
     }

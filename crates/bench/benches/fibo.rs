@@ -22,6 +22,7 @@ mod bench {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::runtime::Handle;
+    use tokio::sync::mpsc;
     use wasm_workers::RunnableComponent;
     use wasm_workers::activity::activity_worker::{ActivityConfig, ActivityWorkerCompiled};
     use wasm_workers::activity::cancel_registry::CancelRegistry;
@@ -117,6 +118,7 @@ mod bench {
         cancel_registry: CancelRegistry,
     ) -> (Arc<dyn Worker>, ComponentId) {
         let (wasm_component, component_id) = compile_activity_with_engine(wasm_path, &engine);
+        let (db_forwarder_sender, _) = mpsc::channel(1);
         (
             Arc::new(
                 ActivityWorkerCompiled::new_with_config(
@@ -127,7 +129,7 @@ mod bench {
                     sleep,
                 )
                 .unwrap()
-                .into_worker(cancel_registry),
+                .into_worker(cancel_registry, &db_forwarder_sender),
             ),
             component_id,
         )

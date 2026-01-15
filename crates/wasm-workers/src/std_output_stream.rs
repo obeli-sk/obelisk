@@ -1,5 +1,10 @@
 // Based on https://github.com/bytecodealliance/wasmtime/blob/v36.0.1/src/commands/serve.rs#L874
 use chrono::{DateTime, Utc};
+use concepts::{
+    ExecutionId,
+    prefixed_ulid::RunId,
+    storage::{LogInfo, LogInfoAppendRow, LogStreamType},
+};
 use std::{
     pin::Pin,
     sync::{
@@ -8,8 +13,51 @@ use std::{
     },
     task::{Context, Poll},
 };
-use tokio::io::AsyncWrite;
+use tokio::{io::AsyncWrite, sync::mpsc};
+use tracing::{debug, instrument};
 use wasmtime_wasi::p2::{StreamError, StreamResult};
+
+#[derive(Clone)]
+pub enum StdOutputConfigWithSender {
+    Stdout,
+    Stderr,
+    Db {
+        sender: mpsc::Sender<LogInfoAppendRow>,
+        forwarding_from: LogStreamType,
+    },
+}
+impl StdOutputConfigWithSender {
+    pub fn new(
+        config: Option<StdOutputConfig>,
+        log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+        forwarding_from: LogStreamType,
+    ) -> Option<Self> {
+        config.map(|config| match config {
+            StdOutputConfig::Stdout => StdOutputConfigWithSender::Stdout,
+            StdOutputConfig::Stderr => StdOutputConfigWithSender::Stderr,
+            StdOutputConfig::Db => StdOutputConfigWithSender::Db {
+                sender: log_forwarder_sender.clone(),
+                forwarding_from,
+            },
+        })
+    }
+
+    pub fn build(&self, execution_id: &ExecutionId, run_id: RunId) -> StdOutput {
+        match self {
+            StdOutputConfigWithSender::Stdout => StdOutput::Stdout,
+            StdOutputConfigWithSender::Stderr => StdOutput::Stderr,
+            StdOutputConfigWithSender::Db {
+                sender,
+                forwarding_from,
+            } => StdOutput::Db(DbOutput {
+                execution_id: execution_id.clone(),
+                run_id,
+                sender: sender.clone(),
+                forwarding_from: *forwarding_from,
+            }),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum StdOutputConfig {
@@ -25,16 +73,28 @@ pub enum StdOutput {
     Db(DbOutput),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct DbOutput {
-    pub events: Vec<OutputEvent>,
+    pub sender: mpsc::Sender<LogInfoAppendRow>,
+    pub execution_id: ExecutionId,
+    pub run_id: RunId,
+    pub forwarding_from: LogStreamType,
 }
 impl DbOutput {
+    #[instrument(skip_all, fields(execution_id = %self.execution_id, run_id = %self.run_id))]
     fn write(&mut self, buf: &[u8]) {
-        self.events.push(OutputEvent {
-            buf: Vec::from(buf),
-            created_at: Utc::now(),
+        let res = self.sender.try_send(LogInfoAppendRow {
+            execution_id: self.execution_id.clone(),
+            run_id: self.run_id.clone(),
+            log_info: LogInfo::Stream {
+                created_at: Utc::now(),
+                payload: Vec::from(buf),
+                stream_type: self.forwarding_from,
+            },
         });
+        if res.is_err() {
+            debug!("Dropping stream message");
+        }
     }
 }
 

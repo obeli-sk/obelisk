@@ -3601,7 +3601,7 @@ impl DbConnection for PostgresConnection {
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_log_batch(&self, batch: Vec<LogInfoAppendRow>) -> Result<(), DbErrorWrite> {
+    async fn append_log_batch(&self, batch: &[LogInfoAppendRow]) -> Result<(), DbErrorWrite> {
         trace!("append_log_batch");
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;

@@ -2,7 +2,6 @@ use tracing::{Span, debug, error, info, trace, warn};
 
 pub(crate) struct ComponentLogger {
     pub(crate) span: Span,
-    // TODO: dynamic level filtering
 }
 const TARGET: &str = "app";
 impl ComponentLogger {

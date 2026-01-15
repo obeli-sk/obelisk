@@ -1,6 +1,6 @@
 use super::activity_worker::{ActivityConfig, ProcessProvider};
 use crate::component_logger::{ComponentLogger, log_activities};
-use crate::std_output_stream::{DbOutput, LogStream, StdOutput, StdOutputConfig};
+use crate::std_output_stream::{LogStream, StdOutput};
 use bytes::Bytes;
 use concepts::ExecutionId;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
@@ -128,33 +128,27 @@ pub(crate) fn store<C: ClockFn>(
     worker_span: Span,
     clock_fn: C,
     preopened_dir: Option<PathBuf>,
+    stdout: Option<StdOutput>,
+    stderr: Option<StdOutput>,
 ) -> Result<Store<ActivityCtx<C>>, ActivityPreopenIoError> {
     let mut wasi_ctx = WasiCtxBuilder::new();
-    if let Some(std_config) = config.forward_stdout {
+    if let Some(stdout) = stdout {
         let stdout = LogStream::new(
             format!(
                 "[{component_id} {execution_id} stdout]",
                 component_id = config.component_id
             ),
-            match std_config {
-                StdOutputConfig::Stdout => StdOutput::Stdout,
-                StdOutputConfig::Stderr => StdOutput::Stderr,
-                StdOutputConfig::Db => StdOutput::Db(DbOutput::default()),
-            },
+            stdout,
         );
         wasi_ctx.stdout(stdout);
     }
-    if let Some(std_config) = config.forward_stderr {
+    if let Some(stderr) = stderr {
         let stderr = LogStream::new(
             format!(
                 "[{component_id} {execution_id} stderr]",
                 component_id = config.component_id
             ),
-            match std_config {
-                StdOutputConfig::Stdout => StdOutput::Stdout,
-                StdOutputConfig::Stderr => StdOutput::Stderr,
-                StdOutputConfig::Db => StdOutput::Db(DbOutput::default()),
-            },
+            stderr,
         );
         wasi_ctx.stderr(stderr);
     }

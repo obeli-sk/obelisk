@@ -1,15 +1,15 @@
 use crate::component_logger::{ComponentLogger, log_activities};
 use crate::envvar::EnvVar;
-use crate::std_output_stream::{DbOutput, LogStream, StdOutput, StdOutputConfig};
+use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
 use crate::webhook::webhook_trigger::types_v4_0_0::obelisk::types::join_set::JoinNextError;
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
-use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX};
+use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX, RunId};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric,
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent, JoinSetRequest,
-    TimeoutOutcome, Version,
+    LogInfoAppendRow, LogStreamType, TimeoutOutcome, Version,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -31,13 +31,12 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::select;
-use tokio::sync::{OwnedSemaphorePermit, watch};
+use tokio::sync::{OwnedSemaphorePermit, mpsc, watch};
 use tracing::{
     Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace, warn,
 };
 use types_v4_0_0::obelisk::types::execution::Host as ExecutionHost;
 use types_v4_0_0::obelisk::types::join_set::HostJoinSet;
-use utils::wasm_tools::ExIm;
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::types::ComponentFunc;
@@ -113,7 +112,7 @@ impl WebhookEndpointCompiled {
         self,
         engine: &Engine,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<WebhookEndpointInstance<C, S>, WasmFileError> {
+    ) -> Result<WebhookEndpointInstanceLinked<C, S>, WasmFileError> {
         let mut linker = Linker::new(engine);
         // Link wasi
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
@@ -199,11 +198,40 @@ impl WebhookEndpointCompiled {
             WasmFileError::linking_error("linking error while creating ProxyPre instance", err)
         })?);
 
-        Ok(WebhookEndpointInstance {
+        Ok(WebhookEndpointInstanceLinked {
             config: self.config,
-            exim: self.runnable_component.wasm_component.exim,
             proxy_pre,
         })
+    }
+}
+
+#[derive(Clone, derive_more::Debug)]
+pub struct WebhookEndpointInstanceLinked<C: ClockFn, S: Sleep> {
+    #[debug(skip)]
+    proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C, S>>>,
+    config: WebhookEndpointConfig,
+}
+impl<C: ClockFn, S: Sleep> WebhookEndpointInstanceLinked<C, S> {
+    pub fn build(
+        self,
+        log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+    ) -> WebhookEndpointInstance<C, S> {
+        let stdout = StdOutputConfigWithSender::new(
+            self.config.forward_stdout,
+            &log_forwarder_sender,
+            LogStreamType::StdOut,
+        );
+        let stderr = StdOutputConfigWithSender::new(
+            self.config.forward_stderr,
+            &log_forwarder_sender,
+            LogStreamType::StdErr,
+        );
+        WebhookEndpointInstance {
+            proxy_pre: self.proxy_pre,
+            config: self.config,
+            stdout,
+            stderr,
+        }
     }
 }
 
@@ -212,14 +240,10 @@ pub struct WebhookEndpointInstance<C: ClockFn, S: Sleep> {
     #[debug(skip)]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx<C, S>>>,
     pub config: WebhookEndpointConfig,
-    exim: ExIm,
-}
-
-impl<C: ClockFn, S: Sleep> WebhookEndpointInstance<C, S> {
-    #[must_use]
-    pub fn imported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.imports_flat
-    }
+    #[debug(skip)]
+    stdout: Option<StdOutputConfigWithSender>,
+    #[debug(skip)]
+    stderr: Option<StdOutputConfigWithSender>,
 }
 
 pub struct MethodAwareRouter<T> {
@@ -283,6 +307,7 @@ pub async fn server<C: ClockFn + 'static, S: Sleep>(
     server_termination_watcher: watch::Receiver<()>,
 ) -> Result<(), WebhookServerError> {
     let router = Arc::new(router);
+
     loop {
         let (stream, _) = listener
             .accept()
@@ -763,33 +788,27 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
         request_span: Span,
         connection_drop_watcher: watch::Receiver<()>,
         server_termination_watcher: watch::Receiver<()>,
+        stdout: Option<StdOutput>,
+        stderr: Option<StdOutput>,
     ) -> Store<WebhookEndpointCtx<C, S>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
-        if let Some(std_config) = config.forward_stdout {
+        if let Some(stdout) = stdout {
             let stdout = LogStream::new(
                 format!(
                     "[{component_id} {execution_id} stdout]",
                     component_id = config.component_id
                 ),
-                match std_config {
-                    StdOutputConfig::Stdout => StdOutput::Stdout,
-                    StdOutputConfig::Stderr => StdOutput::Stderr,
-                    StdOutputConfig::Db => StdOutput::Db(DbOutput::default()),
-                },
+                stdout,
             );
             wasi_ctx.stdout(stdout);
         }
-        if let Some(std_config) = config.forward_stderr {
+        if let Some(stderr) = stderr {
             let stderr = LogStream::new(
                 format!(
                     "[{component_id} {execution_id} stderr]",
                     component_id = config.component_id
                 ),
-                match std_config {
-                    StdOutputConfig::Stdout => StdOutput::Stdout,
-                    StdOutputConfig::Stderr => StdOutput::Stderr,
-                    StdOutputConfig::Db => StdOutput::Db(DbOutput::default()),
-                },
+                stderr,
             );
             wasi_ctx.stderr(stderr);
         }
@@ -1039,8 +1058,15 @@ impl<C: ClockFn + 'static, S: Sleep> RequestHandler<C, S> {
         #[error("timeout")]
         struct TimeoutError;
 
-        if let Some(matched) = self.router.find(req.method(), req.uri()) {
-            let found_instance = matched.handler();
+        if let Some(instance_match) = self.router.find(req.method(), req.uri()) {
+            let found_instance = instance_match.handler();
+            let run_id = RunId::generate();
+            let stdout = found_instance.stdout.as_ref().map(|stdoutput| {
+                stdoutput.build(&ExecutionId::TopLevel(self.execution_id), run_id)
+            });
+            let stderr = found_instance.stderr.as_ref().map(|stdoutput| {
+                stdoutput.build(&ExecutionId::TopLevel(self.execution_id), run_id)
+            });
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let mut store = WebhookEndpointCtx::new(
                 found_instance.config.clone(),
@@ -1049,11 +1075,13 @@ impl<C: ClockFn + 'static, S: Sleep> RequestHandler<C, S> {
                 self.sleep,
                 self.db_pool,
                 self.fn_registry,
-                matched.params().iter(),
+                instance_match.params().iter(),
                 self.execution_id,
                 request_span.clone(),
                 self.connection_drop_watcher,
                 self.server_termination_watcher,
+                stdout,
+                stderr,
             );
             let req = store
                 .data_mut()
@@ -1182,7 +1210,7 @@ pub(crate) mod tests {
         use test_db_macro::expand_enum_database;
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
-        use tokio::sync::watch;
+        use tokio::sync::{mpsc, watch};
         use tracing::info;
 
         struct AbortOnDrop(tokio::task::AbortHandle);
@@ -1237,7 +1265,7 @@ pub(crate) mod tests {
                     &fn_registry,
                     cancel_registry,
                 );
-
+                let (db_forwarder_sender, _) = mpsc::channel(1);
                 let router = {
                     let instance = WebhookEndpointCompiled::new(
                         WebhookEndpointConfig {
@@ -1254,7 +1282,8 @@ pub(crate) mod tests {
                     )
                     .unwrap()
                     .link(&engine, fn_registry.as_ref())
-                    .unwrap();
+                    .unwrap()
+                    .build(&db_forwarder_sender);
                     let mut router = MethodAwareRouter::default();
                     router.add(Some(Method::GET), "/fibo/:N/:ITERATIONS", instance);
                     router

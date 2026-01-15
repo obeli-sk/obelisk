@@ -4,11 +4,12 @@ use crate::activity::activity_ctx::ActivityPreopenIoError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
-use crate::std_output_stream::StdOutputConfig;
+use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::http_client_trace::HttpClientTrace;
+use concepts::storage::{LogInfoAppendRow, LogStreamType};
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue, TrapKind};
 use concepts::{FunctionMetadata, ResultParsingError};
@@ -18,6 +19,7 @@ use itertools::Itertools;
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
+use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
 use utils::wasm_tools::ExIm;
 use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
@@ -119,7 +121,21 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
         &self.exim.imports_flat
     }
 
-    pub fn into_worker(self, cancel_registry: CancelRegistry) -> ActivityWorker<C, S> {
+    pub fn into_worker(
+        self,
+        cancel_registry: CancelRegistry,
+        log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+    ) -> ActivityWorker<C, S> {
+        let stdout = StdOutputConfigWithSender::new(
+            self.config.forward_stdout,
+            &log_forwarder_sender,
+            LogStreamType::StdOut,
+        );
+        let stderr = StdOutputConfigWithSender::new(
+            self.config.forward_stderr,
+            &log_forwarder_sender,
+            LogStreamType::StdErr,
+        );
         ActivityWorker {
             engine: self.engine,
             instance_pre: self.instance_pre,
@@ -129,6 +145,8 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             config: self.config,
             cancel_registry,
+            stdout,
+            stderr,
         }
     }
 }
@@ -143,6 +161,8 @@ pub struct ActivityWorker<C: ClockFn, S: Sleep> {
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
     cancel_registry: CancelRegistry,
+    stdout: Option<StdOutputConfigWithSender>,
+    stderr: Option<StdOutputConfigWithSender>,
 }
 
 impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
@@ -292,6 +312,12 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
             ctx.worker_span.clone(),
             self.clock_fn.clone(),
             preopened_dir,
+            self.stdout
+                .as_ref()
+                .map(|it| it.build(&ctx.execution_id, ctx.locked_event.run_id)),
+            self.stderr
+                .as_ref()
+                .map(|it| it.build(&ctx.execution_id, ctx.locked_event.run_id)),
         ) {
             Ok(store) => store,
             Err(ActivityPreopenIoError { err }) => {
@@ -597,6 +623,7 @@ pub(crate) mod tests {
         let cancel_registry = CancelRegistry::new();
         let (wasm_component, component_id) =
             compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm);
+        let (db_forwarder_sender, _) = mpsc::channel(1);
         (
             Arc::new(
                 ActivityWorkerCompiled::new_with_config(
@@ -607,7 +634,7 @@ pub(crate) mod tests {
                     sleep,
                 )
                 .unwrap()
-                .into_worker(cancel_registry),
+                .into_worker(cancel_registry, &db_forwarder_sender),
             ),
             component_id,
         )

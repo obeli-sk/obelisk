@@ -4005,8 +4005,9 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_log_batch(&self, batch: Vec<LogInfoAppendRow>) -> Result<(), DbErrorWrite> {
+    async fn append_log_batch(&self, batch: &[LogInfoAppendRow]) -> Result<(), DbErrorWrite> {
         trace!("append_log_batch");
+        let batch = Vec::from(batch);
         self.transaction(
             move |tx| {
                 for row in &batch {
