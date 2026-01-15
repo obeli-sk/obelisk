@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
-use tracing::{info, warn};
+use tracing::{Instrument, debug, info_span, warn};
 
 pub const CANCEL_RETRIES: u8 = 5;
 
@@ -40,11 +40,11 @@ impl CancelRegistry {
         db_pool: Arc<dyn DbPool>,
         sleep_duration: Duration,
     ) -> AbortOnDropHandle {
-        info!("Spawning cancel_watcher");
         let clone = self.clone();
         AbortOnDropHandle::new(
             tokio::spawn({
                 async move {
+                    debug!("Spawned the cancel watcher");
                     let mut old_err = None;
                     loop {
                         let res = db_pool.connection().await;
@@ -59,6 +59,7 @@ impl CancelRegistry {
                         tokio::time::sleep(sleep_duration).await;
                     }
                 }
+                .instrument(info_span!(parent: None, "cancel_watcher"))
             })
             .abort_handle(),
         )

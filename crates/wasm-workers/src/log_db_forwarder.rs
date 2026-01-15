@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
-use tracing::{Instrument, Level, debug, info, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, debug, info_span, instrument, trace, warn};
 
 const RECV_MANY_LIMIT: usize = 500; // max items per tx
 const DB_ERR_DELAY_MS: u64 = 100;
@@ -17,7 +17,7 @@ pub fn spawn_new(
     AbortOnDropHandle::new(
         tokio::spawn({
             async move {
-                info!("Spawned log db forwarder");
+                debug!("Spawned log db forwarder");
                 let mut old_err = None;
                 let mut buffer = Vec::with_capacity(RECV_MANY_LIMIT);
                 loop {

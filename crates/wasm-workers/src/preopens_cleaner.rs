@@ -5,7 +5,7 @@ use concepts::{
 };
 use executor::AbortOnDropHandle;
 use std::{error::Error, ffi::OsStr, path::Path, str::FromStr, sync::Arc, time::Duration};
-use tracing::{debug, info, trace, warn};
+use tracing::{Instrument, debug, info_span, trace, warn};
 
 pub struct PreopensCleaner<S: Sleep, C: ClockFn> {
     delete_older_than: Duration,
@@ -25,7 +25,6 @@ impl<S: Sleep + 'static, C: ClockFn + 'static> PreopensCleaner<S, C> {
         clock_fn: C,
         db_pool: Arc<dyn DbPool>,
     ) -> AbortOnDropHandle {
-        info!("Spawning preopened dir cleaner");
         let this = PreopensCleaner {
             delete_older_than,
             parent_preopen_dir,
@@ -35,15 +34,19 @@ impl<S: Sleep + 'static, C: ClockFn + 'static> PreopensCleaner<S, C> {
             db_pool,
         };
         AbortOnDropHandle::new(
-            tokio::task::spawn(async move {
-                loop {
-                    this.sleep.sleep(this.sleep_duration).await;
-                    let res = this.tick().await;
-                    if let Err(err) = res {
-                        warn!("Cleaning old preopened directories failed - {err:?}");
+            tokio::task::spawn(
+                async move {
+                    debug!("Spawning preopened dir cleaner");
+                    loop {
+                        this.sleep.sleep(this.sleep_duration).await;
+                        let res = this.tick().await;
+                        if let Err(err) = res {
+                            warn!("Cleaning old preopened directories failed - {err:?}");
+                        }
                     }
                 }
-            })
+                .instrument(info_span!(parent: None, "preopened_dir_cleaner")),
+            )
             .abort_handle(),
         )
     }

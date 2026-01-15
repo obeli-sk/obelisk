@@ -45,11 +45,11 @@ pub fn spawn_new<C: ClockFn + 'static>(
     db_pool: Arc<dyn DbPool>,
     config: TimersWatcherConfig<C>,
 ) -> AbortOnDropHandle {
-    info!("Spawning expired_timers_watcher");
     let tick_sleep = config.tick_sleep;
     AbortOnDropHandle::new(
-        tokio::spawn({
+        tokio::spawn(
             async move {
+                debug!("Spawned expired timers watcher");
                 let mut old_err = None;
                 loop {
                     let executed_at = config.clock_fn.now() - config.leeway;
@@ -61,7 +61,8 @@ pub fn spawn_new<C: ClockFn + 'static>(
                     tokio::time::sleep(tick_sleep).await;
                 }
             }
-        })
+            .instrument(info_span!(parent: None, "expired_timers_watcher")),
+        )
         .abort_handle(),
     )
 }
