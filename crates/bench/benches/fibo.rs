@@ -129,7 +129,11 @@ mod bench {
                     sleep,
                 )
                 .unwrap()
-                .into_worker(cancel_registry, &db_forwarder_sender),
+                .into_worker(
+                    cancel_registry,
+                    &db_forwarder_sender,
+                    None, // log_storage_config
+                ),
             ),
             component_id,
         )
@@ -199,6 +203,7 @@ mod bench {
                     clock_fn: clock_fn.clone(),
                 }),
                 cancel_registry,
+                None, // log_storage_config
             ),
         );
         let exec_config = ExecConfig {

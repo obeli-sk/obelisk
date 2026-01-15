@@ -2,6 +2,7 @@ use super::deadline_tracker::DeadlineTrackerFactory;
 use super::event_history::ApplyError;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::activity::cancel_registry::CancelRegistry;
+use crate::component_logger::LogStrageConfig;
 use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
@@ -83,6 +84,7 @@ pub struct WorkflowWorker<C: ClockFn> {
     fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
     deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+    log_storage_config: Option<LogStrageConfig>,
 }
 
 const WASI_NAMESPACE: &str = "wasi";
@@ -316,6 +318,7 @@ impl<C: ClockFn> WorkflowWorkerLinked<C> {
         db_pool: Arc<dyn DbPool>,
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
         cancel_registry: CancelRegistry,
+        log_storage_config: Option<LogStrageConfig>,
     ) -> WorkflowWorker<C> {
         WorkflowWorker {
             config: self.config,
@@ -328,6 +331,7 @@ impl<C: ClockFn> WorkflowWorkerLinked<C> {
             fn_registry: self.fn_registry,
             deadline_factory,
             cancel_registry,
+            log_storage_config,
         }
     }
 }
@@ -410,6 +414,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             ctx.locked_event,
             self.config.lock_extension,
             self.config.subscription_interruption,
+            self.log_storage_config.clone(),
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);
@@ -863,6 +868,7 @@ pub(crate) mod tests {
                     clock_fn: clock_fn.clone(),
                 }),
                 cancel_registry,
+                None, // log_storage_config
             ),
         );
         info!("Instantiated worker");
@@ -1068,6 +1074,7 @@ pub(crate) mod tests {
                     clock_fn,
                 }),
                 cancel_registry,
+                None, // log_storage_config
             ),
         )
     }

@@ -5,7 +5,7 @@ use tracing_error::SpanTrace;
 use utils::wasm_tools::{self, DecodeError, WasmComponent};
 
 pub mod activity;
-mod component_logger;
+pub mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
 pub mod log_db_forwarder;

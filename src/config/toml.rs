@@ -12,7 +12,7 @@ use anyhow::Context;
 use anyhow::{anyhow, bail};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
-    component_id::InputContentDigest, prefixed_ulid::ExecutorId,
+    component_id::InputContentDigest, prefixed_ulid::ExecutorId, storage::LogLevel,
 };
 use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
@@ -613,6 +613,32 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     pub(crate) retry_on_err: bool,
     #[serde(default)]
     pub(crate) directories: ActivityDirectoriesConfigToml,
+    #[serde(default)]
+    pub(crate) log_store_min_level: LogLevelToml,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LogLevelToml {
+    #[default]
+    Off,
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+impl From<LogLevelToml> for Option<LogLevel> {
+    fn from(value: LogLevelToml) -> Self {
+        match value {
+            LogLevelToml::Off => None,
+            LogLevelToml::Trace => Some(LogLevel::Trace),
+            LogLevelToml::Debug => Some(LogLevel::Debug),
+            LogLevelToml::Info => Some(LogLevel::Info),
+            LogLevelToml::Warn => Some(LogLevel::Warn),
+            LogLevelToml::Error => Some(LogLevel::Error),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -684,6 +710,7 @@ pub(crate) struct ActivityWasmConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
+    pub(crate) log_store_min_level: Option<LogLevel>,
 }
 
 impl ActivityWasmConfigVerified {
@@ -752,6 +779,7 @@ impl ActivityWasmComponentConfigToml {
                 global_executor_instance_limiter,
                 retry_config,
             ),
+            log_store_min_level: self.log_store_min_level.into(),
         })
     }
 }
@@ -775,6 +803,8 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) stub_wasi: bool,
     #[serde(default = "default_lock_extension")]
     lock_extension: DurationConfig,
+    #[serde(default)]
+    pub(crate) log_store_min_level: LogLevelToml,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
@@ -879,6 +909,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
+    pub(crate) log_store_min_level: Option<LogLevel>,
 }
 
 impl WorkflowConfigVerified {
@@ -951,6 +982,7 @@ impl WorkflowComponentConfigToml {
                 retry_config,
             ),
             backtrace_config,
+            log_store_min_level: self.log_store_min_level.into(),
         })
     }
 }
@@ -1266,10 +1298,14 @@ pub(crate) mod webhook {
         ComponentBacktraceConfig, ComponentCommon, ConfigName, StdOutput, resolve_env_vars,
     };
     use crate::config::{
-        config_holder::PathPrefixes, env_var::EnvVarConfig, toml::ComponentBacktraceConfigVerified,
+        config_holder::PathPrefixes,
+        env_var::EnvVarConfig,
+        toml::{ComponentBacktraceConfigVerified, LogLevelToml},
     };
     use anyhow::Context;
-    use concepts::{ComponentId, ComponentType, StrVariant, component_id::InputContentDigest};
+    use concepts::{
+        ComponentId, ComponentType, StrVariant, component_id::InputContentDigest, storage::LogLevel,
+    };
     use schemars::JsonSchema;
     use serde::Deserialize;
     use std::{
@@ -1304,6 +1340,8 @@ pub(crate) mod webhook {
         pub(crate) env_vars: Vec<EnvVarConfig>,
         #[serde(default)]
         pub(crate) backtrace: ComponentBacktraceConfig,
+        #[serde(default)]
+        pub(crate) log_store_min_level: LogLevelToml,
     }
 
     impl WebhookComponentConfigToml {
@@ -1342,6 +1380,7 @@ pub(crate) mod webhook {
                     env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
                     backtrace_config,
                     subscription_interruption,
+                    log_store_min_level: self.log_store_min_level.into(),
                 },
             ))
         }
@@ -1379,6 +1418,7 @@ pub(crate) mod webhook {
         pub(crate) env_vars: Arc<[EnvVar]>,
         pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
         pub(crate) subscription_interruption: Option<Duration>,
+        pub(crate) log_store_min_level: Option<LogLevel>,
     }
 
     #[derive(Debug)]

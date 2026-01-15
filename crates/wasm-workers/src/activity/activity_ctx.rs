@@ -1,8 +1,10 @@
 use super::activity_worker::{ActivityConfig, ProcessProvider};
-use crate::component_logger::{ComponentLogger, log_activities};
+use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::std_output_stream::{LogStream, StdOutput};
 use bytes::Bytes;
 use concepts::ExecutionId;
+use concepts::prefixed_ulid::RunId;
+use concepts::storage::LogLevel;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
 use hyper::body::Body;
@@ -124,13 +126,15 @@ pub(crate) struct ActivityPreopenIoError {
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn store<C: ClockFn>(
     engine: &Engine,
-    execution_id: &ExecutionId,
+    execution_id: ExecutionId,
+    run_id: RunId,
     config: &ActivityConfig,
     worker_span: Span,
     clock_fn: C,
     preopened_dir: Option<PathBuf>,
     stdout: Option<StdOutput>,
     stderr: Option<StdOutput>,
+    log_storage_config: Option<LogStrageConfig>,
 ) -> Result<Store<ActivityCtx<C>>, ActivityPreopenIoError> {
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = stdout {
@@ -168,7 +172,12 @@ pub(crate) fn store<C: ClockFn>(
         table: ResourceTable::new(),
         wasi_ctx: wasi_ctx.build(),
         http_ctx: WasiHttpCtx::new(),
-        component_logger: ComponentLogger { span: worker_span },
+        component_logger: ComponentLogger {
+            span: worker_span,
+            execution_id,
+            run_id,
+            log_storage_config,
+        },
         http_client_traces: HttpClientTracesContainer::default(),
         clock_fn,
         preopened_dir: preopened_dir.map(Arc::from),
@@ -182,22 +191,22 @@ pub(crate) fn store<C: ClockFn>(
 
 impl<C: ClockFn> log_activities::obelisk::log::log::Host for ActivityCtx<C> {
     fn trace(&mut self, message: String) {
-        self.component_logger.trace(&message);
+        self.component_logger.log(LogLevel::Trace, message);
     }
 
     fn debug(&mut self, message: String) {
-        self.component_logger.debug(&message);
+        self.component_logger.log(LogLevel::Debug, message);
     }
 
     fn info(&mut self, message: String) {
-        self.component_logger.info(&message);
+        self.component_logger.log(LogLevel::Info, message);
     }
 
     fn warn(&mut self, message: String) {
-        self.component_logger.warn(&message);
+        self.component_logger.log(LogLevel::Warn, message);
     }
 
     fn error(&mut self, message: String) {
-        self.component_logger.error(&message);
+        self.component_logger.log(LogLevel::Error, message);
     }
 }

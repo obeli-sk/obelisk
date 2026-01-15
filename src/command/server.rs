@@ -18,6 +18,7 @@ use crate::config::toml::ComponentCommon;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::DatabaseConfigToml;
+use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::StdOutput;
 use crate::config::toml::TimersWatcherTomlConfig;
@@ -59,6 +60,7 @@ use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::LogInfoAppendRow;
+use concepts::storage::LogLevel;
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
@@ -104,6 +106,7 @@ use val_json::wast_val::WastValWithType;
 use wasm_workers::RunnableComponent;
 use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
+use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
@@ -734,6 +737,7 @@ impl ServerVerified {
                     )),
                 }],
                 backtrace: ComponentBacktraceConfig::default(),
+                log_store_min_level: LogLevelToml::Off,
             });
         }
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
@@ -1425,6 +1429,7 @@ async fn compile_and_verify(
                                 fuel,
                                 backtrace_persist: global_backtrace_persist,
                                 subscription_interruption: webhook.subscription_interruption,
+                                log_store_min_level: webhook.log_store_min_level,
                             };
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
@@ -1563,6 +1568,7 @@ fn prespawn_activity(
         worker,
         activity.exec_config,
         wit,
+        activity.log_store_min_level,
     ))
 }
 
@@ -1598,6 +1604,7 @@ fn prespawn_workflow(
         workflow.exec_config,
         wit,
         workflows_lock_extension_leeway,
+        workflow.log_store_min_level,
     ))
 }
 
@@ -1609,6 +1616,7 @@ struct WorkflowWorkerCompiledWithConfig {
 struct WorkerCompiled {
     worker: Either<ActivityWorkerCompiled<Now, TokioSleep>, WorkflowWorkerCompiledWithConfig>,
     exec_config: ExecConfig,
+    log_store_min_level: Option<LogLevel>,
 }
 
 impl WorkerCompiled {
@@ -1616,6 +1624,7 @@ impl WorkerCompiled {
         worker: ActivityWorkerCompiled<Now, TokioSleep>,
         exec_config: ExecConfig,
         wit: Option<String>,
+        log_store_min_level: Option<LogLevel>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
@@ -1630,6 +1639,7 @@ impl WorkerCompiled {
             WorkerCompiled {
                 worker: Either::Left(worker),
                 exec_config,
+                log_store_min_level,
             },
             component,
         )
@@ -1640,6 +1650,7 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         wit: Option<String>,
         workflows_lock_extension_leeway: Duration,
+        log_store_min_level: Option<LogLevel>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
@@ -1657,6 +1668,7 @@ impl WorkerCompiled {
                     workflows_lock_extension_leeway,
                 }),
                 exec_config,
+                log_store_min_level,
             },
             component,
         )
@@ -1674,6 +1686,7 @@ impl WorkerCompiled {
                 }),
             },
             exec_config: self.exec_config,
+            log_store_min_level: self.log_store_min_level,
         })
     }
 }
@@ -1686,6 +1699,7 @@ struct WorkflowWorkerLinkedWithConfig {
 struct WorkerLinked {
     worker: Either<ActivityWorkerCompiled<Now, TokioSleep>, WorkflowWorkerLinkedWithConfig>,
     exec_config: ExecConfig,
+    log_store_min_level: Option<LogLevel>,
 }
 impl WorkerLinked {
     fn spawn(
@@ -1695,9 +1709,14 @@ impl WorkerLinked {
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
     ) -> ExecutorTaskHandle {
         let worker: Arc<dyn Worker> = match self.worker {
-            Either::Left(activity_compiled) => {
-                Arc::from(activity_compiled.into_worker(cancel_registry, log_forwarder_sender))
-            }
+            Either::Left(activity_compiled) => Arc::from(activity_compiled.into_worker(
+                cancel_registry,
+                log_forwarder_sender,
+                self.log_store_min_level.map(|min_level| LogStrageConfig {
+                    min_level,
+                    log_sender: log_forwarder_sender.clone(),
+                }),
+            )),
             Either::Right(workflow_linked) => Arc::from(workflow_linked.worker.into_worker(
                 db_pool.clone(),
                 Arc::new(DeadlineTrackerFactoryTokio {
@@ -1705,6 +1724,10 @@ impl WorkerLinked {
                     clock_fn: Now,
                 }),
                 cancel_registry,
+                self.log_store_min_level.map(|min_level| LogStrageConfig {
+                    min_level,
+                    log_sender: log_forwarder_sender.clone(),
+                }),
             )),
         };
         ExecTask::spawn_new(worker, self.exec_config, Now, db_pool.clone(), TokioSleep)

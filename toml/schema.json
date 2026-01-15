@@ -188,6 +188,9 @@
         "location": {
           "$ref": "#/$defs/ComponentLocation"
         },
+        "log_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml"
+        },
         "max_retries": {
           "type": "integer",
           "format": "uint32",
@@ -634,6 +637,17 @@
         "by_component_id"
       ]
     },
+    "LogLevelToml": {
+      "type": "string",
+      "enum": [
+        "off",
+        "trace",
+        "debug",
+        "info",
+        "warn",
+        "error"
+      ]
+    },
     "LoggingConfig": {
       "type": "object",
       "properties": {
@@ -1050,6 +1064,9 @@
         "location": {
           "$ref": "#/$defs/ComponentLocation"
         },
+        "log_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml"
+        },
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
@@ -1118,6 +1135,9 @@
         },
         "lock_extension": {
           "$ref": "#/$defs/DurationConfig"
+        },
+        "log_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml"
         },
         "name": {
           "$ref": "#/$defs/ConfigName"

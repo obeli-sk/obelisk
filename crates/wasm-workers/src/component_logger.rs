@@ -1,28 +1,52 @@
+use chrono::Utc;
+use concepts::{
+    ExecutionId,
+    prefixed_ulid::RunId,
+    storage::{LogInfo, LogInfoAppendRow, LogLevel},
+};
+use tokio::sync::mpsc;
 use tracing::{Span, debug, error, info, trace, warn};
 
 pub(crate) struct ComponentLogger {
     pub(crate) span: Span,
+    pub(crate) execution_id: ExecutionId,
+    pub(crate) run_id: RunId,
+    pub(crate) log_storage_config: Option<LogStrageConfig>,
 }
+
+#[derive(Clone, derive_more::Debug)]
+pub struct LogStrageConfig {
+    pub min_level: LogLevel,
+    #[debug(skip)]
+    pub log_sender: mpsc::Sender<LogInfoAppendRow>,
+}
+
 const TARGET: &str = "app";
 impl ComponentLogger {
-    pub(crate) fn trace(&self, message: &str) {
-        self.span.in_scope(|| trace!(target: TARGET, "{}", message));
-    }
-
-    pub(crate) fn debug(&self, message: &str) {
-        self.span.in_scope(|| debug!(target: TARGET, "{}", message));
-    }
-
-    pub(crate) fn info(&self, message: &str) {
-        self.span.in_scope(|| info!(target: TARGET, "{}", message));
-    }
-
-    pub(crate) fn warn(&self, message: &str) {
-        self.span.in_scope(|| warn!(target: TARGET, "{}", message));
-    }
-
-    pub(crate) fn error(&self, message: &str) {
-        self.span.in_scope(|| error!(target: TARGET, "{}", message));
+    pub(crate) fn log(&mut self, level: LogLevel, message: String) {
+        // publish via tracing subscriber
+        self.span.in_scope(|| match level {
+            LogLevel::Trace => trace!(target = TARGET, "{message}"),
+            LogLevel::Debug => debug!(target = TARGET, "{message}"),
+            LogLevel::Info => info!(target = TARGET, "{message}"),
+            LogLevel::Warn => warn!(target = TARGET, "{message}"),
+            LogLevel::Error => error!(target = TARGET, "{message}"),
+        });
+        // store
+        if let Some(log_storage_config) = &mut self.log_storage_config {
+            let res = log_storage_config.log_sender.try_send(LogInfoAppendRow {
+                execution_id: self.execution_id.clone(),
+                run_id: self.run_id,
+                log_info: LogInfo::Log {
+                    created_at: Utc::now(),
+                    level,
+                    message,
+                },
+            });
+            if res.is_err() {
+                debug!("Dropping stream message");
+            }
+        }
     }
 }
 

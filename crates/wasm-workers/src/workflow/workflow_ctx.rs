@@ -13,14 +13,14 @@ use super::host_exports::{
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::component_logger::{ComponentLogger, log_activities};
+use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::workflow::event_history::JoinSetCreate;
 use crate::workflow::host_exports::v4_0_0::DelayId_4_0_0;
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::{
-    self, DbErrorWrite, HistoryEventScheduleAt, Locked, Version, WasmBacktrace,
+    self, DbErrorWrite, HistoryEventScheduleAt, Locked, LogLevel, Version, WasmBacktrace,
 };
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
@@ -800,14 +800,16 @@ impl<C: ClockFn> WorkflowCtx<C> {
         locked_event: Locked,
         lock_extension: Duration,
         subscription_interruption: Option<Duration>,
+        log_storage_config: Option<LogStrageConfig>,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
         wasi_ctx_builder.allow_udp(false);
         wasi_ctx_builder.insecure_random_seed(0);
-
+        let run_id = locked_event.run_id;
+        let execution_id = db_connection.execution_id.clone();
         Self {
-            execution_id: db_connection.execution_id.clone(),
+            execution_id: execution_id.clone(),
             db_connection,
             event_history: EventHistory::new(
                 event_history,
@@ -823,7 +825,12 @@ impl<C: ClockFn> WorkflowCtx<C> {
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
-            component_logger: ComponentLogger { span: worker_span },
+            component_logger: ComponentLogger {
+                span: worker_span,
+                execution_id,
+                run_id,
+                log_storage_config,
+            },
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace_persist,
             wasi_ctx: wasi_ctx_builder.build(),
@@ -1461,44 +1468,34 @@ mod workflow_support {
     }
 }
 
-fn trace_on_replay<C: ClockFn>(ctx: &WorkflowCtx<C>, message: &str) -> bool {
+fn trace_on_replay<C: ClockFn>(ctx: &mut WorkflowCtx<C>, level: LogLevel, message: String) {
     if ctx.event_history.has_unprocessed_requests() {
-        ctx.component_logger.trace(&format!("(replay) {message}"));
-        true
+        ctx.component_logger
+            .log(LogLevel::Trace, format!("(replay) {message}"));
     } else {
-        false
+        ctx.component_logger.log(level, message);
     }
 }
 
 impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
     fn trace(&mut self, message: String) {
-        if !trace_on_replay(self, &message) {
-            self.component_logger.trace(&message);
-        }
+        trace_on_replay(self, LogLevel::Trace, message);
     }
 
     fn debug(&mut self, message: String) {
-        if !trace_on_replay(self, &message) {
-            self.component_logger.debug(&message);
-        }
+        trace_on_replay(self, LogLevel::Debug, message);
     }
 
     fn info(&mut self, message: String) {
-        if !trace_on_replay(self, &message) {
-            self.component_logger.info(&message);
-        }
+        trace_on_replay(self, LogLevel::Info, message);
     }
 
     fn warn(&mut self, message: String) {
-        if !trace_on_replay(self, &message) {
-            self.component_logger.warn(&message);
-        }
+        trace_on_replay(self, LogLevel::Warn, message);
     }
 
     fn error(&mut self, message: String) {
-        if !trace_on_replay(self, &message) {
-            self.component_logger.error(&message);
-        }
+        trace_on_replay(self, LogLevel::Error, message);
     }
 }
 
@@ -1689,6 +1686,7 @@ pub(crate) mod tests {
                 ctx.locked_event,
                 Duration::from_secs(1), // lock extension
                 None,                   // subscription_interruption
+                None,                   // log_storage_config
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");

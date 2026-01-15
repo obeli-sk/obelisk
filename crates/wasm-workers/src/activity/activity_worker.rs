@@ -2,7 +2,7 @@ use super::activity_ctx::{self, ActivityCtx};
 use super::activity_ctx_process::process_support_outer::v1_0_0::obelisk::activity::process as process_support;
 use crate::activity::activity_ctx::ActivityPreopenIoError;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::component_logger::log_activities;
+use crate::component_logger::{LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use crate::{RunnableComponent, WasmFileError};
@@ -125,6 +125,7 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
         self,
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+        log_storage_config: Option<LogStrageConfig>,
     ) -> ActivityWorker<C, S> {
         let stdout = StdOutputConfigWithSender::new(
             self.config.forward_stdout,
@@ -147,6 +148,7 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
             cancel_registry,
             stdout,
             stderr,
+            log_storage_config,
         }
     }
 }
@@ -163,6 +165,7 @@ pub struct ActivityWorker<C: ClockFn, S: Sleep> {
     cancel_registry: CancelRegistry,
     stdout: Option<StdOutputConfigWithSender>,
     stderr: Option<StdOutputConfigWithSender>,
+    log_storage_config: Option<LogStrageConfig>,
 }
 
 impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
@@ -307,7 +310,8 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
 
         let mut store = match activity_ctx::store(
             &self.engine,
-            &ctx.execution_id,
+            ctx.execution_id.clone(),
+            ctx.locked_event.run_id,
             &self.config,
             ctx.worker_span.clone(),
             self.clock_fn.clone(),
@@ -318,6 +322,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
             self.stderr
                 .as_ref()
                 .map(|it| it.build(&ctx.execution_id, ctx.locked_event.run_id)),
+            self.log_storage_config.clone(),
         ) {
             Ok(store) => store,
             Err(ActivityPreopenIoError { err }) => {
@@ -634,7 +639,7 @@ pub(crate) mod tests {
                     sleep,
                 )
                 .unwrap()
-                .into_worker(cancel_registry, &db_forwarder_sender),
+                .into_worker(cancel_registry, &db_forwarder_sender, None),
             ),
             component_id,
         )

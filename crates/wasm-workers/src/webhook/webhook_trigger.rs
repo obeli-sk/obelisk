@@ -1,4 +1,4 @@
-use crate::component_logger::{ComponentLogger, log_activities};
+use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
 use crate::webhook::webhook_trigger::types_v4_0_0::obelisk::types::join_set::JoinNextError;
@@ -9,7 +9,7 @@ use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_
 use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric,
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent, JoinSetRequest,
-    LogInfoAppendRow, LogStreamType, TimeoutOutcome, Version,
+    LogInfoAppendRow, LogLevel, LogStreamType, TimeoutOutcome, Version,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -229,9 +229,16 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointInstanceLinked<C, S> {
         );
         WebhookEndpointInstance {
             proxy_pre: self.proxy_pre,
-            config: self.config,
             stdout,
             stderr,
+            log_storage_config: self
+                .config
+                .log_store_min_level
+                .map(|min_level| LogStrageConfig {
+                    min_level,
+                    log_sender: log_forwarder_sender.clone(),
+                }),
+            config: self.config,
         }
     }
 }
@@ -245,6 +252,7 @@ pub struct WebhookEndpointInstance<C: ClockFn, S: Sleep> {
     stdout: Option<StdOutputConfigWithSender>,
     #[debug(skip)]
     stderr: Option<StdOutputConfigWithSender>,
+    log_storage_config: Option<LogStrageConfig>,
 }
 
 pub struct MethodAwareRouter<T> {
@@ -374,6 +382,7 @@ pub struct WebhookEndpointConfig {
     pub fuel: Option<u64>,
     pub backtrace_persist: bool,
     pub subscription_interruption: Option<Duration>,
+    pub log_store_min_level: Option<LogLevel>,
 }
 
 struct WebhookEndpointCtx<C: ClockFn, S: Sleep> {
@@ -791,6 +800,8 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
         server_termination_watcher: watch::Receiver<()>,
         stdout: Option<StdOutput>,
         stderr: Option<StdOutput>,
+        run_id: RunId,
+        log_storage_config: Option<LogStrageConfig>,
     ) -> Store<WebhookEndpointCtx<C, S>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
         if let Some(stdout) = stdout {
@@ -833,7 +844,12 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
             component_id: config.component_id,
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
-            component_logger: ComponentLogger { span: request_span },
+            component_logger: ComponentLogger {
+                span: request_span,
+                execution_id: ExecutionId::TopLevel(execution_id),
+                run_id,
+                log_storage_config,
+            },
             subscription_interruption: config.subscription_interruption,
             connection_drop_watcher,
             server_termination_watcher,
@@ -927,23 +943,23 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
 
 impl<C: ClockFn, S: Sleep> log_activities::obelisk::log::log::Host for WebhookEndpointCtx<C, S> {
     fn trace(&mut self, message: String) {
-        self.component_logger.trace(&message);
+        self.component_logger.log(LogLevel::Trace, message);
     }
 
     fn debug(&mut self, message: String) {
-        self.component_logger.debug(&message);
+        self.component_logger.log(LogLevel::Debug, message);
     }
 
     fn info(&mut self, message: String) {
-        self.component_logger.info(&message);
+        self.component_logger.log(LogLevel::Info, message);
     }
 
     fn warn(&mut self, message: String) {
-        self.component_logger.warn(&message);
+        self.component_logger.log(LogLevel::Warn, message);
     }
 
     fn error(&mut self, message: String) {
-        self.component_logger.error(&message);
+        self.component_logger.log(LogLevel::Error, message);
     }
 }
 
@@ -1083,6 +1099,8 @@ impl<C: ClockFn + 'static, S: Sleep> RequestHandler<C, S> {
                 self.server_termination_watcher,
                 stdout,
                 stderr,
+                run_id,
+                found_instance.log_storage_config.clone(),
             );
             let req = store
                 .data_mut()
@@ -1277,6 +1295,7 @@ pub(crate) mod tests {
                             fuel: None,
                             backtrace_persist: false,
                             subscription_interruption: None,
+                            log_store_min_level: None,
                         },
                         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                         &engine,
