@@ -1068,19 +1068,15 @@ pub trait DbConnection: DbExecutor {
 
     async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite>;
 
-    async fn append_log(
-        &self,
-        execution_id: &ExecutionId,
-        run_id: &RunId,
-        log_info: LogInfo,
-    ) -> Result<(), DbErrorWrite>;
+    async fn append_log(&self, row: LogInfoAppendRow) -> Result<(), DbErrorWrite>;
 
-    async fn append_log_batch(
-        &self,
-        execution_id: &ExecutionId,
-        run_id: &RunId,
-        log_info: Vec<LogInfo>,
-    ) -> Result<(), DbErrorWrite>;
+    async fn append_log_batch(&self, batch: Vec<LogInfoAppendRow>) -> Result<(), DbErrorWrite>;
+}
+
+pub struct LogInfoAppendRow {
+    pub execution_id: ExecutionId,
+    pub run_id: RunId,
+    pub log_info: LogInfo,
 }
 
 pub struct LogInfoRow {

@@ -15,10 +15,11 @@ use concepts::{
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
         ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse,
-        Locked, LockedBy, LockedExecution, LogFilter, LogInfo, LogInfoRow, LogLevel, LogStreamType,
-        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
-        PendingStateLocked, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
+        Locked, LockedBy, LockedExecution, LogFilter, LogInfo, LogInfoAppendRow, LogInfoRow,
+        LogLevel, LogStreamType, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor,
+        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
+        Version, VersionType, WasmBacktrace,
     },
 };
 use deadpool_postgres::{Client, Config, ManagerConfig, Pool, RecyclingMethod};
@@ -2368,13 +2369,8 @@ async fn append_backtrace(
     Ok(())
 }
 
-async fn append_log(
-    tx: &Transaction<'_>,
-    execution_id: &ExecutionId,
-    run_id: &RunId,
-    info: &LogInfo,
-) -> Result<(), DbErrorWrite> {
-    let (level, message, stream_type, payload, created_at) = match info {
+async fn append_log(tx: &Transaction<'_>, row: &LogInfoAppendRow) -> Result<(), DbErrorWrite> {
+    let (level, message, stream_type, payload, created_at) = match &row.log_info {
         LogInfo::Log {
             created_at,
             level,
@@ -2410,8 +2406,8 @@ async fn append_log(
             payload
         ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         &[
-            &execution_id.to_string(),
-            &run_id.to_string(),
+            &row.execution_id.to_string(),
+            &row.run_id.to_string(),
             &created_at,
             &level,
             &message,
@@ -3594,42 +3590,24 @@ impl DbConnection for PostgresConnection {
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_log(
-        &self,
-        execution_id: &ExecutionId,
-        run_id: &RunId,
-        append: LogInfo,
-    ) -> Result<(), DbErrorWrite> {
+    async fn append_log(&self, row: LogInfoAppendRow) -> Result<(), DbErrorWrite> {
         trace!("append_log");
-        let execution_id = execution_id.clone();
-        let run_id = *run_id;
-
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        append_log(&tx, &execution_id, &run_id, &append).await?;
+        append_log(&tx, &row).await?;
         tx.commit().await?;
 
         Ok(())
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_log_batch(
-        &self,
-        execution_id: &ExecutionId,
-        run_id: &RunId,
-        batch: Vec<LogInfo>,
-    ) -> Result<(), DbErrorWrite> {
+    async fn append_log_batch(&self, batch: Vec<LogInfoAppendRow>) -> Result<(), DbErrorWrite> {
         trace!("append_log_batch");
-        let execution_id = execution_id.clone();
-        let run_id = *run_id;
-
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-
-        for append in batch {
-            append_log(&tx, &execution_id, &run_id, &append).await?;
+        for row in batch {
+            append_log(&tx, &row).await?;
         }
-
         tx.commit().await?;
         Ok(())
     }

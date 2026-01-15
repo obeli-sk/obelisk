@@ -15,7 +15,7 @@ use concepts::storage::{
     DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionLog,
     ExecutionRequest, ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent,
     JoinSetResponse, JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedExecution,
-    LogInfo, TimeoutOutcome, Version, VersionType,
+    LogInfoAppendRow, TimeoutOutcome, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
@@ -391,22 +391,12 @@ impl DbConnection for InMemoryDbConnection {
         Ok(())
     }
 
-    async fn append_log(
-        &self,
-        _execution_id: &ExecutionId,
-        _run_id: &RunId,
-        _log_info: LogInfo,
-    ) -> Result<(), DbErrorWrite> {
+    async fn append_log(&self, _row: LogInfoAppendRow) -> Result<(), DbErrorWrite> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
     }
 
-    async fn append_log_batch(
-        &self,
-        _execution_id: &ExecutionId,
-        _run_id: &RunId,
-        _log_info: Vec<LogInfo>,
-    ) -> Result<(), DbErrorWrite> {
+    async fn append_log_batch(&self, _batch: Vec<LogInfoAppendRow>) -> Result<(), DbErrorWrite> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
     }

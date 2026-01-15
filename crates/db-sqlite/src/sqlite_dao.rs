@@ -15,10 +15,11 @@ use concepts::{
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
         ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse,
-        Locked, LockedBy, LockedExecution, LogFilter, LogInfo, LogInfoRow, LogLevel, LogStreamType,
-        Pagination, PendingState, PendingStateFinished, PendingStateFinishedResultKind,
-        PendingStateLocked, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
+        Locked, LockedBy, LockedExecution, LogFilter, LogInfo, LogInfoAppendRow, LogInfoRow,
+        LogLevel, LogStreamType, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor,
+        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
+        Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -2536,12 +2537,7 @@ impl SqlitePool {
         Ok(())
     }
 
-    fn append_log(
-        tx: &Transaction,
-        execution_id: &ExecutionId,
-        run_id: &RunId,
-        info: &LogInfo,
-    ) -> Result<(), DbErrorWrite> {
+    fn append_log(tx: &Transaction, row: &LogInfoAppendRow) -> Result<(), DbErrorWrite> {
         let mut stmt = tx.prepare(
             "INSERT INTO t_log (
             execution_id,
@@ -2562,15 +2558,15 @@ impl SqlitePool {
         )",
         )?;
 
-        match info {
+        match &row.log_info {
             LogInfo::Log {
                 created_at,
                 level,
                 message,
             } => {
                 stmt.execute(named_params! {
-                    ":execution_id": execution_id,
-                    ":run_id": run_id,
+                    ":execution_id": row.execution_id,
+                    ":run_id": row.run_id,
                     ":created_at": created_at,
                     ":level": *level as u8,
                     ":message": message,
@@ -2584,8 +2580,8 @@ impl SqlitePool {
                 stream_type,
             } => {
                 stmt.execute(named_params! {
-                    ":execution_id": execution_id,
-                    ":run_id": run_id,
+                    ":execution_id": row.execution_id,
+                    ":run_id": row.run_id,
                     ":created_at": created_at,
                     ":level": Option::<u8>::None,
                     ":message": Option::<String>::None,
@@ -4002,36 +3998,19 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_log(
-        &self,
-        execution_id: &ExecutionId,
-        run_id: &RunId,
-        append: LogInfo,
-    ) -> Result<(), DbErrorWrite> {
+    async fn append_log(&self, row: LogInfoAppendRow) -> Result<(), DbErrorWrite> {
         trace!("append_log");
-        let execution_id = execution_id.clone();
-        let run_id = *run_id;
-        self.transaction(
-            move |tx| Self::append_log(tx, &execution_id, &run_id, &append),
-            "append_log",
-        )
-        .await
+        self.transaction(move |tx| Self::append_log(tx, &row), "append_log")
+            .await
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_log_batch(
-        &self,
-        execution_id: &ExecutionId,
-        run_id: &RunId,
-        batch: Vec<LogInfo>,
-    ) -> Result<(), DbErrorWrite> {
+    async fn append_log_batch(&self, batch: Vec<LogInfoAppendRow>) -> Result<(), DbErrorWrite> {
         trace!("append_log_batch");
-        let execution_id = execution_id.clone();
-        let run_id = *run_id;
         self.transaction(
             move |tx| {
-                for append in &batch {
-                    Self::append_log(tx, &execution_id, &run_id, append)?;
+                for row in &batch {
+                    Self::append_log(tx, &row)?;
                 }
                 Ok(())
             },
