@@ -12,3 +12,7 @@ export TEST_POSTGRES_HOST="localhost"
 export TEST_POSTGRES_USER="postgres"
 export TEST_POSTGRES_PASSWORD="postgres"
 export TEST_POSTGRES_DATABASE_PREFIX="obelisk_test"
+
+# Wild
+export RUSTFLAGS="-Clinker=clang -Clink-args=--ld-path=wild"
+
