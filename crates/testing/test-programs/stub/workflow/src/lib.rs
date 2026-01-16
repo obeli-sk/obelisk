@@ -1,19 +1,25 @@
-use crate::exports::testing::stub_workflow::workflow::Guest;
-use crate::obelisk::types::time::{Duration, ScheduleAt};
-use crate::obelisk::workflow::workflow_support::{self, join_set_create};
-use crate::testing::stub_activity::activity;
-use crate::testing::stub_activity_obelisk_ext::activity as activity_ext;
-use crate::testing::stub_activity_obelisk_stub::activity as activity_stub;
-use obelisk::log::log;
-use obelisk::types::execution::{
+use generated::export;
+use generated::exports::testing::stub_workflow::workflow::Guest;
+use generated::obelisk::log::log;
+use generated::obelisk::types::execution::{
     AwaitNextExtensionError, ExecutionId, GetExtensionError, ResponseId,
 };
-use obelisk::workflow::workflow_support::join_set_create_named;
-use wit_bindgen::generate;
+use generated::obelisk::types::time::{Duration, ScheduleAt};
+use generated::obelisk::workflow::workflow_support::join_set_create_named;
+use generated::obelisk::workflow::workflow_support::{self, join_set_create};
+use generated::testing::stub_activity::activity;
+use generated::testing::stub_activity_obelisk_ext::activity as activity_ext;
+use generated::testing::stub_activity_obelisk_stub::activity as activity_stub;
 
-generate!({ generate_all });
+use crate::generated::obelisk;
+
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn submit_stub_await(arg: String) -> Result<String, ()> {

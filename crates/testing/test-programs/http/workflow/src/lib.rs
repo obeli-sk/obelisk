@@ -1,15 +1,19 @@
-use crate::obelisk::log::log;
-use exports::testing::http_workflow::workflow::Guest;
-use obelisk::workflow::workflow_support::join_set_create;
-use testing::{
+use generated::export;
+use generated::exports::testing::http_workflow::workflow::Guest;
+use generated::obelisk::log::log;
+use generated::obelisk::workflow::workflow_support::join_set_create;
+use generated::testing::{
     http::http_get,
     http_obelisk_ext::http_get::{get_successful_await_next, get_successful_submit},
 };
-use wit_bindgen::generate;
 
-generate!({ generate_all });
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn get(url: String) -> Result<String, String> {

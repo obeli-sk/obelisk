@@ -1,18 +1,22 @@
-use crate::obelisk::types::execution::ResponseId;
-use crate::obelisk::types::join_set::JoinNextError;
-use exports::testing::sleep_workflow::workflow::Guest;
-use obelisk::types::execution::ExecutionId;
-use obelisk::types::time::Duration as DurationEnum;
-use obelisk::types::time::ScheduleAt;
-use obelisk::workflow::workflow_support;
-use testing::sleep::sleep as sleep_activity;
-use testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
-use testing::sleep_obelisk_schedule::sleep as sleep_activity_schedule;
-use wit_bindgen::generate;
+use generated::export;
+use generated::exports::testing::sleep_workflow::workflow::Guest;
+use generated::obelisk::types::execution::ExecutionId;
+use generated::obelisk::types::execution::ResponseId;
+use generated::obelisk::types::join_set::JoinNextError;
+use generated::obelisk::types::time::Duration as DurationEnum;
+use generated::obelisk::types::time::ScheduleAt;
+use generated::obelisk::workflow::workflow_support;
+use generated::testing::sleep::sleep as sleep_activity;
+use generated::testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
+use generated::testing::sleep_obelisk_schedule::sleep as sleep_activity_schedule;
 
-generate!({ generate_all });
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn sleep_host_activity(duration: DurationEnum) -> Result<(), ()> {

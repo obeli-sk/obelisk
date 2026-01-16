@@ -1,10 +1,14 @@
-use exports::testing::dir::dir::Guest;
+use generated::export;
+use generated::exports::testing::dir::dir::Guest;
 use std::path::PathBuf;
-use wit_bindgen::generate;
 
-generate!({ generate_all });
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn io() -> Result<(), String> {

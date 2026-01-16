@@ -4506,7 +4506,9 @@ dependencies = [
 name = "test-programs-dir-activity"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4520,7 +4522,9 @@ dependencies = [
 name = "test-programs-fibo-activity"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4534,7 +4538,9 @@ dependencies = [
 name = "test-programs-fibo-webhook"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -4549,7 +4555,9 @@ dependencies = [
 name = "test-programs-fibo-workflow"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4563,7 +4571,9 @@ dependencies = [
 name = "test-programs-fibo-workflow-outer"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4579,6 +4589,7 @@ version = "0.34.1"
 dependencies = [
  "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -4593,7 +4604,9 @@ dependencies = [
 name = "test-programs-http-get-workflow"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4611,6 +4624,7 @@ dependencies = [
  "futures-concurrency",
  "wasip2",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -4625,7 +4639,9 @@ dependencies = [
 name = "test-programs-serde-activity"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4639,7 +4655,9 @@ dependencies = [
 name = "test-programs-serde-workflow"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4653,7 +4671,9 @@ dependencies = [
 name = "test-programs-sleep-activity"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4669,6 +4689,7 @@ version = "0.34.1"
 dependencies = [
  "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -4683,7 +4704,9 @@ dependencies = [
 name = "test-programs-sleep-workflow"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4697,7 +4720,9 @@ dependencies = [
 name = "test-programs-stub-activity"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -4711,7 +4736,9 @@ dependencies = [
 name = "test-programs-stub-workflow"
 version = "0.34.1"
 dependencies = [
+ "anyhow",
  "wit-bindgen 0.50.0",
+ "wit-bindgen-rust",
 ]
 
 [[package]]

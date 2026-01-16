@@ -1,10 +1,14 @@
-use exports::testing::fibo_workflow_outer::workflow::Guest as GuestNesting;
-use obelisk::workflow::workflow_support::join_set_create;
-use wit_bindgen::generate;
+use generated::export;
+use generated::exports::testing::fibo_workflow_outer::workflow::Guest as GuestNesting;
+use generated::obelisk::workflow::workflow_support::join_set_create;
 
-generate!({ generate_all });
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 pub fn black_box<T>(dummy: T) -> T {
     unsafe {
@@ -17,7 +21,7 @@ pub fn black_box<T>(dummy: T) -> T {
 impl GuestNesting for Component {
     // Start 2 child workflows each starting 2 child workflows...
     fn fibo_nested_workflow(n: u8) -> Result<u64, ()> {
-        use testing::fibo_workflow_outer::workflow::fibo_nested_workflow as imported_fibo_nested_workflow;
+        use generated::testing::fibo_workflow_outer::workflow::fibo_nested_workflow as imported_fibo_nested_workflow;
         if n <= 1 {
             Ok(1)
         } else {
@@ -32,7 +36,7 @@ impl GuestNesting for Component {
     // `fiboa_concurrent`, is significantly slower than having multiple parent executions
     // behind a single topmost parent.
     fn fibo_start_fiboas(n: u8, fiboas: u32, iterations_per_fiboa: u32) -> Result<u64, ()> {
-        use testing::fibo_workflow_obelisk_ext::workflow::{
+        use generated::testing::fibo_workflow_obelisk_ext::workflow::{
             fiboa_concurrent_await_next, fiboa_concurrent_submit,
         };
         let join_set = join_set_create();

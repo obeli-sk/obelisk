@@ -1,14 +1,18 @@
-use crate::exports::testing::http::http_get::Guest;
-use exports::testing::http::http_get;
-use wit_bindgen::generate;
+use generated::export;
+use generated::exports::testing::http::http_get;
+use generated::exports::testing::http::http_get::Guest;
 use wstd::{
     http::{Body, Client, Method, Request},
     runtime::block_on,
 };
 
-generate!({ generate_all });
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 async fn get_resp(url: String) -> Result<http_get::Response, anyhow::Error> {
     let request = Request::builder()

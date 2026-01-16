@@ -11,6 +11,10 @@ version.workspace = true
 [dependencies]
 wit-bindgen.workspace = true
 
+[build-dependencies]
+anyhow.workspace = true
+wit-bindgen-rust.workspace = true
+
 [lib]
 crate-type = ["cdylib"]
 

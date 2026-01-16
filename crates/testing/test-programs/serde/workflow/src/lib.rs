@@ -1,10 +1,14 @@
-use crate::exports::testing::serde_workflow::serde_workflow::Guest;
-use testing::serde::serde::{self, MyError};
-use wit_bindgen::generate;
+use generated::export;
+use generated::exports::testing::serde_workflow::serde_workflow::Guest;
+use generated::testing::serde::serde::{self, MyError};
 
-generate!({ generate_all });
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn expect_trap() -> Result<(), ()> {

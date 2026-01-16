@@ -1,25 +1,20 @@
 use anyhow::{Context as _, bail, ensure};
-use exports::testing::process::process::Guest;
 use futures_concurrency::future::Join as _;
-use obelisk::activity::process::{self as process_support};
+use generated::export;
+use generated::exports::testing::process::process::Guest;
+use generated::obelisk::activity::process::{self as process_support};
 use std::time::Duration;
 use wasip2::io::streams::InputStream;
 use wstd::io::{AsyncInputStream, AsyncOutputStream, AsyncPollable, Cursor};
 use wstd::runtime::block_on;
 
-wit_bindgen::generate!({
-     world: "any:any/any",
-       with: {
-       "wasi:io/error@0.2.3": wasip2::io::error,
-       "wasi:io/poll@0.2.3": wasip2::io::poll,
-       "wasi:io/streams@0.2.3": wasip2::io::streams,
-       "obelisk:activity/process@1.0.0": generate,
-       "testing:process/process": generate,
-   },
-});
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
 
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 fn touch() -> Result<(), anyhow::Error> {
     // Idempotently create a file so that the activity works with `reuse_on_retry`.

@@ -1,9 +1,12 @@
-use crate::testing::sleep_workflow::workflow;
 use anyhow::{Result, anyhow};
-use wit_bindgen::generate;
+use generated::testing::sleep_workflow::workflow;
 use wstd::http::body::Body;
 use wstd::http::{Error, Request, Response, StatusCode};
-generate!({ generate_all });
+
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
 
 #[wstd::http_server]
 async fn main(_request: Request<Body>) -> Result<Response<Body>, Error> {
@@ -24,6 +27,6 @@ async fn main(_request: Request<Body>) -> Result<Response<Body>, Error> {
 
 fn sleep() -> Result<(), anyhow::Error> {
     let seconds: u64 = std::env::var("SECONDS")?.parse()?;
-    workflow::sleep_host_activity(obelisk::types::time::Duration::Seconds(seconds))
+    workflow::sleep_host_activity(generated::obelisk::types::time::Duration::Seconds(seconds))
         .map_err(|()| anyhow!("cancelled"))
 }

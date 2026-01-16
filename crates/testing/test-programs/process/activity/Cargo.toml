@@ -15,6 +15,10 @@ wasip2.workspace = true
 wit-bindgen.workspace = true
 wstd.workspace = true
 
+[build-dependencies]
+anyhow.workspace = true
+wit-bindgen-rust.workspace = true
+
 [lib]
 crate-type = ["cdylib"]
 

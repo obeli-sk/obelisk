@@ -1,11 +1,15 @@
-use exports::testing::sleep::sleep::Guest;
-use obelisk::types::time::Duration as DurationEnum;
+use generated::export;
+use generated::exports::testing::sleep::sleep::Guest;
+use generated::obelisk::types::time::Duration as DurationEnum;
 use std::time::Duration;
-use wit_bindgen::generate;
 
-generate!({ generate_all });
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn sleep(duration: DurationEnum) -> Result<(), ()> {

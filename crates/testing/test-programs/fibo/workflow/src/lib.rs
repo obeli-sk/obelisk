@@ -1,14 +1,18 @@
-use exports::testing::fibo_workflow::workflow::Guest;
-use obelisk::workflow::workflow_support::join_set_create;
-use testing::{
+use generated::export;
+use generated::exports::testing::fibo_workflow::workflow::Guest;
+use generated::obelisk::workflow::workflow_support::join_set_create;
+use generated::testing::{
     fibo::fibo::fibo as fibo_activity,
     fibo_obelisk_ext::fibo::{fibo_await_next, fibo_submit},
 };
-use wit_bindgen::generate;
 
-generate!({ generate_all });
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 pub fn black_box<T>(dummy: T) -> T {
     unsafe {

@@ -1,9 +1,13 @@
-use exports::testing::fibo::fibo::Guest;
-use wit_bindgen::generate;
+use generated::export;
+use generated::exports::testing::fibo::fibo::Guest;
 
-generate!({ generate_all });
+mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
+    include!(concat!(env!("OUT_DIR"), "/any.rs"));
+}
+
 struct Component;
-export!(Component);
+export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn fibo(n: u8) -> Result<u64, ()> {

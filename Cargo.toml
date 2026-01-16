@@ -318,6 +318,7 @@ wit-component = "0.244.0"
 # testing components
 wasip2 = "1.0.1"
 wit-bindgen = "0.50.0"
+wit-bindgen-rust = "0.50.0"
 wstd = "0.6.4"
 
 # otlp
