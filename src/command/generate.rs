@@ -1,23 +1,17 @@
 use crate::args::Generate;
+use crate::args::shadow::PKG_VERSION;
 use crate::command::generate::wit_highlighter::{OutputToFile, process_pkg_with_deps};
 use crate::command::server::{VerifyParams, verify_internal};
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::init::{self};
 use crate::project_dirs;
-use crate::{args::shadow::PKG_VERSION, config::toml::ConfigToml};
 use anyhow::Context;
 use concepts::{ComponentType, ExecutionId};
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::HashSet;
-use schemars::schema_for;
 use std::sync::Arc;
-use std::{
-    borrow::Cow,
-    fs::File,
-    io::{BufWriter, Write as _, stdout},
-    path::PathBuf,
-};
+use std::{borrow::Cow, path::PathBuf};
 use tokio::sync::watch;
 use utils::{wasm_tools::WasmComponent, wit};
 
@@ -72,7 +66,11 @@ impl Generate {
 
 #[cfg(debug_assertions)]
 pub(crate) fn generate_toml_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
-    let schema = schema_for!(ConfigToml);
+    use std::{
+        fs::File,
+        io::{BufWriter, Write as _, stdout},
+    };
+    let schema = schemars::schema_for!(crate::config::toml::ConfigToml);
     if let Some(output) = output {
         // Save to a file
         let mut writer = BufWriter::new(File::create(&output)?);
