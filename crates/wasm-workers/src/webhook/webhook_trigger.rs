@@ -509,11 +509,7 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
             return Err(WebhookEndpointFunctionError::ConnectionClosed);
         }
 
-        let (db_connection, version_min_including, version_max_excluding) = if let Some(
-            package_name,
-        ) =
-            ffqn.ifc_fqn.package_strip_obelisk_schedule_suffix()
-        {
+        if let Some(package_name) = ffqn.ifc_fqn.package_strip_obelisk_schedule_suffix() {
             // -schedule
             let ifc_fqn = IfcFqnName::from_parts(
                 ffqn.ifc_fqn.namespace(),
@@ -556,7 +552,7 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
-                let (_function_metadata, component_id) = self
+                let (_function_metadata, child_component_id) = self
                     .fn_registry
                     .get_by_exported_function(&ffqn)
                     .expect("target function must be found in fn_registry");
@@ -582,11 +578,18 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
                     scheduled_at: schedule_at,
-                    component_id,
+                    component_id: child_component_id.clone(),
                     scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
                 };
                 let db_connection = self.db_pool.connection().await?;
-                let version_min_including = version.0;
+                let expected_next_version = version.increment();
+                let backtrace_info = wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+                    execution_id: ExecutionId::TopLevel(self.execution_id),
+                    component_id: self.component_id.clone(),
+                    version_min_including: version.clone(),
+                    version_max_excluding: expected_next_version.clone(),
+                    wasm_backtrace,
+                });
                 let version = db_connection
                     .append_batch_create_new_execution(
                         created_at,
@@ -594,11 +597,12 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                         ExecutionId::TopLevel(self.execution_id),
                         version.clone(),
                         vec![create_child_req],
+                        backtrace_info.into_iter().collect(),
                     )
                     .await?;
+                assert_eq!(version, expected_next_version); // Expected for backtrace's version_max_excluding
                 self.version = Some(version.clone());
                 results[0] = execution_id_into_val(&new_execution_id);
-                (db_connection, version_min_including, version.0)
             } else {
                 error!("unrecognized `{SUFFIX_PKG_SCHEDULE}` extension function {ffqn}");
                 return Err(WebhookEndpointFunctionError::UncategorizedError(
@@ -620,7 +624,7 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
             let child_execution_id =
                 ExecutionId::TopLevel(self.execution_id).next_level(&join_set_id_direct);
             let created_at = self.clock_fn.now();
-            let (fn_metadata, component_id) = self
+            let (fn_metadata, child_component_id) = self
                 .fn_registry
                 .get_by_exported_function(&ffqn)
                 .expect("import was mocked using fn_registry exports limited to -schedule and no-ext functions");
@@ -671,13 +675,20 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                 parent: Some((ExecutionId::TopLevel(self.execution_id), join_set_id_direct)),
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                 scheduled_at: created_at,
-                component_id,
+                component_id: child_component_id.clone(),
                 scheduled_by: None,
             };
             let db_connection = self.db_pool.connection().await?;
-            let version_min_including = version.0;
             let appended = vec![req_join_set_created, req_child_exec, req_join_next];
-            let version_max_excluding = version_min_including + 3; // obvious from line above
+            let expected_next_version = Version(version.0 + 3);
+            let backtrace_info = wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+                execution_id: ExecutionId::TopLevel(self.execution_id),
+                component_id: self.component_id.clone(),
+                version_min_including: version.clone(),
+                version_max_excluding: expected_next_version.clone(),
+                wasm_backtrace,
+            });
+
             let version = db_connection
                 .append_batch_create_new_execution(
                     created_at,
@@ -685,8 +696,10 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
                     ExecutionId::TopLevel(self.execution_id),
                     version,
                     vec![req_create_child],
+                    backtrace_info.into_iter().collect(),
                 )
                 .await?;
+            assert_eq!(version, expected_next_version); // Expected for backtrace's version_max_excluding
             self.version = Some(version);
 
             let res = Self::wait_for_finished_result(
@@ -701,21 +714,6 @@ impl<C: ClockFn, S: Sleep> WebhookEndpointCtx<C, S> {
             results[0] = res.into_wast_val(move || return_type_tl).as_val();
 
             trace!(?results, "call_imported_fn finish");
-            (db_connection, version_min_including, version_max_excluding)
-        };
-
-        if let Some(wasm_backtrace) = wasm_backtrace
-            && let Err(err) = db_connection
-                .append_backtrace(BacktraceInfo {
-                    execution_id: ExecutionId::TopLevel(self.execution_id),
-                    component_id: self.component_id.clone(),
-                    version_min_including: Version::new(version_min_including),
-                    version_max_excluding: Version::new(version_max_excluding),
-                    wasm_backtrace,
-                })
-                .await
-        {
-            trace!("Ignoring error while appending backtrace: {err:?}");
         }
         Ok(())
     }

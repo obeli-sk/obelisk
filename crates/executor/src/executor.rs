@@ -1438,6 +1438,7 @@ mod tests {
                     parent_execution_id.clone(),
                     Version::new(2),
                     vec![child],
+                    vec![],
                 )
                 .await
                 .unwrap();

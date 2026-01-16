@@ -985,6 +985,7 @@ pub trait DbConnection: DbExecutor {
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
+        backtraces: Vec<BacktraceInfo>,
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     /// Get a single event specified by version. Impls may set `ExecutionEvent::backtrace_id` to `None`.

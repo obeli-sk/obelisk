@@ -3742,6 +3742,7 @@ impl DbConnection for SqlitePool {
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
+        backtraces: Vec<BacktraceInfo>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         debug!("append_batch_create_new_execution");
         trace!(?batch, ?child_req, "append_batch_create_new_execution");
@@ -3764,6 +3765,9 @@ impl DbConnection for SqlitePool {
                     for child_req in &child_req {
                         let (_, notifier) = Self::create_inner(tx, child_req.clone())?;
                         notifiers.push(notifier);
+                    }
+                    for backtrace in &backtraces {
+                        Self::append_backtrace(tx, backtrace)?;
                     }
                     Ok::<_, DbErrorWrite>((version, notifiers))
                 },

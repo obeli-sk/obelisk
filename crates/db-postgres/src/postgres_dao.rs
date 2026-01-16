@@ -3345,6 +3345,7 @@ impl DbConnection for PostgresConnection {
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
+        backtraces: Vec<BacktraceInfo>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         debug!("append_batch_create_new_execution");
         trace!(?batch, ?child_req, "append_batch_create_new_execution");
@@ -3369,7 +3370,9 @@ impl DbConnection for PostgresConnection {
             let (_, n) = create_inner(&tx, req).await?;
             notifiers.push(n);
         }
-
+        for backtrace in backtraces {
+            append_backtrace(&tx, &backtrace).await?;
+        }
         tx.commit().await?;
         drop(client_guard);
 

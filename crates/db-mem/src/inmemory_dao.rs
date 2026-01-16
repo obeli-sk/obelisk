@@ -238,6 +238,7 @@ impl DbConnection for InMemoryDbConnection {
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
+        _backtraces: Vec<BacktraceInfo>, // // backtrace functionality is for reporting only and its absence should not affect the system.
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         self.0
             .lock()

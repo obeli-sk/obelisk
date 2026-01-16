@@ -102,26 +102,16 @@ impl CachingDbConnection {
                     child_req,
                     backtrace,
                 } => {
-                    let next_version = self
-                        .db_connection
+                    self.db_connection
                         .append_batch_create_new_execution(
                             called_at,
                             vec![request],
                             self.execution_id.clone(),
                             version.clone(),
                             vec![child_req],
+                            backtrace.into_iter().collect(),
                         )
-                        .await?;
-                    if let Some(backtrace) = backtrace {
-                        let _ = self
-                            .db_connection
-                            .append_backtrace(backtrace)
-                            .await
-                            .inspect_err(|err| {
-                                debug!("Ignoring error while appending backtrace: {err:?}");
-                            });
-                    }
-                    next_version
+                        .await?
                 }
                 CacheableDbEvent::JoinSetCreate {
                     request,
@@ -217,6 +207,15 @@ impl CachingDbConnection {
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         self.flush_non_blocking_event_cache(current_time).await?;
+        let expected_next_version =
+            Version(self.version.0 + u32::try_from(batch.len()).expect("max 3 won't overflow"));
+        let backtrace_info = wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+            execution_id: execution_id.clone(),
+            component_id: component_id.clone(),
+            version_min_including: self.version.clone(),
+            version_max_excluding: expected_next_version.clone(),
+            wasm_backtrace,
+        });
         let next_version = self
             .db_connection
             .append_batch_create_new_execution(
@@ -225,15 +224,11 @@ impl CachingDbConnection {
                 execution_id,
                 self.version.clone(),
                 child_req,
+                backtrace_info.into_iter().collect(),
             )
             .await?;
-        self.persist_backtrace_blocking(
-            &self.version.clone(),
-            &next_version,
-            wasm_backtrace,
-            component_id,
-        )
-        .await;
+        assert_eq!(next_version, expected_next_version); // must hold, assumed when creating the backtrace `version_max_excluding`
+
         self.version = next_version;
         Ok(())
     }
@@ -361,15 +356,10 @@ impl CachingDbConnection {
                     self.execution_id.clone(),
                     first_version.expect("checked that !non_blocking_event_batch.is_empty()"),
                     childs,
+                    backtraces,
                 )
                 .await?;
-            if !backtraces.is_empty() {
-                let _ = self
-                    .db_connection
-                    .append_backtrace_batch(backtraces)
-                    .await
-                    .inspect_err(|err| debug!("Ignoring error while appending backtrace: {err:?}"));
-            }
+
             debug!("Flushing the non-blocking event cache finished");
         }
         Ok(())
