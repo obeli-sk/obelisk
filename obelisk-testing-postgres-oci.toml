@@ -33,6 +33,7 @@ name = "test_programs_fibo_webhook"
 location.oci = "docker.io/getobelisk/test_programs_fibo_webhook:2025-12-08@sha256:d48247d9f5c538c4c584c6f149f896a26a6f51efdc39ae73d6194b10f8cf0c12"
 http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_http_get_activity"
