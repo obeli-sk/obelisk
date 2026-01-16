@@ -4,7 +4,7 @@ use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionRequest,
     HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
     Locked, LockedBy, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
-    VersionType,
+    ResponseCursor, ResponseWithCursor, VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, Version};
 use concepts::{ComponentId, JoinSetId};
@@ -21,8 +21,8 @@ pub(crate) struct ExecutionJournal {
     pub(crate) pending_state: PendingState, // updated on every state change
     pub(crate) component_digest: InputContentDigest, // updated on every state change
     pub(crate) execution_events: Vec<ExecutionEvent>,
-    pub(crate) responses: Vec<JoinSetResponseEventOuter>,
-    pub(crate) response_subscriber: Option<oneshot::Sender<JoinSetResponseEventOuter>>,
+    pub(crate) responses: Vec<ResponseWithCursor>, // response cursor is its index.
+    pub(crate) response_subscriber: Option<oneshot::Sender<ResponseWithCursor>>,
 }
 
 impl ExecutionJournal {
@@ -201,7 +201,7 @@ impl ExecutionJournal {
                 ..
             } = &event.event
                 && self.responses.iter().any(|event| {
-                    matches!(&event.event, JoinSetResponseEvent {
+                    matches!(&event.event.event, JoinSetResponseEvent {
                         event:
                             JoinSetResponse::ChildExecutionFinished {
                                 child_execution_id: found_id,
@@ -223,7 +223,7 @@ impl ExecutionJournal {
                 ..
             } = &event.event
                 && self.responses.iter().any(|event| {
-                    matches!(&event.event, JoinSetResponseEvent {
+                    matches!(&event.event.event, JoinSetResponseEvent {
                         event:
                             JoinSetResponse::DelayFinished {
                                 delay_id: found_id, ..
@@ -238,6 +238,12 @@ impl ExecutionJournal {
             }
         }
 
+        let event = ResponseWithCursor {
+            event,
+            cursor: ResponseCursor(
+                u32::try_from(self.responses.len()).expect("too many responses"),
+            ),
+        };
         self.responses.push(event.clone());
         // update the state
         self.update_pending_state();
@@ -402,7 +408,7 @@ impl ExecutionJournal {
                     let resp = self
                         .responses
                         .iter()
-                        .filter_map(|event| match event {
+                        .filter_map(|event| match &event.event {
                             JoinSetResponseEventOuter {
                                 event: JoinSetResponseEvent { join_set_id, .. },
                                 created_at,

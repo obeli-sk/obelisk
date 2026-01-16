@@ -1060,7 +1060,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
     let parent_exe = db_connection.get(&parent_id).await.unwrap();
     assert_eq!(2, parent_exe.responses.len());
     assert_eq!(
-        *parent_exe.responses.first().unwrap(),
+        parent_exe.responses.first().unwrap().event,
         JoinSetResponseEventOuter {
             created_at: sim_clock.now(),
             event: JoinSetResponseEvent {
@@ -1074,7 +1074,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
         }
     );
     assert_eq!(
-        *parent_exe.responses.get(1).unwrap(),
+        parent_exe.responses.get(1).unwrap().event,
         JoinSetResponseEventOuter {
             created_at: sim_clock.now(),
             event: JoinSetResponseEvent {

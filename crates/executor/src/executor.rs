@@ -383,11 +383,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             ffqn: locked_execution.ffqn,
             params: locked_execution.params,
             event_history: locked_execution.event_history,
-            responses: locked_execution
-                .responses
-                .into_iter()
-                .map(|outer| outer.event)
-                .collect(),
+            responses: locked_execution.responses,
             version: locked_execution.next_version,
             can_be_retried: can_be_retried.is_some(),
             locked_event: locked_execution.locked_event,
@@ -1514,7 +1510,7 @@ mod tests {
             "parent should be back to pending"
         );
         let (found_join_set_id, found_child_execution_id, child_finished_version, found_result) = assert_matches!(
-            parent_log.responses.last(),
+            parent_log.responses.last().map(|resp| &resp.event),
             Some(JoinSetResponseEventOuter{
                 created_at: at,
                 event: JoinSetResponseEvent{

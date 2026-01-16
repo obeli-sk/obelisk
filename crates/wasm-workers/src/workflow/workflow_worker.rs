@@ -783,6 +783,7 @@ pub(crate) mod tests {
     use std::ops::Deref;
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
+    use test_utils::ExecutionLogSanitized;
     use test_utils::sim_clock::SimClock;
     use tracing::debug;
     use tracing::info_span;
@@ -1780,7 +1781,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_matches!(
-            res.into_finished_result().unwrap(),
+            res.as_finished_result().unwrap(),
             SupportedFunctionReturnValue::Ok { ok: None }
         );
         sim_clock.move_time_forward(SLEEP_DURATION);
@@ -2006,7 +2007,7 @@ pub(crate) mod tests {
 
         let res = db_connection.get(&execution_id).await.unwrap();
         let value = assert_matches!(
-            res.into_finished_result().unwrap(),
+            res.as_finished_result().unwrap(),
             SupportedFunctionReturnValue::Ok{
                 ok: Some(WastValWithType { value, .. })
              } => value
@@ -2175,11 +2176,11 @@ pub(crate) mod tests {
             }
         );
         let execution_log = db_connection.get(&execution_id).await.unwrap();
-        insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")}, {insta::assert_json_snapshot!(execution_log)});
         assert_matches!(
-            execution_log.into_finished_result(),
+            execution_log.as_finished_result(),
             Some(SupportedFunctionReturnValue::Ok { ok: None })
         );
+        insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")}, {insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log))});
         drop(db_connection);
         db_close.close().await;
     }
@@ -2341,7 +2342,7 @@ pub(crate) mod tests {
         );
         let res = db_connection.get(&execution_id).await.unwrap();
         assert_matches!(
-            res.into_finished_result().unwrap(),
+            res.as_finished_result().unwrap(),
             SupportedFunctionReturnValue::Ok { ok: None }
         );
         drop(db_connection);

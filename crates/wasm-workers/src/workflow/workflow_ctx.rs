@@ -19,10 +19,11 @@ use crate::workflow::host_exports::v4_0_0::DelayId_4_0_0;
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutionIdDerived;
+use concepts::storage::HistoryEvent;
 use concepts::storage::{
-    self, DbErrorWrite, HistoryEventScheduleAt, Locked, LogLevel, Version, WasmBacktrace,
+    self, DbErrorWrite, HistoryEventScheduleAt, Locked, LogLevel, ResponseWithCursor, Version,
+    WasmBacktrace,
 };
-use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::{
     ComponentId, ExecutionId, FunctionMetadata, FunctionRegistry, IfcFqnName, InvalidNameError,
@@ -788,7 +789,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
     pub(crate) fn new(
         db_connection: CachingDbConnection,
         event_history: Vec<(HistoryEvent, Version)>,
-        responses: Vec<JoinSetResponseEvent>,
+        responses: Vec<ResponseWithCursor>,
         seed: u64,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -1937,12 +1938,12 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             // Append responses
-            for response_event in execution_log.responses {
+            for response in execution_log.responses {
                 db_connection
                     .append_response(
-                        response_event.created_at,
+                        response.event.created_at,
                         execution_id.clone(),
-                        response_event.event,
+                        response.event.event,
                     )
                     .await
                     .unwrap();
@@ -2094,7 +2095,7 @@ pub(crate) mod tests {
             } => kind
         );
         assert_eq!(ExecutionFailureKind::Uncategorized, kind);
-        let (reason, kind, _detail) = assert_matches!(log.into_finished_result().unwrap(),
+        let (reason, kind, _detail) = assert_matches!(log.as_finished_result().unwrap(),
             SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError { reason, kind, detail })
             =>(reason, kind, detail));
         assert_eq!(ExecutionFailureKind::Uncategorized, kind);
@@ -2204,11 +2205,7 @@ pub(crate) mod tests {
                         ffqn: FFQN_MOCK,
                         params: Params::empty(),
                         event_history: execution_log.event_history().collect(),
-                        responses: execution_log
-                            .responses
-                            .into_iter()
-                            .map(|outer| outer.event)
-                            .collect(),
+                        responses: execution_log.responses,
                         version: execution_log.next_version,
                         can_be_retried: false,
                         worker_span: info_span!("check_determinism"),
@@ -2265,12 +2262,7 @@ pub(crate) mod tests {
                 ffqn: FFQN_MOCK,
                 params: Params::empty(),
                 event_history: execution_log.event_history().collect(),
-                responses: execution_log
-                    .responses
-                    .clone()
-                    .into_iter()
-                    .map(|outer| outer.event)
-                    .collect(),
+                responses: execution_log.responses.clone(),
                 version: execution_log.next_version.clone(),
                 can_be_retried: false,
                 worker_span: info_span!("check_determinism"),
@@ -2565,7 +2557,7 @@ pub(crate) mod tests {
             "Child execution {child_execution_id} should be finished: {:?}",
             &child_log.events
         );
-        let child_res = child_log.into_finished_result().unwrap();
+        let child_res = child_log.as_finished_result().unwrap();
         assert_matches!(child_res, SupportedFunctionReturnValue::Ok { ok: None });
     }
 

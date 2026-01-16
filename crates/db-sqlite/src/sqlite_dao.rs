@@ -478,7 +478,7 @@ struct NotifierExecutionFinished {
 struct AppendNotifier {
     pending_at: Option<NotifierPendingAt>,
     execution_finished: Option<NotifierExecutionFinished>,
-    response: Option<(ExecutionId, JoinSetResponseEventOuter)>,
+    response: Option<(ExecutionId, ResponseWithCursor)>,
 }
 
 impl CombinedState {
@@ -653,7 +653,7 @@ enum ThreadCommand {
 pub struct SqlitePool(SqlitePoolInner);
 
 type ResponseSubscribers =
-    Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<JoinSetResponseEventOuter>, u64)>>>;
+    Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<ResponseWithCursor>, u64)>>>;
 type PendingSubscribers = Arc<Mutex<PendingFfqnSubscribersHolder>>;
 type ExecutionFinishedSubscribers =
     Mutex<HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>>;
@@ -2045,11 +2045,10 @@ impl SqlitePool {
             })
         })?;
 
-        // Update `t_state`
         let responses = Self::list_responses(tx, execution_id, None)?;
-        let responses = responses.into_iter().map(|resp| resp.event).collect();
         trace!("Responses: {responses:?}");
 
+        // Update `t_state`
         let intermittent_event_count = Self::update_state_locked_get_intermittent_event_count(
             tx,
             execution_id,
@@ -2427,20 +2426,20 @@ impl SqlitePool {
     fn append_response(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        response_outer: JoinSetResponseEventOuter,
+        event: JoinSetResponseEventOuter,
     ) -> Result<AppendNotifier, DbErrorWrite> {
         let mut stmt = tx.prepare(
             "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, delay_success, child_execution_id, finished_version) \
                     VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :delay_success, :child_execution_id, :finished_version)",
         )?;
-        let join_set_id = &response_outer.event.join_set_id;
-        let (delay_id, delay_success) = match &response_outer.event.event {
+        let join_set_id = &event.event.join_set_id;
+        let (delay_id, delay_success) = match &event.event.event {
             JoinSetResponse::DelayFinished { delay_id, result } => {
                 (Some(delay_id.to_string()), Some(result.is_ok()))
             }
             JoinSetResponse::ChildExecutionFinished { .. } => (None, None),
         };
-        let (child_execution_id, finished_version) = match &response_outer.event.event {
+        let (child_execution_id, finished_version) = match &event.event.event {
             JoinSetResponse::ChildExecutionFinished {
                 child_execution_id,
                 finished_version,
@@ -2454,13 +2453,17 @@ impl SqlitePool {
 
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
-            ":created_at": response_outer.created_at,
+            ":created_at": event.created_at,
             ":join_set_id": join_set_id.to_string(),
             ":delay_id": delay_id,
             ":delay_success": delay_success,
             ":child_execution_id": child_execution_id,
             ":finished_version": finished_version,
         })?;
+        let cursor = ResponseCursor(
+            u32::try_from(tx.last_insert_rowid())
+                .map_err(|_| consistency_db_err("t_join_set_response.id must not be negative"))?,
+        );
 
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
@@ -2474,7 +2477,7 @@ impl SqlitePool {
         {
             // PendingAt should be set to current time if called from expired_timers_watcher,
             // or to a future time if the execution is hot.
-            let scheduled_at = max(lock_expires_at, response_outer.created_at);
+            let scheduled_at = max(lock_expires_at, event.created_at);
             // TODO: Add diff test
             // Unblock the state.
             Self::update_state_pending_after_response_appended(
@@ -2494,7 +2497,7 @@ impl SqlitePool {
                     delay_id,
                     result: _,
                 },
-        } = &response_outer.event
+        } = &event.event
         {
             debug!(%join_set_id, %delay_id, "Deleting from `t_delay`");
             let mut stmt =
@@ -2506,7 +2509,7 @@ impl SqlitePool {
                 ":delay_id": delay_id.to_string(),
             })?;
         }
-        notifier.response = Some((execution_id.clone(), response_outer));
+        notifier.response = Some((execution_id.clone(), ResponseWithCursor { cursor, event }));
         Ok(notifier)
     }
 
@@ -2632,10 +2635,7 @@ impl SqlitePool {
             return Err(DbErrorRead::NotFound);
         }
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let responses = Self::list_responses(tx, execution_id, None)?
-            .into_iter()
-            .map(|resp| resp.event)
-            .collect();
+        let responses = Self::list_responses(tx, execution_id, None)?;
         Ok(concepts::storage::ExecutionLog {
             execution_id: execution_id.clone(),
             events,
@@ -2807,39 +2807,38 @@ impl SqlitePool {
         .map_err(DbErrorRead::from)
     }
 
-    // TODO(perf): Instead of OFFSET an per-execution sequential ID could improve the read performance.
     #[instrument(level = Level::TRACE, skip_all)]
-    fn get_responses_with_offset(
+    /// Find next responses for this execution
+    fn get_responses_after(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        skip_rows: u32,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorRead> {
+        last_response: ResponseCursor,
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
         // TODO: Add test
         tx.prepare(
             "SELECT r.id, r.created_at, r.join_set_id, \
             r.delay_id, r.delay_success, \
-            r.child_execution_id, r.finished_version, l.json_value \
-            FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
+            r.child_execution_id, r.finished_version, child.json_value \
+            FROM t_join_set_response r LEFT OUTER JOIN t_execution_log child ON r.child_execution_id = child.execution_id \
             WHERE \
+            r.id > :last_response_id AND \
             r.execution_id = :execution_id AND \
             ( \
-            r.finished_version = l.version \
+            r.finished_version = child.version \
             OR r.child_execution_id IS NULL \
             ) \
-            ORDER BY id \
-            LIMIT -1 OFFSET :offset",
+            ORDER BY id",
         )
         ?
         .query_map(
             named_params! {
+                ":last_response_id": last_response.0,
                 ":execution_id": execution_id.to_string(),
-                ":offset": skip_rows,
             },
             Self::parse_response_with_cursor,
         )
         ?
         .collect::<Result<Vec<_>, _>>()
-        .map(|resp| resp.into_iter().map(|vec| vec.event).collect())
         .map_err(DbErrorRead::from)
     }
 
@@ -3782,9 +3781,9 @@ impl DbConnection for SqlitePool {
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: u32,
+        last_response: ResponseCursor,
         timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout> {
         debug!("next_responses");
         let unique_tag: u64 = rand::random();
         let execution_id = execution_id.clone();
@@ -3806,7 +3805,7 @@ impl DbConnection for SqlitePool {
             let execution_id = execution_id.clone();
             self.transaction(
                 move |tx| {
-                    let responses = Self::get_responses_with_offset(tx, &execution_id, start_idx)?;
+                    let responses = Self::get_responses_after(tx, &execution_id, last_response)?;
                     if responses.is_empty() {
                         // cannot race as we have the transaction write lock
                         let (sender, receiver) = oneshot::channel();

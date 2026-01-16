@@ -37,6 +37,8 @@ use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::Locked;
 use concepts::storage::PersistKind;
+use concepts::storage::ResponseCursor;
+use concepts::storage::ResponseWithCursor;
 use concepts::storage::TimeoutOutcome;
 use concepts::storage::{
     AppendRequest, CreateRequest, ExecutionRequest, JoinSetResponse, JoinSetResponseEvent, Version,
@@ -101,16 +103,8 @@ pub(crate) struct EventHistory {
     // Used for `-get`ting the processed response by Execution Id.
     index_child_exe_to_processed_response_idx: HashMap<ExecutionIdDerived, usize>,
     index_child_exe_to_ffqn: HashMap<ExecutionIdDerived, FunctionFqn>,
-    // Used for closing join sets in reverse order. One-off join sets are ignored.
-
-    // index_join_set_to_created_child_requests:
-    // IndexMap<JoinSetId, usize /* created child count */>,
     index_delay_id_to_expires_at: IndexMap<DelayId, DateTime<Utc>>,
-
-    // Used for closing join sets.
-    // close_requests: std::collections::HashMap<JoinSetId, usize>,
-    // closed_join_sets: HashSet<JoinSetId>,
-    responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
+    responses: Vec<(ResponseWithCursor, ProcessingStatus)>,
     worker_span: Span,
     deadline_tracker: Box<dyn DeadlineTracker>,
     lock_extension: Duration,
@@ -135,7 +129,7 @@ impl EventHistory {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         event_history: Vec<(HistoryEvent, Version)>,
-        responses: Vec<JoinSetResponseEvent>,
+        responses: Vec<ResponseWithCursor>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
@@ -371,33 +365,30 @@ impl EventHistory {
             while let Some(timeout_fut) =
                 self.deadline_tracker.track(self.subscription_interruption)
             {
-                let start_idx = u32::try_from(self.responses.len()).map_err(|_| {
-                    ApplyError::ConstraintViolation(
-                        "number of responses must not exceed u32::MAX".into(),
-                    )
-                })?;
+                let last_response = self
+                    .responses
+                    .last()
+                    .map(|(resp, _)| resp.cursor)
+                    .unwrap_or(ResponseCursor(0));
                 match db_connection
                     .subscribe_to_next_responses(
                         &db_connection.execution_id,
-                        start_idx,
+                        last_response,
                         timeout_fut,
                     )
                     .await
                 {
                     Ok(next_responses) => {
                         debug!(
-                            "Original {orig_len} responses are extended by {len} with start_idx {start_idx} first: {first:?}, last: {last:?}",
+                            "Original {orig_len} responses are extended by {len} after old last rep {last_response}, next first: {first:?}, last: {last:?}",
                             orig_len = self.responses.len(),
                             len = next_responses.len(),
                             first = next_responses.first(),
                             last = next_responses.last(),
                         );
                         trace!("Got next responses {next_responses:?}");
-                        self.responses.extend(
-                            next_responses
-                                .into_iter()
-                                .map(|outer| (outer.event, Unprocessed)),
-                        );
+                        self.responses
+                            .extend(next_responses.into_iter().map(|resp| (resp, Unprocessed)));
                         trace!("All responses: {:?}", self.responses);
                         if let FindMatchingResponse::Found(accept_resp) =
                             self.process_event_by_key(&key)?
@@ -596,7 +587,7 @@ impl EventHistory {
                         && let JoinSetResponseEvent {
                             join_set_id: found_join_set_id,
                             event: _,
-                        } = event
+                        } = &event.event.event
                         && found_join_set_id == join_set_id
                     {
                         Some(idx)
@@ -608,7 +599,7 @@ impl EventHistory {
             self.event_history[parent_event_idx].1 = Processed;
             self.responses[found_resp_idx].1 = Processed;
             let enriched = {
-                match &self.responses[found_resp_idx].0.event {
+                match &self.responses[found_resp_idx].0.event.event.event {
                     JoinSetResponse::ChildExecutionFinished {
                         child_execution_id,
                         finished_version: _,
@@ -1600,6 +1591,8 @@ impl EventHistory {
             .as_ref()
             .expect("`index_child_exe_to_processed_response_idx` must point to a response")
             .0
+            .event
+            .event
             .event
         {
             JoinSetResponse::ChildExecutionFinished {
@@ -3428,11 +3421,7 @@ mod tests {
         let cancel_registry = CancelRegistry::new();
         let event_history = EventHistory::new(
             exec_log.event_history().collect(),
-            exec_log
-                .responses
-                .into_iter()
-                .map(|event| event.event)
-                .collect(),
+            exec_log.responses,
             join_next_blocking_strategy,
             fn_registry,
             cancel_registry,

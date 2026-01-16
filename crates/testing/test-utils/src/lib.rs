@@ -1,5 +1,11 @@
+use concepts::ExecutionId;
+use concepts::component_id::InputContentDigest;
+use concepts::storage::{
+    ExecutionEvent, ExecutionLog, JoinSetResponseEventOuter, PendingState, Version,
+};
 use rand::rngs::StdRng;
 use rand::{Rng as _, SeedableRng as _};
+use serde::Serialize;
 use std::str::FromStr;
 use std::{env::VarError, fmt};
 use tracing::{Event, Subscriber};
@@ -110,5 +116,27 @@ pub fn get_seed() -> Box<dyn Iterator<Item = u64>> {
             }))
         }
         _ => unreachable!(),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct ExecutionLogSanitized {
+    pub execution_id: ExecutionId,
+    pub events: Vec<ExecutionEvent>,
+    pub responses: Vec<JoinSetResponseEventOuter>,
+    pub next_version: Version,
+    pub pending_state: PendingState,
+    pub component_digest: InputContentDigest,
+}
+impl From<ExecutionLog> for ExecutionLogSanitized {
+    fn from(value: ExecutionLog) -> Self {
+        ExecutionLogSanitized {
+            execution_id: value.execution_id,
+            events: value.events,
+            responses: value.responses.into_iter().map(|resp| resp.event).collect(),
+            next_version: value.next_version,
+            pending_state: value.pending_state,
+            component_digest: value.component_digest,
+        }
     }
 }

@@ -5,7 +5,7 @@ use concepts::{
     storage::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
         AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, JoinSetResponseEventOuter,
+        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ResponseCursor, ResponseWithCursor,
         TimeoutOutcome, Version,
     },
 };
@@ -270,11 +270,11 @@ impl CachingDbConnection {
     pub(crate) async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: u32,
+        last_response: ResponseCursor,
         timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout> {
         self.db_connection
-            .subscribe_to_next_responses(execution_id, start_idx, timeout_fut)
+            .subscribe_to_next_responses(execution_id, last_response, timeout_fut)
             .await
     }
 

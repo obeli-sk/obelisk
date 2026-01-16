@@ -15,6 +15,7 @@ utils.workspace = true
 arbitrary.workspace = true
 chrono.workspace = true
 rand.workspace = true
+serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-error.workspace = true

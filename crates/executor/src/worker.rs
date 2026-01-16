@@ -7,9 +7,10 @@ use concepts::TrapKind;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::HistoryEvent;
 use concepts::storage::Locked;
+use concepts::storage::ResponseWithCursor;
 use concepts::storage::Version;
 use concepts::storage::http_client_trace::HttpClientTrace;
-use concepts::{FinishedExecutionError, StrVariant, storage::JoinSetResponseEvent};
+use concepts::{FinishedExecutionError, StrVariant};
 use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
 use concepts::{Params, SupportedFunctionReturnValue};
 use tracing::Span;
@@ -44,7 +45,7 @@ pub struct WorkerContext {
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub event_history: Vec<(HistoryEvent, Version)>,
-    pub responses: Vec<JoinSetResponseEvent>,
+    pub responses: Vec<ResponseWithCursor>,
     pub version: Version,
     pub can_be_retried: bool,
     pub worker_span: Span,

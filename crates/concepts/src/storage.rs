@@ -37,13 +37,11 @@ pub const STATE_LOCKED: &str = "locked";
 pub const STATE_FINISHED: &str = "finished";
 pub static HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "join_next";
 
-/// Remote client representation of the execution journal.
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct ExecutionLog {
     pub execution_id: ExecutionId,
     pub events: Vec<ExecutionEvent>,
-    pub responses: Vec<JoinSetResponseEventOuter>,
+    pub responses: Vec<ResponseWithCursor>,
     pub next_version: Version, // Is not advanced once in Finished state
     pub pending_state: PendingState, // updated on every state change
     pub component_digest: InputContentDigest, // updated on every state change
@@ -117,13 +115,14 @@ impl ExecutionLog {
     }
 
     #[must_use]
-    pub fn into_finished_result(mut self) -> Option<SupportedFunctionReturnValue> {
+    #[cfg(feature = "test")]
+    pub fn as_finished_result(&self) -> Option<SupportedFunctionReturnValue> {
         if let ExecutionEvent {
             event: ExecutionRequest::Finished { result, .. },
             ..
-        } = self.events.pop().expect("must contain at least one event")
+        } = self.events.last().expect("must contain at least one event")
         {
-            Some(result)
+            Some(result.clone())
         } else {
             None
         }
@@ -223,7 +222,7 @@ pub struct ExecutionEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize /* webapi */)]
 pub struct ResponseCursor(pub u32);
 
-#[derive(Debug, Clone, Serialize /* webapi */)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */)]
 pub struct ResponseWithCursor {
     pub event: JoinSetResponseEventOuter,
     pub cursor: ResponseCursor,
@@ -624,7 +623,7 @@ pub struct LockedExecution {
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub event_history: Vec<(HistoryEvent, Version)>,
-    pub responses: Vec<JoinSetResponseEventOuter>,
+    pub responses: Vec<ResponseWithCursor>,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub intermittent_event_count: u32,
 }
@@ -1057,9 +1056,9 @@ pub trait DbConnection: DbExecutor {
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: u32,
+        last_response: ResponseCursor,
         timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout>;
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout>;
 
     /// Notification mechainism with no strict guarantees for getting the finished result.
     /// Implementations with no pubsub support should use polling.

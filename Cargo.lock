@@ -4730,6 +4730,7 @@ dependencies = [
  "obeli-sk-concepts",
  "obeli-sk-utils",
  "rand 0.9.2",
+ "serde",
  "tokio",
  "tracing",
  "tracing-error",

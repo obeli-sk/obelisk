@@ -20,6 +20,7 @@ use rstest::rstest;
 use std::sync::Arc;
 use std::time::Duration;
 use test_db_macro::expand_enum_database;
+use test_utils::ExecutionLogSanitized;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
@@ -75,23 +76,27 @@ async fn diff_proptest_inner(seed: u64) {
     }
     let (_mem_guard, db_mem_pool, db_mem_close) = Database::Memory.set_up().await;
     let mem_conn = db_mem_pool.connection_test().await.unwrap();
-    let mem_log = create_and_append(
-        mem_conn.as_ref(),
-        execution_id.clone(),
-        create_req.clone(),
-        &append_requests,
-    )
-    .await;
+    let mem_log = ExecutionLogSanitized::from(
+        create_and_append(
+            mem_conn.as_ref(),
+            execution_id.clone(),
+            create_req.clone(),
+            &append_requests,
+        )
+        .await,
+    );
     db_mem_close.close().await;
     let (_sqlite_guard, sqlite_pool, db_sqlite_close) = Database::Sqlite.set_up().await;
     let sqlite_conn = sqlite_pool.connection_test().await.unwrap();
-    let sqlite_log = create_and_append(
-        sqlite_conn.as_ref(),
-        execution_id,
-        create_req,
-        &append_requests,
-    )
-    .await;
+    let sqlite_log = ExecutionLogSanitized::from(
+        create_and_append(
+            sqlite_conn.as_ref(),
+            execution_id,
+            create_req,
+            &append_requests,
+        )
+        .await,
+    );
     db_sqlite_close.close().await;
     println!(
         "Expected (mem):\n{expected}\nActual (sqlite):\n{actual}",

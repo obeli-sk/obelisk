@@ -15,7 +15,7 @@ use concepts::storage::{
     DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionLog,
     ExecutionRequest, ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent,
     JoinSetResponse, JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedExecution,
-    LogInfoAppendRow, TimeoutOutcome, Version, VersionType,
+    LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
@@ -261,12 +261,12 @@ impl DbConnection for InMemoryDbConnection {
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
-        start_idx: u32,
+        last_response: ResponseCursor,
         interrupt_after: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, DbErrorReadWithTimeout> {
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout> {
         let either = {
             let mut guard = self.0.lock().unwrap();
-            guard.subscribe_to_next_responses(execution_id, start_idx)?
+            guard.subscribe_to_next_responses(execution_id, last_response)?
         };
         // unlocked now
         match either {
@@ -317,7 +317,7 @@ impl DbConnection for InMemoryDbConnection {
                     journal
                         .responses
                         .iter()
-                        .find_map(|resp| match &resp.event.event {
+                        .find_map(|resp| match &resp.event.event.event {
                             JoinSetResponse::DelayFinished {
                                 delay_id: found_id,
                                 result,
@@ -365,7 +365,7 @@ impl DbConnection for InMemoryDbConnection {
             }
         }?;
         Ok(execution_log
-            .into_finished_result()
+            .as_finished_result()
             .expect("pending state was checked"))
     }
 
@@ -563,9 +563,9 @@ mod index {
                 if let JoinSetResponse::DelayFinished {
                     delay_id,
                     result: _,
-                } = &e.event.event
+                } = &e.event.event.event
                 {
-                    Some((e.event.join_set_id.clone(), delay_id.clone()))
+                    Some((e.event.event.join_set_id.clone(), delay_id.clone()))
                 } else {
                     None
                 }
@@ -1035,13 +1035,14 @@ impl DbHolder {
     fn subscribe_to_next_responses(
         &mut self,
         execution_id: &ExecutionId,
-        start_idx: u32,
+        last_response: ResponseCursor,
     ) -> Result<
-        Either<Vec<JoinSetResponseEventOuter>, oneshot::Receiver<JoinSetResponseEventOuter>>,
+        Either<Vec<ResponseWithCursor>, oneshot::Receiver<ResponseWithCursor>>,
         DbErrorReadWithTimeout,
     > {
         debug!("next_response");
-        let start_idx = usize::try_from(start_idx).expect("16 bit systems are unsupported");
+        // responses cursor are their indexes.
+        let start_idx = usize::try_from(last_response.0).expect("16 bit systems are unsupported");
         let Some(journal) = self.journals.get_mut(execution_id) else {
             return Err(DbErrorReadWithTimeout::DbErrorRead(DbErrorRead::NotFound));
         };
