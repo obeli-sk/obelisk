@@ -1,4 +1,5 @@
 api.listening_addr = "127.0.0.1:5005"
+webui.listening_addr = "127.0.0.1:8080"
 
 database.postgres.host =     "${POSTGRES_HOST}"
 database.postgres.user =     "${POSTGRES_USER}"
