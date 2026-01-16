@@ -11,7 +11,7 @@ use generated::testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
 use generated::testing::sleep_obelisk_schedule::sleep as sleep_activity_schedule;
 
 mod generated {
-    #![allow(clippy::empty_line_after_outer_attr)]
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/any.rs"));
 }
 

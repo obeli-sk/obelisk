@@ -14,7 +14,7 @@ use generated::testing::stub_activity_obelisk_stub::activity as activity_stub;
 use crate::generated::obelisk;
 
 mod generated {
-    #![allow(clippy::empty_line_after_outer_attr)]
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/any.rs"));
 }
 

@@ -6,7 +6,7 @@ use wstd::http::body::Body;
 use wstd::http::{Error, Request, Response, StatusCode};
 
 mod generated {
-    #![allow(clippy::empty_line_after_outer_attr)]
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/any.rs"));
 }
 

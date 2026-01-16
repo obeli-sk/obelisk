@@ -9,7 +9,7 @@ use wstd::io::{AsyncInputStream, AsyncOutputStream, AsyncPollable, Cursor};
 use wstd::runtime::block_on;
 
 mod generated {
-    #![allow(clippy::empty_line_after_outer_attr)]
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/any.rs"));
 }
 

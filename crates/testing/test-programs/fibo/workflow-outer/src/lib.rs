@@ -3,7 +3,7 @@ use generated::exports::testing::fibo_workflow_outer::workflow::Guest as GuestNe
 use generated::obelisk::workflow::workflow_support::join_set_create;
 
 mod generated {
-    #![allow(clippy::empty_line_after_outer_attr)]
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/any.rs"));
 }
 

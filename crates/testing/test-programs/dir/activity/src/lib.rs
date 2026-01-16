@@ -3,7 +3,7 @@ use generated::exports::testing::dir::dir::Guest;
 use std::path::PathBuf;
 
 mod generated {
-    #![allow(clippy::empty_line_after_outer_attr)]
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/any.rs"));
 }
 

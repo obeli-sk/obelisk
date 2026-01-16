@@ -3,7 +3,7 @@ use generated::exports::testing::serde_workflow::serde_workflow::Guest;
 use generated::testing::serde::serde::{self, MyError};
 
 mod generated {
-    #![allow(clippy::empty_line_after_outer_attr)]
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/any.rs"));
 }
 

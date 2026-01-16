@@ -21,6 +21,3 @@ wit-bindgen-rust.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
-
-[lints]
-workspace = true
