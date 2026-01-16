@@ -705,7 +705,7 @@ pub mod response {
         fn from(response: ResponseWithCursor) -> Self {
             Self {
                 event: Some(response.event.into()),
-                cursor: response.cursor,
+                cursor: response.cursor.0,
             }
         }
     }

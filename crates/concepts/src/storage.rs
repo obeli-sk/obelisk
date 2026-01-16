@@ -220,8 +220,16 @@ pub struct ExecutionEvent {
     pub version: Version,
 }
 
-/// Moves the execution to [`PendingState::PendingNow`] if it is currently blocked on `JoinNextBlocking`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize /* webapi */)]
+pub struct ResponseCursor(pub u32);
+
+#[derive(Debug, Clone, Serialize /* webapi */)]
+pub struct ResponseWithCursor {
+    pub event: JoinSetResponseEventOuter,
+    pub cursor: ResponseCursor,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */)]
 pub struct JoinSetResponseEventOuter {
     pub created_at: DateTime<Utc>,
     pub event: JoinSetResponseEvent,
@@ -1327,15 +1335,6 @@ mod wasm_backtrace {
         }
     }
 }
-
-pub type ResponseCursorType = u32;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ResponseWithCursor {
-    pub event: JoinSetResponseEventOuter,
-    pub cursor: ResponseCursorType,
-}
-
 #[derive(Debug, Clone, Serialize, derive_more::Display)]
 #[display("{execution_id} {pending_state} {component_digest}")]
 pub struct ExecutionWithState {

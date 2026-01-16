@@ -17,7 +17,7 @@ use concepts::{
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse,
         Locked, LockedBy, LockedExecution, LogFilter, LogInfo, LogInfoAppendRow, LogInfoRow,
         LogLevel, LogStreamType, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, ResponseWithCursor,
+        PendingStateFinishedResultKind, PendingStateLocked, ResponseCursor, ResponseWithCursor,
         STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
         Version, VersionType,
     },
@@ -1973,7 +1973,7 @@ impl SqlitePool {
             }
         };
         Ok(ResponseWithCursor {
-            cursor: id,
+            cursor: ResponseCursor(id),
             event: JoinSetResponseEventOuter {
                 event: JoinSetResponseEvent { join_set_id, event },
                 created_at,
