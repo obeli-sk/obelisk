@@ -175,34 +175,6 @@ impl ConfigHolder {
         Ok(())
     }
 
-    fn guess_obelisk_toml(project_dirs: Option<&ProjectDirs>) -> Result<PathBuf, anyhow::Error> {
-        // Guess the config file location based on the following priority:
-        // 1. ./obelisk.toml
-        let local = PathBuf::from("obelisk.toml");
-        if local.try_exists().unwrap_or_default() {
-            return Ok(local);
-        }
-        // 2. $CONFIG_DIR/obelisk/obelisk.toml
-
-        if let Some(project_dirs) = &project_dirs {
-            let user_config_dir = project_dirs.config_dir();
-            // Lin: /home/alice/.config/obelisk/
-            // Win: C:\Users\Alice\AppData\Roaming\obelisk\obelisk\config\
-            // Mac: /Users/Alice/Library/Application Support/com.obelisk.obelisk-App/
-            let user_config = user_config_dir.join("obelisk.toml");
-            if user_config.try_exists().unwrap_or_default() {
-                return Ok(user_config);
-            }
-        }
-
-        // 3. /etc/obelisk/obelisk.toml
-        let global_config = PathBuf::from("/etc/obelisk/obelisk.toml");
-        if global_config.try_exists().unwrap_or_default() {
-            return Ok(global_config);
-        }
-        bail!("cannot find `obelisk.toml` in any of the default locations");
-    }
-
     pub(crate) fn new(
         project_dirs: Option<ProjectDirs>,
         base_dirs: Option<BaseDirs>,
@@ -211,9 +183,12 @@ impl ConfigHolder {
         let obelisk_toml = if let Some(config) = config {
             config
         } else {
-            let found = Self::guess_obelisk_toml(project_dirs.as_ref())?;
-            info!("Using configuration file {:?}", found);
-            found
+            let local = PathBuf::from("obelisk.toml");
+            if !local.try_exists().unwrap_or_default() {
+                bail!("cannot find `obelisk.toml` in current directory");
+            }
+            info!("Using configuration file {:?}", local);
+            local
         };
         Ok(Self {
             path_prefixes: PathPrefixes {
