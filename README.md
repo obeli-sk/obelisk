@@ -79,18 +79,26 @@ cargo binstall obelisk
 ### Docker
 ```sh
 # Use host's network. Ports 8080 (web) and 5005 (grpc) will be bound to 127.0.0.1
-docker run --net=host getobelisk/obelisk
+mkdir config
+docker run getobelisk/obelisk generate config > config/obelisk.toml
+docker run \
+  --net=host
+  -v $(pwd)/config:/config \
+  getobelisk/obelisk \
+  server run --config /config/obelisk.toml
 
 # Forward ports explicitly
 docker run \
   -p 8080:8080 -e 'OBELISK__webui__listening_addr=0.0.0.0:8080' \
   -p 5005:5005 -e 'OBELISK__api__listening_addr=0.0.0.0:5005' \
-  getobelisk/obelisk
+  -v $(pwd)/config:/config \
+  getobelisk/obelisk \
+  server run --config /config/obelisk.toml
 
-# Share the config and cache directory from host
+# Share the cache directory from host
 docker run --net=host \
   -u $(id -u):$(id -g) \
-  -v $(pwd):/config \
+  -v $(pwd)/config:/config \
   -e 'OBELISK__WASM__CACHE_DIRECTORY=/cache/obelisk/wasm' \
   -v ~/.cache/obelisk/wasm:/cache/obelisk/wasm \
   getobelisk/obelisk \
@@ -115,7 +123,7 @@ Check out the [Getting Started Guide](https://obeli.sk/docs/latest/getting-start
 
 ### Start the Server
 ```sh
-obelisk server run
+obelisk server run -c obelisk-testing-sqlite-oci.toml
 ```
 
 ### Running with Postgres
@@ -127,7 +135,7 @@ docker run -it --rm \
   postgres:18
 
 
-obelisk server run --config obelisk-postgres.toml
+obelisk server run --config obelisk-testing-postgres-oci.toml
 ```
 
 ### [CLI Usage](https://obeli.sk/docs/latest/cli/)
