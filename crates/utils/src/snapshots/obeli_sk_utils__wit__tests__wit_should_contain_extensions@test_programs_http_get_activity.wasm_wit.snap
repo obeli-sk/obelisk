@@ -5,16 +5,16 @@ expression: wit
 package root:component;
 
 world root {
-  import wasi:io/poll@0.2.6;
-  import wasi:clocks/monotonic-clock@0.2.6;
-  import wasi:io/error@0.2.6;
-  import wasi:io/streams@0.2.6;
-  import wasi:http/types@0.2.4;
-  import wasi:http/outgoing-handler@0.2.4;
-  import wasi:cli/environment@0.2.6;
-  import wasi:cli/exit@0.2.6;
-  import wasi:cli/stderr@0.2.6;
-  import wasi:random/insecure-seed@0.2.6;
+  import wasi:io/poll@0.2.9;
+  import wasi:clocks/monotonic-clock@0.2.9;
+  import wasi:io/error@0.2.9;
+  import wasi:io/streams@0.2.9;
+  import wasi:cli/stderr@0.2.9;
+  import wasi:http/types@0.2.9;
+  import wasi:http/outgoing-handler@0.2.9;
+  import wasi:cli/environment@0.2.9;
+  import wasi:cli/exit@0.2.9;
+  import wasi:random/insecure-seed@0.2.9;
 
   export testing:http/http-get;
   export testing:http-obelisk-ext/http-get;
@@ -153,7 +153,7 @@ package obelisk:types@4.0.0 {
 }
 
 
-package wasi:io@0.2.6 {
+package wasi:io@0.2.9 {
   interface poll {
     resource pollable {
       ready: func() -> bool;
@@ -191,9 +191,9 @@ package wasi:io@0.2.6 {
 }
 
 
-package wasi:clocks@0.2.6 {
+package wasi:clocks@0.2.9 {
   interface monotonic-clock {
-    use wasi:io/poll@0.2.6.{pollable};
+    use wasi:io/poll@0.2.9.{pollable};
 
     type duration = u64;
 
@@ -202,11 +202,26 @@ package wasi:clocks@0.2.6 {
 }
 
 
-package wasi:http@0.2.4 {
+package wasi:cli@0.2.9 {
+  interface stderr {
+    use wasi:io/streams@0.2.9.{output-stream};
+
+    get-stderr: func() -> output-stream;
+  }
+  interface environment {
+    get-environment: func() -> list<tuple<string, string>>;
+  }
+  interface exit {
+    exit: func(status: result);
+  }
+}
+
+
+package wasi:http@0.2.9 {
   interface types {
-    use wasi:clocks/monotonic-clock@0.2.6.{duration};
-    use wasi:io/streams@0.2.6.{output-stream, input-stream};
-    use wasi:io/poll@0.2.6.{pollable};
+    use wasi:clocks/monotonic-clock@0.2.9.{duration};
+    use wasi:io/streams@0.2.9.{output-stream, input-stream};
+    use wasi:io/poll@0.2.9.{pollable};
 
     resource fields {
       constructor();
@@ -358,22 +373,7 @@ package wasi:http@0.2.4 {
 }
 
 
-package wasi:cli@0.2.6 {
-  interface environment {
-    get-environment: func() -> list<tuple<string, string>>;
-  }
-  interface exit {
-    exit: func(status: result);
-  }
-  interface stderr {
-    use wasi:io/streams@0.2.6.{output-stream};
-
-    get-stderr: func() -> output-stream;
-  }
-}
-
-
-package wasi:random@0.2.6 {
+package wasi:random@0.2.9 {
   interface insecure-seed {
     insecure-seed: func() -> tuple<u64, u64>;
   }
