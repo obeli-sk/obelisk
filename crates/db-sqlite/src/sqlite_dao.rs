@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS t_metadata (
     created_at TEXT NOT NULL
 ) STRICT
 ";
-const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 5;
+const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 6;
 
 /// Stores execution history. Append only.
 const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
@@ -226,19 +226,40 @@ CREATE TABLE IF NOT EXISTS t_delay (
 ";
 
 // Append only.
-const CREATE_TABLE_T_BACKTRACE: &str = r"
-CREATE TABLE IF NOT EXISTS t_backtrace (
+const CREATE_TABLE_T_EXECUTION_BACKTRACE: &str = r"
+CREATE TABLE IF NOT EXISTS t_execution_backtrace (
     execution_id TEXT NOT NULL,
     component_id TEXT NOT NULL,
     version_min_including INTEGER NOT NULL,
     version_max_excluding INTEGER NOT NULL,
-    wasm_backtrace TEXT NOT NULL,
-    PRIMARY KEY (execution_id, version_min_including, version_max_excluding)
+    backtrace_hash BLOB NOT NULL,
+
+    PRIMARY KEY (
+        execution_id,
+        version_min_including,
+        version_max_excluding
+    ),
+    FOREIGN KEY (backtrace_hash)
+        REFERENCES t_wasm_backtrace(backtrace_hash)
 ) STRICT
 ";
 // Index for searching backtraces by execution_id and version
-const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (execution_id, version_min_including, version_max_excluding);
+const IDX_T_EXECUTION_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_execution_backtrace_execution_id_version
+ON t_execution_backtrace (
+    execution_id,
+    version_min_including,
+    version_max_excluding
+)
+";
+
+const CREATE_TABLE_T_WASM_BACKTRACE: &str = r"
+CREATE TABLE IF NOT EXISTS t_wasm_backtrace (
+    backtrace_hash BLOB NOT NULL,
+    wasm_backtrace TEXT NOT NULL,
+
+    PRIMARY KEY (backtrace_hash)
+) STRICT
 ";
 
 /// Stores logs and std stream output of execution runs. Append only.
@@ -934,9 +955,10 @@ impl SqlitePool {
         conn_execute(&conn, IDX_T_STATE_CREATED_AT, [])?;
         // t_delay
         conn_execute(&conn, CREATE_TABLE_T_DELAY, [])?;
-        // t_backtrace
-        conn_execute(&conn, CREATE_TABLE_T_BACKTRACE, [])?;
-        conn_execute(&conn, IDX_T_BACKTRACE_EXECUTION_ID_VERSION, [])?;
+        // backtrace
+        conn_execute(&conn, CREATE_TABLE_T_EXECUTION_BACKTRACE, [])?;
+        conn_execute(&conn, IDX_T_EXECUTION_BACKTRACE_EXECUTION_ID_VERSION, [])?;
+        conn_execute(&conn, CREATE_TABLE_T_WASM_BACKTRACE, [])?;
         // t_log
         conn_execute(&conn, CREATE_TABLE_T_LOG, [])?;
         conn_execute(&conn, IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT, [])?;
@@ -2517,26 +2539,26 @@ impl SqlitePool {
         tx: &Transaction,
         backtrace_info: &BacktraceInfo,
     ) -> Result<(), DbErrorWrite> {
-        let backtrace = serde_json::to_string(&backtrace_info.wasm_backtrace).map_err(|err| {
-            warn!(
-                "Cannot serialize backtrace {:?} - {err:?}",
-                backtrace_info.wasm_backtrace
-            );
-            DbErrorWriteNonRetriable::ValidationFailed("cannot serialize backtrace".into())
+        let backtrace_hash = crate::backtrace::hash(&backtrace_info.wasm_backtrace);
+
+        tx.prepare("INSERT OR IGNORE INTO t_wasm_backtrace (backtrace_hash, wasm_backtrace) VALUES (:backtrace_hash, :wasm_backtrace)")?
+        .execute(named_params! {
+            ":backtrace_hash": backtrace_hash,
+            ":wasm_backtrace": JsonWrapper(&backtrace_info.wasm_backtrace)
         })?;
-        let mut stmt = tx
-            .prepare(
-                "INSERT INTO t_backtrace (execution_id, component_id, version_min_including, version_max_excluding, wasm_backtrace) \
-                    VALUES (:execution_id, :component_id, :version_min_including, :version_max_excluding, :wasm_backtrace)",
-            )
-            ?;
-        stmt.execute(named_params! {
+
+        tx.prepare(
+                "INSERT INTO t_execution_backtrace (execution_id, component_id, version_min_including, version_max_excluding, backtrace_hash) \
+                    VALUES (:execution_id, :component_id, :version_min_including, :version_max_excluding, :backtrace_hash)",
+        )?
+        .execute(named_params! {
             ":execution_id": backtrace_info.execution_id.to_string(),
             ":component_id": JsonWrapper(&backtrace_info.component_id),
             ":version_min_including": backtrace_info.version_min_including.0,
             ":version_max_excluding": backtrace_info.version_max_excluding.0,
-            ":wasm_backtrace": backtrace,
+            ":backtrace_hash": backtrace_hash,
         })?;
+
         Ok(())
     }
 
@@ -2663,7 +2685,7 @@ impl SqlitePool {
             FROM
                 t_execution_log AS log
             LEFT OUTER JOIN -- Use LEFT JOIN to keep all logs even if no backtrace matches
-                t_backtrace AS bt ON log.execution_id = bt.execution_id
+                t_execution_backtrace AS bt ON log.execution_id = bt.execution_id
                                 -- Check if the log's version falls within the backtrace's range
                                 AND log.version >= bt.version_min_including
                                 AND log.version < bt.version_max_excluding
@@ -3530,7 +3552,8 @@ impl DbExternalApi for SqlitePool {
 
         self.transaction(
             move |tx| {
-                let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_backtrace \
+                let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_execution_backtrace e \
+                                INNER JOIN t_wasm_backtrace w ON e.backtrace_hash = w.backtrace_hash \
                                 WHERE execution_id = :execution_id";
                 let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![(":execution_id", Box::new(execution_id.to_string()))];
                 let select = match &filter {
