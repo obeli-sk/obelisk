@@ -662,6 +662,12 @@ struct LogicalTx {
     func_name: &'static str,
     #[debug(skip)]
     commit_ack_sender: oneshot::Sender<Result<(), RusqliteError>>,
+    priority: LtxPriority,
+}
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum LtxPriority {
+    High,
+    Low,
 }
 
 #[derive(derive_more::Debug)]
@@ -995,26 +1001,34 @@ impl SqlitePool {
         histograms: &mut Histograms,
     ) -> Result<(), ()> {
         let mut ltx_list = Vec::new();
-        // Wait for first logical tx.
-        let mut ltx = match command_rx.blocking_recv() {
-            Some(ThreadCommand::LogicalTx(ltx)) => ltx,
-            Some(ThreadCommand::Shutdown) => {
-                debug!("Shutdown message received");
-                return Err(());
+        // perf: Wait for first logical tx with high priority.
+        loop {
+            let ltx = match command_rx.blocking_recv() {
+                Some(ThreadCommand::LogicalTx(ltx)) => ltx,
+                Some(ThreadCommand::Shutdown) => {
+                    debug!("Shutdown message received");
+                    return Err(());
+                }
+                None => {
+                    debug!("command_rx was closed");
+                    return Err(());
+                }
+            };
+            let prio = ltx.priority;
+            ltx_list.push(ltx);
+            if prio == LtxPriority::High {
+                break;
             }
-            None => {
-                debug!("command_rx was closed");
-                return Err(());
-            }
-        };
+        }
         let all_fns_start = std::time::Instant::now();
         let mut physical_tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|begin_err| {
                 error!("Cannot open transaction, closing sqlite - {begin_err:?}");
             })?;
-        Self::ltx_apply_to_tx(&mut ltx, &mut physical_tx, histograms);
-        ltx_list.push(ltx);
+        for ltx in &mut ltx_list {
+            Self::ltx_apply_to_tx(ltx, &mut physical_tx, histograms);
+        }
 
         while let Ok(more) = command_rx.try_recv() {
             let mut ltx = match more {
@@ -1174,6 +1188,7 @@ impl SqlitePool {
                 sent_at: Instant::now(),
                 func_name,
                 commit_ack_sender,
+                priority: LtxPriority::High,
             })
         };
         self.0
@@ -1218,6 +1233,7 @@ impl SqlitePool {
                 sent_at: Instant::now(),
                 func_name,
                 commit_ack_sender,
+                priority: LtxPriority::Low,
             })
         };
         self.0
@@ -3824,15 +3840,22 @@ impl DbConnection for SqlitePool {
                         let (_, notifier) = Self::create_inner(tx, child_req.clone())?;
                         notifiers.push(notifier);
                     }
-                    for backtrace in &backtraces {
-                        Self::append_backtrace(tx, backtrace)?;
-                    }
                     Ok::<_, DbErrorWrite>((version, notifiers))
                 },
                 "append_batch_create_new_execution_inner",
             )
             .await?;
         self.notify_all(notifiers, current_time);
+        self.transaction_fire_forget(
+            move |tx| {
+                for backtrace in &backtraces {
+                    Self::append_backtrace(tx, backtrace)?;
+                }
+                Ok::<_, DbErrorWrite>(())
+            },
+            "append_batch_create_new_execution_append_backtrace",
+        )
+        .await?;
         Ok(version)
     }
 
