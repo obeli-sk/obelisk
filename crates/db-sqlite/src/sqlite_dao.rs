@@ -1193,6 +1193,41 @@ impl SqlitePool {
         }
     }
 
+    /// Invokes the provided function wrapping a new [`rusqlite::Transaction`] that is committed automatically.
+    async fn transaction_fire_forget<F, T, E>(
+        &self,
+        mut func: F,
+        func_name: &'static str,
+    ) -> Result<T, E>
+    where
+        F: FnMut(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
+        T: Send + 'static + Default,
+        E: From<RusqliteError> + Send + 'static,
+    {
+        let fn_res: Arc<std::sync::Mutex<Option<_>>> = Arc::default();
+        let (commit_ack_sender, _commit_ack_receiver) = oneshot::channel();
+        let current_span = Span::current();
+        let thread_command_func = {
+            let fn_res = fn_res.clone();
+            ThreadCommand::LogicalTx(LogicalTx {
+                func: Box::new(move |tx| {
+                    let _guard = current_span.enter();
+                    let func_res = func(tx);
+                    *fn_res.lock().unwrap() = Some(func_res);
+                }),
+                sent_at: Instant::now(),
+                func_name,
+                commit_ack_sender,
+            })
+        };
+        self.0
+            .command_tx
+            .send(thread_command_func)
+            .await
+            .map_err(|_send_err| RusqliteError::Close)?;
+        Ok(T::default())
+    }
+
     fn fetch_created_event(
         conn: &Connection,
         execution_id: &ExecutionId,
@@ -4001,7 +4036,7 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite> {
         trace!("append_backtrace");
-        self.transaction(
+        self.transaction_fire_forget(
             move |tx| Self::append_backtrace(tx, &append),
             "append_backtrace",
         )
@@ -4011,7 +4046,7 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite> {
         trace!("append_backtrace_batch");
-        self.transaction(
+        self.transaction_fire_forget(
             move |tx| {
                 for append in &batch {
                     Self::append_backtrace(tx, append)?;
@@ -4026,7 +4061,7 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_log(&self, row: LogInfoAppendRow) -> Result<(), DbErrorWrite> {
         trace!("append_log");
-        self.transaction(move |tx| Self::append_log(tx, &row), "append_log")
+        self.transaction_fire_forget(move |tx| Self::append_log(tx, &row), "append_log")
             .await
     }
 
@@ -4034,7 +4069,7 @@ impl DbConnection for SqlitePool {
     async fn append_log_batch(&self, batch: &[LogInfoAppendRow]) -> Result<(), DbErrorWrite> {
         trace!("append_log_batch");
         let batch = Vec::from(batch);
-        self.transaction(
+        self.transaction_fire_forget(
             move |tx| {
                 for row in &batch {
                     Self::append_log(tx, row)?;
