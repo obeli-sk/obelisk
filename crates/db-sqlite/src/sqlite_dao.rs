@@ -225,7 +225,8 @@ CREATE TABLE IF NOT EXISTS t_delay (
 ) STRICT
 ";
 
-// Append only.
+// Backtrace tables
+// Append only
 const CREATE_TABLE_T_EXECUTION_BACKTRACE: &str = r"
 CREATE TABLE IF NOT EXISTS t_execution_backtrace (
     execution_id TEXT NOT NULL,
@@ -252,7 +253,7 @@ ON t_execution_backtrace (
     version_max_excluding
 )
 ";
-
+// Deduplication of backtraces
 const CREATE_TABLE_T_WASM_BACKTRACE: &str = r"
 CREATE TABLE IF NOT EXISTS t_wasm_backtrace (
     backtrace_hash BLOB NOT NULL,
@@ -2590,7 +2591,7 @@ impl SqlitePool {
         tx: &Transaction,
         backtrace_info: &BacktraceInfo,
     ) -> Result<(), DbErrorWrite> {
-        let backtrace_hash = crate::backtrace::hash(&backtrace_info.wasm_backtrace);
+        let backtrace_hash = backtrace_info.wasm_backtrace.hash();
 
         tx.prepare("INSERT OR IGNORE INTO t_wasm_backtrace (backtrace_hash, wasm_backtrace) VALUES (:backtrace_hash, :wasm_backtrace)")?
         .execute(named_params! {

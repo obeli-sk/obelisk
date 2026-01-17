@@ -1,3 +1,5 @@
+#[cfg(any(feature = "rusqlite", feature = "postgres"))]
+pub mod backtrace;
 pub mod component_id;
 mod error_conversions;
 #[cfg(feature = "postgres")]

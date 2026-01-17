@@ -25,7 +25,6 @@ rand.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-sha2.workspace = true
 tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true

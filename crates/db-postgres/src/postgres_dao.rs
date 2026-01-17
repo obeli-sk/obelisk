@@ -48,9 +48,9 @@ mod ddl {
 
     pub const ADMIN_DB_NAME: &str = "postgres";
 
-    pub const T_METADATA_EXPECTED_SCHEMA_VERSION: i32 = 1;
+    pub const T_METADATA_EXPECTED_SCHEMA_VERSION: i32 = 2;
 
-    // CREATE_TABLE_T_METADATA
+    // T_METADATA
     pub const CREATE_TABLE_T_METADATA: &str = r"
 CREATE TABLE IF NOT EXISTS t_metadata (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS t_metadata (
 );
 ";
 
-    // CREATE_TABLE_T_EXECUTION_LOG
+    // T_EXECUTION_LOG
     pub const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
 CREATE TABLE IF NOT EXISTS t_execution_log (
     execution_id TEXT NOT NULL,
@@ -87,7 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant ON t_executi
         HISTORY_EVENT_TYPE_JOIN_NEXT
     );
 
-    // CREATE_TABLE_T_JOIN_SET_RESPONSE
+    // T_JOIN_SET_RESPONSE
     pub const CREATE_TABLE_T_JOIN_SET_RESPONSE: &str = r"
 CREATE TABLE IF NOT EXISTS t_join_set_response (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -120,7 +120,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_join_set_response_unique_delay_id
 ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 ";
 
-    // CREATE_TABLE_T_STATE
+    // T_STATE
     pub const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
@@ -172,7 +172,7 @@ CREATE INDEX IF NOT EXISTS idx_t_state_ffqn ON t_state (ffqn);
 CREATE INDEX IF NOT EXISTS idx_t_state_created_at ON t_state (created_at);
 ";
 
-    // CREATE_TABLE_T_DELAY
+    // T_DELAY
     pub const CREATE_TABLE_T_DELAY: &str = r"
 CREATE TABLE IF NOT EXISTS t_delay (
     execution_id TEXT NOT NULL,
@@ -183,21 +183,32 @@ CREATE TABLE IF NOT EXISTS t_delay (
 );
 ";
 
-    // CREATE_TABLE_T_BACKTRACE
-    pub const CREATE_TABLE_T_BACKTRACE: &str = r"
-CREATE TABLE IF NOT EXISTS t_backtrace (
+    // Backtrace
+
+    pub const CREATE_TABLE_T_WASM_BACKTRACE: &str = r"
+CREATE TABLE IF NOT EXISTS t_wasm_backtrace (
+    backtrace_hash BYTEA PRIMARY KEY,
+    wasm_backtrace JSONB NOT NULL
+);
+";
+
+    pub const CREATE_TABLE_T_EXECUTION_BACKTRACE: &str = r"
+CREATE TABLE IF NOT EXISTS t_execution_backtrace (
     execution_id TEXT NOT NULL,
     component_id JSONB NOT NULL,
     version_min_including BIGINT NOT NULL CHECK (version_min_including >= 0),
     version_max_excluding BIGINT NOT NULL CHECK (version_max_excluding >= 0),
-    wasm_backtrace JSONB NOT NULL,
-    PRIMARY KEY (execution_id, version_min_including, version_max_excluding)
+    backtrace_hash BYTEA NOT NULL,
+    PRIMARY KEY (execution_id, version_min_including, version_max_excluding),
+    FOREIGN KEY (backtrace_hash) REFERENCES t_wasm_backtrace(backtrace_hash)
 );
 ";
 
-    pub const IDX_T_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_backtrace_execution_id_version ON t_backtrace (execution_id, version_min_including, version_max_excluding);
+    pub const IDX_T_EXECUTION_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_execution_backtrace_execution_id_version ON t_execution_backtrace (execution_id, version_min_including, version_max_excluding);
 ";
+
+    // Logs & Std sterams
     pub const CREATE_TABLE_T_LOG: &str = r"
 CREATE TABLE IF NOT EXISTS t_log (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -472,8 +483,9 @@ impl PostgresPool {
             ddl::IDX_T_STATE_FFQN,
             ddl::IDX_T_STATE_CREATED_AT,
             ddl::CREATE_TABLE_T_DELAY,
-            ddl::CREATE_TABLE_T_BACKTRACE,
-            ddl::IDX_T_BACKTRACE_EXECUTION_ID_VERSION,
+            ddl::CREATE_TABLE_T_WASM_BACKTRACE,
+            ddl::CREATE_TABLE_T_EXECUTION_BACKTRACE,
+            ddl::IDX_T_EXECUTION_BACKTRACE_EXECUTION_ID_VERSION,
             ddl::CREATE_TABLE_T_LOG,
             ddl::IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT,
             ddl::IDX_T_LOG_EXECUTION_ID_CREATED_AT,
@@ -2357,20 +2369,35 @@ async fn append_backtrace(
     tx: &Transaction<'_>,
     backtrace_info: &BacktraceInfo,
 ) -> Result<(), DbErrorWrite> {
-    let backtrace_json = Json(&backtrace_info.wasm_backtrace);
+    // Compute hash for deduplication
+    let backtrace_hash = backtrace_info.wasm_backtrace.hash();
 
+    // Insert into t_wasm_backtrace if not already present
     tx.execute(
-            "INSERT INTO t_backtrace (execution_id, component_id, version_min_including, version_max_excluding, wasm_backtrace) \
-             VALUES ($1, $2, $3, $4, $5)",
-            &[
-                &backtrace_info.execution_id.to_string(),
-                &Json(&backtrace_info.component_id),
-                &i64::from(backtrace_info.version_min_including.0),
-                &i64::from(backtrace_info.version_max_excluding.0),
-                &backtrace_json,
-            ],
-        )
-        .await?;
+        "INSERT INTO t_wasm_backtrace (backtrace_hash, wasm_backtrace) \
+         VALUES ($1, $2) \
+         ON CONFLICT (backtrace_hash) DO NOTHING",
+        &[
+            &backtrace_hash.as_slice(),
+            &Json(&backtrace_info.wasm_backtrace),
+        ],
+    )
+    .await?;
+
+    // Insert into t_execution_backtrace referencing the hash
+    tx.execute(
+        "INSERT INTO t_execution_backtrace \
+         (execution_id, component_id, version_min_including, version_max_excluding, backtrace_hash) \
+         VALUES ($1, $2, $3, $4, $5)",
+        &[
+            &backtrace_info.execution_id.to_string(),
+            &Json(&backtrace_info.component_id),
+            &i64::from(backtrace_info.version_min_including.0),
+            &i64::from(backtrace_info.version_max_excluding.0),
+            &backtrace_hash.as_slice(),
+        ],
+    )
+    .await?;
 
     Ok(())
 }
@@ -2490,7 +2517,7 @@ async fn list_execution_events(
             FROM
                 t_execution_log AS log
             LEFT OUTER JOIN
-                t_backtrace AS bt ON log.execution_id = bt.execution_id
+                t_execution_backtrace AS bt ON log.execution_id = bt.execution_id
                                 AND log.version >= bt.version_min_including
                                 AND log.version < bt.version_max_excluding
             WHERE
@@ -3777,7 +3804,8 @@ impl DbExternalApi for PostgresConnection {
         write!(
             &mut sql,
             "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace \
-     FROM t_backtrace WHERE execution_id = {p_execution_id_idx}"
+            FROM t_execution_backtrace e INNER JOIN t_wasm_backtrace w ON e.backtrace_hash = w.backtrace_hash \
+            WHERE execution_id = {p_execution_id_idx}"
         )
         .unwrap();
 
