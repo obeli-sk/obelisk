@@ -5,23 +5,23 @@ expression: wit
 package root:component;
 
 world root {
-  import wasi:io/poll@0.2.6;
-  import wasi:clocks/monotonic-clock@0.2.6;
-  import wasi:io/error@0.2.6;
-  import wasi:io/streams@0.2.6;
-  import wasi:http/types@0.2.4;
+  import wasi:io/poll@0.2.9;
+  import wasi:clocks/monotonic-clock@0.2.9;
+  import wasi:io/error@0.2.9;
+  import wasi:io/streams@0.2.9;
+  import wasi:cli/stdout@0.2.9;
+  import wasi:cli/stderr@0.2.9;
+  import wasi:http/types@0.2.9;
   import obelisk:log/log@1.0.0;
   import testing:fibo-workflow/workflow;
   import obelisk:types/execution@4.0.0;
   import obelisk:types/time@4.0.0;
   import testing:fibo-workflow-obelisk-schedule/workflow;
-  import wasi:cli/environment@0.2.6;
-  import wasi:cli/exit@0.2.6;
-  import wasi:cli/stdout@0.2.6;
-  import wasi:cli/stderr@0.2.6;
-  import wasi:random/insecure-seed@0.2.6;
+  import wasi:cli/environment@0.2.9;
+  import wasi:cli/exit@0.2.9;
+  import wasi:random/insecure-seed@0.2.9;
 
-  export wasi:http/incoming-handler@0.2.4;
+  export wasi:http/incoming-handler@0.2.9;
 }
 package obelisk:log@1.0.0 {
   interface log {
@@ -163,7 +163,7 @@ package obelisk:types@4.0.0 {
 }
 
 
-package wasi:io@0.2.6 {
+package wasi:io@0.2.9 {
   interface poll {
     resource pollable {
       ready: func() -> bool;
@@ -200,9 +200,9 @@ package wasi:io@0.2.6 {
 }
 
 
-package wasi:clocks@0.2.6 {
+package wasi:clocks@0.2.9 {
   interface monotonic-clock {
-    use wasi:io/poll@0.2.6.{pollable};
+    use wasi:io/poll@0.2.9.{pollable};
 
     type duration = u64;
 
@@ -211,10 +211,30 @@ package wasi:clocks@0.2.6 {
 }
 
 
-package wasi:http@0.2.4 {
+package wasi:cli@0.2.9 {
+  interface stdout {
+    use wasi:io/streams@0.2.9.{output-stream};
+
+    get-stdout: func() -> output-stream;
+  }
+  interface stderr {
+    use wasi:io/streams@0.2.9.{output-stream};
+
+    get-stderr: func() -> output-stream;
+  }
+  interface environment {
+    get-environment: func() -> list<tuple<string, string>>;
+  }
+  interface exit {
+    exit: func(status: result);
+  }
+}
+
+
+package wasi:http@0.2.9 {
   interface types {
-    use wasi:io/streams@0.2.6.{output-stream, input-stream};
-    use wasi:io/poll@0.2.6.{pollable};
+    use wasi:io/streams@0.2.9.{output-stream, input-stream};
+    use wasi:io/poll@0.2.9.{pollable};
 
     resource incoming-request {
       method: func() -> method;
@@ -375,27 +395,7 @@ package testing:fibo-workflow-obelisk-schedule {
 }
 
 
-package wasi:cli@0.2.6 {
-  interface environment {
-    get-environment: func() -> list<tuple<string, string>>;
-  }
-  interface exit {
-    exit: func(status: result);
-  }
-  interface stdout {
-    use wasi:io/streams@0.2.6.{output-stream};
-
-    get-stdout: func() -> output-stream;
-  }
-  interface stderr {
-    use wasi:io/streams@0.2.6.{output-stream};
-
-    get-stderr: func() -> output-stream;
-  }
-}
-
-
-package wasi:random@0.2.6 {
+package wasi:random@0.2.9 {
   interface insecure-seed {
     insecure-seed: func() -> tuple<u64, u64>;
   }
