@@ -66,7 +66,7 @@ jobs:
                 -H "Authorization: Bearer $GITHUB_TOKEN" \
                 https://api.github.com/repos/$OWNER/$REPO/pulls \
                 -d '{
-                  "title": "Bump Rust dependencies",
+                  "title": "Bump '${{ matrix.name }}' dependencies",
                   "head": "'${{ steps.branch-name.outputs.branch_name }}'",
                   "base": "main",
                   "body": ""
