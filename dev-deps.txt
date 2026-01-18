@@ -8,6 +8,6 @@ libprotoc 32.1
 rustc 1.92.0 (ded5c06cf 2025-12-08)
 wasm-tools 1.244.0
 wasmtime 40.0.0
-cargo-zigbuild 0.20.1
+cargo-zigbuild 0.21.1
 litestream v0.5.6
 ldd (GNU libc) 2.40
