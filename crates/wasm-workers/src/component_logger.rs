@@ -37,7 +37,7 @@ impl ComponentLogger {
             let res = log_storage_config.log_sender.try_send(LogInfoAppendRow {
                 execution_id: self.execution_id.clone(),
                 run_id: self.run_id,
-                log_info: LogEntry::Log {
+                log_entry: LogEntry::Log {
                     created_at: Utc::now(),
                     level,
                     message,

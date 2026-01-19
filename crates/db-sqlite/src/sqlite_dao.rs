@@ -2636,7 +2636,7 @@ impl SqlitePool {
         )",
         )?;
 
-        match &row.log_info {
+        match &row.log_entry {
             LogEntry::Log {
                 created_at,
                 level,
@@ -3200,7 +3200,7 @@ impl SqlitePool {
                 let stream_type: Option<u8> = row.get("stream_type")?;
                 let payload: Option<Vec<u8>> = row.get("payload")?;
 
-                let log_info = match (level, message, stream_type, payload) {
+                let log_entry = match (level, message, stream_type, payload) {
                     (Some(lvl), Some(msg), None, None) => LogEntry::Log {
                         created_at,
                         level: LogLevel::try_from(lvl).map_err(|_| {
@@ -3228,7 +3228,7 @@ impl SqlitePool {
                 Ok(LogEntryRow {
                     cursor,
                     run_id,
-                    log_info,
+                    log_entry,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

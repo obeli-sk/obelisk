@@ -848,9 +848,9 @@ impl From<LogEntryRow> for grpc_gen::list_logs_response::LogEntry {
     fn from(value: LogEntryRow) -> Self {
         use grpc_gen::list_logs_response::log_entry;
 
-        let created_at = Some(value.log_info.created_at().into());
+        let created_at = Some(value.log_entry.created_at().into());
 
-        let entry = match value.log_info {
+        let entry = match value.log_entry {
             LogEntry::Log {
                 created_at: _,
                 level,

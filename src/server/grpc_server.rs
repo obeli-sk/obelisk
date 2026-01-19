@@ -4,7 +4,8 @@ use crate::command::server::ComponentSourceMap;
 use crate::command::server::GET_STATUS_POLLING_SLEEP;
 use crate::command::server::MatchableSourceMap;
 use crate::command::server::SubmitError;
-use base64::{Engine as _, engine::general_purpose};
+use base64::Engine as _;
+use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
 use chrono::Utc;
 use concepts::ComponentId;
@@ -779,7 +780,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         } else {
             20
         };
-        let pagination = if let Ok(decoded) = general_purpose::STANDARD.decode(&request.page_token)
+        let pagination = if let Ok(decoded) = BASE64_STANDARD.decode(&request.page_token)
             && let Ok(decoded) = serde_json::from_slice::<ListLogsPagination>(&decoded)
         {
             match decoded {
@@ -812,7 +813,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .to_status()?;
 
         let to_base64 = |pagination| {
-            general_purpose::STANDARD.encode(
+            BASE64_STANDARD.encode(
                 serde_json::to_vec(&ListLogsPagination::from(pagination))
                     .expect("no NaNs or custom serialization"),
             )

@@ -1730,7 +1730,7 @@ async fn list_logs_tx(
         let stream_type: Option<i32> = get(&row, "stream_type")?;
         let payload: Option<Vec<u8>> = get(&row, "payload")?;
 
-        let log_info = match (level, message, stream_type, payload) {
+        let log_entry = match (level, message, stream_type, payload) {
             (Some(lvl), Some(msg), None, None) => {
                 let map_err = |err| {
                     consistency_db_err_src(
@@ -1771,7 +1771,7 @@ async fn list_logs_tx(
         items.push(LogEntryRow {
             cursor,
             run_id,
-            log_info,
+            log_entry,
         });
     }
 
@@ -2461,7 +2461,7 @@ async fn append_backtrace(
 }
 
 async fn append_log(tx: &Transaction<'_>, row: &LogInfoAppendRow) -> Result<(), DbErrorWrite> {
-    let (level, message, stream_type, payload, created_at) = match &row.log_info {
+    let (level, message, stream_type, payload, created_at) = match &row.log_entry {
         LogEntry::Log {
             created_at,
             level,

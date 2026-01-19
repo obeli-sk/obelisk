@@ -88,7 +88,7 @@ impl DbOutput {
         let res = self.sender.try_send(LogInfoAppendRow {
             execution_id: self.execution_id.clone(),
             run_id: self.run_id,
-            log_info: LogEntry::Stream {
+            log_entry: LogEntry::Stream {
                 created_at: Utc::now(),
                 payload: Vec::from(buf),
                 stream_type: self.forwarding_from,

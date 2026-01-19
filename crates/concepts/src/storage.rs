@@ -1142,14 +1142,14 @@ pub trait DbConnection: DbExecutor {
 pub struct LogInfoAppendRow {
     pub execution_id: ExecutionId,
     pub run_id: RunId,
-    pub log_info: LogEntry,
+    pub log_entry: LogEntry,
 }
 
 #[derive(Debug, Clone)]
 pub struct LogEntryRow {
     pub cursor: u32,
     pub run_id: RunId,
-    pub log_info: LogEntry,
+    pub log_entry: LogEntry,
 }
 
 #[derive(Debug, Clone)]
