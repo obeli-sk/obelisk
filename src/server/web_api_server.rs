@@ -69,6 +69,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::get(execution_events),
         )
         .route(
+            "/executions/{execution-id}/logs",
+            routing::get(logs::execution_logs),
+        )
+        .route(
             "/executions/{execution-id}/responses",
             routing::get(execution_responses),
         )
@@ -359,6 +363,275 @@ async fn execution_events(
             output.into_response()
         }
     })
+}
+
+mod logs {
+    use super::*;
+    use base64::{Engine as _, prelude::BASE64_STANDARD};
+    use concepts::{
+        prefixed_ulid::RunId,
+        storage::{LogEntry, LogEntryRow, LogFilter, LogLevel, LogStreamType},
+    };
+
+    #[derive(Deserialize, Debug)]
+    pub(crate) struct ExecutionLogsParams {
+        #[serde(default)]
+        level: Vec<LogLevelParam>,
+        #[serde(default)]
+        stream_type: Vec<LogStreamTypeParam>,
+        #[serde(default = "default_true")]
+        show_logs: bool,
+        #[serde(default = "default_true")]
+        show_streams: bool,
+
+        // pagination
+        cursor: Option<u32>,
+        length: Option<u16>,
+        #[serde(default)]
+        including_cursor: bool,
+        #[serde(default)]
+        direction: PaginationDirection,
+    }
+
+    fn default_true() -> bool {
+        true
+    }
+
+    #[derive(Debug, Deserialize, Clone, Copy)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum LogLevelParam {
+        Trace,
+        Debug,
+        Info,
+        Warn,
+        Error,
+    }
+
+    impl From<LogLevelParam> for LogLevel {
+        fn from(value: LogLevelParam) -> Self {
+            match value {
+                LogLevelParam::Trace => LogLevel::Trace,
+                LogLevelParam::Debug => LogLevel::Debug,
+                LogLevelParam::Info => LogLevel::Info,
+                LogLevelParam::Warn => LogLevel::Warn,
+                LogLevelParam::Error => LogLevel::Error,
+            }
+        }
+    }
+
+    #[derive(Debug, Deserialize, Clone, Copy)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum LogStreamTypeParam {
+        Stdout,
+        Stderr,
+    }
+
+    impl From<LogStreamTypeParam> for LogStreamType {
+        fn from(value: LogStreamTypeParam) -> Self {
+            match value {
+                LogStreamTypeParam::Stdout => LogStreamType::StdOut,
+                LogStreamTypeParam::Stderr => LogStreamType::StdErr,
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    struct LogEntryRowSer {
+        pub cursor: u32,
+        pub run_id: RunId,
+        #[serde(flatten)]
+        pub info: LogEntrySer,
+    }
+
+    #[derive(Serialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    enum LogEntrySer {
+        Log {
+            created_at: DateTime<Utc>,
+            level: LogLevelSer,
+            message: String,
+        },
+        Stream {
+            created_at: DateTime<Utc>,
+            payload: String, // Base64 encoded
+            stream_type: LogStreamTypeSer,
+        },
+    }
+
+    impl From<LogEntryRow> for LogEntryRowSer {
+        fn from(row: LogEntryRow) -> Self {
+            Self {
+                cursor: row.cursor,
+                run_id: row.run_id,
+                info: match row.log_entry {
+                    LogEntry::Log {
+                        created_at,
+                        level,
+                        message,
+                    } => LogEntrySer::Log {
+                        created_at,
+                        level: level.into(),
+                        message,
+                    },
+                    LogEntry::Stream {
+                        created_at,
+                        payload,
+                        stream_type,
+                    } => LogEntrySer::Stream {
+                        created_at,
+                        payload: BASE64_STANDARD.encode(payload),
+                        stream_type: stream_type.into(),
+                    },
+                },
+            }
+        }
+    }
+
+    #[derive(serde::Serialize, derive_more::Display)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum LogLevelSer {
+        #[display("TRACE")]
+        Trace,
+        #[display("DEBUG")]
+        Debug,
+        #[display("INFO")]
+        Info,
+        #[display("WARN")]
+        Warn,
+        #[display("ERROR")]
+        Error,
+    }
+
+    impl From<LogLevel> for LogLevelSer {
+        fn from(value: LogLevel) -> Self {
+            match value {
+                LogLevel::Trace => Self::Trace,
+                LogLevel::Debug => Self::Debug,
+                LogLevel::Info => Self::Info,
+                LogLevel::Warn => Self::Warn,
+                LogLevel::Error => Self::Error,
+            }
+        }
+    }
+
+    #[derive(serde::Serialize, derive_more::Display)]
+    #[serde(rename_all = "lowercase")]
+    pub(crate) enum LogStreamTypeSer {
+        #[display("STDOUT")]
+        Stdout,
+        #[display("STDERR")]
+        Stderr,
+    }
+
+    impl From<LogStreamType> for LogStreamTypeSer {
+        fn from(value: LogStreamType) -> Self {
+            match value {
+                LogStreamType::StdOut => Self::Stdout,
+                LogStreamType::StdErr => Self::Stderr,
+            }
+        }
+    }
+
+    pub(crate) async fn execution_logs(
+        Path(execution_id): Path<ExecutionId>,
+        state: State<Arc<WebApiState>>,
+        Query(params): Query<ExecutionLogsParams>,
+        accept: AcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        const DEFAULT_LENGTH: u16 = 20;
+        const MAX_LENGTH_INCLUSIVE: u16 = 200;
+
+        let filter = match (params.show_logs, params.show_streams) {
+            (true, true) => LogFilter::show_combined(
+                params.level.into_iter().map(Into::into).collect(),
+                params.stream_type.into_iter().map(Into::into).collect(),
+            ),
+            (true, false) => {
+                LogFilter::show_logs(params.level.into_iter().map(Into::into).collect())
+            }
+            (false, true) => {
+                LogFilter::show_streams(params.stream_type.into_iter().map(Into::into).collect())
+            }
+            (false, false) => {
+                return Err(HttpResponse {
+                    status: StatusCode::BAD_REQUEST,
+                    message: "at least one of `show_logs`, `show_streams` must be set".to_string(),
+                    accept,
+                });
+            }
+        };
+
+        let length = MAX_LENGTH_INCLUSIVE.min(params.length.unwrap_or(DEFAULT_LENGTH));
+
+        let pagination = match params.direction {
+            PaginationDirection::Older => Pagination::OlderThan {
+                length,
+                cursor: params.cursor.unwrap_or(0),
+                including_cursor: params.including_cursor,
+            },
+            PaginationDirection::Newer => Pagination::NewerThan {
+                length,
+                cursor: params.cursor.unwrap_or(0),
+                including_cursor: params.including_cursor,
+            },
+        };
+
+        let conn = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        let result = conn
+            .list_logs(&execution_id, filter, pagination)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        Ok(match accept {
+            AcceptHeader::Json => {
+                let items: Vec<LogEntryRowSer> =
+                    result.items.into_iter().map(LogEntryRowSer::from).collect();
+                Json(items).into_response()
+            }
+            AcceptHeader::Text => {
+                let mut output = String::new();
+                for log in result.items {
+                    match log.log_entry {
+                        LogEntry::Log {
+                            created_at,
+                            level,
+                            message,
+                        } => {
+                            let level = LogLevelSer::from(level);
+                            writeln!(
+                                &mut output,
+                                "{cursor} {run_id} `{created_at}` [{level}] {message}",
+                                cursor = log.cursor,
+                                run_id = log.run_id,
+                            )
+                            .expect("writing to string");
+                        }
+                        LogEntry::Stream {
+                            created_at,
+                            payload,
+                            stream_type,
+                        } => {
+                            let stream_type = LogStreamTypeSer::from(stream_type);
+                            let payload_utf8 = String::from_utf8_lossy(&payload);
+                            writeln!(
+                                &mut output,
+                                "{cursor} {run_id} `{created_at}` [{stream_type}] {payload_utf8}",
+                                cursor = log.cursor,
+                                run_id = log.run_id,
+                            )
+                            .expect("writing to string");
+                        }
+                    }
+                }
+                output.into_response()
+            }
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
