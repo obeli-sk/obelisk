@@ -4,6 +4,7 @@ use crate::command::server::ComponentSourceMap;
 use crate::command::server::GET_STATUS_POLLING_SLEEP;
 use crate::command::server::MatchableSourceMap;
 use crate::command::server::SubmitError;
+use base64::{Engine as _, engine::general_purpose};
 use chrono::DateTime;
 use chrono::Utc;
 use concepts::ComponentId;
@@ -24,6 +25,10 @@ use concepts::storage::DbPool;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
 use concepts::storage::ListExecutionsFilter;
+use concepts::storage::LogFilter;
+use concepts::storage::LogLevel;
+use concepts::storage::LogStreamType;
+use concepts::storage::Pagination;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
@@ -43,6 +48,7 @@ use grpc::grpc_mapping::db_error_write_to_status;
 use grpc::grpc_mapping::from_execution_event_to_grpc;
 use grpc_gen::ExecutionSummary;
 use serde::Deserialize;
+use serde::Serialize;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::select;
@@ -676,10 +682,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
     async fn upgrade_execution_component(
         &self,
         request: tonic::Request<grpc_gen::UpgradeExecutionComponentRequest>,
-    ) -> std::result::Result<
-        tonic::Response<grpc_gen::UpgradeExecutionComponentResponse>,
-        tonic::Status,
-    > {
+    ) -> Result<tonic::Response<grpc_gen::UpgradeExecutionComponentResponse>, tonic::Status> {
         let request = request.into_inner();
         let execution_id: ExecutionId = request
             .execution_id
@@ -704,6 +707,140 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         Ok(tonic::Response::new(
             grpc_gen::UpgradeExecutionComponentResponse {},
         ))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn list_logs(
+        &self,
+        request: tonic::Request<grpc_gen::ListLogsRequest>,
+    ) -> Result<tonic::Response<grpc_gen::ListLogsResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let filter = {
+            let levels = request
+                .levels
+                .into_iter()
+                .map(|lvl| {
+                    grpc_gen::LogLevel::try_from(lvl)
+                        .map_err(|err| {
+                            debug!("Cannot convert level {err:?}");
+                            tonic::Status::invalid_argument("unknown (new?) level filter")
+                        })
+                        .and_then(|lvl| {
+                            LogLevel::try_from(lvl).map_err(|err| {
+                                debug!("Cannot convert level {err:?}");
+                                tonic::Status::invalid_argument(
+                                    "unspecified level filter cannot be used here",
+                                )
+                            })
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let stream_types = request
+                .stream_types
+                .into_iter()
+                .map(|st| {
+                    grpc_gen::LogStreamType::try_from(st)
+                        .map_err(|err| {
+                            debug!("Cannot convert stream type {err:?}");
+                            tonic::Status::invalid_argument("unknown (new?) stream type filter")
+                        })
+                        .and_then(|st| {
+                            LogStreamType::try_from(st).map_err(|err| {
+                                debug!("Cannot convert stream type {err:?}");
+                                tonic::Status::invalid_argument(
+                                    "unspecified stream type filter cannot be used here",
+                                )
+                            })
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            match (request.show_logs, request.show_streams) {
+                (true, true) => LogFilter::show_combined(levels, stream_types),
+                (true, false) => LogFilter::show_logs(levels),
+                (false, true) => LogFilter::show_streams(stream_types),
+                _ => {
+                    return Err(tonic::Status::invalid_argument(
+                        "at least one of `show_logs`, `show_streams` must be set",
+                    ));
+                }
+            }
+        };
+
+        let length = if let Ok(page_size) = u16::try_from(request.page_size)
+            && page_size > 0
+            && page_size <= 200
+        {
+            page_size
+        } else {
+            20
+        };
+        let pagination = if let Ok(decoded) = general_purpose::STANDARD.decode(&request.page_token)
+            && let Ok(decoded) = serde_json::from_slice::<ListLogsPagination>(&decoded)
+        {
+            match decoded {
+                ListLogsPagination::NewerThan { cursor } => Pagination::NewerThan {
+                    length,
+                    cursor,
+                    including_cursor: false,
+                },
+                ListLogsPagination::OlderThan { cursor } => Pagination::OlderThan {
+                    length,
+                    cursor,
+                    including_cursor: false,
+                },
+            }
+        } else {
+            Pagination::NewerThan {
+                length,
+                cursor: 0,
+                including_cursor: false,
+            }
+        };
+
+        let resp = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?
+            .list_logs(&execution_id, filter, pagination)
+            .await
+            .to_status()?;
+
+        let to_base64 = |pagination| {
+            general_purpose::STANDARD.encode(
+                serde_json::to_vec(&ListLogsPagination::from(pagination))
+                    .expect("no NaNs or custom serialization"),
+            )
+        };
+
+        Ok(tonic::Response::new(grpc_gen::ListLogsResponse {
+            logs: resp
+                .items
+                .into_iter()
+                .map(std::convert::Into::into)
+                .collect(),
+            next_page_token: to_base64(resp.next_page),
+            prev_page_token: to_base64(resp.next_page),
+        }))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum ListLogsPagination {
+    NewerThan { cursor: u32 },
+    OlderThan { cursor: u32 },
+}
+impl From<Pagination<u32>> for ListLogsPagination {
+    fn from(value: Pagination<u32>) -> Self {
+        match value {
+            Pagination::NewerThan { cursor, .. } => ListLogsPagination::NewerThan { cursor },
+            Pagination::OlderThan { cursor, .. } => ListLogsPagination::OlderThan { cursor },
+        }
     }
 }
 

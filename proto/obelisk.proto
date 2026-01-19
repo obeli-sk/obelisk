@@ -21,6 +21,7 @@ service ExecutionRepository {
     rpc Stub(StubRequest) returns (StubResponse);
     // Activity cancellation is best effort.
     rpc Cancel(CancelRequest) returns (CancelResponse);
+    rpc ListLogs(ListLogsRequest) returns (ListLogsResponse);
 
     rpc UpgradeExecutionComponent(UpgradeExecutionComponentRequest) returns (UpgradeExecutionComponentResponse);
 }
@@ -593,4 +594,57 @@ message UpgradeExecutionComponentRequest {
   ContentDigest new_component_digest = 3;      // new
 }
 message UpgradeExecutionComponentResponse {
+}
+
+// Logging
+
+enum LogLevel {
+    LOG_LEVEL_UNSPECIFIED = 0;
+    LOG_LEVEL_TRACE = 1;
+    LOG_LEVEL_DEBUG = 2;
+    LOG_LEVEL_INFO = 3;
+    LOG_LEVEL_WARN = 4;
+    LOG_LEVEL_ERROR = 5;
+}
+
+enum LogStreamType {
+    LOG_STREAM_TYPE_UNSPECIFIED = 0;
+    LOG_STREAM_TYPE_STDOUT = 1;
+    LOG_STREAM_TYPE_STDERR = 2;
+}
+
+message ListLogsRequest {
+    ExecutionId execution_id = 1;
+    int32 page_size = 2;
+    string page_token = 3;
+    bool show_logs = 4;
+    bool show_streams = 5;
+    repeated LogLevel levels = 6; // Only applied if show_logs = true, empty means return all levels.
+    repeated LogStreamType stream_types = 7; // Only applied if show_streams = true, empty means return all stream types.
+}
+
+message ListLogsResponse {
+
+    message LogEntry {
+        google.protobuf.Timestamp created_at = 1;
+
+        message LogVariant {
+            LogLevel level = 1;
+            string message = 2;
+        }
+
+        message StreamVariant {
+            bytes payload = 1;
+            LogStreamType stream_type = 2;
+        }
+
+        oneof entry {
+            LogVariant log = 2;
+            StreamVariant stream = 3;
+        }
+    }
+
+    repeated LogEntry logs = 1;
+    string next_page_token = 2;
+    string prev_page_token = 3;
 }

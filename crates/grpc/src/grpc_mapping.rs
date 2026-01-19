@@ -7,9 +7,10 @@ use concepts::{
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState, HistoryEvent,
-        HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy, Pagination, PendingState,
-        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStateLocked, VersionParseError, http_client_trace::HttpClientTrace,
+        HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy, LogEntry, LogEntryRow, LogLevel,
+        LogStreamType, Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
+        PendingStateFinishedResultKind, PendingStateLocked, VersionParseError,
+        http_client_trace::HttpClientTrace,
     },
 };
 use concepts::{JoinSetId, JoinSetKind};
@@ -790,5 +791,84 @@ impl From<CancelOutcome> for grpc_gen::cancel_response::CancelOutcome {
                 grpc_gen::cancel_response::CancelOutcome::AlreadyFinished
             }
         }
+    }
+}
+
+impl TryFrom<grpc_gen::LogLevel> for LogLevel {
+    type Error = &'static str;
+
+    fn try_from(
+        value: grpc_gen::LogLevel,
+    ) -> Result<Self, <Self as TryFrom<grpc_gen::LogLevel>>::Error> {
+        match value {
+            grpc_gen::LogLevel::Unspecified => Err("unspecified"),
+            grpc_gen::LogLevel::Trace => Ok(LogLevel::Trace),
+            grpc_gen::LogLevel::Debug => Ok(LogLevel::Debug),
+            grpc_gen::LogLevel::Info => Ok(LogLevel::Info),
+            grpc_gen::LogLevel::Warn => Ok(LogLevel::Warn),
+            grpc_gen::LogLevel::Error => Ok(LogLevel::Error),
+        }
+    }
+}
+
+impl TryFrom<grpc_gen::LogStreamType> for LogStreamType {
+    type Error = &'static str;
+
+    fn try_from(value: grpc_gen::LogStreamType) -> Result<Self, Self::Error> {
+        match value {
+            grpc_gen::LogStreamType::Unspecified => Err("unspecified"),
+            grpc_gen::LogStreamType::Stdout => Ok(LogStreamType::StdOut),
+            grpc_gen::LogStreamType::Stderr => Ok(LogStreamType::StdErr),
+        }
+    }
+}
+
+impl From<LogLevel> for grpc_gen::LogLevel {
+    fn from(value: LogLevel) -> Self {
+        match value {
+            LogLevel::Trace => grpc_gen::LogLevel::Trace,
+            LogLevel::Debug => grpc_gen::LogLevel::Debug,
+            LogLevel::Info => grpc_gen::LogLevel::Info,
+            LogLevel::Warn => grpc_gen::LogLevel::Warn,
+            LogLevel::Error => grpc_gen::LogLevel::Error,
+        }
+    }
+}
+
+impl From<LogStreamType> for grpc_gen::LogStreamType {
+    fn from(value: LogStreamType) -> Self {
+        match value {
+            LogStreamType::StdOut => grpc_gen::LogStreamType::Stdout,
+            LogStreamType::StdErr => grpc_gen::LogStreamType::Stderr,
+        }
+    }
+}
+
+impl From<LogEntryRow> for grpc_gen::list_logs_response::LogEntry {
+    fn from(value: LogEntryRow) -> Self {
+        use grpc_gen::list_logs_response::log_entry;
+
+        let created_at = Some(value.log_info.created_at().into());
+
+        let entry = match value.log_info {
+            LogEntry::Log {
+                created_at: _,
+                level,
+                message,
+            } => Some(log_entry::Entry::Log(log_entry::LogVariant {
+                level: grpc_gen::LogLevel::from(level).into(),
+                message,
+            })),
+            LogEntry::Stream {
+                created_at: _,
+                payload,
+                stream_type,
+            } => Some(log_entry::Entry::Stream(log_entry::StreamVariant {
+                payload,
+                stream_type: grpc_gen::LogStreamType::from(stream_type).into(),
+            })),
+        };
+
+        grpc_gen::list_logs_response::LogEntry { created_at, entry }
     }
 }

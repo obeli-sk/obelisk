@@ -2,7 +2,7 @@ use chrono::Utc;
 use concepts::{
     ExecutionId,
     prefixed_ulid::RunId,
-    storage::{LogInfo, LogInfoAppendRow, LogLevel},
+    storage::{LogEntry, LogInfoAppendRow, LogLevel},
 };
 use tokio::sync::mpsc;
 use tracing::{Span, debug, error, info, trace, warn};
@@ -37,7 +37,7 @@ impl ComponentLogger {
             let res = log_storage_config.log_sender.try_send(LogInfoAppendRow {
                 execution_id: self.execution_id.clone(),
                 run_id: self.run_id,
-                log_info: LogInfo::Log {
+                log_info: LogEntry::Log {
                     created_at: Utc::now(),
                     level,
                     message,

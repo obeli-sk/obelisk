@@ -15,11 +15,11 @@ use concepts::{
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
         ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, ListLogsResponse,
-        LockPendingResponse, Locked, LockedBy, LockedExecution, LogFilter, LogInfo,
-        LogInfoAppendRow, LogInfoRow, LogLevel, LogStreamType, Pagination, PendingState,
-        PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked, ResponseCursor,
-        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter,
+        LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedResultKind, PendingStateLocked, ResponseCursor, ResponseWithCursor,
+        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
+        Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -2637,7 +2637,7 @@ impl SqlitePool {
         )?;
 
         match &row.log_info {
-            LogInfo::Log {
+            LogEntry::Log {
                 created_at,
                 level,
                 message,
@@ -2652,7 +2652,7 @@ impl SqlitePool {
                     ":payload": Option::<Vec<u8>>::None,
                 })?;
             }
-            LogInfo::Stream {
+            LogEntry::Stream {
                 created_at,
                 payload,
                 stream_type,
@@ -3201,7 +3201,7 @@ impl SqlitePool {
                 let payload: Option<Vec<u8>> = row.get("payload")?;
 
                 let log_info = match (level, message, stream_type, payload) {
-                    (Some(lvl), Some(msg), None, None) => LogInfo::Log {
+                    (Some(lvl), Some(msg), None, None) => LogEntry::Log {
                         created_at,
                         level: LogLevel::try_from(lvl).map_err(|_| {
                             consistency_rusqlite(format!(
@@ -3210,7 +3210,7 @@ impl SqlitePool {
                         })?,
                         message: msg,
                     },
-                    (None, None, Some(stype), Some(pl)) => LogInfo::Stream {
+                    (None, None, Some(stype), Some(pl)) => LogEntry::Stream {
                         created_at,
                         stream_type: LogStreamType::try_from(stype).map_err(|_| {
                             consistency_rusqlite(format!(
@@ -3225,7 +3225,7 @@ impl SqlitePool {
                         )));
                     }
                 };
-                Ok(LogInfoRow {
+                Ok(LogEntryRow {
                     cursor,
                     run_id,
                     log_info,

@@ -943,7 +943,7 @@ pub trait DbExternalApi: DbConnection {
 
 #[derive(Debug)]
 pub struct ListLogsResponse {
-    pub items: Vec<LogInfoRow>,
+    pub items: Vec<LogEntryRow>,
     pub next_page: Pagination<u32>,
     pub prev_page: Pagination<u32>,
 }
@@ -1142,18 +1142,18 @@ pub trait DbConnection: DbExecutor {
 pub struct LogInfoAppendRow {
     pub execution_id: ExecutionId,
     pub run_id: RunId,
-    pub log_info: LogInfo,
+    pub log_info: LogEntry,
 }
 
 #[derive(Debug, Clone)]
-pub struct LogInfoRow {
+pub struct LogEntryRow {
     pub cursor: u32,
     pub run_id: RunId,
-    pub log_info: LogInfo,
+    pub log_info: LogEntry,
 }
 
 #[derive(Debug, Clone)]
-pub enum LogInfo {
+pub enum LogEntry {
     Log {
         created_at: DateTime<Utc>,
         level: LogLevel,
@@ -1165,6 +1165,15 @@ pub enum LogInfo {
         stream_type: LogStreamType,
     },
 }
+impl LogEntry {
+    #[must_use]
+    pub fn created_at(&self) -> DateTime<Utc> {
+        match self {
+            LogEntry::Log { created_at, .. } | LogEntry::Stream { created_at, .. } => *created_at,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom, strum::EnumIter)]
 #[try_from(repr)]
 #[repr(u8)]

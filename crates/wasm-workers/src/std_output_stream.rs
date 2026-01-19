@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::{
     ExecutionId,
     prefixed_ulid::RunId,
-    storage::{LogInfo, LogInfoAppendRow, LogStreamType},
+    storage::{LogEntry, LogInfoAppendRow, LogStreamType},
 };
 use std::{
     pin::Pin,
@@ -88,7 +88,7 @@ impl DbOutput {
         let res = self.sender.try_send(LogInfoAppendRow {
             execution_id: self.execution_id.clone(),
             run_id: self.run_id,
-            log_info: LogInfo::Stream {
+            log_info: LogEntry::Stream {
                 created_at: Utc::now(),
                 payload: Vec::from(buf),
                 stream_type: self.forwarding_from,
