@@ -938,14 +938,71 @@ pub trait DbExternalApi: DbConnection {
         execution_id: &ExecutionId,
         filter: LogFilter,
         pagination: Pagination<u32>,
-    ) -> Result<Vec<LogInfoRow>, DbErrorRead>;
+    ) -> Result<ListLogsResponse, DbErrorRead>;
+}
+
+#[derive(Debug)]
+pub struct ListLogsResponse {
+    pub items: Vec<LogInfoRow>,
+    pub next_page: Pagination<u32>,
+    pub prev_page: Pagination<u32>,
 }
 
 #[derive(Debug)]
 pub struct LogFilter {
-    pub run_id: Option<RunId>,
-    // if set, return only logs (not streams) with the spefcified level or higher.
-    pub min_level: Option<LogLevel>,
+    show_logs: bool,
+    show_streams: bool,
+    levels: Vec<LogLevel>, // Only applied if `show_logs` = true, empty means return all levels.
+    stream_types: Vec<LogStreamType>, // Only applied if `show_streams` = true, empty means return all stream types.
+}
+impl LogFilter {
+    // Constructor for logs only
+    #[must_use]
+    pub fn show_logs(levels: Vec<LogLevel>) -> LogFilter {
+        LogFilter {
+            show_logs: true,
+            show_streams: false,
+            levels,
+            stream_types: Vec::new(),
+        }
+    }
+    // Constructor for streams only
+    #[must_use]
+    pub fn show_streams(stream_types: Vec<LogStreamType>) -> LogFilter {
+        LogFilter {
+            show_logs: false,
+            show_streams: true,
+            levels: Vec::new(),
+            stream_types,
+        }
+    }
+    // Constructor for both logs and streams
+    #[must_use]
+    pub fn show_combined(levels: Vec<LogLevel>, stream_types: Vec<LogStreamType>) -> LogFilter {
+        LogFilter {
+            show_logs: true,
+            show_streams: true,
+            levels,
+            stream_types,
+        }
+    }
+    // Getters
+    #[must_use]
+    pub fn should_show_logs(&self) -> bool {
+        self.show_logs
+    }
+    #[must_use]
+    pub fn should_show_streams(&self) -> bool {
+        self.show_streams
+    }
+    #[must_use]
+    pub fn levels(&self) -> &Vec<LogLevel> {
+        &self.levels
+    }
+    #[must_use]
+    pub fn stream_types(&self) -> &Vec<LogStreamType> {
+        &self.stream_types
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1088,6 +1145,7 @@ pub struct LogInfoAppendRow {
     pub log_info: LogInfo,
 }
 
+#[derive(Debug, Clone)]
 pub struct LogInfoRow {
     pub cursor: u32,
     pub run_id: RunId,
@@ -1107,7 +1165,7 @@ pub enum LogInfo {
         stream_type: LogStreamType,
     },
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom, strum::EnumIter)]
 #[try_from(repr)]
 #[repr(u8)]
 pub enum LogLevel {
@@ -1117,7 +1175,7 @@ pub enum LogLevel {
     Warn,
     Error,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom, strum::EnumIter)]
 #[try_from(repr)]
 #[repr(u8)]
 pub enum LogStreamType {

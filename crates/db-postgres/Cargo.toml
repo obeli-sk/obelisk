@@ -21,6 +21,7 @@ const_format.workspace = true
 deadpool-postgres.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
+strum.workspace = true
 tokio-postgres.workspace = true
 rand.workspace = true
 thiserror.workspace = true

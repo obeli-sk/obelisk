@@ -14,12 +14,12 @@ use concepts::{
         DbPool, DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
         ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse,
-        Locked, LockedBy, LockedExecution, LogFilter, LogInfo, LogInfoAppendRow, LogInfoRow,
-        LogLevel, LogStreamType, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, ResponseCursor, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Version, VersionType,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, ListLogsResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogFilter, LogInfo,
+        LogInfoAppendRow, LogInfoRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked, ResponseCursor,
+        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
+        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
@@ -42,6 +42,7 @@ use std::{
     time::Duration,
 };
 use std::{fmt::Write as _, pin::Pin};
+use strum::IntoEnumIterator as _;
 use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
@@ -3112,7 +3113,7 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         filter: &LogFilter,
         pagination: &Pagination<u32>,
-    ) -> Result<Vec<LogInfoRow>, DbErrorRead> {
+    ) -> Result<ListLogsResponse, DbErrorRead> {
         let mut query = String::from(
             "SELECT id, run_id, created_at, level, message, stream_type, payload
          FROM t_log
@@ -3120,23 +3121,61 @@ impl SqlitePool {
         );
 
         let length = pagination.length();
-        let mut params = vec![
+        let params = vec![
             (":execution_id", &execution_id as &dyn rusqlite::ToSql),
             (":cursor", pagination.cursor() as &dyn rusqlite::ToSql),
             (":length", &length as &dyn rusqlite::ToSql),
         ];
 
-        if let Some(run_id) = &filter.run_id {
-            query.push_str(" AND run_id = :run_id");
-            params.push((":run_id", run_id));
-        }
-
-        // Filter by min_level (logs only)
-        let min_level_temporary;
-        if let Some(min_level) = filter.min_level {
-            query.push_str(" AND level IS NOT NULL AND level >= :min_level");
-            min_level_temporary = min_level as u8;
-            params.push((":min_level", &min_level_temporary));
+        // Logs and streams filter
+        let level_filter = if filter.should_show_logs() {
+            let levels_str = if !filter.levels().is_empty() {
+                filter
+                    .levels()
+                    .iter()
+                    .map(|lvl| (*lvl as u8).to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            } else {
+                LogLevel::iter()
+                    .map(|lvl| (lvl as u8).to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            Some(format!(" AND level IN ({levels_str})"))
+        } else {
+            None
+        };
+        let stream_filter = if filter.should_show_streams() {
+            let streams_str = if !filter.stream_types().is_empty() {
+                filter
+                    .stream_types()
+                    .iter()
+                    .map(|st| (*st as u8).to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            } else {
+                LogStreamType::iter()
+                    .map(|st| (st as u8).to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            Some(format!(" AND stream_type IN ({streams_str})"))
+        } else {
+            None
+        };
+        match (level_filter, stream_filter) {
+            (Some(level_filter), Some(stream_filter)) => {
+                write!(&mut query, " AND ({level_filter} OR {stream_filter}")
+                    .expect("writing to string");
+            }
+            (Some(level_filter), None) => {
+                write!(&mut query, " AND {level_filter}").expect("writing to string");
+            }
+            (None, Some(stream_filter)) => {
+                write!(&mut query, " AND {stream_filter}").expect("writing to string");
+            }
+            (None, None) => unreachable!("guarded by constructor"),
         }
 
         // Pagination
@@ -3151,7 +3190,7 @@ impl SqlitePool {
 
         let mut stmt = tx.prepare(&query)?;
 
-        let logs = stmt
+        let items = stmt
             .query_map(params.as_slice(), |row| {
                 let cursor = row.get("id")?;
                 let created_at: DateTime<Utc> = row.get("created_at")?;
@@ -3194,7 +3233,33 @@ impl SqlitePool {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(logs)
+        Ok(ListLogsResponse {
+            next_page: items
+                .last()
+                .map(|item| Pagination::NewerThan {
+                    length: pagination.length(),
+                    cursor: item.cursor,
+                    including_cursor: false,
+                })
+                .unwrap_or(Pagination::NewerThan {
+                    length: pagination.length(),
+                    cursor: 0,
+                    including_cursor: false, // does not matter, no row has id = 0
+                }),
+            prev_page: items
+                .first()
+                .map(|item| Pagination::OlderThan {
+                    length: pagination.length(),
+                    cursor: item.cursor,
+                    including_cursor: false,
+                })
+                .unwrap_or(Pagination::OlderThan {
+                    length: pagination.length(),
+                    cursor: 0,
+                    including_cursor: false, // does not matter, no row has id = 0
+                }),
+            items,
+        })
     }
 }
 
@@ -3749,7 +3814,7 @@ impl DbExternalApi for SqlitePool {
         execution_id: &ExecutionId,
         filter: LogFilter,
         pagination: Pagination<u32>,
-    ) -> Result<Vec<LogInfoRow>, DbErrorRead> {
+    ) -> Result<ListLogsResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
         self.transaction(
             move |tx| Self::list_logs_tx(tx, &execution_id, &filter, &pagination),

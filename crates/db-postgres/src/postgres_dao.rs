@@ -14,18 +14,19 @@ use concepts::{
         DbPool, DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
         ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, LockPendingResponse,
-        Locked, LockedBy, LockedExecution, LogFilter, LogInfo, LogInfoAppendRow, LogInfoRow,
-        LogLevel, LogStreamType, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, ResponseCursor, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Version, VersionType, WasmBacktrace,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, ListLogsResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogFilter, LogInfo,
+        LogInfoAppendRow, LogInfoRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked, ResponseCursor,
+        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
+        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
     },
 };
 use deadpool_postgres::{Client, Config, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
 use std::{collections::VecDeque, pin::Pin, str::FromStr as _, sync::Arc, time::Duration};
 use std::{fmt::Write as _, panic::Location};
+use strum::IntoEnumIterator as _;
 use tokio::sync::{mpsc, oneshot};
 use tokio_postgres::{
     NoTls, Row, Transaction,
@@ -1629,7 +1630,7 @@ async fn list_logs_tx(
     execution_id: &ExecutionId,
     filter: &LogFilter,
     pagination: &Pagination<u32>,
-) -> Result<Vec<LogInfoRow>, DbErrorRead> {
+) -> Result<ListLogsResponse, DbErrorRead> {
     let mut param_index = 1;
     let mut query = format!(
         "SELECT id, run_id, created_at, level, message, stream_type, payload
@@ -1641,24 +1642,55 @@ async fn list_logs_tx(
     let execution_id = execution_id.to_string();
     let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&execution_id];
 
-    let run_id_temporary;
-    if let Some(run_id) = &filter.run_id {
-        write!(&mut query, " AND run_id = ${param_index}").expect("writing to string");
-        run_id_temporary = run_id.to_string();
-        params.push(&run_id_temporary);
-        param_index += 1;
-    }
-
-    let min_level_val_temporary;
-    if let Some(min_level) = filter.min_level {
-        write!(
-            &mut query,
-            " AND level IS NOT NULL AND level >= ${param_index}"
-        )
-        .expect("writing to string");
-        min_level_val_temporary = i32::from(min_level as u8);
-        params.push(&min_level_val_temporary);
-        param_index += 1;
+    // Logs and streams filter
+    let level_filter = if filter.should_show_logs() {
+        let levels_str = if !filter.levels().is_empty() {
+            filter
+                .levels()
+                .iter()
+                .map(|lvl| (*lvl as u8).to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        } else {
+            LogLevel::iter()
+                .map(|lvl| (lvl as u8).to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        Some(format!(" AND level IN ({levels_str})"))
+    } else {
+        None
+    };
+    let stream_filter = if filter.should_show_streams() {
+        let streams_str = if !filter.stream_types().is_empty() {
+            filter
+                .stream_types()
+                .iter()
+                .map(|st| (*st as u8).to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        } else {
+            LogStreamType::iter()
+                .map(|st| (st as u8).to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        Some(format!(" AND stream_type IN ({streams_str})"))
+    } else {
+        None
+    };
+    match (level_filter, stream_filter) {
+        (Some(level_filter), Some(stream_filter)) => {
+            write!(&mut query, " AND ({level_filter} OR {stream_filter}")
+                .expect("writing to string");
+        }
+        (Some(level_filter), None) => {
+            write!(&mut query, " AND {level_filter}").expect("writing to string");
+        }
+        (None, Some(stream_filter)) => {
+            write!(&mut query, " AND {stream_filter}").expect("writing to string");
+        }
+        (None, None) => unreachable!("guarded by constructor"),
     }
 
     // Pagination
@@ -1680,7 +1712,7 @@ async fn list_logs_tx(
 
     let rows = tx.query(&query, &params[..]).await?;
 
-    let mut logs = Vec::with_capacity(rows.len());
+    let mut items = Vec::with_capacity(rows.len());
 
     for row in rows {
         let cursor: u32 = get(&row, "id")?;
@@ -1736,14 +1768,40 @@ async fn list_logs_tx(
             }
         };
 
-        logs.push(LogInfoRow {
+        items.push(LogInfoRow {
             cursor,
             run_id,
             log_info,
         });
     }
 
-    Ok(logs)
+    Ok(ListLogsResponse {
+        next_page: items
+            .last()
+            .map(|item| Pagination::NewerThan {
+                length: pagination.length(),
+                cursor: item.cursor,
+                including_cursor: false,
+            })
+            .unwrap_or(Pagination::NewerThan {
+                length: pagination.length(),
+                cursor: 0,
+                including_cursor: false, // does not matter, no row has id = 0
+            }),
+        prev_page: items
+            .first()
+            .map(|item| Pagination::OlderThan {
+                length: pagination.length(),
+                cursor: item.cursor,
+                including_cursor: false,
+            })
+            .unwrap_or(Pagination::OlderThan {
+                length: pagination.length(),
+                cursor: 0,
+                including_cursor: false, // does not matter, no row has id = 0
+            }),
+        items,
+    })
 }
 
 fn parse_response_with_cursor(
@@ -3966,7 +4024,7 @@ impl DbExternalApi for PostgresConnection {
         execution_id: &ExecutionId,
         filter: LogFilter,
         pagination: Pagination<u32>,
-    ) -> Result<Vec<LogInfoRow>, DbErrorRead> {
+    ) -> Result<ListLogsResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         let responses = list_logs_tx(&tx, execution_id, &filter, &pagination).await?;
