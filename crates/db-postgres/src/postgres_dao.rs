@@ -36,12 +36,20 @@ use tokio_postgres::{
 use tracing::{Level, debug, error, info, instrument, trace, warn};
 use tracing_error::SpanTrace;
 
+#[track_caller]
 fn get<'a, T: FromSql<'a>, I: RowIndex + std::fmt::Display + Copy>(
     row: &'a Row,
     name: I,
 ) -> Result<T, DbErrorGeneric> {
-    row.try_get(name)
-        .map_err(|err| consistency_db_err(format!("Failed to retrieve column '{name}': {err:?}")))
+    match row.try_get(name) {
+        Ok(ok) => Ok(ok),
+        Err(err) => {
+            // no map_err, cannot attach `track_caller`
+            Err(consistency_db_err(format!(
+                "Failed to retrieve column '{name}': {err:?}"
+            )))
+        }
+    }
 }
 
 mod ddl {
@@ -1657,7 +1665,7 @@ async fn list_logs_tx(
                 .collect::<Vec<_>>()
                 .join(",")
         };
-        Some(format!(" AND level IN ({levels_str})"))
+        Some(format!(" level IN ({levels_str})"))
     } else {
         None
     };
@@ -1675,13 +1683,13 @@ async fn list_logs_tx(
                 .collect::<Vec<_>>()
                 .join(",")
         };
-        Some(format!(" AND stream_type IN ({streams_str})"))
+        Some(format!(" stream_type IN ({streams_str})"))
     } else {
         None
     };
     match (level_filter, stream_filter) {
         (Some(level_filter), Some(stream_filter)) => {
-            write!(&mut query, " AND ({level_filter} OR {stream_filter}")
+            write!(&mut query, " AND ({level_filter} OR {stream_filter})")
                 .expect("writing to string");
         }
         (Some(level_filter), None) => {
@@ -1715,7 +1723,8 @@ async fn list_logs_tx(
     let mut items = Vec::with_capacity(rows.len());
 
     for row in rows {
-        let cursor: u32 = get(&row, "id")?;
+        let cursor = u32::try_from(get::<i64, _>(&row, "id")?)
+            .map_err(|_| consistency_db_err("t_join_set_response.id must not be negative"))?;
         let created_at: chrono::DateTime<chrono::Utc> = get(&row, "created_at")?;
         let run_id: String = get(&row, "run_id")?;
         let run_id = RunId::from_str(&run_id).map_err(|parse_err| {

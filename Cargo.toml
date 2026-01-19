@@ -23,6 +23,7 @@ wasm-workers.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum-accept.workspace = true
+axum-extra.workspace = true
 axum.workspace = true
 base64.workspace = true
 bytes.workspace = true
@@ -193,8 +194,9 @@ val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = 
 wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.34.1" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }
-axum = { version = "0.8.8", features = ["http2"] }
 axum-accept = "0.0.5"
+axum-extra = { version = "0.12.5", features = ["query"] }
+axum = { version = "0.8.8", features = ["http2"] }
 arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"

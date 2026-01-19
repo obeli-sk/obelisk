@@ -5,11 +5,12 @@ use crate::{
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{Path, Query, State},
+    extract::{Path, State},
     response::{IntoResponse, Response},
     routing,
 };
 use axum_accept::AcceptExtractor;
+use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use concepts::{
     ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
@@ -143,8 +144,8 @@ struct ExecutionsListParams {
 #[derive(Debug, Clone, Copy, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 enum PaginationDirection {
-    #[default]
     Older,
+    #[default] // everything is newer than 0
     Newer,
 }
 
@@ -515,7 +516,7 @@ mod logs {
     }
 
     #[derive(serde::Serialize, derive_more::Display)]
-    #[serde(rename_all = "lowercase")]
+    #[serde(rename_all = "snake_case")]
     pub(crate) enum LogStreamTypeSer {
         #[display("STDOUT")]
         Stdout,

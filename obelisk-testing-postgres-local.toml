@@ -1,0 +1,122 @@
+api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
+webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
+activities.directories.enabled = true
+
+database.postgres.host =     "${POSTGRES_HOST}"
+database.postgres.user =     "${POSTGRES_USER}"
+database.postgres.password = "${POSTGRES_PASSWORD}"
+database.postgres.db_name =  "${POSTGRES_DATABASE}"
+database.postgres.provision_policy = "auto"
+
+[log.file]
+enabled = true
+target = true
+directory = "."
+prefix = "obelisk.log" # File name prefix
+
+[[http_server]]
+name = "external_webhook"
+listening_addr = "127.0.0.1:9090"
+
+[[activity_wasm]]
+name = "test_programs_fibo_activity"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_fibo_activity.wasm"
+max_retries = 0
+exec.locking_strategy = "by_component_id"
+
+[[workflow]]
+name = "test_programs_fibo_workflow"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_fibo_workflow.wasm"
+exec.lock_expiry.seconds = 2
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
+exec.locking_strategy = "by_component_id"
+backtrace.ignore_component_digest = true
+
+[[workflow]]
+name = "test_programs_fibo_workflow_outer"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_fibo_workflow_outer.wasm"
+exec.lock_expiry.seconds = 2
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow-outer/src/lib.rs" }
+exec.locking_strategy = "by_component_id"
+backtrace.ignore_component_digest = true
+
+[[webhook_endpoint]]
+name = "test_programs_fibo_webhook"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_fibo_webhook.wasm"
+http_server = "external_webhook"
+routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
+log_store_min_level = "info"
+forward_stdout = "db"
+forward_stderr = "db"
+
+[[activity_wasm]]
+name = "test_programs_http_get_activity"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_http_get_activity.wasm"
+forward_stdout = "stderr"
+forward_stderr = "stderr"
+
+[[workflow]]
+name = "test_programs_http_get_workflow"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_http_get_workflow.wasm"
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
+backtrace.ignore_component_digest = true
+
+[[activity_wasm]]
+name = "test_programs_sleep_activity"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_sleep_activity.wasm"
+exec.lock_expiry.seconds = 10
+
+[[workflow]]
+name = "test_programs_sleep_workflow"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_sleep_workflow.wasm"
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
+exec.locking_strategy = "by_component_id"
+backtrace.ignore_component_digest = true
+
+[[webhook_endpoint]]
+name = "test_programs_sleep_webhook"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_sleep_webhook.wasm"
+http_server = "external_webhook"
+routes = [{ methods = ["GET"], route = "/sleep/:SECONDS" }]
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/webhook/src/lib.rs" }
+forward_stdout="stderr"
+forward_stderr="stderr"
+
+[[activity_wasm]]
+name = "test_programs_dir_activity"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_dir_activity.wasm"
+max_retries = 1
+forward_stdout = "stderr"
+forward_stderr = "stderr"
+directories = { enabled = true, reuse_on_retry = true }
+
+[[activity_wasm]]
+name = "test_programs_process_activity"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_process_activity.wasm"
+max_retries = 0
+forward_stdout = "stderr"
+forward_stderr = "stderr"
+directories = { enabled = true, reuse_on_retry = false, process_provider = "native" }
+env_vars = ["PATH"]                                                                                     # Needed for spawning subprocesses.
+
+[[activity_wasm]]
+name = "test_programs_serde_activity"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_serde_activity.wasm"
+max_retries = 0
+forward_stdout = "stderr"
+forward_stderr = "stderr"
+
+[[workflow]]
+name = "test_programs_serde_workflow"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_serde_workflow.wasm"
+
+[[activity_stub]]
+name = "test_programs_stub_activity_dummy"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_stub_activity.wasm"
+
+[[workflow]]
+name = "test_programs_stub_workflow"
+location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_stub_workflow.wasm"
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/stub/workflow/src/lib.rs" }
+backtrace.ignore_component_digest = true

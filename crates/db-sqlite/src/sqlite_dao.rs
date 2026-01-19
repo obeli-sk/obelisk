@@ -3142,7 +3142,7 @@ impl SqlitePool {
                     .collect::<Vec<_>>()
                     .join(",")
             };
-            Some(format!(" AND level IN ({levels_str})"))
+            Some(format!(" level IN ({levels_str})"))
         } else {
             None
         };
@@ -3160,13 +3160,13 @@ impl SqlitePool {
                     .collect::<Vec<_>>()
                     .join(",")
             };
-            Some(format!(" AND stream_type IN ({streams_str})"))
+            Some(format!(" stream_type IN ({streams_str})"))
         } else {
             None
         };
         match (level_filter, stream_filter) {
             (Some(level_filter), Some(stream_filter)) => {
-                write!(&mut query, " AND ({level_filter} OR {stream_filter}")
+                write!(&mut query, " AND ({level_filter} OR {stream_filter})")
                     .expect("writing to string");
             }
             (Some(level_filter), None) => {
