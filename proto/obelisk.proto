@@ -98,11 +98,12 @@ message Component {
 }
 
 enum ComponentType {
-    WORKFLOW = 0;
-    ACTIVITY_WASM = 1;
-    WEBHOOK_ENDPOINT = 2;
-    ACTIVITY_STUB = 3;
-    ACTIVITY_EXTERNAL = 4;
+    COMPONENT_TYPE_UNSPECIFIED = 0;
+    COMPONENT_TYPE_WORKFLOW = 1;
+    COMPONENT_TYPE_ACTIVITY_WASM = 2;
+    COMPONENT_TYPE_WEBHOOK_ENDPOINT = 3;
+    COMPONENT_TYPE_ACTIVITY_STUB = 4;
+    COMPONENT_TYPE_ACTIVITY_EXTERNAL = 5;
 }
 
 message FunctionDetail {
@@ -114,11 +115,12 @@ message FunctionDetail {
 }
 
 enum FunctionExtension {
-    SUBMIT = 0;
-    AWAIT_NEXT = 1;
-    SCHEDULE = 2;
-    STUB = 3;
-    GET = 4;
+    FUNCTION_EXTENSION_UNSPECIFIED = 0;
+    FUNCTION_EXTENSION_SUBMIT = 1;
+    FUNCTION_EXTENSION_AWAIT_NEXT = 2;
+    FUNCTION_EXTENSION_SCHEDULE = 3;
+    FUNCTION_EXTENSION_STUB = 4;
+    FUNCTION_EXTENSION_GET = 5;
 }
 
 message FunctionParameter {
@@ -143,9 +145,10 @@ message RunId {
 
 message JoinSetId {
     enum JoinSetKind {
-        ONE_OFF = 0;
-        NAMED = 1;
-        GENERATED = 2;
+        JOIN_SET_KIND_UNSPECIFIED = 0;
+        JOIN_SET_KIND_ONE_OFF = 1;
+        JOIN_SET_KIND_NAMED = 2;
+        JOIN_SET_KIND_GENERATED = 3;
     }
 
     JoinSetKind kind = 2;
@@ -181,8 +184,9 @@ message SubmitRequest {
 
 message SubmitResponse {
     enum Outcome {
-        CREATED = 0;
-        EXISTS_WITH_SAME_PARAMETERS = 1;
+        OUTCOME_UNSPECIFIED = 0;
+        OUTCOME_CREATED = 1;
+        OUTCOME_EXISTS_WITH_SAME_PARAMETERS = 2;
     }
 
     Outcome outcome = 1;
@@ -252,15 +256,16 @@ message FinishedStatus {
 }
 
 enum ExecutionFailureKind {
+    EXECUTION_FAILURE_KIND_UNSPECIFIED = 0;
     // Applicable to activities only, because workflows will be retried forever
-    TIMED_OUT = 0;
+    EXECUTION_FAILURE_KIND_TIMED_OUT = 1;
     // Applicable to workflows
-    NONDETERMINISM_DETECTED = 1;
+    EXECUTION_FAILURE_KIND_NONDETERMINISM_DETECTED = 2;
     // Applicable to WASM components
-    OUT_OF_FUEL = 2;
+    EXECUTION_FAILURE_KIND_OUT_OF_FUEL = 3;
     // Applicable to activities
-    CANCELLED = 3;
-    UNCATEGORIZED = 4;
+    EXECUTION_FAILURE_KIND_CANCELLED = 4;
+    EXECUTION_FAILURE_KIND_UNCATEGORIZED = 5;
 }
 
 message SupportedFunctionResult {
@@ -579,11 +584,12 @@ message CancelRequest {
 
 message CancelResponse {
     enum CancelOutcome {
+        CANCEL_OUTCOME_UNSPECIFIED = 0;
         // Cancel successfully requested, activity termination is best effort.
         // The activity may still be running.
-        CANCELLED = 0;
+        CANCEL_OUTCOME_CANCELLED = 1;
         // Execution or delay was already marked as finished, and not cancelled.
-        ALREADY_FINISHED = 1;
+        CANCEL_OUTCOME_ALREADY_FINISHED = 2;
     }
     CancelOutcome outcome = 1;
 }

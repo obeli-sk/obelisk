@@ -66,12 +66,15 @@ impl From<JoinSetKind> for grpc_gen::join_set_id::JoinSetKind {
     }
 }
 
-impl From<grpc_gen::join_set_id::JoinSetKind> for JoinSetKind {
-    fn from(value: grpc_gen::join_set_id::JoinSetKind) -> Self {
+impl TryFrom<grpc_gen::join_set_id::JoinSetKind> for JoinSetKind {
+    type Error = ();
+
+    fn try_from(value: grpc_gen::join_set_id::JoinSetKind) -> Result<JoinSetKind, Self::Error> {
         match value {
-            grpc_gen::join_set_id::JoinSetKind::OneOff => JoinSetKind::OneOff,
-            grpc_gen::join_set_id::JoinSetKind::Named => JoinSetKind::Named,
-            grpc_gen::join_set_id::JoinSetKind::Generated => JoinSetKind::Generated,
+            grpc_gen::join_set_id::JoinSetKind::Unspecified => Err(()),
+            grpc_gen::join_set_id::JoinSetKind::OneOff => Ok(JoinSetKind::OneOff),
+            grpc_gen::join_set_id::JoinSetKind::Named => Ok(JoinSetKind::Named),
+            grpc_gen::join_set_id::JoinSetKind::Generated => Ok(JoinSetKind::Generated),
         }
     }
 }
@@ -129,7 +132,7 @@ impl TryFrom<grpc_gen::ComponentId> for ComponentId {
                     "`component_type` cannot be parsed - {parse_err}"
                 ))
             })?;
-        let component_type = ComponentType::from(component_type);
+        let component_type = ComponentType::try_from(component_type)?;
         let Some(input_digest) = value.digest else {
             return Err(tonic::Status::invalid_argument(
                 "`input_digest` is mandatory",
@@ -255,14 +258,18 @@ impl From<ComponentType> for grpc_gen::ComponentType {
         }
     }
 }
-impl From<grpc_gen::ComponentType> for ComponentType {
-    fn from(value: grpc_gen::ComponentType) -> Self {
+impl TryFrom<grpc_gen::ComponentType> for ComponentType {
+    type Error = tonic::Status;
+    fn try_from(value: grpc_gen::ComponentType) -> Result<Self, Self::Error> {
         match value {
-            grpc_gen::ComponentType::ActivityWasm => ComponentType::ActivityWasm,
-            grpc_gen::ComponentType::ActivityStub => ComponentType::ActivityStub,
-            grpc_gen::ComponentType::ActivityExternal => ComponentType::ActivityExternal,
-            grpc_gen::ComponentType::Workflow => ComponentType::Workflow,
-            grpc_gen::ComponentType::WebhookEndpoint => ComponentType::WebhookEndpoint,
+            grpc_gen::ComponentType::Unspecified => Err(tonic::Status::invalid_argument(
+                "`ComponentType` must be specified",
+            )),
+            grpc_gen::ComponentType::ActivityWasm => Ok(ComponentType::ActivityWasm),
+            grpc_gen::ComponentType::ActivityStub => Ok(ComponentType::ActivityStub),
+            grpc_gen::ComponentType::ActivityExternal => Ok(ComponentType::ActivityExternal),
+            grpc_gen::ComponentType::Workflow => Ok(ComponentType::Workflow),
+            grpc_gen::ComponentType::WebhookEndpoint => Ok(ComponentType::WebhookEndpoint),
         }
     }
 }
@@ -358,8 +365,8 @@ impl From<&PendingStateFinishedResultKind> for grpc_gen::ResultKind {
 }
 #[derive(Debug)]
 pub enum ResultKindConversionError {
-    MissingValue,
-    UnknownVariant,
+    MissingValue,   // buggy producer
+    UnknownVariant, // newer producer
 }
 
 impl TryFrom<grpc_gen::ResultKind> for PendingStateFinishedResultKind {
@@ -372,10 +379,13 @@ impl TryFrom<grpc_gen::ResultKind> for PendingStateFinishedResultKind {
             Some(Value::Ok(_)) => Ok(PendingStateFinishedResultKind::Ok),
 
             Some(Value::ExecutionFailureKind(kind)) => Ok(PendingStateFinishedResultKind::Err(
-                PendingStateFinishedError::ExecutionFailure(ExecutionFailureKind::from(
-                    grpc_gen::ExecutionFailureKind::try_from(kind)
-                        .map_err(|_| ResultKindConversionError::UnknownVariant)?,
-                )),
+                PendingStateFinishedError::ExecutionFailure(
+                    ExecutionFailureKind::try_from(
+                        grpc_gen::ExecutionFailureKind::try_from(kind)
+                            .map_err(|_| ResultKindConversionError::UnknownVariant)?,
+                    )
+                    .map_err(|_unspecified| ResultKindConversionError::MissingValue)?,
+                ),
             )),
 
             Some(Value::Error(_)) => Ok(PendingStateFinishedResultKind::Err(
@@ -405,20 +415,24 @@ impl From<&ExecutionFailureKind> for grpc_gen::ExecutionFailureKind {
         }
     }
 }
-impl From<grpc_gen::ExecutionFailureKind> for ExecutionFailureKind {
-    fn from(value: grpc_gen::ExecutionFailureKind) -> Self {
+impl TryFrom<grpc_gen::ExecutionFailureKind> for ExecutionFailureKind {
+    type Error = ();
+    fn try_from(value: grpc_gen::ExecutionFailureKind) -> Result<Self, Self::Error> {
         match value {
-            grpc_gen::ExecutionFailureKind::TimedOut => ExecutionFailureKind::TimedOut,
+            grpc_gen::ExecutionFailureKind::Unspecified => Err(()),
+            grpc_gen::ExecutionFailureKind::TimedOut => Ok(ExecutionFailureKind::TimedOut),
 
             grpc_gen::ExecutionFailureKind::NondeterminismDetected => {
-                ExecutionFailureKind::NondeterminismDetected
+                Ok(ExecutionFailureKind::NondeterminismDetected)
             }
 
-            grpc_gen::ExecutionFailureKind::OutOfFuel => ExecutionFailureKind::OutOfFuel,
+            grpc_gen::ExecutionFailureKind::OutOfFuel => Ok(ExecutionFailureKind::OutOfFuel),
 
-            grpc_gen::ExecutionFailureKind::Cancelled => ExecutionFailureKind::Cancelled,
+            grpc_gen::ExecutionFailureKind::Cancelled => Ok(ExecutionFailureKind::Cancelled),
 
-            grpc_gen::ExecutionFailureKind::Uncategorized => ExecutionFailureKind::Uncategorized,
+            grpc_gen::ExecutionFailureKind::Uncategorized => {
+                Ok(ExecutionFailureKind::Uncategorized)
+            }
         }
     }
 }
@@ -795,13 +809,13 @@ impl From<CancelOutcome> for grpc_gen::cancel_response::CancelOutcome {
 }
 
 impl TryFrom<grpc_gen::LogLevel> for LogLevel {
-    type Error = &'static str;
+    type Error = ();
 
     fn try_from(
         value: grpc_gen::LogLevel,
     ) -> Result<Self, <Self as TryFrom<grpc_gen::LogLevel>>::Error> {
         match value {
-            grpc_gen::LogLevel::Unspecified => Err("unspecified"),
+            grpc_gen::LogLevel::Unspecified => Err(()),
             grpc_gen::LogLevel::Trace => Ok(LogLevel::Trace),
             grpc_gen::LogLevel::Debug => Ok(LogLevel::Debug),
             grpc_gen::LogLevel::Info => Ok(LogLevel::Info),
@@ -812,11 +826,11 @@ impl TryFrom<grpc_gen::LogLevel> for LogLevel {
 }
 
 impl TryFrom<grpc_gen::LogStreamType> for LogStreamType {
-    type Error = &'static str;
+    type Error = ();
 
     fn try_from(value: grpc_gen::LogStreamType) -> Result<Self, Self::Error> {
         match value {
-            grpc_gen::LogStreamType::Unspecified => Err("unspecified"),
+            grpc_gen::LogStreamType::Unspecified => Err(()),
             grpc_gen::LogStreamType::Stdout => Ok(LogStreamType::StdOut),
             grpc_gen::LogStreamType::Stderr => Ok(LogStreamType::StdErr),
         }

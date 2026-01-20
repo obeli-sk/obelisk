@@ -284,10 +284,10 @@ fn format_pending_status(pending_status: grpc_gen::ExecutionStatus) -> String {
             join_set_id: Some(grpc_gen::JoinSetId { name, kind }),
             lock_expires_at: _,
         }) => {
-            let kind = JoinSetKind::from(
-                grpc_gen::join_set_id::JoinSetKind::try_from(kind)
-                    .expect("JoinSetKind must be valid"),
-            );
+            let kind = grpc_gen::join_set_id::JoinSetKind::try_from(kind)
+                .map_err(|_| ())
+                .and_then(JoinSetKind::try_from)
+                .expect("JoinSetKind must be valid");
             let join_set_id =
                 JoinSetId::new(kind, name.into()).expect("server sends valid join sets");
             format!(
@@ -355,8 +355,10 @@ fn print_finished_status(
             },
         )) => {
             let kind = grpc_gen::ExecutionFailureKind::try_from(kind)
+                .map_err(|_| ())
+                .and_then(ExecutionFailureKind::try_from)
                 .expect("ExecutionFailureKind must be in sync with the server");
-            let kind = ExecutionFailureKind::from(kind);
+
             let mut string = format!("Execution failure ({kind})");
             if let Some(reason) = reason {
                 string.push_str(": `");
@@ -472,6 +474,7 @@ impl CancelCommand {
             .into_inner();
 
         match resp.outcome() {
+            CancelOutcome::Unspecified => panic!("unspecified"),
             CancelOutcome::Cancelled => println!("Cancelled"),
             CancelOutcome::AlreadyFinished => println!("Already successfully finished"),
         }

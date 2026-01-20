@@ -124,10 +124,11 @@ pub(crate) async fn list_components(
         println!(
             "{name}\t{ty}",
             name = component_id.name,
-            ty = grpc_gen::ComponentType::try_from(component_id.component_type).map_or_else(
-                |_| "unknown type".to_string(),
-                |ty| ComponentType::from(ty).to_string()
-            )
+            ty = grpc_gen::ComponentType::try_from(component_id.component_type)
+                .map_err(|_| ())
+                .and_then(|ty| ComponentType::try_from(ty).map_err(|_| ()))
+                .map(|ct| ct.to_string())
+                .unwrap_or_else(|_| "unknown type".to_string())
         );
         println!("Exports:");
         print_fn_details(component.exports)?;
