@@ -8,14 +8,14 @@ use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::storage::DbPool;
+use concepts::storage::{DbErrorWrite, DbPool, Version};
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
     ComponentId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
     TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
-use executor::worker::{FatalError, WorkerContext, WorkerResult};
+use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use std::future;
 use std::ops::Deref;
@@ -351,15 +351,39 @@ enum RunError<C: ClockFn + 'static> {
 
 enum WorkerResultRefactored<C: ClockFn> {
     Ok(SupportedFunctionReturnValue, WorkflowCtx<C>),
+    DbUpdatedByWorkerOrWatcher,
     FatalError(FatalError, WorkflowCtx<C>),
-    Retriable(WorkerResult),
+    DbError(DbErrorWrite),
 }
 
 type CallFuncResult<C> = Result<(SupportedFunctionReturnValue, WorkflowCtx<C>), RunError<C>>;
 
 enum PrepareFuncErr {
-    WorkerError(WorkerError),
+    WorkerError(WorkflowWorkerError),
     DbUpdatedByWorkerOrWatcher,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum WorkflowWorkerError {
+    #[error("limit reached: {reason}")]
+    LimitReached { reason: String, version: Version },
+    #[error(transparent)]
+    DbError(DbErrorWrite),
+    #[error("fatal error: {0}")]
+    FatalError(FatalError, Version),
+}
+impl From<WorkflowWorkerError> for WorkerError {
+    fn from(value: WorkflowWorkerError) -> Self {
+        match value {
+            WorkflowWorkerError::LimitReached { reason, version } => {
+                WorkerError::LimitReached { reason, version }
+            }
+            WorkflowWorkerError::DbError(db_err) => WorkerError::DbError(db_err),
+            WorkflowWorkerError::FatalError(fatal_error, version) => {
+                WorkerError::FatalError(fatal_error, version)
+            }
+        }
+    }
 }
 
 impl<C: ClockFn + 'static> WorkflowWorker<C> {
@@ -440,18 +464,19 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                 let reason = err.to_string();
                 let version = store.into_data().db_connection.version;
                 if reason.starts_with("maximum concurrent") {
-                    return Err(PrepareFuncErr::WorkerError(WorkerError::LimitReached {
-                        reason,
-                        version,
-                    }));
+                    return Err(PrepareFuncErr::WorkerError(
+                        WorkflowWorkerError::LimitReached { reason, version },
+                    ));
                 }
-                return Err(PrepareFuncErr::WorkerError(WorkerError::FatalError(
-                    FatalError::CannotInstantiate {
-                        reason: format!("{err}"),
-                        detail: format!("{err:?}"),
-                    },
-                    version,
-                )));
+                return Err(PrepareFuncErr::WorkerError(
+                    WorkflowWorkerError::FatalError(
+                        FatalError::CannotInstantiate {
+                            reason: format!("{err}"),
+                            detail: format!("{err:?}"),
+                        },
+                        version,
+                    ),
+                ));
             }
         };
 
@@ -468,10 +493,12 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         let params = match ctx.params.as_vals(component_func.params()) {
             Ok(params) => params,
             Err(err) => {
-                return Err(PrepareFuncErr::WorkerError(WorkerError::FatalError(
-                    FatalError::ParamsParsingError(err),
-                    version_at_start,
-                )));
+                return Err(PrepareFuncErr::WorkerError(
+                    WorkflowWorkerError::FatalError(
+                        FatalError::ParamsParsingError(err),
+                        version_at_start,
+                    ),
+                ));
             }
         };
         Ok((store, func, component_func, params))
@@ -564,36 +591,56 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         worker_span: &Span,
         execution_deadline: DateTime<Utc>,
         assigned_fuel: Option<u64>,
-    ) -> WorkerResult {
+    ) -> Result<WorkerResultOk, WorkflowWorkerError> {
         // call_func
         let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         let res = Self::call_func(store, func, component_func, params, assigned_fuel).await;
         let elapsed = elapsed.elapsed();
         let worker_result_refactored =
             Self::convert_result(res, worker_span, elapsed, execution_deadline).await;
+
         match worker_result_refactored {
-            WorkerResultRefactored::Ok(res, mut workflow_ctx) => {
+            WorkerResultRefactored::Ok(retval, mut workflow_ctx) => {
                 match Self::close_join_sets(&mut workflow_ctx).await {
-                    Err(worker_result) => {
-                        debug!("Error while closing join sets {worker_result:?}");
-                        worker_result
+                    Ok(CloseJoinSetOk::Ok) => Ok(WorkerResultOk::Finished {
+                        retval,
+                        version: workflow_ctx.db_connection.version,
+                        traces: None,
+                    }),
+                    Ok(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher) => {
+                        Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
                     }
-                    Ok(()) => WorkerResult::Ok(res, workflow_ctx.db_connection.version, None),
+                    Err(closing_err) => {
+                        debug!("Error while closing join sets {closing_err:?}");
+                        Err(closing_err)
+                    }
                 }
+            }
+            WorkerResultRefactored::DbUpdatedByWorkerOrWatcher => {
+                // Made some progress.
+                Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
             }
             WorkerResultRefactored::FatalError(err, mut workflow_ctx) => {
+                // Even on fatal error we try to cancel activities and wait for workflows.
                 match Self::close_join_sets(&mut workflow_ctx).await {
-                    Err(worker_result) => {
-                        debug!("Error while closing join sets {worker_result:?}");
-                        worker_result
+                    Ok(CloseJoinSetOk::Ok) | Ok(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher) => {
+                        // Propagate the original error
+                        Err(WorkflowWorkerError::FatalError(
+                            err,
+                            workflow_ctx.db_connection.version,
+                        ))
                     }
-                    Ok(()) => WorkerResult::Err(WorkerError::FatalError(
-                        err,
-                        workflow_ctx.db_connection.version,
-                    )),
+                    Err(closing_err) => {
+                        debug!(
+                            "Error {closing_err:?} while closing join sets while handling original {err:?}"
+                        );
+                        // This can be a temporary db or limit reached error, schedule a retry
+                        // to properly close join sets.
+                        Err(closing_err)
+                    }
                 }
             }
-            WorkerResultRefactored::Retriable(retriable) => retriable,
+            WorkerResultRefactored::DbError(err) => Err(WorkflowWorkerError::DbError(err)),
         }
     }
 
@@ -609,9 +656,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                 worker_span.in_scope(|| info!("Finished"));
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(|| error!("Database error: {db_err}"));
-                    return WorkerResultRefactored::Retriable(WorkerResult::Err(
-                        WorkerError::DbError(db_err),
-                    ));
+                    return WorkerResultRefactored::DbError(db_err);
                 }
                 WorkerResultRefactored::Ok(supported_result, workflow_ctx)
             }
@@ -625,31 +670,24 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                     worker_span.in_scope(||
                         error!("Database flush error: {db_err:?} while handling {kind}: `{reason}`, `{detail:?}`, execution will be retried")
                     );
-                    return WorkerResultRefactored::Retriable(WorkerResult::Err(
-                        WorkerError::DbError(db_err),
-                    ));
+                    return WorkerResultRefactored::DbError(db_err);
                 }
-                let version = workflow_ctx.db_connection.version;
                 worker_span.in_scope(|| info!("Trap handled as a fatal error"));
-                let err = WorkerError::FatalError(
+                WorkerResultRefactored::FatalError(
                     FatalError::WorkflowTrap {
                         reason,
                         trap_kind: kind,
                         detail,
                     },
-                    version,
-                );
-
-                WorkerResultRefactored::Retriable(WorkerResult::Err(err))
+                    workflow_ctx,
+                )
             }
             Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(||
                         error!("Database flush error: {db_err:?} while handling WorkerPartialResult: {worker_partial_result:?}")
                     );
-                    return WorkerResultRefactored::Retriable(WorkerResult::Err(
-                        WorkerError::DbError(db_err),
-                    ));
+                    return WorkerResultRefactored::DbError(db_err);
                 }
                 match worker_partial_result {
                     WorkerPartialResult::FatalError(err, _version) => {
@@ -658,19 +696,15 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
                     }
                     WorkerPartialResult::InterruptDbUpdated => {
                         worker_span.in_scope(|| info!("Interrupt requested"));
-                        WorkerResultRefactored::Retriable(WorkerResult::DbUpdatedByWorkerOrWatcher)
+                        WorkerResultRefactored::DbUpdatedByWorkerOrWatcher
                     }
-                    WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::Retriable(
-                        WorkerResult::Err(WorkerError::DbError(db_err)),
-                    ),
+                    WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::DbError(db_err),
                 }
             }
             Err(RunError::ResultParsingError(err, mut workflow_ctx)) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(|| error!("Database error: {db_err}"));
-                    return WorkerResultRefactored::Retriable(WorkerResult::Err(
-                        WorkerError::DbError(db_err),
-                    ));
+                    return WorkerResultRefactored::DbError(db_err);
                 }
                 worker_span.in_scope(|| error!("Fatal error: Result parsing error: {err}"));
                 WorkerResultRefactored::FatalError(
@@ -681,27 +715,40 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
         }
     }
 
-    async fn close_join_sets(workflow_ctx: &mut WorkflowCtx<C>) -> Result<(), WorkerResult> {
-        workflow_ctx
-            .join_sets_close_on_finish()
-            .await
-            .map_err(|err| match err {
-                ApplyError::InterruptDbUpdated => WorkerResult::DbUpdatedByWorkerOrWatcher,
-                ApplyError::DbError(db_error) => WorkerResult::Err(WorkerError::DbError(db_error)),
-                ApplyError::NondeterminismDetected(detail) => {
-                    WorkerResult::Err(WorkerError::FatalError(
-                        FatalError::NondeterminismDetected { detail },
-                        workflow_ctx.db_connection.version.clone(),
-                    ))
-                }
-                ApplyError::ConstraintViolation(reason) => {
-                    WorkerResult::Err(WorkerError::FatalError(
-                        FatalError::ConstraintViolation { reason },
-                        workflow_ctx.db_connection.version.clone(),
-                    ))
-                }
-            })
+    async fn close_join_sets(
+        workflow_ctx: &mut WorkflowCtx<C>,
+    ) -> Result<CloseJoinSetOk, WorkflowWorkerError> {
+        match workflow_ctx.join_sets_close_on_finish().await {
+            Ok(()) => Ok(CloseJoinSetOk::Ok),
+            Err(ApplyError::InterruptDbUpdated) => Ok(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher),
+
+            Err(ApplyError::DbError(db_error)) => Err(WorkflowWorkerError::DbError(db_error)),
+            Err(ApplyError::NondeterminismDetected(detail)) => {
+                Err(WorkflowWorkerError::FatalError(
+                    FatalError::NondeterminismDetected { detail },
+                    workflow_ctx.db_connection.version.clone(),
+                ))
+            }
+            Err(ApplyError::ConstraintViolation(reason)) => Err(WorkflowWorkerError::FatalError(
+                FatalError::ConstraintViolation { reason },
+                workflow_ctx.db_connection.version.clone(),
+            )),
+        }
     }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseJoinSetOk {
+    Ok,
+    DbUpdatedByWorkerOrWatcher,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReplayError {
+    #[error("limit reached: {reason}")]
+    LimitReached { reason: String, version: Version },
+    // non-retriable errors
+    #[error("fatal error: {0}")]
+    FatalError(FatalError, Version),
 }
 
 #[async_trait]
@@ -721,7 +768,7 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
         let execution_deadline = ctx.locked_event.lock_expires_at;
         match self.prepare_func(ctx).await {
             Ok((store, func, component_func, params)) => {
-                Self::call_func_convert_result(
+                match Self::call_func_convert_result(
                     store,
                     func,
                     component_func,
@@ -731,11 +778,17 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
                     self.config.fuel,
                 )
                 .await
+                {
+                    Ok(ok) => WorkerResult::from(ok),
+                    Err(workflow_err) => WorkerResult::Err(WorkerError::from(workflow_err)),
+                }
             }
             Err(PrepareFuncErr::DbUpdatedByWorkerOrWatcher) => {
                 WorkerResult::DbUpdatedByWorkerOrWatcher
             }
-            Err(PrepareFuncErr::WorkerError(err)) => WorkerResult::Err(err),
+            Err(PrepareFuncErr::WorkerError(workflow_err)) => {
+                WorkerResult::Err(WorkerError::from(workflow_err))
+            }
         }
     }
 }

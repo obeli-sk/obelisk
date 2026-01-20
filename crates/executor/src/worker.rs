@@ -39,6 +39,28 @@ pub enum WorkerResult {
 }
 
 #[derive(Debug)]
+pub enum WorkerResultOk {
+    DbUpdatedByWorkerOrWatcher,
+    Finished {
+        retval: SupportedFunctionReturnValue,
+        version: Version,
+        traces: Option<Vec<HttpClientTrace>>,
+    },
+}
+impl From<WorkerResultOk> for WorkerResult {
+    fn from(value: WorkerResultOk) -> Self {
+        match value {
+            WorkerResultOk::DbUpdatedByWorkerOrWatcher => WorkerResult::DbUpdatedByWorkerOrWatcher,
+            WorkerResultOk::Finished {
+                retval,
+                version,
+                traces,
+            } => WorkerResult::Ok(retval, version, traces),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct WorkerContext {
     pub execution_id: ExecutionId,
     pub metadata: ExecutionMetadata,
@@ -77,7 +99,9 @@ pub enum WorkerError {
         version: Version,
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
-    // Resources are exhausted, retry after a delay as Unlocked, without increasing temporary event count.
+    /// Resources are exhausted.
+    /// Executor must mark the execution as Unlocked.
+    /// This event does not increase temporary event count.
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
     // Used by activity worker, best effort. If this is not persisted, the expired timers watcher will append it.
@@ -125,7 +149,7 @@ pub enum FatalError {
     OutOfFuel { reason: String },
     #[error("constraint violation: {reason}")]
     ConstraintViolation { reason: StrVariant },
-
+    // Applies to activities.
     #[error("cancelled")]
     Cancelled,
 }
