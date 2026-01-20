@@ -1,5 +1,5 @@
 use crate::{
-    command::server::{self, ComponentConfigRegistryRO, SubmitError, SubmitOutcome},
+    command::server::{self, SubmitError, SubmitOutcome},
     server::web_api_server::components::{component_wit, components_list},
 };
 use axum::{
@@ -36,7 +36,9 @@ use tokio::{
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{Instrument as _, debug, info_span, trace, warn};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
-use wasm_workers::activity::cancel_registry::CancelRegistry;
+use wasm_workers::{
+    activity::cancel_registry::CancelRegistry, registry::ComponentConfigRegistryRO,
+};
 
 #[derive(Clone)]
 pub(crate) struct WebApiState {

@@ -10,6 +10,7 @@ pub mod engines;
 pub mod epoch_ticker;
 pub mod log_db_forwarder;
 pub mod preopens_cleaner;
+pub mod registry;
 pub mod std_output_stream;
 #[cfg(any(test, feature = "test"))]
 pub mod testing_fn_registry;

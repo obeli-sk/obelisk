@@ -1,5 +1,4 @@
 use crate::command::server;
-use crate::command::server::ComponentConfigRegistryRO;
 use crate::command::server::ComponentSourceMap;
 use crate::command::server::GET_STATUS_POLLING_SLEEP;
 use crate::command::server::MatchableSourceMap;
@@ -65,6 +64,7 @@ use tracing::info_span;
 use tracing::instrument;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
+use wasm_workers::registry::ComponentConfigRegistryRO;
 
 pub(crate) const IGNORING_COMPONENT_DIGEST: InputContentDigest =
     InputContentDigest(CONTENT_DIGEST_DUMMY);
