@@ -128,7 +128,7 @@ pub(crate) async fn list_components(
                 .map_err(|_| ())
                 .and_then(|ty| ComponentType::try_from(ty).map_err(|_| ()))
                 .map(|ct| ct.to_string())
-                .unwrap_or_else(|_| "unknown type".to_string())
+                .unwrap_or_else(|()| "unknown type".to_string())
         );
         println!("Exports:");
         print_fn_details(component.exports)?;
