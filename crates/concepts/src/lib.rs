@@ -557,14 +557,8 @@ impl From<TypeWrapperTopLevel> for TypeWrapper {
 #[derive(Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SupportedFunctionReturnValue {
-    Ok {
-        #[debug(skip)]
-        ok: Option<WastValWithType>,
-    },
-    Err {
-        #[debug(skip)]
-        err: Option<WastValWithType>,
-    },
+    Ok { ok: Option<WastValWithType> },
+    Err { err: Option<WastValWithType> },
     ExecutionError(FinishedExecutionError),
 }
 impl Display for SupportedFunctionReturnValue {

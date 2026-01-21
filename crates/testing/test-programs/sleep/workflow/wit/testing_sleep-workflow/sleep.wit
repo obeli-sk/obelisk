@@ -7,11 +7,13 @@ interface workflow {
     sleep-host-activity: func(duration: duration) -> result;
     sleep-schedule-at: func(schedule-at: schedule-at) -> result;
     sleep-activity: func(duration: duration) -> result;
-    sleep-activity-submit: func(duration: duration) -> result<execution-id>;
     sleep-random: func(min-millis: u64, max-millis-inclusive: u64) -> result;
     schedule-noop: func(duration: duration) -> result;
 
     two-delays-in-same-join-set: func() -> result;
     join-next-produces-all-processed-error: func() -> result;
+
+    sleep-activity-submit: func() -> result;
+    sleep-activity-submit-then-trap: func() -> result;
 
 }

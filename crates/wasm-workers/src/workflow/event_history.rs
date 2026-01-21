@@ -90,7 +90,7 @@ pub(crate) enum ApplyError {
     #[error("interrupt, db updated")]
     InterruptDbUpdated,
     #[error(transparent)]
-    DbError(DbErrorWrite),
+    DbError(#[from] DbErrorWrite),
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
 }
@@ -244,9 +244,7 @@ impl EventHistory {
         debug!("applying {event_call:?}, Version:{}", db_connection.version);
 
         if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
-            self.extend_lock(db_connection, called_at)
-                .await
-                .map_err(ApplyError::DbError)?;
+            self.extend_lock(db_connection, called_at).await?;
         }
 
         if let Some(resp) = self.find_matching_atomic(&event_call)? {
@@ -260,8 +258,7 @@ impl EventHistory {
                 let cloned_non_blocking = event_call.clone();
                 let (event, version) = self
                     .append_to_db_non_blocking(event_call, db_connection, called_at)
-                    .await
-                    .map_err(ApplyError::DbError)?;
+                    .await?;
                 self.event_history.push((event, Unprocessed, version));
                 trace!("find_matching_atomic must mark the non-blocking event as Processed");
                 let non_blocking_resp = self
@@ -320,8 +317,7 @@ impl EventHistory {
         // Create and append HistoryEvents.
         let history_events = self
             .append_to_db_blocking(event_call, db_connection, called_at, lock_expires_at)
-            .await
-            .map_err(ApplyError::DbError)?;
+            .await?;
         assert!(
             !history_events.is_empty(),
             "each EventCall must produce at least one HistoryEvent"
@@ -450,6 +446,11 @@ impl EventHistory {
 
         let join_next_count = response_ids.len();
         // Attempt to cancel activities and delays.
+        // Flush the DB cache, -submit requests might not have been written!
+        db_connection
+            .flush_non_blocking_event_cache(called_at)
+            .await?;
+
         for (response_id, component_type) in response_ids.iter().rev() {
             if let ResponseId::ChildExecutionId(child_execution_id_derived) = response_id
                 && component_type.is_activity()
@@ -495,8 +496,8 @@ impl EventHistory {
         Ok(())
     }
 
-    /// Final determinism check: there must be no unprocessed requests, otherwise the
-    /// code is trimming previous run.
+    /// Close join sets and check determinism.
+    /// There must be no unprocessed requests, otherwise the code is trimming previous run.
     #[instrument(skip_all)]
     pub(crate) async fn finalize(
         &mut self,

@@ -1,6 +1,5 @@
 use generated::export;
 use generated::exports::testing::sleep_workflow::workflow::Guest;
-use generated::obelisk::types::execution::ExecutionId;
 use generated::obelisk::types::execution::ResponseId;
 use generated::obelisk::types::join_set::JoinNextError;
 use generated::obelisk::types::time::Duration as DurationEnum;
@@ -34,9 +33,18 @@ impl Guest for Component {
         Ok(())
     }
 
-    fn sleep_activity_submit(duration: DurationEnum) -> Result<ExecutionId, ()> {
+    fn sleep_activity_submit() -> Result<(), ()> {
         let join_set = workflow_support::join_set_create();
-        Ok(sleep_activity_ext::sleep_submit(&join_set, duration))
+        sleep_activity_ext::sleep_submit(&join_set, DurationEnum::Days(1));
+        // Should be cancelled in join set close
+        Ok(())
+    }
+
+    fn sleep_activity_submit_then_trap() -> Result<(), ()> {
+        let join_set = workflow_support::join_set_create();
+        sleep_activity_ext::sleep_submit(&join_set, DurationEnum::Days(1));
+        // Should be cancelled in join set close
+        panic!()
     }
 
     fn sleep_random(min_millis: u64, max_millis_inclusive: u64) -> Result<(), ()> {

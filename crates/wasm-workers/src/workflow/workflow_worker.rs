@@ -623,7 +623,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             WorkerResultRefactored::FatalError(err, mut workflow_ctx) => {
                 // Even on fatal error we try to cancel activities and wait for workflows.
                 match Self::close_join_sets(&mut workflow_ctx).await {
-                    Ok(CloseJoinSetOk::Ok) | Ok(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher) => {
+                    Ok(CloseJoinSetOk::Ok | CloseJoinSetOk::DbUpdatedByWorkerOrWatcher) => {
                         // Propagate the original error
                         Err(WorkflowWorkerError::FatalError(
                             err,
@@ -735,6 +735,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             )),
         }
     }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CloseJoinSetOk {
@@ -811,12 +812,15 @@ pub(crate) mod tests {
     use chrono::DateTime;
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{
-        AppendEventsToExecution, AppendResponseToExecution, Locked, LockedBy,
-        PendingStateFinishedError,
+        AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, JoinSetResponse, Locked,
+        LockedBy, PendingStateFinishedError,
     };
     use concepts::storage::{AppendRequest, DbConnection, DbPool, ExecutionRequest};
     use concepts::time::TokioSleep;
-    use concepts::{ComponentRetryConfig, ExecutionId, Params, SupportedFunctionReturnValue};
+    use concepts::{
+        ComponentRetryConfig, ExecutionFailureKind, ExecutionId, Params,
+        SupportedFunctionReturnValue,
+    };
     use concepts::{
         ComponentType,
         prefixed_ulid::{ExecutorId, RunId},
@@ -854,9 +858,6 @@ pub(crate) mod tests {
     ); // fiboa: func(n: u8, iterations: u32) -> u64;
     const SLEEP1_HOST_ACTIVITY_FFQN: FunctionFqn =
         FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_HOST_ACTIVITY); // sleep-host-activity: func(millis: u64);
-
-    const SLEEP2_HOST_ACTIVITY_FFQN: FunctionFqn =
-        FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_SCHEDULE_AT); // sleep-host-activity: func(s: schedule-at);
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
@@ -1186,6 +1187,9 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn sleep2_happy_path() {
+        const SLEEP_SCHEDULE_AT_HOST_ACTIVITY_FFQN: FunctionFqn =
+        FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_SCHEDULE_AT); // sleep-host-activity: func(s: schedule-at);
+
         const LOCK_DURATION: Duration = Duration::from_secs(1);
         let join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt;
 
@@ -1200,7 +1204,7 @@ pub(crate) mod tests {
                 .create(CreateRequest {
                     created_at: sim_clock.now(),
                     execution_id: execution_id.clone(),
-                    ffqn: SLEEP2_HOST_ACTIVITY_FFQN,
+                    ffqn: SLEEP_SCHEDULE_AT_HOST_ACTIVITY_FFQN,
                     params,
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
@@ -2107,7 +2111,7 @@ pub(crate) mod tests {
         ffqn: FunctionFqn,
         delay: Option<Duration>,
         db: db_tests::Database,
-    ) {
+    ) -> ExecutionLog {
         const MAX_RUNS: u128 = 100;
 
         test_utils::set_up();
@@ -2169,7 +2173,7 @@ pub(crate) mod tests {
             }
         };
         {
-            // First exec tick must run.
+            // First workflow exec tick must run.
             let task_count = exec_task
                 .tick_test(sim_clock.now(), run_id())
                 .await
@@ -2180,6 +2184,7 @@ pub(crate) mod tests {
         }
 
         if let Some(delay) = delay {
+            // If delay is expected, move time forward and tick expired timers watcher
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
@@ -2219,23 +2224,13 @@ pub(crate) mod tests {
             .await
             .unwrap()
             .pending_state;
-        assert_matches!(
-            pending_state,
-            PendingState::Finished {
-                finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind::Ok,
-                    ..
-                },
-            }
-        );
+        assert_matches!(pending_state, PendingState::Finished { .. });
         let execution_log = db_connection.get(&execution_id).await.unwrap();
-        assert_matches!(
-            execution_log.as_finished_result(),
-            Some(SupportedFunctionReturnValue::Ok { ok: None })
-        );
-        insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")}, {insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log))});
+        insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")},
+            {insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log.clone()))});
         drop(db_connection);
         db_close.close().await;
+        execution_log
     }
 
     #[expand_enum_database]
@@ -2441,8 +2436,10 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn execution_failed_variant_should_work(db: db_tests::Database) {
-        const FFQN_WORKFLOW: FunctionFqn = FunctionFqn::new_static_tuple(
+    async fn activity_trap_should_be_converted_as_custom_err_execution_failed_variant(
+        db: db_tests::Database,
+    ) {
+        const EXPECT_TRAP_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_serde_workflow_builder::exports::testing::serde_workflow::serde_workflow::EXPECT_TRAP,
         );
         test_utils::set_up();
@@ -2470,7 +2467,7 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id: execution_id.clone(),
-                ffqn: FFQN_WORKFLOW,
+                ffqn: EXPECT_TRAP_FFQN,
                 params: Params::empty(),
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -2495,7 +2492,7 @@ pub(crate) mod tests {
             },
             sim_clock.clone(),
             db_pool.clone(),
-            Arc::new([FFQN_WORKFLOW]),
+            Arc::new([EXPECT_TRAP_FFQN]),
         );
 
         // 1. Tick workflow executor
@@ -2584,5 +2581,51 @@ pub(crate) mod tests {
         );
         drop(db_connection);
         db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn sleep_activity_submit_should_cancel_the_activity(db: db_tests::Database) {
+        let execution_log = execute_workflow_fn_with_single_delay(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_ACTIVITY_SUBMIT),
+            None,
+            db,
+        )
+        .await;
+        // There must be a single activity that is already cancelled
+        assert_eq!(1, execution_log.responses.len());
+        let resp = execution_log.responses.into_iter().next().unwrap();
+        let result = assert_matches!(
+            resp.event.event.event,
+            JoinSetResponse::ChildExecutionFinished { result, .. } => result
+        );
+        let result =
+            assert_matches!(result, SupportedFunctionReturnValue::ExecutionError(err) => err);
+        assert_matches!(result.kind, ExecutionFailureKind::Cancelled);
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn sleep_activity_submit_then_trap_should_cancel_the_activity(db: db_tests::Database) {
+        let execution_log = execute_workflow_fn_with_single_delay(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_ACTIVITY_SUBMIT_THEN_TRAP),
+            None,
+            db,
+        )
+        .await;
+        // There must be a single activity that is already cancelled
+        assert_eq!(1, execution_log.responses.len());
+        let resp = execution_log.responses.into_iter().next().unwrap();
+        let result = assert_matches!(
+            resp.event.event.event,
+            JoinSetResponse::ChildExecutionFinished { result, .. } => result
+        );
+        let result =
+            assert_matches!(result, SupportedFunctionReturnValue::ExecutionError(err) => err);
+        assert_matches!(result.kind, ExecutionFailureKind::Cancelled);
     }
 }

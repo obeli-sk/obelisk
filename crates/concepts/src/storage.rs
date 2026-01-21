@@ -37,7 +37,7 @@ pub const STATE_LOCKED: &str = "locked";
 pub const STATE_FINISHED: &str = "finished";
 pub static HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "join_next";
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ExecutionLog {
     pub execution_id: ExecutionId,
     pub events: Vec<ExecutionEvent>,

@@ -152,8 +152,8 @@ package obelisk:types@4.0.0 {
 
 package obelisk:workflow@4.0.0 {
   interface workflow-support {
-    use obelisk:types/time@4.0.0.{schedule-at, datetime};
     use obelisk:types/join-set@4.0.0.{join-set};
+    use obelisk:types/time@4.0.0.{schedule-at, datetime};
 
     random-u64-inclusive: func(min: u64, max-inclusive: u64) -> u64;
 
@@ -205,8 +205,6 @@ package testing:sleep-workflow {
 
     sleep-activity: func(duration: duration) -> result;
 
-    sleep-activity-submit: func(duration: duration) -> result<execution-id>;
-
     sleep-random: func(min-millis: u64, max-millis-inclusive: u64) -> result;
 
     schedule-noop: func(duration: duration) -> result;
@@ -214,6 +212,10 @@ package testing:sleep-workflow {
     two-delays-in-same-join-set: func() -> result;
 
     join-next-produces-all-processed-error: func() -> result;
+
+    sleep-activity-submit: func() -> result;
+
+    sleep-activity-submit-then-trap: func() -> result;
   }
 }
 
@@ -243,12 +245,6 @@ package testing:sleep-workflow-obelisk-ext {
 
     sleep-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-activity-submit-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
-
-    sleep-activity-submit-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<execution-id>>, await-next-extension-error>;
-
-    sleep-activity-submit-get: func(execution-id: execution-id) -> result<result<execution-id>, get-extension-error>;
-
     sleep-random-submit: func(join-set: borrow<join-set>, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
 
     sleep-random-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
@@ -272,6 +268,18 @@ package testing:sleep-workflow-obelisk-ext {
     join-next-produces-all-processed-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     join-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+
+    sleep-activity-submit-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+    sleep-activity-submit-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+
+    sleep-activity-submit-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+
+    sleep-activity-submit-then-trap-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+    sleep-activity-submit-then-trap-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+
+    sleep-activity-submit-then-trap-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
   }
 }
 
@@ -287,8 +295,6 @@ package testing:sleep-workflow-obelisk-schedule {
 
     sleep-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 
-    sleep-activity-submit-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
-
     sleep-random-schedule: func(schedule-at: schedule-at, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
 
     schedule-noop-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
@@ -296,5 +302,9 @@ package testing:sleep-workflow-obelisk-schedule {
     two-delays-in-same-join-set-schedule: func(schedule-at: schedule-at) -> execution-id;
 
     join-next-produces-all-processed-error-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+    sleep-activity-submit-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+    sleep-activity-submit-then-trap-schedule: func(schedule-at: schedule-at) -> execution-id;
   }
 }
