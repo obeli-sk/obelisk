@@ -33,6 +33,7 @@ use tracing::debug;
 use tracing::instrument;
 use tracing_error::SpanTrace;
 
+// std mutex because none of the functions block.
 pub struct InMemoryDbConnection(Arc<std::sync::Mutex<DbHolder>>);
 
 #[async_trait]
@@ -206,6 +207,11 @@ impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         self.0.lock().unwrap().create(req)
+    }
+
+    #[instrument(skip_all, %execution_id)]
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
+        self.0.lock().unwrap().get(execution_id)
     }
 
     #[instrument(skip_all)]
@@ -421,11 +427,6 @@ impl concepts::storage::DbConnectionTest for InMemoryDbConnection {
             },
         )
     }
-
-    #[instrument(skip_all, %execution_id)]
-    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
-        self.0.lock().unwrap().get(execution_id)
-    }
 }
 
 mod index {
@@ -591,12 +592,6 @@ mod index {
 
 #[derive(Clone)]
 pub struct InMemoryPool(Arc<std::sync::Mutex<DbHolder>>, Arc<AtomicBool>);
-
-impl Default for InMemoryPool {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl InMemoryPool {
     #[must_use]

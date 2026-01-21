@@ -37,7 +37,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{Instrument as _, debug, info_span, trace, warn};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
-    activity::cancel_registry::CancelRegistry, registry::ComponentConfigRegistryRO,
+    activity::cancel_registry::CancelRegistry, engines::Engines,
+    registry::ComponentConfigRegistryRO, workflow::workflow_worker::WorkflowWorker,
 };
 
 #[derive(Clone)]
@@ -47,6 +48,7 @@ pub(crate) struct WebApiState {
     pub(crate) cancel_registry: CancelRegistry,
     pub(crate) termination_watcher: watch::Receiver<()>,
     pub(crate) subscription_interruption: Option<Duration>,
+    pub(crate) engines: Engines,
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
@@ -1009,25 +1011,60 @@ async fn stream_execution_response_task(
 struct ExecutionUpgradePayload {
     pub old: InputContentDigest,
     pub new: InputContentDigest,
+    #[serde(default)]
+    pub skip_determinism_check: bool,
 }
 
 async fn execution_upgrade(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
     Json(payload): Json<ExecutionUpgradePayload>,
 ) -> Result<Response, HttpResponse> {
+    if !payload.skip_determinism_check {
+        let (component_id, runnable_component) = state
+            .component_registry_ro
+            .get_workflow_component(&payload.new)
+            .ok_or_else(|| HttpResponse::not_found(accept, Some("new component")))?;
+        let replay_res = WorkflowWorker::replay(
+            component_id.clone(),
+            runnable_component.clone(),
+            state.engines.workflow_engine.clone(),
+            Arc::new(state.component_registry_ro.clone()),
+            state
+                .db_pool
+                .connection()
+                .await
+                .map_err(|e| ErrorWrapper(e, accept))?
+                .as_ref(),
+            execution_id.clone(),
+        )
+        .await;
+        if let Err(err) = replay_res {
+            return Err(HttpResponse {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: format!("Replay failed: {err}"),
+                accept,
+            });
+        }
+    }
     state
         .db_pool
         .external_api_conn()
         .await
-        .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?
+        .map_err(|e| ErrorWrapper(e, accept))?
         .upgrade_execution_component(&execution_id, &payload.old, &payload.new)
         .await
-        .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
+        .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(HttpResponse {
         status: StatusCode::OK,
-        message: "upgraded".to_string(),
-        accept: AcceptHeader::Json,
+        message: if payload.old == payload.new && !payload.skip_determinism_check {
+            "replayed"
+        } else {
+            "upgraded"
+        }
+        .to_string(),
+        accept,
     }
     .into_response())
 }

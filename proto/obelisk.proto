@@ -598,6 +598,7 @@ message UpgradeExecutionComponentRequest {
   ExecutionId execution_id = 1;
   ContentDigest expected_component_digest = 2; // old
   ContentDigest new_component_digest = 3;      // new
+  bool skip_determinism_check = 4;
 }
 message UpgradeExecutionComponentResponse {
 }

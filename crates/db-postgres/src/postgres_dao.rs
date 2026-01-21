@@ -769,7 +769,6 @@ impl CombinedState {
         self.corresponding_version.increment()
     }
 
-    #[cfg(feature = "test")]
     fn get_next_version_or_finished(&self) -> Version {
         if self.execution_with_state.pending_state.is_finished() {
             self.corresponding_version.clone()
@@ -2520,7 +2519,6 @@ async fn append_log(tx: &Transaction<'_>, row: &LogInfoAppendRow) -> Result<(), 
     Ok(())
 }
 
-#[cfg(feature = "test")]
 async fn get_execution_log(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
@@ -3397,6 +3395,21 @@ impl DbConnection for PostgresConnection {
         Ok(version)
     }
 
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
+        trace!("get");
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        let res = get_execution_log(&tx, execution_id).await?;
+
+        tx.commit().await?;
+        Ok(res)
+    }
+
     #[instrument(level = Level::DEBUG, skip(self, batch))]
     async fn append_batch(
         &self,
@@ -4075,21 +4088,6 @@ impl concepts::storage::DbConnectionTest for PostgresConnection {
 
         self.notify_all(vec![notifier], created_at);
         Ok(())
-    }
-
-    #[instrument(level = Level::DEBUG, skip(self))]
-    async fn get(
-        &self,
-        execution_id: &ExecutionId,
-    ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
-        trace!("get");
-        let mut client_guard = self.client.lock().await;
-        let tx = client_guard.transaction().await?;
-
-        let res = get_execution_log(&tx, execution_id).await?;
-
-        tx.commit().await?;
-        Ok(res)
     }
 }
 

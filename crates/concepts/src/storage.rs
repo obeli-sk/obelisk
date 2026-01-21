@@ -102,6 +102,14 @@ impl ExecutionLog {
     }
 
     #[must_use]
+    pub fn params(&self) -> &Params {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
+            event: ExecutionRequest::Created { params, .. },
+            ..
+        }) => params)
+    }
+
+    #[must_use]
     pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionRequest::Created { parent, .. },
@@ -115,7 +123,6 @@ impl ExecutionLog {
     }
 
     #[must_use]
-    #[cfg(feature = "test")]
     pub fn as_finished_result(&self) -> Option<SupportedFunctionReturnValue> {
         if let ExecutionEvent {
             event: ExecutionRequest::Finished { result, .. },
@@ -128,7 +135,6 @@ impl ExecutionLog {
         }
     }
 
-    #[cfg(feature = "test")]
     pub fn event_history(&self) -> impl Iterator<Item = (HistoryEvent, Version)> + '_ {
         self.events.iter().filter_map(|event| {
             if let ExecutionRequest::HistoryEvent { event: eh, .. } = &event.event {
@@ -1014,6 +1020,9 @@ pub struct ExecutionWithStateRequestsResponses {
 
 #[async_trait]
 pub trait DbConnection: DbExecutor {
+    /// Get execution log.
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
+
     async fn append_delay_response(
         &self,
         created_at: DateTime<Utc>,
@@ -1207,9 +1216,6 @@ pub trait DbConnectionTest: DbConnection {
         execution_id: ExecutionId,
         response_event: JoinSetResponseEvent,
     ) -> Result<(), DbErrorWrite>;
-
-    /// Get execution log.
-    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

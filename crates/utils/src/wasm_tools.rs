@@ -20,7 +20,7 @@ use val_json::type_wrapper::TypeWrapper;
 use wit_component::{ComponentEncoder, WitPrinter};
 use wit_parser::{InterfaceId, PackageId, Resolve, World, WorldKey, decoding::DecodedWasm};
 
-#[derive(derive_more::Debug)]
+#[derive(derive_more::Debug, Clone)]
 pub struct WasmComponent {
     pub exim: ExIm,
     resolve: Resolve,

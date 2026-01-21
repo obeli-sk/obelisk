@@ -1,3 +1,4 @@
+use crate::RunnableComponent;
 use concepts::ComponentId;
 use concepts::ComponentType;
 use concepts::FunctionFqn;
@@ -18,6 +19,7 @@ pub struct ComponentConfig {
     pub imports: Vec<FunctionMetadata>,
     pub workflow_or_activity_config: Option<ComponentConfigImportable>,
     pub wit: Option<String>,
+    pub workflow_component: Option<RunnableComponent>, // For replaying workflows.
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +234,22 @@ impl ComponentConfigRegistryRO {
             .ids_to_components
             .get(input_digest)
             .map(|component_config| component_config.wit.as_deref())
+    }
+
+    #[must_use]
+    pub fn get_workflow_component(
+        &self,
+        input_digest: &InputContentDigest,
+    ) -> Option<(&ComponentId, &RunnableComponent)> {
+        self.inner
+            .ids_to_components
+            .get(input_digest)
+            .and_then(|component_config| {
+                component_config
+                    .workflow_component
+                    .as_ref()
+                    .map(|it| (&component_config.component_id, it))
+            })
     }
 
     #[must_use]

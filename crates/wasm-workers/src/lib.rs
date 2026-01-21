@@ -55,7 +55,7 @@ pub mod envvar {
     }
 }
 
-#[derive(derive_more::Debug)]
+#[derive(derive_more::Debug, Clone)]
 pub struct RunnableComponent {
     #[debug(skip)]
     pub wasmtime_component: wasmtime::component::Component,

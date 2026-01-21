@@ -119,6 +119,7 @@ use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
+use wasmtime::Engine;
 
 const EPOCH_MILLIS: u64 = 10;
 const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt");
@@ -622,6 +623,7 @@ async fn run_internal(
         cancel_registry,
         termination_watcher: termination_watcher.clone(),
         subscription_interruption,
+        engines: server_init.engines.clone(),
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
@@ -969,6 +971,7 @@ async fn spawn_tasks_and_threads(
         epoch_ticker,
         preopens_cleaner,
         log_db_forarder,
+        engines: server_compiled_linked.engines,
     };
     Ok((server_init, server_compiled_linked.component_registry_ro))
 }
@@ -976,6 +979,7 @@ async fn spawn_tasks_and_threads(
 struct ServerInit {
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
+    engines: Engines,
     exec_join_handles: Vec<ExecutorTaskHandle>,
     timers_watcher: Option<AbortOnDropHandle>,
     cancel_watcher: Option<AbortOnDropHandle>,
@@ -991,6 +995,7 @@ impl ServerInit {
         let ServerInit {
             db_pool,
             db_close,
+            engines,
             exec_join_handles,
             timers_watcher,
             cancel_watcher,
@@ -1006,6 +1011,7 @@ impl ServerInit {
         drop(http_servers_handles);
         drop(epoch_ticker);
         drop(preopens_cleaner);
+        drop(engines);
         debug!("Closing executors");
         // Close most of the services. Worker tasks might still be running.
         for exec_join_handle in exec_join_handles {
@@ -1383,6 +1389,7 @@ async fn compile_and_verify(
                         imports: vec![],
                         workflow_or_activity_config: Some(component_config_importable),
                         wit,
+                        workflow_component: None,
                     };
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
                 })
@@ -1466,7 +1473,8 @@ async fn compile_and_verify(
                             workflow_or_activity_config: None,
                             wit: webhook_compiled.runnable_component.wasm_component.wit()
                                 .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-                                .ok()
+                                .ok(),
+                            workflow_component: None,
                         };
                         component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
@@ -1590,19 +1598,14 @@ fn prespawn_workflow(
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
         .ok();
-    let worker = WorkflowWorkerCompiled::new_with_config(
-        runnable_component,
-        workflow.workflow_config,
-        engine,
-        Now.clone_box(),
-    )?;
+
     Ok(WorkerCompiled::new_workflow(
-        worker,
-        workflow.exec_config,
+        runnable_component,
+        engine,
+        workflow,
         wit,
         workflows_lock_extension_leeway,
-        workflow.log_store_min_level,
-    ))
+    )?)
 }
 
 struct WorkflowWorkerCompiledWithConfig {
@@ -1631,6 +1634,7 @@ impl WorkerCompiled {
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
+            workflow_component: None,
         };
         (
             WorkerCompiled {
@@ -1643,32 +1647,39 @@ impl WorkerCompiled {
     }
 
     fn new_workflow(
-        worker: WorkflowWorkerCompiled,
-        exec_config: ExecConfig,
+        runnable_component: RunnableComponent,
+        engine: Arc<Engine>,
+        workflow: WorkflowConfigVerified,
         wit: Option<String>,
         workflows_lock_extension_leeway: Duration,
-        log_store_min_level: Option<LogLevel>,
-    ) -> (WorkerCompiled, ComponentConfig) {
+    ) -> Result<(WorkerCompiled, ComponentConfig), utils::wasm_tools::DecodeError> {
+        let worker = WorkflowWorkerCompiled::new_with_config(
+            runnable_component.clone(),
+            workflow.workflow_config,
+            engine,
+            Now.clone_box(),
+        )?;
         let component = ComponentConfig {
-            component_id: exec_config.component_id.clone(),
+            component_id: workflow.exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
                 exports_ext: worker.exported_functions_ext().to_vec(),
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
+            workflow_component: Some(runnable_component),
         };
-        (
+        Ok((
             WorkerCompiled {
                 worker: Either::Right(WorkflowWorkerCompiledWithConfig {
                     worker,
                     workflows_lock_extension_leeway,
                 }),
-                exec_config,
-                log_store_min_level,
+                exec_config: workflow.exec_config,
+                log_store_min_level: workflow.log_store_min_level,
             },
             component,
-        )
+        ))
     }
 
     #[instrument(skip_all, fields(component_id = %self.exec_config.component_id))]

@@ -4,17 +4,20 @@ use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
+use crate::workflow::deadline_tracker::DeadlineTrackerFactoryForReplay;
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::storage::{DbErrorWrite, DbPool, Version};
-use concepts::time::{ClockFn, now_tokio_instant};
+use concepts::prefixed_ulid::{ExecutorId, RunId};
+use concepts::storage::{DbConnection, DbErrorWrite, DbPool, Locked, Version};
+use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
 use concepts::{
-    ComponentId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
-    TrapKind,
+    ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, PackageIfcFns,
+    ResultParsingError, StrVariant, TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
+use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use std::future;
@@ -765,35 +768,71 @@ impl WorkflowWorker {
         }
     }
 
-    // /// Must be called on in-memory DB if no writes are desired.
-    // pub async fn replay(ctx: WorkerContext) -> Result<(), WorkflowError> {
-    //     let clock = ConstClock(DateTime::from_timestamp_nanos(0));
-    //     let worker = WorkflowWorker {
-    //         config: WorkflowConfig {
-    //             component_id: (),
-    //             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-    //             backtrace_persist: false,
-    //             stub_wasi: (),
-    //             fuel: None,
-    //             lock_extension: Duration::ZERO, // There won't be a timeout ???
-    //             subscription_interruption: None, // No need to wait for response, just interrupt
-    //         },
-    //         engine: todo!(),
-    //         exported_functions_noext: todo!(),
-    //         db_pool: todo!(),
-    //         clock_fn: todo!(),
-    //         exported_ffqn_to_index: todo!(),
-    //         instance_pre: todo!(),
-    //         fn_registry: todo!(),
-    //         cancel_registry: CancelRegistry::new(),
-    //         deadline_factory: Arc::new(DeadlineTrackerFactoryTokio {
-    //             leeway: Duration::ZERO,
-    //             clock_fn,
-    //         }),
-    //         log_storage_config: None,
-    //     };
-    //     worker.run_internal(ctx).await.map(|_| ())
-    // }
+    #[instrument(skip_all, fields(%execution_id))]
+    pub async fn replay(
+        component_id: ComponentId,
+        runnable_component: RunnableComponent,
+        engine: Arc<Engine>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        db_conn: &dyn DbConnection,
+        execution_id: ExecutionId,
+    ) -> Result<(), ReplayError> {
+        let clock_fn = ConstClock(DateTime::from_timestamp_nanos(0));
+
+        let config = WorkflowConfig {
+            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+            backtrace_persist: false,
+            lock_extension: Duration::ZERO,
+            subscription_interruption: None,
+            component_id,
+            stub_wasi: true, // no harm, stub it in any case
+            fuel: None,
+        };
+
+        let log = db_conn
+            .get(&execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
+        let ctx = WorkerContext {
+            execution_id,
+            metadata: ExecutionMetadata::empty(),
+            ffqn: log.ffqn().clone(),
+            params: log.params().clone(),
+            event_history: log.event_history().collect(),
+            responses: log.responses,
+            version: log.next_version,
+            can_be_retried: true, // Just to avoid "Workflow configuration set to not retry anymore" warning
+            worker_span: Span::current(),
+            locked_event: Locked {
+                component_id: config.component_id.clone(),
+                executor_id: ExecutorId::generate(), // TODO: Remove
+                run_id: RunId::generate(),
+                lock_expires_at: clock_fn.now(), // does not matter, using DeadlineTrackerFactoryForReplay
+                retry_config: concepts::ComponentRetryConfig::WORKFLOW,
+            },
+        };
+
+        let compiled = WorkflowWorkerCompiled::new_with_config(
+            runnable_component,
+            config,
+            engine,
+            clock_fn.clone_box(),
+        )?;
+        let linked = compiled.link(fn_registry)?;
+        let db_pool = Arc::new(InMemoryPool::new());
+        let log_storage_config = None;
+        let worker = linked.into_worker(
+            db_pool,
+            Arc::new(DeadlineTrackerFactoryForReplay {}),
+            CancelRegistry::new(),
+            log_storage_config,
+        );
+        worker
+            .run_internal(ctx)
+            .await
+            .map(|_| ())
+            .map_err(ReplayError::from)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -804,11 +843,32 @@ enum CloseJoinSetOk {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReplayError {
+    #[error(transparent)]
+    DecodeError(#[from] DecodeError),
+    #[error(transparent)]
+    LinkError(#[from] WasmFileError),
+    // Transient error
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
-    // non-retriable errors
+    // Transient error
+    #[error(transparent)]
+    DbError(#[from] DbErrorWrite),
+    /// Replay failed
     #[error("fatal error: {0}")]
-    FatalError(FatalError, Version),
+    ReplayFailed(FatalError),
+}
+impl From<WorkflowError> for ReplayError {
+    fn from(value: WorkflowError) -> Self {
+        match value {
+            WorkflowError::LimitReached { reason, version } => {
+                ReplayError::LimitReached { reason, version }
+            }
+            WorkflowError::DbError(db_error_write) => ReplayError::DbError(db_error_write),
+            WorkflowError::FatalError(fatal_error, _version) => {
+                ReplayError::ReplayFailed(fatal_error)
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -965,7 +1025,7 @@ pub(crate) mod tests {
             component_id,
             task_limiter: None,
             executor_id: ExecutorId::generate(),
-            retry_config: ComponentRetryConfig::WORKFLOW_TEST,
+            retry_config: ComponentRetryConfig::WORKFLOW,
             locking_strategy: LockingStrategy::default(),
         };
         ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_pool)
@@ -1887,7 +1947,7 @@ pub(crate) mod tests {
                 ExecutorId::generate(),
                 sim_clock.now() + Duration::from_secs(1),
                 RunId::generate(),
-                ComponentRetryConfig::WORKFLOW_TEST,
+                ComponentRetryConfig::WORKFLOW,
             )
             .await
             .unwrap();
@@ -2171,7 +2231,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::from_parts(0, 0),
-                retry_config: ComponentRetryConfig::WORKFLOW_TEST,
+                retry_config: ComponentRetryConfig::WORKFLOW,
                 locking_strategy: LockingStrategy::default(),
             },
             sim_clock.clone_box(),

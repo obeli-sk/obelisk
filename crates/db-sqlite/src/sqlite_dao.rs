@@ -474,7 +474,6 @@ impl CombinedState {
         self.corresponding_version.increment()
     }
 
-    #[cfg(feature = "test")]
     fn get_next_version_or_finished(&self) -> Version {
         if self.execution_with_state.pending_state.is_finished() {
             self.corresponding_version.clone()
@@ -2672,7 +2671,6 @@ impl SqlitePool {
         Ok(())
     }
 
-    #[cfg(feature = "test")]
     fn get(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -3838,6 +3836,17 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
+        trace!("get");
+        let execution_id = execution_id.clone();
+        self.transaction(move |tx| Self::get(tx, &execution_id), "get")
+            .await
+    }
+
     #[instrument(level = Level::DEBUG, skip(self, batch))]
     async fn append_batch(
         &self,
@@ -4292,17 +4301,6 @@ impl concepts::storage::DbConnectionTest for SqlitePool {
             .await?;
         self.notify_all(vec![notifier], created_at);
         Ok(())
-    }
-
-    #[instrument(level = Level::DEBUG, skip(self))]
-    async fn get(
-        &self,
-        execution_id: &ExecutionId,
-    ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
-        trace!("get");
-        let execution_id = execution_id.clone();
-        self.transaction(move |tx| Self::get(tx, &execution_id), "get")
-            .await
     }
 }
 

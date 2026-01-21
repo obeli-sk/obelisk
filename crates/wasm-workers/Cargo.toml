@@ -11,6 +11,7 @@ version.workspace = true
 
 [dependencies]
 concepts.workspace = true
+db-mem.workspace = true
 executor.workspace = true
 utils.workspace = true
 val-json.workspace = true
@@ -49,7 +50,6 @@ test = []
 
 [dev-dependencies]
 concepts = { workspace = true, features = ["test"] }
-db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
 db-tests.workspace = true
 executor = { workspace = true, features = ["test"] }

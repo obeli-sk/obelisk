@@ -2092,8 +2092,7 @@ impl ComponentRetryConfig {
         retry_exp_backoff: Duration::ZERO,
     };
 
-    #[cfg(feature = "test")]
-    pub const WORKFLOW_TEST: ComponentRetryConfig = ComponentRetryConfig {
+    pub const WORKFLOW: ComponentRetryConfig = ComponentRetryConfig {
         max_retries: None,
         retry_exp_backoff: Duration::ZERO,
     };

@@ -1216,7 +1216,7 @@ enum JoinSetCreateError {
 }
 
 mod workflow_support {
-    use super::{ClockFn, WorkflowCtx, WorkflowFunctionError, types_4_0_0};
+    use super::{WorkflowCtx, WorkflowFunctionError, types_4_0_0};
     use crate::workflow::event_history::{JoinNext, Persist, SubmitDelay};
     use crate::workflow::host_exports;
     use crate::workflow::host_exports::v4_0_0::obelisk::types::execution::Host as ExecutionIfcHost;

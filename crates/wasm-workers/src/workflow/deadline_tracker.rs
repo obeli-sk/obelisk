@@ -128,3 +128,30 @@ pub fn deadline_tracker_factory_test(
         clock_fn: sim_clock.clone_box(),
     })
 }
+
+pub struct DeadlineTrackerFactoryForReplay {}
+
+impl DeadlineTrackerFactory for DeadlineTrackerFactoryForReplay {
+    fn create(
+        &self,
+        _lock_expires_at: DateTime<Utc>,
+    ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
+        Ok(Box::new(DeadlineTrackerFactoryForReplay {}))
+    }
+}
+impl DeadlineTracker for DeadlineTrackerFactoryForReplay {
+    fn track(
+        &self,
+        _max_duration: Option<Duration>,
+    ) -> Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>> {
+        unreachable!("`track` is not called for the interrupt strategy")
+    }
+
+    fn close_to_expired(&self) -> bool {
+        false
+    }
+
+    fn extend_by(&mut self, _lock_extension: Duration) -> DateTime<Utc> {
+        unreachable!("`close_to_expired` returns always false")
+    }
+}

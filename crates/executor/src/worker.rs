@@ -28,6 +28,7 @@ pub trait Worker: Send + Sync + 'static {
 #[must_use]
 #[derive(Debug)]
 pub enum WorkerResult {
+    // FIXME: Use Result<WorkerResultOk, WorkerError>
     Ok(
         SupportedFunctionReturnValue,
         Version,
