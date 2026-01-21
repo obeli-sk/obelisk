@@ -524,13 +524,15 @@ impl ComponentCommon {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LockingStrategy {
     ByFfqns,
-    ByComponentId,
+    ByComponentDigest,
 }
 impl From<LockingStrategy> for executor::executor::LockingStrategy {
     fn from(value: LockingStrategy) -> Self {
         match value {
             LockingStrategy::ByFfqns => executor::executor::LockingStrategy::ByFfqns,
-            LockingStrategy::ByComponentId => executor::executor::LockingStrategy::ByComponentId,
+            LockingStrategy::ByComponentDigest => {
+                executor::executor::LockingStrategy::ByComponentDigest
+            }
         }
     }
 }
@@ -538,7 +540,9 @@ impl From<executor::executor::LockingStrategy> for LockingStrategy {
     fn from(value: executor::executor::LockingStrategy) -> Self {
         match value {
             executor::executor::LockingStrategy::ByFfqns => LockingStrategy::ByFfqns,
-            executor::executor::LockingStrategy::ByComponentId => LockingStrategy::ByComponentId,
+            executor::executor::LockingStrategy::ByComponentDigest => {
+                LockingStrategy::ByComponentDigest
+            }
         }
     }
 }

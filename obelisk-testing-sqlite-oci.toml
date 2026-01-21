@@ -49,4 +49,3 @@ exec.lock_expiry.seconds = 10
 name = "test_programs_sleep_workflow"
 location.oci = "docker.io/getobelisk/test_programs_sleep_workflow:2026-01-16@sha256:328f992787cea8fccd98491a982f22c1923fc7158a0ff5e510f45c67892f0ce9"
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
-exec.locking_strategy = "by_component_id"

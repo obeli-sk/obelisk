@@ -120,15 +120,15 @@ fn extract_exported_ffqns_noext(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub enum LockingStrategy {
-    #[default]
     ByFfqns,
-    ByComponentId,
+    #[default]
+    ByComponentDigest,
 }
 impl LockingStrategy {
     fn holder(&self, ffqns: Arc<[FunctionFqn]>) -> LockingStrategyHolder {
         match self {
             LockingStrategy::ByFfqns => LockingStrategyHolder::ByFfqns(ffqns),
-            LockingStrategy::ByComponentId => LockingStrategyHolder::ByComponentId,
+            LockingStrategy::ByComponentDigest => LockingStrategyHolder::ByComponentId,
         }
     }
 }
@@ -905,7 +905,7 @@ mod tests {
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based(
         database: Database,
-        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,
     ) {
         set_up();

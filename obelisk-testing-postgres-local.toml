@@ -22,14 +22,13 @@ listening_addr = "127.0.0.1:9090"
 name = "test_programs_fibo_activity"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_fibo_activity.wasm"
 max_retries = 0
-exec.locking_strategy = "by_component_id"
+backtrace.ignore_component_digest = true
 
 [[workflow]]
 name = "test_programs_fibo_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_fibo_workflow.wasm"
 exec.lock_expiry.seconds = 2
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
-exec.locking_strategy = "by_component_id"
 backtrace.ignore_component_digest = true
 
 [[workflow]]
@@ -37,7 +36,6 @@ name = "test_programs_fibo_workflow_outer"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_fibo_workflow_outer.wasm"
 exec.lock_expiry.seconds = 2
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow-outer/src/lib.rs" }
-exec.locking_strategy = "by_component_id"
 backtrace.ignore_component_digest = true
 
 [[webhook_endpoint]]
@@ -71,7 +69,6 @@ exec.lock_expiry.seconds = 10
 name = "test_programs_sleep_workflow"
 location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_sleep_workflow.wasm"
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
-exec.locking_strategy = "by_component_id"
 backtrace.ignore_component_digest = true
 
 [[webhook_endpoint]]

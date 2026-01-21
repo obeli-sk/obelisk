@@ -594,7 +594,7 @@
         },
         "locking_strategy": {
           "$ref": "#/$defs/LockingStrategy",
-          "default": "by_ffqns"
+          "default": "by_component_digest"
         },
         "tick_sleep": {
           "$ref": "#/$defs/DurationConfig"
@@ -634,7 +634,7 @@
       "type": "string",
       "enum": [
         "by_ffqns",
-        "by_component_id"
+        "by_component_digest"
       ]
     },
     "LogLevelToml": {
