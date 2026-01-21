@@ -1041,6 +1041,7 @@ async fn execution_upgrade(
         )
         .await;
         if let Err(err) = replay_res {
+            debug!("Replay failed: {err:?}");
             return Err(HttpResponse {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
                 message: format!("Replay failed: {err}"),

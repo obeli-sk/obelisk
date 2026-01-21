@@ -160,6 +160,8 @@ pub trait TonicServerOptionExt<T> {
     fn argument_must_exist(self, argument: &str) -> Result<T, tonic::Status>;
 
     fn entity_must_exist(self) -> Result<T, tonic::Status>;
+
+    fn must_exist(self, what: &'static str) -> Result<T, tonic::Status>;
 }
 
 impl<T> TonicServerOptionExt<T> for Option<T> {
@@ -171,6 +173,10 @@ impl<T> TonicServerOptionExt<T> for Option<T> {
 
     fn entity_must_exist(self) -> Result<T, tonic::Status> {
         self.ok_or_else(|| tonic::Status::not_found("entity not found"))
+    }
+
+    fn must_exist(self, what: &'static str) -> Result<T, tonic::Status> {
+        self.ok_or_else(|| tonic::Status::not_found(format!("{what} not found")))
     }
 }
 

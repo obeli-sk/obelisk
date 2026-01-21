@@ -579,6 +579,7 @@ async fn run_internal(
         component_registry_ro.clone(),
         component_source_map,
         cancel_registry.clone(),
+        server_init.engines.clone(),
     ));
 
     let mut grpc = RoutesBuilder::default();

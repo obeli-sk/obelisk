@@ -64,7 +64,9 @@ use tracing::info_span;
 use tracing::instrument;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
+use wasm_workers::engines::Engines;
 use wasm_workers::registry::ComponentConfigRegistryRO;
+use wasm_workers::workflow::workflow_worker::WorkflowWorker;
 
 pub(crate) const IGNORING_COMPONENT_DIGEST: InputContentDigest =
     InputContentDigest(CONTENT_DIGEST_DUMMY);
@@ -78,6 +80,8 @@ pub(crate) struct GrpcServer {
     component_source_map: ComponentSourceMap,
     #[debug(skip)]
     cancel_registry: CancelRegistry,
+    #[debug(skip)]
+    engines: Engines,
 }
 
 impl GrpcServer {
@@ -87,6 +91,7 @@ impl GrpcServer {
         component_registry_ro: ComponentConfigRegistryRO,
         component_source_map: ComponentSourceMap,
         cancel_registry: CancelRegistry,
+        engines: Engines,
     ) -> Self {
         Self {
             db_pool,
@@ -94,6 +99,7 @@ impl GrpcServer {
             component_registry_ro,
             component_source_map,
             cancel_registry,
+            engines,
         }
     }
 }
@@ -698,6 +704,30 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .new_component_digest
             .argument_must_exist("new_component_digest")?
             .try_into()?;
+        if !request.skip_determinism_check {
+            let (component_id, runnable_component) = self
+                .component_registry_ro
+                .get_workflow_component(&new)
+                .must_exist("new component")?;
+            let replay_res = WorkflowWorker::replay(
+                component_id.clone(),
+                runnable_component.clone(),
+                self.engines.workflow_engine.clone(),
+                Arc::new(self.component_registry_ro.clone()),
+                self.db_pool
+                    .connection()
+                    .await
+                    .map_err(map_to_status)?
+                    .as_ref(),
+                execution_id.clone(),
+            )
+            .await;
+            if let Err(err) = replay_res {
+                debug!("Replay failed: {err:?}");
+                return Err(tonic::Status::internal(format!("replay failed: {err}")));
+            }
+        }
+
         self.db_pool
             .external_api_conn()
             .await
