@@ -1,7 +1,10 @@
-use concepts::ExecutionId;
 use concepts::component_id::InputContentDigest;
 use concepts::storage::{
-    ExecutionEvent, ExecutionLog, JoinSetResponseEventOuter, PendingState, Version,
+    ExecutionEvent, ExecutionLog, ExecutionRequest, JoinSetResponseEventOuter, PendingState,
+    Version,
+};
+use concepts::{
+    ExecutionFailureKind, ExecutionId, FinishedExecutionError, SupportedFunctionReturnValue,
 };
 use rand::rngs::StdRng;
 use rand::{Rng as _, SeedableRng as _};
@@ -122,14 +125,30 @@ pub fn get_seed() -> Box<dyn Iterator<Item = u64>> {
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ExecutionLogSanitized {
     pub execution_id: ExecutionId,
-    pub events: Vec<ExecutionEvent>,
-    pub responses: Vec<JoinSetResponseEventOuter>,
+    pub events: Vec<ExecutionEvent>, // `execution_error`'s detail (backtrace) removed
+    pub responses: Vec<JoinSetResponseEventOuter>, // `created_at`, `cursor` removed
     pub next_version: Version,
     pub pending_state: PendingState,
     pub component_digest: InputContentDigest,
 }
 impl From<ExecutionLog> for ExecutionLogSanitized {
-    fn from(value: ExecutionLog) -> Self {
+    fn from(mut value: ExecutionLog) -> Self {
+        if let Some(ExecutionEvent {
+            event:
+                ExecutionRequest::Finished {
+                    result:
+                        SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+                            kind: ExecutionFailureKind::Uncategorized,
+                            reason: _,
+                            detail,
+                        }),
+                    ..
+                },
+            ..
+        }) = value.events.last_mut()
+        {
+            detail.take();
+        }
         ExecutionLogSanitized {
             execution_id: value.execution_id,
             events: value.events,
