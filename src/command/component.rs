@@ -122,13 +122,14 @@ pub(crate) async fn list_components(
     for component in components {
         let component_id = component.component_id.expect("`component_id` is sent");
         println!(
-            "{name}\t{ty}",
+            "{name}\t{ty}\t{sha}",
             name = component_id.name,
             ty = grpc_gen::ComponentType::try_from(component_id.component_type)
                 .map_err(|_| ())
                 .and_then(|ty| ComponentType::try_from(ty).map_err(|_| ()))
                 .map(|ct| ct.to_string())
-                .unwrap_or_else(|()| "unknown type".to_string())
+                .unwrap_or_else(|()| "unknown type".to_string()),
+            sha = component_id.digest.map(|d| d.digest).unwrap_or_default()
         );
         println!("Exports:");
         print_fn_details(component.exports)?;
