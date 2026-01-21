@@ -160,7 +160,7 @@ impl WorkflowWorkerCompiled {
             .wasm_component
             .exim
             .imports_flat
-            .into_iter()
+            .iter()
             .filter(|fn_meta| {
                 if config.stub_wasi {
                     // Hide wasi imports
@@ -169,6 +169,7 @@ impl WorkflowWorkerCompiled {
                     true
                 }
             })
+            .cloned()
             .collect();
 
         Ok(Self {

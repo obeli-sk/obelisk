@@ -352,6 +352,19 @@ impl Display for DecodeError {
 
 #[derive(Debug, Clone)]
 pub struct ExIm {
+    inner: Arc<ExImInner>,
+}
+
+impl std::ops::Deref for ExIm {
+    type Target = ExImInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+#[derive(Debug)]
+pub struct ExImInner {
     pub(crate) exports_hierarchy_ext: Vec<PackageIfcFns>,
     exports_flat_noext: Vec<FunctionMetadata>,
     exports_flat_ext: Vec<FunctionMetadata>,
@@ -401,11 +414,13 @@ impl ExIm {
         let imports_hierarchy = exim_lite.imports;
         let imports_flat = Self::flatten(&imports_hierarchy);
         Ok(Self {
-            exports_hierarchy_ext,
-            exports_flat_noext,
-            exports_flat_ext,
-            imports_flat,
-            imports_hierarchy,
+            inner: Arc::new(ExImInner {
+                exports_hierarchy_ext,
+                exports_flat_noext,
+                exports_flat_ext,
+                imports_flat,
+                imports_hierarchy,
+            }),
         })
     }
 
