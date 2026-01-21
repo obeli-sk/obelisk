@@ -3321,7 +3321,7 @@ impl DbExecutor for SqlitePool {
     }
 
     #[instrument(level = Level::TRACE, skip(self))]
-    async fn lock_pending_by_component_id(
+    async fn lock_pending_by_component_digest(
         &self,
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,

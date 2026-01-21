@@ -231,8 +231,9 @@ async fn lock_pending(
             )
             .await
             .unwrap(),
+
         LockingStrategyLifecycle::ByComponentDigest => db_connection
-            .lock_pending_by_component_id(
+            .lock_pending_by_component_digest(
                 1,
                 created_at,
                 component_id,
@@ -1181,7 +1182,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
         }
         LockingStrategyLifecycle::ByComponentDigest => {
             db_connection
-                .lock_pending_by_component_id(
+                .lock_pending_by_component_digest(
                     3,
                     sim_clock.now(),
                     &ComponentId::dummy_activity(),

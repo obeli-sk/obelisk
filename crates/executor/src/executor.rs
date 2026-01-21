@@ -293,7 +293,7 @@ impl ExecTask {
                 }
                 LockingStrategyHolder::ByComponentId => {
                     db_exec
-                        .lock_pending_by_component_id(
+                        .lock_pending_by_component_digest(
                             batch_size,
                             executed_at, // pending_at_or_sooner
                             &self.config.component_id,

@@ -66,7 +66,7 @@ impl DbExecutor for InMemoryDbConnection {
     }
 
     #[instrument(skip_all)]
-    async fn lock_pending_by_component_id(
+    async fn lock_pending_by_component_digest(
         &self,
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
