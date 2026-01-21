@@ -1,6 +1,5 @@
 use super::activity_ctx::ActivityCtx;
 use crate::activity::process::HostChildProcess;
-use concepts::time::ClockFn;
 use process_support_outer::v1_0_0::{
     SpawnErrorTrappable, obelisk::activity::process as process_support,
 };
@@ -39,7 +38,7 @@ pub(crate) mod process_support_outer {
     }
 }
 
-impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
+impl process_support::Host for ActivityCtx {
     fn spawn(
         &mut self,
         command: String,
@@ -72,7 +71,7 @@ impl<C: ClockFn> process_support::Host for ActivityCtx<C> {
 }
 
 // Implement methods for the `child-process` resource
-impl<C: ClockFn> process_support::HostChildProcess for ActivityCtx<C> {
+impl process_support::HostChildProcess for ActivityCtx {
     fn id(&mut self, self_handle: Resource<HostChildProcess>) -> wasmtime::Result<u32> {
         let child_process = self.table().get(&self_handle)?;
         Ok(child_process.id())

@@ -879,7 +879,7 @@ async fn spawn_tasks_and_threads(
             db_pool.clone(),
             TimersWatcherConfig {
                 tick_sleep: timers_watcher.tick_sleep.into(),
-                clock_fn: Now,
+                clock_fn: Now.clone_box(),
                 leeway: timers_watcher.leeway.into(),
             },
         ))
@@ -904,7 +904,7 @@ async fn spawn_tasks_and_threads(
             parent_preopen_dir,
             activities_cleanup.run_every.into(),
             TokioSleep,
-            Now,
+            Now.clone_box(),
             db_pool.clone(),
         ))
     } else {
@@ -1017,7 +1017,7 @@ impl ServerInit {
 }
 
 type WebhookInstancesAndRoutes = (
-    WebhookEndpointInstanceLinked<Now, TokioSleep>,
+    WebhookEndpointInstanceLinked<TokioSleep>,
     Vec<WebhookRouteVerified>,
 );
 
@@ -1073,7 +1073,7 @@ async fn start_http_servers(
                 engine.clone(),
                 router,
                 db_pool.clone(),
-                Now,
+                Now.clone_box(),
                 TokioSleep,
                 fn_registry.clone(),
                 global_webhook_instance_limiter.clone(),
@@ -1558,7 +1558,7 @@ fn prespawn_activity(
         runnable_component,
         activity.activity_config,
         engine,
-        Now,
+        Now.clone_box(),
         TokioSleep,
     )?;
     Ok(WorkerCompiled::new_activity(
@@ -1594,7 +1594,7 @@ fn prespawn_workflow(
         runnable_component,
         workflow.workflow_config,
         engine,
-        Now,
+        Now.clone_box(),
     )?;
     Ok(WorkerCompiled::new_workflow(
         worker,
@@ -1606,19 +1606,19 @@ fn prespawn_workflow(
 }
 
 struct WorkflowWorkerCompiledWithConfig {
-    worker: WorkflowWorkerCompiled<Now>,
+    worker: WorkflowWorkerCompiled,
     workflows_lock_extension_leeway: Duration,
 }
 
 struct WorkerCompiled {
-    worker: Either<ActivityWorkerCompiled<Now, TokioSleep>, WorkflowWorkerCompiledWithConfig>,
+    worker: Either<ActivityWorkerCompiled<TokioSleep>, WorkflowWorkerCompiledWithConfig>,
     exec_config: ExecConfig,
     log_store_min_level: Option<LogLevel>,
 }
 
 impl WorkerCompiled {
     fn new_activity(
-        worker: ActivityWorkerCompiled<Now, TokioSleep>,
+        worker: ActivityWorkerCompiled<TokioSleep>,
         exec_config: ExecConfig,
         wit: Option<String>,
         log_store_min_level: Option<LogLevel>,
@@ -1643,7 +1643,7 @@ impl WorkerCompiled {
     }
 
     fn new_workflow(
-        worker: WorkflowWorkerCompiled<Now>,
+        worker: WorkflowWorkerCompiled,
         exec_config: ExecConfig,
         wit: Option<String>,
         workflows_lock_extension_leeway: Duration,
@@ -1689,12 +1689,12 @@ impl WorkerCompiled {
 }
 
 struct WorkflowWorkerLinkedWithConfig {
-    worker: WorkflowWorkerLinked<Now>,
+    worker: WorkflowWorkerLinked,
     workflows_lock_extension_leeway: Duration,
 }
 
 struct WorkerLinked {
-    worker: Either<ActivityWorkerCompiled<Now, TokioSleep>, WorkflowWorkerLinkedWithConfig>,
+    worker: Either<ActivityWorkerCompiled<TokioSleep>, WorkflowWorkerLinkedWithConfig>,
     exec_config: ExecConfig,
     log_store_min_level: Option<LogLevel>,
 }
@@ -1718,7 +1718,7 @@ impl WorkerLinked {
                 db_pool.clone(),
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: workflow_linked.workflows_lock_extension_leeway,
-                    clock_fn: Now,
+                    clock_fn: Now.clone_box(),
                 }),
                 cancel_registry,
                 self.log_store_min_level.map(|min_level| LogStrageConfig {
@@ -1727,7 +1727,13 @@ impl WorkerLinked {
                 }),
             )),
         };
-        ExecTask::spawn_new(worker, self.exec_config, Now, db_pool.clone(), TokioSleep)
+        ExecTask::spawn_new(
+            worker,
+            self.exec_config,
+            Now.clone_box(),
+            db_pool.clone(),
+            TokioSleep,
+        )
     }
 }
 

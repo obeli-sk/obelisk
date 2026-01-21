@@ -28,22 +28,22 @@ use wasmtime_wasi_io::IoView;
 
 pub type HttpClientTracesContainer = Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>;
 
-pub struct ActivityCtx<C: ClockFn> {
+pub struct ActivityCtx {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     component_logger: ComponentLogger,
-    clock_fn: C,
+    clock_fn: Box<dyn ClockFn>,
     pub(crate) http_client_traces: HttpClientTracesContainer,
     pub(crate) preopened_dir: Option<Arc<Path>>,
     pub(crate) process_provider: Option<ProcessProvider>,
 }
 
-impl<C: ClockFn> wasmtime::component::HasData for ActivityCtx<C> {
-    type Data<'a> = &'a mut ActivityCtx<C>;
+impl wasmtime::component::HasData for ActivityCtx {
+    type Data<'a> = &'a mut ActivityCtx;
 }
 
-impl<C: ClockFn> WasiView for ActivityCtx<C> {
+impl WasiView for ActivityCtx {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi_ctx,
@@ -52,13 +52,13 @@ impl<C: ClockFn> WasiView for ActivityCtx<C> {
     }
 }
 
-impl<C: ClockFn> IoView for ActivityCtx<C> {
+impl IoView for ActivityCtx {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
 }
 
-impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
+impl WasiHttpView for ActivityCtx {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
     }
@@ -97,7 +97,7 @@ impl<C: ClockFn + 'static> WasiHttpView for ActivityCtx<C> {
         };
         let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
         self.http_client_traces.push((req, resp_trace_rx));
-        let clock_fn = self.clock_fn.clone();
+        let clock_fn = self.clock_fn.clone_box();
         span.in_scope(|| debug!("Sending {request:?}"));
         let handle = wasmtime_wasi::runtime::spawn(
             async move {
@@ -124,18 +124,18 @@ pub(crate) struct ActivityPreopenIoError {
 }
 
 #[expect(clippy::too_many_arguments)]
-pub(crate) fn store<C: ClockFn>(
+pub(crate) fn store(
     engine: &Engine,
     execution_id: ExecutionId,
     run_id: RunId,
     config: &ActivityConfig,
     worker_span: Span,
-    clock_fn: C,
+    clock_fn: Box<dyn ClockFn>,
     preopened_dir: Option<PathBuf>,
     stdout: Option<StdOutput>,
     stderr: Option<StdOutput>,
     log_storage_config: Option<LogStrageConfig>,
-) -> Result<Store<ActivityCtx<C>>, ActivityPreopenIoError> {
+) -> Result<Store<ActivityCtx>, ActivityPreopenIoError> {
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = stdout {
         let stdout = LogStream::new(
@@ -189,7 +189,7 @@ pub(crate) fn store<C: ClockFn>(
     Ok(Store::new(engine, ctx))
 }
 
-impl<C: ClockFn> log_activities::obelisk::log::log::Host for ActivityCtx<C> {
+impl log_activities::obelisk::log::log::Host for ActivityCtx {
     fn trace(&mut self, message: String) {
         self.component_logger.log(LogLevel::Trace, message);
     }

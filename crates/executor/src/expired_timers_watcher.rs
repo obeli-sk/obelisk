@@ -24,10 +24,11 @@ use tracing::info_span;
 use tracing::warn;
 use tracing::{debug, info, instrument};
 
-#[derive(Debug, Clone)]
-pub struct TimersWatcherConfig<C: ClockFn> {
+#[derive(derive_more::Debug)]
+pub struct TimersWatcherConfig {
     pub tick_sleep: Duration,
-    pub clock_fn: C,
+    #[debug(skip)]
+    pub clock_fn: Box<dyn ClockFn>,
     // A short duration that will be subtracted from now() so that:
     // a workflow that made progress (is blocked by join set) and is subscribed can either win or
     // the executor can lock it.
@@ -41,10 +42,7 @@ pub struct TickProgress {
     pub expired_async_timers: usize,
 }
 
-pub fn spawn_new<C: ClockFn + 'static>(
-    db_pool: Arc<dyn DbPool>,
-    config: TimersWatcherConfig<C>,
-) -> AbortOnDropHandle {
+pub fn spawn_new(db_pool: Arc<dyn DbPool>, config: TimersWatcherConfig) -> AbortOnDropHandle {
     let tick_sleep = config.tick_sleep;
     AbortOnDropHandle::new(
         tokio::spawn(

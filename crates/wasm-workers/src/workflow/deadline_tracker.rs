@@ -32,14 +32,14 @@ pub struct LockAlreadyExpired {
     pub started_at: DateTime<Utc>,
 }
 
-pub(crate) struct DeadlineTrackerTokio<C: ClockFn> {
+pub(crate) struct DeadlineTrackerTokio {
     pub(crate) deadline: tokio::time::Instant, // Tracked as instant because calling track happens later after creation.
-    pub(crate) clock_fn: C,
+    pub(crate) clock_fn: Box<dyn ClockFn>,
     pub(crate) leeway: Duration, // Fire this much sooner than requested.
 }
 
 #[async_trait]
-impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
+impl DeadlineTracker for DeadlineTrackerTokio {
     fn track(
         &self,
         max_duration: Option<Duration>,
@@ -79,13 +79,20 @@ impl<C: ClockFn> DeadlineTracker for DeadlineTrackerTokio<C> {
     }
 }
 
-#[derive(Clone)]
-pub struct DeadlineTrackerFactoryTokio<C: ClockFn> {
+pub struct DeadlineTrackerFactoryTokio {
     pub leeway: Duration, // Fire this much sooner than requested.
-    pub clock_fn: C,
+    pub clock_fn: Box<dyn ClockFn>,
+}
+impl Clone for DeadlineTrackerFactoryTokio {
+    fn clone(&self) -> Self {
+        Self {
+            leeway: self.leeway,
+            clock_fn: self.clock_fn.clone_box(),
+        }
+    }
 }
 
-impl<C: ClockFn> DeadlineTrackerFactory for DeadlineTrackerFactoryTokio<C> {
+impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
@@ -104,7 +111,7 @@ impl<C: ClockFn> DeadlineTrackerFactory for DeadlineTrackerFactoryTokio<C> {
         let deadline = tokio::time::Instant::now() + deadline_duration;
         let tracker = DeadlineTrackerTokio {
             deadline,
-            clock_fn: self.clock_fn.clone(),
+            clock_fn: self.clock_fn.clone_box(),
             leeway: self.leeway,
         };
         Ok(Box::new(tracker))
@@ -114,10 +121,10 @@ impl<C: ClockFn> DeadlineTrackerFactory for DeadlineTrackerFactoryTokio<C> {
 #[cfg(test)]
 #[must_use]
 pub fn deadline_tracker_factory_test(
-    sim_clock: test_utils::sim_clock::SimClock,
-) -> std::sync::Arc<impl DeadlineTrackerFactory> {
+    sim_clock: &test_utils::sim_clock::SimClock,
+) -> std::sync::Arc<impl DeadlineTrackerFactory + use<>> {
     std::sync::Arc::new(DeadlineTrackerFactoryTokio {
         leeway: Duration::ZERO,
-        clock_fn: sim_clock,
+        clock_fn: sim_clock.clone_box(),
     })
 }

@@ -1,11 +1,10 @@
 use super::wasi::filesystem::{preopens, types};
 use crate::workflow::workflow_ctx::WorkflowCtx;
-use concepts::time::ClockFn;
 use wasmtime::Result;
 use wasmtime::component::Resource;
 use wasmtime_wasi_io::streams::{DynInputStream, DynOutputStream};
 
-impl<C: ClockFn> preopens::Host for WorkflowCtx<C> {
+impl preopens::Host for WorkflowCtx {
     fn get_directories(&mut self) -> Result<Vec<(Resource<types::Descriptor>, String)>> {
         // Never construct a Descriptor, so all of the methods in the rest of Filesystem should be
         // unreachable.
@@ -13,7 +12,7 @@ impl<C: ClockFn> preopens::Host for WorkflowCtx<C> {
     }
 }
 
-impl<C: ClockFn> types::HostDescriptor for WorkflowCtx<C> {
+impl types::HostDescriptor for WorkflowCtx {
     fn read_via_stream(
         &mut self,
         _: Resource<types::Descriptor>,
@@ -217,7 +216,7 @@ impl<C: ClockFn> types::HostDescriptor for WorkflowCtx<C> {
         unreachable!("no filesystem")
     }
 }
-impl<C: ClockFn> types::HostDirectoryEntryStream for WorkflowCtx<C> {
+impl types::HostDirectoryEntryStream for WorkflowCtx {
     fn read_directory_entry(
         &mut self,
         _: Resource<types::DirectoryEntryStream>,
@@ -228,7 +227,7 @@ impl<C: ClockFn> types::HostDirectoryEntryStream for WorkflowCtx<C> {
         unreachable!("no filesystem")
     }
 }
-impl<C: ClockFn> types::Host for WorkflowCtx<C> {
+impl types::Host for WorkflowCtx {
     fn filesystem_error_code(
         &mut self,
         _: Resource<wasmtime_wasi_io::streams::Error>,

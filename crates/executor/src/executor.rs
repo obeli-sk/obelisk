@@ -38,10 +38,10 @@ pub struct ExecConfig {
     pub locking_strategy: LockingStrategy,
 }
 
-pub struct ExecTask<C: ClockFn> {
+pub struct ExecTask {
     worker: Arc<dyn Worker>,
     config: ExecConfig,
-    clock_fn: C, // Used for obtaining current time when the execution finishes.
+    clock_fn: Box<dyn ClockFn>, // Used for obtaining current time when the execution finishes.
     db_pool: Arc<dyn DbPool>,
     locking_strategy_holder: LockingStrategyHolder,
 }
@@ -138,12 +138,12 @@ enum LockingStrategyHolder {
     ByComponentId,
 }
 
-impl<C: ClockFn + 'static> ExecTask<C> {
+impl ExecTask {
     #[cfg(feature = "test")]
     pub fn new_test(
         worker: Arc<dyn Worker>,
         config: ExecConfig,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
         ffqns: Arc<[FunctionFqn]>,
     ) -> Self {
@@ -160,7 +160,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
     pub fn new_all_ffqns_test(
         worker: Arc<dyn Worker>,
         config: ExecConfig,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
     ) -> Self {
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
@@ -176,7 +176,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
     pub fn spawn_new(
         worker: Arc<dyn Worker>,
         config: ExecConfig,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
         sleep: impl Sleep + 'static,
     ) -> ExecutorTaskHandle {
@@ -193,7 +193,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
                 config,
                 db_pool,
                 locking_strategy_holder: lock_strategy_holder,
-                clock_fn: clock_fn.clone(),
+                clock_fn: clock_fn.clone_box(),
             };
             let mut old_err = None;
             while !is_closing_inner.load(Ordering::Relaxed) {
@@ -321,7 +321,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
             let join_handle = {
                 let worker = self.worker.clone();
                 let db_pool = self.db_pool.clone();
-                let clock_fn = self.clock_fn.clone();
+                let clock_fn = self.clock_fn.clone_box();
                 let worker_span = info_span!(parent: None, "worker",
                     "otel.name" = format!("worker {}", locked_execution.ffqn),
                     %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.config.executor_id, component_id = %self.config.component_id);
@@ -355,7 +355,7 @@ impl<C: ClockFn + 'static> ExecTask<C> {
     async fn run_worker(
         worker: Arc<dyn Worker>,
         db_pool: &dyn DbPool,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         locked_execution: LockedExecution,
         retry_config: ComponentRetryConfig,
         worker_span: Span,
@@ -869,7 +869,7 @@ mod tests {
     };
     use concepts::storage::{DbPoolCloseable, LockedBy};
     use concepts::storage::{ExecutionEvent, ExecutionRequest, HistoryEvent, PendingState};
-    use concepts::time::Now;
+    use concepts::time::{ConstClock, Now};
     use concepts::{
         FunctionMetadata, JoinSetKind, ParameterTypes, Params, RETURN_TYPE_DUMMY,
         SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, SupportedFunctionReturnValue, TrapKind,
@@ -881,13 +881,13 @@ mod tests {
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_db_macro::expand_enum_database;
     use test_utils::set_up;
-    use test_utils::sim_clock::{ConstClock, SimClock};
+    use test_utils::sim_clock::SimClock;
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
 
-    async fn tick_fn<W: Worker + Debug, C: ClockFn + 'static>(
+    async fn tick_fn<W: Worker + Debug>(
         config: ExecConfig,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
         worker: Arc<W>,
         executed_at: DateTime<Utc>,
@@ -915,7 +915,7 @@ mod tests {
         execute_simple_lifecycle_tick_based_inner(
             db_connection.as_ref(),
             db_pool.clone(),
-            ConstClock(created_at),
+            Box::new(ConstClock(created_at)),
             locking_strategy,
         )
         .await;
@@ -923,10 +923,10 @@ mod tests {
         db_close.close().await;
     }
 
-    async fn execute_simple_lifecycle_tick_based_inner<C: ClockFn + 'static>(
+    async fn execute_simple_lifecycle_tick_based_inner(
         db_connection: &dyn DbConnectionTest,
         db_pool: Arc<dyn DbPool>,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         locking_strategy: LockingStrategy,
     ) {
         let created_at = clock_fn.now();
@@ -977,7 +977,7 @@ mod tests {
     async fn execute_simple_lifecycle_task_based_mem() {
         set_up();
         let created_at = Now.now();
-        let clock_fn = ConstClock(created_at);
+        let clock_fn = Box::new(ConstClock(created_at));
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
@@ -1034,12 +1034,11 @@ mod tests {
 
     async fn create_and_tick<
         W: Worker,
-        C: ClockFn,
-        T: FnMut(ExecConfig, C, Arc<dyn DbPool>, Arc<W>, DateTime<Utc>) -> F,
+        T: FnMut(ExecConfig, Box<dyn ClockFn>, Arc<dyn DbPool>, Arc<W>, DateTime<Utc>) -> F,
         F: Future<Output = Vec<ExecutionId>>,
     >(
         config: CreateAndTickConfig,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         db_connection: &dyn DbConnectionTest,
         db_pool: Arc<dyn DbPool>,
         exec_config: ExecConfig,
@@ -1135,7 +1134,7 @@ mod tests {
                 created_at: sim_clock.now(),
                 executed_at: sim_clock.now(),
             },
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_connection.as_ref(),
             db_pool.clone(),
             exec_config.clone(),
@@ -1178,7 +1177,7 @@ mod tests {
         assert!(
             tick_fn(
                 exec_config.clone(),
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 db_pool.clone(),
                 worker.clone(),
                 sim_clock.now(),
@@ -1190,7 +1189,7 @@ mod tests {
         sim_clock.move_time_forward(retry_config.retry_exp_backoff);
         tick_fn(
             exec_config,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
             worker,
             sim_clock.now(),
@@ -1232,7 +1231,7 @@ mod tests {
     async fn activity_trap_should_not_be_retried_if_no_retries_are_set() {
         set_up();
         let created_at = Now.now();
-        let clock_fn = ConstClock(created_at);
+        let clock_fn = Box::new(ConstClock(created_at));
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
@@ -1372,7 +1371,7 @@ mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy: LockingStrategy::default(),
             },
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
             parent_worker,
             sim_clock.now(),
@@ -1459,7 +1458,7 @@ mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy: LockingStrategy::default(),
             },
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
             child_worker,
             sim_clock.now(),
@@ -1611,7 +1610,7 @@ mod tests {
         let executor = ExecTask::new_test(
             worker,
             exec_config.clone(),
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
             ffqns,
         );

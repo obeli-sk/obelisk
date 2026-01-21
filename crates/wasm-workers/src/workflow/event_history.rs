@@ -2667,7 +2667,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            deadline_tracker_factory_test(sim_clock.clone()),
+            deadline_tracker_factory_test(&sim_clock),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
             fn_registry.clone(),
         )
@@ -2713,7 +2713,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            deadline_tracker_factory_test(sim_clock.clone()),
+            deadline_tracker_factory_test(&sim_clock),
             second_run_strategy,
             fn_registry,
         )
@@ -2762,7 +2762,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            deadline_tracker_factory_test(sim_clock.clone()),
+            deadline_tracker_factory_test(&sim_clock),
             join_next_blocking_strategy,
             fn_registry.clone(),
         )
@@ -2806,7 +2806,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            deadline_tracker_factory_test(sim_clock.clone()),
+            deadline_tracker_factory_test(&sim_clock),
             join_next_blocking_strategy,
             fn_registry,
         )
@@ -2892,7 +2892,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            deadline_tracker_factory_test(sim_clock.clone()),
+            deadline_tracker_factory_test(&sim_clock),
             JoinNextBlockingStrategy::Interrupt, // First blocking strategy is always Interrupt
             fn_registry.clone(),
         )
@@ -2967,7 +2967,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::ZERO, // deadline
-            deadline_tracker_factory_test(sim_clock.clone()),
+            deadline_tracker_factory_test(&sim_clock),
             JoinNextBlockingStrategy::Interrupt,
             fn_registry,
         )
@@ -3044,7 +3044,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            deadline_tracker_factory_test(sim_clock.clone()),
+            deadline_tracker_factory_test(&sim_clock),
             JoinNextBlockingStrategy::Interrupt, // does not matter, there are no blocking events
             fn_registry,
         )
@@ -3108,7 +3108,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1), // execution deadline
-                deadline_tracker_factory_test(sim_clock.clone()),
+                deadline_tracker_factory_test(&sim_clock),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3200,7 +3200,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1),
-                deadline_tracker_factory_test(sim_clock.clone()),
+                deadline_tracker_factory_test(&sim_clock),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3249,7 +3249,7 @@ mod tests {
                 execution_id.clone(),
                 sim_clock.now(),
                 Duration::from_secs(1),
-                deadline_tracker_factory_test(sim_clock.clone()),
+                deadline_tracker_factory_test(&sim_clock),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 0,
                 },
@@ -3305,7 +3305,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            deadline_tracker_factory_test(sim_clock.clone()),
+            deadline_tracker_factory_test(&sim_clock),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
             fn_registry.clone(),
         )
@@ -3351,7 +3351,7 @@ mod tests {
             execution_id,
             sim_clock.now(),
             Duration::from_secs(1), // execution deadline
-            deadline_tracker_factory_test(sim_clock.clone()),
+            deadline_tracker_factory_test(&sim_clock),
             second_run_strategy,
             fn_registry,
         )

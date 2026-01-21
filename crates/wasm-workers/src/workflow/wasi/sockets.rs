@@ -1,8 +1,7 @@
 use crate::workflow::wasi::wasi::sockets;
 use crate::workflow::workflow_ctx::WorkflowCtx;
-use concepts::time::ClockFn;
 
-impl<C: ClockFn> sockets::network::Host for WorkflowCtx<C> {
+impl sockets::network::Host for WorkflowCtx {
     fn network_error_code(
         &mut self,
         _err: wasmtime::component::Resource<sockets::network::Error>,
@@ -11,7 +10,7 @@ impl<C: ClockFn> sockets::network::Host for WorkflowCtx<C> {
     }
 }
 
-impl<C: ClockFn> sockets::network::HostNetwork for WorkflowCtx<C> {
+impl sockets::network::HostNetwork for WorkflowCtx {
     fn drop(
         &mut self,
         _rep: wasmtime::component::Resource<sockets::network::Network>,
@@ -20,7 +19,7 @@ impl<C: ClockFn> sockets::network::HostNetwork for WorkflowCtx<C> {
     }
 }
 
-impl<C: ClockFn> sockets::instance_network::Host for WorkflowCtx<C> {
+impl sockets::instance_network::Host for WorkflowCtx {
     fn instance_network(
         &mut self,
     ) -> wasmtime::Result<wasmtime::component::Resource<sockets::instance_network::Network>> {
@@ -31,15 +30,15 @@ impl<C: ClockFn> sockets::instance_network::Host for WorkflowCtx<C> {
 }
 
 mod udp {
-    use super::{ClockFn, WorkflowCtx, sockets};
+    use super::{WorkflowCtx, sockets};
     use sockets::udp::{
         ErrorCode, IncomingDatagramStream, IpAddressFamily, IpSocketAddress, Network,
         OutgoingDatagramStream, Pollable, UdpSocket,
     };
 
-    impl<C: ClockFn> sockets::udp::Host for WorkflowCtx<C> {}
+    impl sockets::udp::Host for WorkflowCtx {}
 
-    impl<C: ClockFn> sockets::udp::HostOutgoingDatagramStream for WorkflowCtx<C> {
+    impl sockets::udp::HostOutgoingDatagramStream for WorkflowCtx {
         fn check_send(
             &mut self,
             _self_: wasmtime::component::Resource<sockets::udp::OutgoingDatagramStream>,
@@ -69,7 +68,7 @@ mod udp {
             Ok(())
         }
     }
-    impl<C: ClockFn> sockets::udp::HostIncomingDatagramStream for WorkflowCtx<C> {
+    impl sockets::udp::HostIncomingDatagramStream for WorkflowCtx {
         fn receive(
             &mut self,
             _self_: wasmtime::component::Resource<sockets::udp::IncomingDatagramStream>,
@@ -98,7 +97,7 @@ mod udp {
         }
     }
 
-    impl<C: ClockFn> sockets::udp::HostUdpSocket for WorkflowCtx<C> {
+    impl sockets::udp::HostUdpSocket for WorkflowCtx {
         fn start_bind(
             &mut self,
             _self_: wasmtime::component::Resource<UdpSocket>,
@@ -211,10 +210,10 @@ mod udp {
 }
 
 mod udp_create_socket {
-    use super::{ClockFn, WorkflowCtx, sockets};
+    use super::{WorkflowCtx, sockets};
     use sockets::udp::{ErrorCode, IpAddressFamily, UdpSocket};
 
-    impl<C: ClockFn> sockets::udp_create_socket::Host for WorkflowCtx<C> {
+    impl sockets::udp_create_socket::Host for WorkflowCtx {
         fn create_udp_socket(
             &mut self,
             _address_family: IpAddressFamily,
@@ -227,15 +226,15 @@ mod udp_create_socket {
 }
 
 mod tcp {
-    use super::{ClockFn, WorkflowCtx, sockets};
+    use super::{WorkflowCtx, sockets};
     use sockets::tcp::{
         Duration, ErrorCode, InputStream, IpAddressFamily, IpSocketAddress, Network, OutputStream,
         Pollable, ShutdownType, TcpSocket,
     };
 
-    impl<C: ClockFn> sockets::tcp::Host for WorkflowCtx<C> {}
+    impl sockets::tcp::Host for WorkflowCtx {}
 
-    impl<C: ClockFn> sockets::tcp::HostTcpSocket for WorkflowCtx<C> {
+    impl sockets::tcp::HostTcpSocket for WorkflowCtx {
         fn start_bind(
             &mut self,
             _self_: wasmtime::component::Resource<TcpSocket>,
@@ -469,10 +468,10 @@ mod tcp {
 }
 
 mod tcp_create_socket {
-    use super::{ClockFn, WorkflowCtx, sockets};
+    use super::{WorkflowCtx, sockets};
     use sockets::tcp_create_socket::{ErrorCode, IpAddressFamily, TcpSocket};
 
-    impl<C: ClockFn> sockets::tcp_create_socket::Host for WorkflowCtx<C> {
+    impl sockets::tcp_create_socket::Host for WorkflowCtx {
         fn create_tcp_socket(
             &mut self,
             _address_family: IpAddressFamily,
@@ -485,10 +484,10 @@ mod tcp_create_socket {
 }
 
 mod ip_name_lookup {
-    use super::{ClockFn, WorkflowCtx, sockets};
+    use super::{WorkflowCtx, sockets};
     use sockets::ip_name_lookup::{ErrorCode, IpAddress, Network, Pollable, ResolveAddressStream};
 
-    impl<C: ClockFn> sockets::ip_name_lookup::Host for WorkflowCtx<C> {
+    impl sockets::ip_name_lookup::Host for WorkflowCtx {
         fn resolve_addresses(
             &mut self,
             _network: wasmtime::component::Resource<Network>,
@@ -501,7 +500,7 @@ mod ip_name_lookup {
         }
     }
 
-    impl<C: ClockFn> sockets::ip_name_lookup::HostResolveAddressStream for WorkflowCtx<C> {
+    impl sockets::ip_name_lookup::HostResolveAddressStream for WorkflowCtx {
         fn resolve_next_address(
             &mut self,
             _self_: wasmtime::component::Resource<ResolveAddressStream>,

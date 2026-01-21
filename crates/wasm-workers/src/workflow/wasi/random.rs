@@ -1,8 +1,7 @@
 use super::wasi::{self, random::random};
 use crate::workflow::workflow_ctx::WorkflowCtx;
-use concepts::time::ClockFn;
 
-impl<C: ClockFn> random::Host for WorkflowCtx<C> {
+impl random::Host for WorkflowCtx {
     fn get_random_bytes(&mut self, len: u64) -> wasmtime::Result<Vec<u8>> {
         let vec = vec![0; usize::try_from(len).unwrap()];
         Ok(vec)
@@ -12,7 +11,7 @@ impl<C: ClockFn> random::Host for WorkflowCtx<C> {
     }
 }
 
-impl<C: ClockFn> wasi::random::insecure::Host for WorkflowCtx<C> {
+impl wasi::random::insecure::Host for WorkflowCtx {
     fn get_insecure_random_bytes(
         &mut self,
         len: u64,
@@ -24,7 +23,7 @@ impl<C: ClockFn> wasi::random::insecure::Host for WorkflowCtx<C> {
         Ok(0)
     }
 }
-impl<C: ClockFn> wasi::random::insecure_seed::Host for WorkflowCtx<C> {
+impl wasi::random::insecure_seed::Host for WorkflowCtx {
     fn insecure_seed(&mut self) -> wasmtime::Result<(u64, u64)> {
         Ok((0, 0))
     }

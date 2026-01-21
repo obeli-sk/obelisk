@@ -120,11 +120,11 @@ impl From<ApplyError> for WorkflowFunctionError {
     }
 }
 
-pub(crate) struct WorkflowCtx<C: ClockFn> {
+pub(crate) struct WorkflowCtx {
     pub(crate) execution_id: ExecutionId,
     event_history: EventHistory,
     rng: StdRng,
-    pub(crate) clock_fn: C,
+    pub(crate) clock_fn: Box<dyn ClockFn>,
     pub(crate) db_connection: CachingDbConnection,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
@@ -151,9 +151,9 @@ pub(crate) struct DirectFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl DirectFnCall<'_> {
-    async fn call_imported_fn<C: ClockFn>(
+    async fn call_imported_fn(
         self,
-        ctx: &mut WorkflowCtx<C>,
+        ctx: &mut WorkflowCtx,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let DirectFnCall {
@@ -232,9 +232,9 @@ impl ScheduleFnCall<'_> {
         })
     }
 
-    async fn call_imported_fn<C: ClockFn>(
+    async fn call_imported_fn(
         self,
-        ctx: &mut WorkflowCtx<C>,
+        ctx: &mut WorkflowCtx,
         called_at: DateTime<Utc>,
         called_ffqn: &FunctionFqn,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
@@ -285,10 +285,10 @@ pub(crate) struct SubmitExecutionFnCall<'a> {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl SubmitExecutionFnCall<'_> {
-    fn new<'a, C: ClockFn>(
+    fn new<'a>(
         target_ffqn: FunctionFqn,
         called_ffqn: FunctionFqn,
-        store_ctx: &mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
+        store_ctx: &mut wasmtime::StoreContextMut<'a, WorkflowCtx>,
         params: &'a [Val],
         wasm_backtrace: Option<storage::WasmBacktrace>,
         target_component_id: ComponentId,
@@ -310,9 +310,9 @@ impl SubmitExecutionFnCall<'_> {
         })
     }
 
-    async fn call_imported_fn<C: ClockFn>(
+    async fn call_imported_fn(
         self,
-        ctx: &mut WorkflowCtx<C>,
+        ctx: &mut WorkflowCtx,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let SubmitExecutionFnCall {
@@ -344,10 +344,10 @@ pub(crate) struct AwaitNextFnCall {
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl AwaitNextFnCall {
-    fn new<'a, C: ClockFn>(
+    fn new<'a>(
         target_ffqn: FunctionFqn,
         called_ffqn: FunctionFqn,
-        store_ctx: &mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
+        store_ctx: &mut wasmtime::StoreContextMut<'a, WorkflowCtx>,
         params: &'a [Val],
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<AwaitNextFnCall, WorkflowFunctionError> {
@@ -379,9 +379,9 @@ impl AwaitNextFnCall {
         })
     }
 
-    async fn call_imported_fn<C: ClockFn>(
+    async fn call_imported_fn(
         self,
-        ctx: &mut WorkflowCtx<C>,
+        ctx: &mut WorkflowCtx,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let AwaitNextFnCall {
@@ -462,9 +462,9 @@ impl StubFnCall<'_> {
     }
 
     // -stub is called
-    async fn call_imported_fn<C: ClockFn>(
+    async fn call_imported_fn(
         self,
-        ctx: &mut WorkflowCtx<C>,
+        ctx: &mut WorkflowCtx,
         called_at: DateTime<Utc>,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let StubFnCall {
@@ -545,7 +545,7 @@ impl GetFnCall {
     }
 
     // Never interrupts the execution
-    fn call_imported_fn<C: ClockFn>(self, ctx: &mut WorkflowCtx<C>) -> wasmtime::component::Val {
+    fn call_imported_fn(self, ctx: &mut WorkflowCtx) -> wasmtime::component::Val {
         let GetFnCall {
             target_ffqn,
             child_execution_id,
@@ -565,9 +565,9 @@ impl GetFnCall {
 }
 
 impl<'a> ImportedFnCall<'a> {
-    fn extract_join_set_id<'ctx, C: ClockFn>(
+    fn extract_join_set_id<'ctx>(
         called_ffqn: &FunctionFqn,
-        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
+        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx>,
         params: &'a [Val],
     ) -> Result<(JoinSetId, &'a [Val]), String> {
         let Some((join_set_id, params)) = params.split_first() else {
@@ -597,9 +597,9 @@ impl<'a> ImportedFnCall<'a> {
     }
 
     #[instrument(skip_all, fields(ffqn = %called_ffqn, otel.name = format!("ImportedFnCall::new {called_ffqn}")), name = "ImportedFnCall::new")]
-    pub(crate) fn new<'ctx, C: ClockFn>(
+    pub(crate) fn new<'ctx>(
         called_ffqn: FunctionFqn,
-        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx<C>>,
+        store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx>,
         params: &'a [Val],
         backtrace_persist: bool,
         fn_registry: &dyn FunctionRegistry,
@@ -765,15 +765,15 @@ impl<'a> ImportedFnCall<'a> {
     }
 }
 
-impl<C: ClockFn> wasmtime::component::HasData for WorkflowCtx<C> {
-    type Data<'a> = &'a mut WorkflowCtx<C>;
+impl wasmtime::component::HasData for WorkflowCtx {
+    type Data<'a> = &'a mut WorkflowCtx;
 }
-impl<C: ClockFn> IoView for WorkflowCtx<C> {
+impl IoView for WorkflowCtx {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.resource_table
     }
 }
-impl<C: ClockFn> WasiView for WorkflowCtx<C> {
+impl WasiView for WorkflowCtx {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi_ctx,
@@ -784,14 +784,14 @@ impl<C: ClockFn> WasiView for WorkflowCtx<C> {
 
 const IFC_FQN_WORKFLOW_SUPPORT_4: &str = "obelisk:workflow/workflow-support@4.0.0";
 
-impl<C: ClockFn> WorkflowCtx<C> {
+impl WorkflowCtx {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         db_connection: CachingDbConnection,
         event_history: Vec<(HistoryEvent, Version)>,
         responses: Vec<ResponseWithCursor>,
         seed: u64,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         worker_span: Span,
         backtrace_persist: bool,
@@ -918,7 +918,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
     fn get_host_maybe_capture_backtrace<'a>(
         caller: &'a mut wasmtime::StoreContextMut<'_, Self>,
-    ) -> (&'a mut WorkflowCtx<C>, Option<storage::WasmBacktrace>) {
+    ) -> (&'a mut WorkflowCtx, Option<storage::WasmBacktrace>) {
         let backtrace = if caller.data().backtrace_persist {
             let backtrace = wasmtime::WasmBacktrace::capture(&caller);
             WasmBacktrace::maybe_from(&backtrace)
@@ -934,13 +934,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
         linker: &mut Linker<Self>,
         stub_wasi: bool,
     ) -> Result<(), WasmFileError> {
-        log_activities::obelisk::log::log::add_to_linker::<_, WorkflowCtx<C>>(
+        log_activities::obelisk::log::log::add_to_linker::<_, WorkflowCtx>(
             linker,
             |state: &mut Self| state,
         )
         .map_err(|err| WasmFileError::linking_error("cannot link obelisk::log", err))?;
         // link obelisk:types/execution
-        types_4_0_0::execution::add_to_linker::<_, WorkflowCtx<C>>(linker, |state: &mut Self| {
+        types_4_0_0::execution::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| {
             state
         })
         .map_err(|err| WasmFileError::linking_error("cannot link obelisk:types/execution", err))?;
@@ -965,7 +965,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             .resource_async(
                 "join-set",
                 ResourceType::host::<JoinSetId>(),
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>, rep: u32| {
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, rep: u32| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -981,7 +981,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_join_set_ifc
             .func_wrap(
                 "[method]join-set.id",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (resource,): (Resource<JoinSetId>,)| {
                     let host = caller.data_mut();
                     let id = host.resource_to_join_set_id(&resource)?.to_string();
@@ -994,7 +994,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_join_set_ifc
             .func_wrap_async(
                 "[method]join-set.submit-delay",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (resource, schedule_at): (
                     Resource<JoinSetId>,
                     ScheduleAt_4_0_0,
@@ -1020,7 +1020,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_join_set_ifc
             .func_wrap_async(
                 "[method]join-set.join-next",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (resource,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
@@ -1044,7 +1044,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_workflow_support
             .func_wrap_async(
                 "random-u64",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (min, max_exclusive): (u64, u64)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
@@ -1060,7 +1060,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_workflow_support
             .func_wrap_async(
                 "random-u64-inclusive",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (min, max_inclusive): (u64, u64)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
@@ -1079,7 +1079,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_workflow_support
             .func_wrap_async(
                 "random-string",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (min_length, max_length_exclusive): (u16, u16)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
@@ -1096,7 +1096,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_workflow_support
             .func_wrap_async(
                 "sleep",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (schedule_at,): (ScheduleAt_4_0_0,)| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
@@ -1112,7 +1112,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_workflow_support
             .func_wrap_async(
                 "join-set-create-named",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (name,): (String,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
@@ -1129,7 +1129,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_workflow_support
             .func_wrap_async(
                 "join-set-create",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>, ()| {
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, ()| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -1143,7 +1143,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         inst_workflow_support
             .func_wrap_async(
                 "join-set-close",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (join_set_resource,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
@@ -1228,9 +1228,9 @@ mod workflow_support {
     use tracing::trace;
     use wasmtime::component::Resource;
 
-    impl<C: ClockFn> ExecutionIfcHost for WorkflowCtx<C> {}
+    impl ExecutionIfcHost for WorkflowCtx {}
 
-    impl<C: ClockFn> WorkflowCtx<C> {
+    impl WorkflowCtx {
         pub(crate) async fn join_set_close_resource(
             &mut self,
             resource: Resource<JoinSetId>,
@@ -1469,7 +1469,7 @@ mod workflow_support {
     }
 }
 
-fn trace_on_replay<C: ClockFn>(ctx: &mut WorkflowCtx<C>, level: LogLevel, message: String) {
+fn trace_on_replay(ctx: &mut WorkflowCtx, level: LogLevel, message: String) {
     if ctx.event_history.has_unprocessed_requests() {
         ctx.component_logger
             .log(LogLevel::Trace, format!("(replay) {message}"));
@@ -1478,7 +1478,7 @@ fn trace_on_replay<C: ClockFn>(ctx: &mut WorkflowCtx<C>, level: LogLevel, messag
     }
 }
 
-impl<C: ClockFn> log_activities::obelisk::log::log::Host for WorkflowCtx<C> {
+impl log_activities::obelisk::log::log::Host for WorkflowCtx {
     fn trace(&mut self, message: String) {
         trace_on_replay(self, LogLevel::Trace, message);
     }
@@ -1613,13 +1613,13 @@ pub(crate) mod tests {
         }
     }
 
-    #[derive(Clone, derive_more::Debug)]
-    struct WorkflowWorkerMock<C: ClockFn> {
+    #[derive(derive_more::Debug)]
+    struct WorkflowWorkerMock {
         #[expect(dead_code)]
         ffqn: FunctionFqn, // For debugging
         steps: Vec<WorkflowStep>,
         #[debug(skip)]
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         #[debug(skip)]
         db_pool: Arc<dyn DbPool>,
         #[debug(skip)]
@@ -1628,12 +1628,12 @@ pub(crate) mod tests {
         exports: [FunctionMetadata; 1],
     }
 
-    impl<C: ClockFn> WorkflowWorkerMock<C> {
+    impl WorkflowWorkerMock {
         fn new(
             ffqn: FunctionFqn,
             fn_registry: Arc<dyn FunctionRegistry>,
             steps: Vec<WorkflowStep>,
-            clock_fn: C,
+            clock_fn: Box<dyn ClockFn>,
             db_pool: Arc<dyn DbPool>,
         ) -> Self {
             Self {
@@ -1654,7 +1654,7 @@ pub(crate) mod tests {
     }
 
     #[async_trait]
-    impl<C: ClockFn + 'static> Worker for WorkflowWorkerMock<C> {
+    impl Worker for WorkflowWorkerMock {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
@@ -1672,13 +1672,13 @@ pub(crate) mod tests {
                 ctx.event_history,
                 ctx.responses,
                 seed,
-                self.clock_fn.clone(),
+                self.clock_fn.clone_box(),
                 join_next_blocking_strategy,
                 tracing::info_span!("workflow-test"),
                 false,
                 DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
-                    clock_fn: self.clock_fn.clone(),
+                    clock_fn: self.clock_fn.clone_box(),
                 }
                 .create(ctx.locked_event.lock_expires_at)
                 .unwrap(),
@@ -1900,7 +1900,7 @@ pub(crate) mod tests {
                     FFQN_MOCK,
                     fn_registry.clone(),
                     steps,
-                    sim_clock.clone(),
+                    sim_clock.clone_box(),
                     db_pool.clone(),
                 ));
                 let exec_config = ExecConfig {
@@ -1916,7 +1916,7 @@ pub(crate) mod tests {
                 ExecTask::new_test(
                     worker,
                     exec_config,
-                    sim_clock.clone(),
+                    sim_clock.clone_box(),
                     db_pool.clone(),
                     Arc::new([FFQN_MOCK]),
                 )
@@ -2151,7 +2151,7 @@ pub(crate) mod tests {
             FFQN_MOCK,
             steps_to_registry(&steps),
             steps,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
         ));
         {
@@ -2393,7 +2393,7 @@ pub(crate) mod tests {
                 FFQN_MOCK,
                 fn_registry.clone(),
                 steps,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 db_pool.clone(),
             ));
             let exec_config = ExecConfig {
@@ -2412,7 +2412,7 @@ pub(crate) mod tests {
             ExecTask::new_test(
                 worker,
                 exec_config,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 db_pool.clone(),
                 Arc::new([FFQN_MOCK]),
             )

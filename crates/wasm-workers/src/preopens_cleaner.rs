@@ -7,22 +7,22 @@ use executor::AbortOnDropHandle;
 use std::{error::Error, ffi::OsStr, path::Path, str::FromStr, sync::Arc, time::Duration};
 use tracing::{Instrument, debug, info_span, trace, warn};
 
-pub struct PreopensCleaner<S: Sleep, C: ClockFn> {
+pub struct PreopensCleaner<S: Sleep> {
     delete_older_than: Duration,
     parent_preopen_dir: Arc<Path>,
     sleep_duration: Duration,
     sleep: S,
-    clock_fn: C,
+    clock_fn: Box<dyn ClockFn>,
     db_pool: Arc<dyn DbPool>,
 }
 
-impl<S: Sleep + 'static, C: ClockFn + 'static> PreopensCleaner<S, C> {
+impl<S: Sleep + 'static> PreopensCleaner<S> {
     pub fn spawn_task(
         delete_older_than: Duration,
         parent_preopen_dir: Arc<Path>,
         sleep_duration: Duration,
         sleep: S,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
     ) -> AbortOnDropHandle {
         let this = PreopensCleaner {

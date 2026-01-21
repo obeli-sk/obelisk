@@ -49,22 +49,21 @@ pub enum ProcessProvider {
     Native,
 }
 
-#[derive(Clone)]
-pub struct ActivityWorkerCompiled<C: ClockFn, S: Sleep> {
+pub struct ActivityWorkerCompiled<S: Sleep> {
     engine: Arc<Engine>,
-    instance_pre: InstancePre<ActivityCtx<C>>,
+    instance_pre: InstancePre<ActivityCtx>,
     exim: ExIm,
-    clock_fn: C,
+    clock_fn: Box<dyn ClockFn>,
     sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
 }
-impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
+impl<S: Sleep> ActivityWorkerCompiled<S> {
     pub fn new_with_config(
         runnable_component: RunnableComponent,
         config: ActivityConfig,
         engine: Arc<Engine>,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         sleep: S,
     ) -> Result<Self, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&engine);
@@ -75,7 +74,7 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
             .map_err(|err| WasmFileError::linking_error("cannot link wasi-http", err))?;
         // obelisk:log
-        log_activities::obelisk::log::log::add_to_linker::<_, ActivityCtx<C>>(&mut linker, |x| x)
+        log_activities::obelisk::log::log::add_to_linker::<_, ActivityCtx>(&mut linker, |x| x)
             .map_err(|err| WasmFileError::linking_error("cannot link obelisk:log", err))?;
         // obelisk:activity/process
         match config
@@ -84,7 +83,7 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
             .and_then(|dir| dir.process_provider.as_ref())
         {
             Some(ProcessProvider::Native) => {
-                process_support::add_to_linker::<_, ActivityCtx<C>>(&mut linker, |x| x).map_err(
+                process_support::add_to_linker::<_, ActivityCtx>(&mut linker, |x| x).map_err(
                     |err| WasmFileError::linking_error("cannot link process support", err),
                 )?;
             }
@@ -126,7 +125,7 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         log_storage_config: Option<LogStrageConfig>,
-    ) -> ActivityWorker<C, S> {
+    ) -> ActivityWorker<S> {
         let stdout = StdOutputConfigWithSender::new(
             self.config.forward_stdout,
             log_forwarder_sender,
@@ -153,12 +152,11 @@ impl<C: ClockFn, S: Sleep> ActivityWorkerCompiled<C, S> {
     }
 }
 
-#[derive(Clone)]
-pub struct ActivityWorker<C: ClockFn, S: Sleep> {
+pub struct ActivityWorker<S: Sleep> {
     engine: Arc<Engine>,
-    instance_pre: InstancePre<ActivityCtx<C>>,
+    instance_pre: InstancePre<ActivityCtx>,
     exim: ExIm,
-    clock_fn: C,
+    clock_fn: Box<dyn ClockFn>,
     sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
@@ -168,7 +166,7 @@ pub struct ActivityWorker<C: ClockFn, S: Sleep> {
     log_storage_config: Option<LogStrageConfig>,
 }
 
-impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
+impl<S: Sleep> ActivityWorker<S> {
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(true)
     }
@@ -183,7 +181,7 @@ impl<C: ClockFn + 'static, S: Sleep> ActivityWorker<C, S> {
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static, S: Sleep + 'static> Worker for ActivityWorker<C, S> {
+impl<S: Sleep + 'static> Worker for ActivityWorker<S> {
     fn exported_functions(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(false)
     }
@@ -265,12 +263,12 @@ struct CallFuncParams {
     result_type: Type,
 }
 
-impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
+impl<S: Sleep + 'static> ActivityWorker<S> {
     async fn create_store(
         &self,
         ctx: &WorkerContext,
         started_at: DateTime<Utc>,
-    ) -> Result<(Store<ActivityCtx<C>>, Duration /* deadline duration*/), WorkerError> {
+    ) -> Result<(Store<ActivityCtx>, Duration /* deadline duration*/), WorkerError> {
         let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
             let preopened_dir = directories_config
                 .parent_preopen_dir
@@ -314,7 +312,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
             ctx.locked_event.run_id,
             &self.config,
             ctx.worker_span.clone(),
-            self.clock_fn.clone(),
+            self.clock_fn.clone_box(),
             preopened_dir,
             self.stdout
                 .as_ref()
@@ -371,7 +369,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
     async fn call_func_params(
         &self,
         ctx: &WorkerContext,
-        store: &mut Store<ActivityCtx<C>>,
+        store: &mut Store<ActivityCtx>,
     ) -> Result<CallFuncParams, WorkerError> {
         let instance = match self.instance_pre.instantiate_async(&mut *store).await {
             Ok(instance) => instance,
@@ -431,7 +429,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
 
     async fn call_func(
         &self,
-        store: &mut Store<ActivityCtx<C>>,
+        store: &mut Store<ActivityCtx>,
         CallFuncParams {
             func,
             params,
@@ -465,7 +463,7 @@ impl<C: ClockFn + 'static, S: Sleep + 'static> ActivityWorker<C, S> {
         &self,
         res: Result<Result<SupportedFunctionReturnValue, ResultParsingError>, wasmtime::Error>,
         ctx: &WorkerContext,
-        activity_ctx: ActivityCtx<C>,
+        activity_ctx: ActivityCtx,
     ) -> WorkerResult {
         let http_client_traces = Some(
             activity_ctx
@@ -612,7 +610,7 @@ pub(crate) mod tests {
     pub(crate) fn new_activity_worker(
         wasm_path: &str,
         engine: Arc<Engine>,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
     ) -> (Arc<dyn Worker>, ComponentId) {
         new_activity_worker_with_config(wasm_path, engine, clock_fn, sleep, activity_config)
@@ -621,7 +619,7 @@ pub(crate) mod tests {
     fn new_activity_worker_with_config(
         wasm_path: &str,
         engine: Arc<Engine>,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
     ) -> (Arc<dyn Worker>, ComponentId) {
@@ -645,13 +643,13 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn new_activity<C: ClockFn + 'static>(
+    pub(crate) fn new_activity(
         db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         retry_config: ComponentRetryConfig,
-    ) -> ExecTask<C> {
+    ) -> ExecTask {
         new_activity_with_config(
             db_pool,
             wasm_path,
@@ -662,17 +660,22 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn new_activity_with_config<C: ClockFn + 'static>(
+    pub(crate) fn new_activity_with_config(
         db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
         retry_config: ComponentRetryConfig,
-    ) -> ExecTask<C> {
+    ) -> ExecTask {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let (worker, component_id) =
-            new_activity_worker_with_config(wasm_path, engine, clock_fn.clone(), sleep, config_fn);
+        let (worker, component_id) = new_activity_worker_with_config(
+            wasm_path,
+            engine,
+            clock_fn.clone_box(),
+            sleep,
+            config_fn,
+        );
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -686,11 +689,11 @@ pub(crate) mod tests {
         ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_pool)
     }
 
-    pub(crate) fn new_activity_fibo<C: ClockFn + 'static>(
+    pub(crate) fn new_activity_fibo(
         db_pool: Arc<dyn DbPool>,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
-    ) -> ExecTask<C> {
+    ) -> ExecTask {
         new_activity(
             db_pool,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
@@ -706,7 +709,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
-        let exec = new_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep);
+        let exec = new_activity_fibo(db_pool.clone(), sim_clock.clone_box(), TokioSleep);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -801,7 +804,7 @@ pub(crate) mod tests {
             let (fibo_worker, _) = new_activity_worker(
                 test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 engine,
-                Now,
+                Now.clone_box(),
                 TokioSleep,
             );
             // create executions
@@ -875,7 +878,7 @@ pub(crate) mod tests {
                 db_pool.clone(),
                 executor::expired_timers_watcher::TimersWatcherConfig {
                     tick_sleep: TICK_SLEEP,
-                    clock_fn: Now,
+                    clock_fn: Now.clone_box(),
                     leeway: Duration::ZERO,
                 },
             );
@@ -889,7 +892,7 @@ pub(crate) mod tests {
             let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
-                Now,
+                Now.clone_box(),
                 TokioSleep,
             );
 
@@ -903,8 +906,13 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy: LockingStrategy::default(),
             };
-            let exec_task =
-                ExecTask::spawn_new(worker, exec_config, Now, db_pool.clone(), TokioSleep);
+            let exec_task = ExecTask::spawn_new(
+                worker,
+                exec_config,
+                Now.clone_box(),
+                db_pool.clone(),
+                TokioSleep,
+            );
 
             // Create an execution.
             let execution_id = ExecutionId::generate();
@@ -967,7 +975,7 @@ pub(crate) mod tests {
             let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
             );
 
@@ -1020,7 +1028,7 @@ pub(crate) mod tests {
             let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
             );
             // simulate a scheduling problem where deadline < now
@@ -1080,7 +1088,7 @@ pub(crate) mod tests {
             let (worker, _) = new_activity_worker(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
             );
             let exec_config = ExecConfig {
@@ -1097,7 +1105,7 @@ pub(crate) mod tests {
             let exec_task = ExecTask::new_test(
                 worker,
                 exec_config,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 db_pool.clone(),
                 ffqns,
             );
@@ -1198,7 +1206,7 @@ pub(crate) mod tests {
             let (worker, _) = new_activity_worker(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
             );
             let exec_config = ExecConfig {
@@ -1215,7 +1223,7 @@ pub(crate) mod tests {
             let exec_task = ExecTask::new_test(
                 worker,
                 exec_config,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 db_pool.clone(),
                 ffqns,
             );
@@ -1326,7 +1334,7 @@ pub(crate) mod tests {
             let (worker, _) = new_activity_worker(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 engine,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
             );
             let retry_config = ComponentRetryConfig {
@@ -1347,7 +1355,7 @@ pub(crate) mod tests {
             let exec_task = ExecTask::new_test(
                 worker,
                 exec_config,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 db_pool.clone(),
                 ffqns,
             );
@@ -1503,7 +1511,7 @@ pub(crate) mod tests {
             let exec = new_activity_with_config(
                 db_pool.clone(),
                 test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
                 move |component_id| ActivityConfig {
                     component_id,
@@ -1594,7 +1602,7 @@ pub(crate) mod tests {
             let exec = new_activity_with_config(
                 db_pool.clone(),
                 test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
                 move |component_id| ActivityConfig {
                     component_id,
@@ -1668,7 +1676,7 @@ pub(crate) mod tests {
             let exec = new_activity_with_config(
                 db_pool.clone(),
                 test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
                 move |component_id| ActivityConfig {
                     component_id,
@@ -1747,7 +1755,7 @@ pub(crate) mod tests {
             let exec = new_activity_with_config(
                 db_pool.clone(),
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
                 move |component_id| ActivityConfig {
                     component_id,
@@ -1806,7 +1814,7 @@ pub(crate) mod tests {
             let exec = new_activity_with_config(
                 db_pool.clone(),
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
                 move |component_id| ActivityConfig {
                     component_id,

@@ -56,12 +56,8 @@ impl ClockFn for SimClock {
     fn now(&self) -> DateTime<Utc> {
         *self.current_time.lock().unwrap()
     }
-}
 
-#[derive(Clone, Copy)]
-pub struct ConstClock(pub DateTime<Utc>);
-impl ClockFn for ConstClock {
-    fn now(&self) -> DateTime<Utc> {
-        self.0
+    fn clone_box(&self) -> Box<dyn ClockFn> {
+        Box::new(self.clone())
     }
 }

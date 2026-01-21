@@ -63,7 +63,7 @@ mod bench {
     pub(crate) fn spawn_activity(
         db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         activity_engine: Arc<Engine>,
         cancel_registry: CancelRegistry,
@@ -82,7 +82,7 @@ mod bench {
     pub(crate) fn spawn_activity_with_config(
         db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
         activity_engine: Arc<Engine>,
@@ -91,7 +91,7 @@ mod bench {
         let (worker, component_id) = new_activity_worker_with_config(
             wasm_path,
             activity_engine,
-            clock_fn.clone(),
+            clock_fn.clone_box(),
             sleep,
             config_fn,
             cancel_registry,
@@ -112,7 +112,7 @@ mod bench {
     fn new_activity_worker_with_config(
         wasm_path: &'static str,
         engine: Arc<Engine>,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
         cancel_registry: CancelRegistry,
@@ -141,7 +141,7 @@ mod bench {
 
     pub(crate) fn spawn_activity_fibo(
         db_pool: Arc<dyn DbPool>,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         activity_engine: Arc<Engine>,
         cancel_registry: CancelRegistry,
@@ -170,7 +170,7 @@ mod bench {
     fn spawn_workflow(
         db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
         workflow_engine: Arc<Engine>,
@@ -191,7 +191,7 @@ mod bench {
                     subscription_interruption: None,
                 },
                 workflow_engine,
-                clock_fn.clone(),
+                clock_fn.clone_box(),
             )
             .unwrap()
             .link(fn_registry.clone())
@@ -200,7 +200,7 @@ mod bench {
                 db_pool.clone(),
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
-                    clock_fn: clock_fn.clone(),
+                    clock_fn: clock_fn.clone_box(),
                 }),
                 cancel_registry,
                 None, // log_storage_config
@@ -221,7 +221,7 @@ mod bench {
 
     pub(crate) fn spawn_workflow_fibo(
         db_pool: Arc<dyn DbPool>,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
         workflow_engine: Arc<Engine>,
@@ -284,7 +284,7 @@ mod bench {
 
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
-            Now,
+            Now.clone_box(),
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
             },
@@ -295,7 +295,7 @@ mod bench {
 
         let activity_exec_task = spawn_activity_fibo(
             db_pool.clone(),
-            Now,
+            Now.clone_box(),
             TokioSleep,
             engines.activity_engine.clone(),
             cancel_registry,

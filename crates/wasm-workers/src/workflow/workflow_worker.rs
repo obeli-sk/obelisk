@@ -50,10 +50,10 @@ pub struct WorkflowConfig {
     pub subscription_interruption: Option<Duration>,
 }
 
-pub struct WorkflowWorkerCompiled<C: ClockFn> {
+pub struct WorkflowWorkerCompiled {
     config: WorkflowConfig,
     engine: Arc<Engine>,
-    clock_fn: C,
+    clock_fn: Box<dyn ClockFn>,
     wasmtime_component: wasmtime::component::Component,
     exported_functions_ext: Vec<FunctionMetadata>,
     exports_hierarchy_ext: Vec<PackageIfcFns>,
@@ -62,25 +62,24 @@ pub struct WorkflowWorkerCompiled<C: ClockFn> {
     imported_functions: Vec<FunctionMetadata>,
 }
 
-pub struct WorkflowWorkerLinked<C: ClockFn> {
+pub struct WorkflowWorkerLinked {
     config: WorkflowConfig,
     engine: Arc<Engine>,
-    clock_fn: C,
+    clock_fn: Box<dyn ClockFn>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    instance_pre: InstancePre<WorkflowCtx<C>>,
+    instance_pre: InstancePre<WorkflowCtx>,
     exported_functions_noext: Vec<FunctionMetadata>,
     fn_registry: Arc<dyn FunctionRegistry>,
 }
 
-#[derive(Clone)]
-pub struct WorkflowWorker<C: ClockFn> {
+pub struct WorkflowWorker {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     exported_functions_noext: Vec<FunctionMetadata>,
     db_pool: Arc<dyn DbPool>,
-    clock_fn: C,
+    clock_fn: Box<dyn ClockFn>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    instance_pre: InstancePre<WorkflowCtx<C>>,
+    instance_pre: InstancePre<WorkflowCtx>,
     fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
     deadline_factory: Arc<dyn DeadlineTrackerFactory>,
@@ -89,13 +88,13 @@ pub struct WorkflowWorker<C: ClockFn> {
 
 const WASI_NAMESPACE: &str = "wasi";
 
-impl<C: ClockFn> WorkflowWorkerCompiled<C> {
+impl WorkflowWorkerCompiled {
     // If `config.stub_wasi` is set, this function must remove WASI exports and imports.
     pub fn new_with_config(
         runnable_component: RunnableComponent,
         config: WorkflowConfig,
         engine: Arc<Engine>,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
     ) -> Result<Self, DecodeError> {
         let exported_functions_ext = runnable_component
             .wasm_component
@@ -186,7 +185,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     pub fn link(
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
-    ) -> Result<WorkflowWorkerLinked<C>, WasmFileError> {
+    ) -> Result<WorkflowWorkerLinked, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
 
         // Link obelisk:workflow-support and obelisk:log
@@ -220,7 +219,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                     let res = linker_instance.func_new_async(function_name.deref(), {
                         let ffqn = ffqn.clone();
                         let fn_registry = fn_registry.clone();
-                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                               _component_func: ComponentFunc,
                               params: &[Val],
                               results: &mut [Val]| {
@@ -299,27 +298,30 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
         })
     }
 
+    #[must_use]
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
         &self.exported_functions_ext
     }
 
+    #[must_use]
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
         &self.exports_hierarchy_ext
     }
 
+    #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.imported_functions
     }
 }
 
-impl<C: ClockFn> WorkflowWorkerLinked<C> {
+impl WorkflowWorkerLinked {
     pub fn into_worker(
         self,
         db_pool: Arc<dyn DbPool>,
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
         cancel_registry: CancelRegistry,
         log_storage_config: Option<LogStrageConfig>,
-    ) -> WorkflowWorker<C> {
+    ) -> WorkflowWorker {
         WorkflowWorker {
             config: self.config,
             engine: self.engine,
@@ -336,30 +338,30 @@ impl<C: ClockFn> WorkflowWorkerLinked<C> {
     }
 }
 
-enum RunError<C: ClockFn + 'static> {
-    ResultParsingError(ResultParsingError, WorkflowCtx<C>),
+enum RunError {
+    ResultParsingError(ResultParsingError, WorkflowCtx),
     /// Error from the wasmtime runtime that can be downcast to `WorkflowFunctionError`
-    WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C>),
+    WorkerPartialResult(WorkerPartialResult, WorkflowCtx),
     /// Error that happened while running the function.
     Trap {
         reason: String,
         detail: Option<String>,
-        workflow_ctx: WorkflowCtx<C>,
+        workflow_ctx: WorkflowCtx,
         kind: TrapKind,
     },
 }
 
-enum WorkerResultRefactored<C: ClockFn> {
-    Ok(SupportedFunctionReturnValue, WorkflowCtx<C>),
+enum WorkerResultRefactored {
+    Ok(SupportedFunctionReturnValue, WorkflowCtx),
     DbUpdatedByWorkerOrWatcher,
-    FatalError(FatalError, WorkflowCtx<C>),
+    FatalError(FatalError, WorkflowCtx),
     DbError(DbErrorWrite),
 }
 
-type CallFuncResult<C> = Result<(SupportedFunctionReturnValue, WorkflowCtx<C>), RunError<C>>;
+type CallFuncResult = Result<(SupportedFunctionReturnValue, WorkflowCtx), RunError>;
 
 #[derive(Debug, thiserror::Error)]
-enum WorkflowError {
+pub enum WorkflowError {
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
     #[error(transparent)]
@@ -381,18 +383,18 @@ impl From<WorkflowError> for WorkerError {
     }
 }
 
-enum PrepareFuncOk<C: ClockFn + 'static> {
+enum PrepareFuncOk {
     DbUpdatedByWorkerOrWatcher,
     Finished {
-        store: Store<WorkflowCtx<C>>,
+        store: Store<WorkflowCtx>,
         func: wasmtime::component::Func,
         component_func: ComponentFunc,
         params: Arc<[Val]>,
     },
 }
 
-impl<C: ClockFn + 'static> WorkflowWorker<C> {
-    async fn prepare_func(&self, ctx: WorkerContext) -> Result<PrepareFuncOk<C>, WorkflowError> {
+impl WorkflowWorker {
+    async fn prepare_func(&self, ctx: WorkerContext) -> Result<PrepareFuncOk, WorkflowError> {
         assert_eq!(
             self.config.component_id.clone(),
             ctx.locked_event.component_id
@@ -425,7 +427,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             ctx.event_history,
             ctx.responses,
             seed,
-            self.clock_fn.clone(),
+            self.clock_fn.clone_box(),
             self.config.join_next_blocking_strategy,
             ctx.worker_span,
             self.config.backtrace_persist,
@@ -501,12 +503,12 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
     }
 
     async fn call_func(
-        mut store: Store<WorkflowCtx<C>>,
+        mut store: Store<WorkflowCtx>,
         func: wasmtime::component::Func,
         component_func: ComponentFunc,
         params: Arc<[Val]>,
         assigned_fuel: Option<u64>,
-    ) -> CallFuncResult<C> {
+    ) -> CallFuncResult {
         let result_types = component_func.results();
         let mut results = vec![Val::Bool(false); result_types.len()];
         let func_call_result = func.call_async(&mut store, &params, &mut results).await;
@@ -580,7 +582,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
     }
 
     async fn call_func_convert_result(
-        store: Store<WorkflowCtx<C>>,
+        store: Store<WorkflowCtx>,
         func: wasmtime::component::Func,
         component_func: ComponentFunc,
         params: Arc<[Val]>,
@@ -642,11 +644,11 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
 
     #[instrument(skip_all, fields(res, worker_span))]
     async fn convert_result(
-        res: CallFuncResult<C>,
+        res: CallFuncResult,
         worker_span: &Span,
         #[expect(unused_variables)] elapsed: Duration,
         #[expect(unused_variables)] execution_deadline: DateTime<Utc>,
-    ) -> WorkerResultRefactored<C> {
+    ) -> WorkerResultRefactored {
         match res {
             Ok((supported_result, mut workflow_ctx)) => {
                 worker_span.in_scope(|| info!("Finished"));
@@ -712,7 +714,7 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
     }
 
     async fn close_join_sets(
-        workflow_ctx: &mut WorkflowCtx<C>,
+        workflow_ctx: &mut WorkflowCtx,
     ) -> Result<CloseJoinSetOk, WorkflowError> {
         match workflow_ctx.join_sets_close_on_finish().await {
             Ok(()) => Ok(CloseJoinSetOk::Ok),
@@ -762,6 +764,36 @@ impl<C: ClockFn + 'static> WorkflowWorker<C> {
             }
         }
     }
+
+    // /// Must be called on in-memory DB if no writes are desired.
+    // pub async fn replay(ctx: WorkerContext) -> Result<(), WorkflowError> {
+    //     let clock = ConstClock(DateTime::from_timestamp_nanos(0));
+    //     let worker = WorkflowWorker {
+    //         config: WorkflowConfig {
+    //             component_id: (),
+    //             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+    //             backtrace_persist: false,
+    //             stub_wasi: (),
+    //             fuel: None,
+    //             lock_extension: Duration::ZERO, // There won't be a timeout ???
+    //             subscription_interruption: None, // No need to wait for response, just interrupt
+    //         },
+    //         engine: todo!(),
+    //         exported_functions_noext: todo!(),
+    //         db_pool: todo!(),
+    //         clock_fn: todo!(),
+    //         exported_ffqn_to_index: todo!(),
+    //         instance_pre: todo!(),
+    //         fn_registry: todo!(),
+    //         cancel_registry: CancelRegistry::new(),
+    //         deadline_factory: Arc::new(DeadlineTrackerFactoryTokio {
+    //             leeway: Duration::ZERO,
+    //             clock_fn,
+    //         }),
+    //         log_storage_config: None,
+    //     };
+    //     worker.run_internal(ctx).await.map(|_| ())
+    // }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -780,7 +812,7 @@ pub enum ReplayError {
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
+impl Worker for WorkflowWorker {
     fn exported_functions(&self) -> &[FunctionMetadata] {
         &self.exported_functions_noext
     }
@@ -885,14 +917,14 @@ pub(crate) mod tests {
         )
     }
 
-    fn new_workflow<C: ClockFn + 'static>(
+    fn new_workflow(
         db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
-    ) -> ExecTask<C> {
+    ) -> ExecTask {
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let component_id = ComponentId::dummy_workflow();
@@ -910,7 +942,7 @@ pub(crate) mod tests {
                     subscription_interruption: None,
                 },
                 workflow_engine,
-                clock_fn.clone(),
+                clock_fn.clone_box(),
             )
             .unwrap()
             .link(fn_registry.clone())
@@ -919,7 +951,7 @@ pub(crate) mod tests {
                 db_pool.clone(),
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
-                    clock_fn: clock_fn.clone(),
+                    clock_fn: clock_fn.clone_box(),
                 }),
                 cancel_registry,
                 None, // log_storage_config
@@ -939,13 +971,13 @@ pub(crate) mod tests {
         ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_pool)
     }
 
-    pub(crate) fn new_workflow_fibo<C: ClockFn + 'static>(
+    pub(crate) fn new_workflow_fibo(
         db_pool: Arc<dyn DbPool>,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
-    ) -> ExecTask<C> {
+    ) -> ExecTask {
         new_workflow(
             db_pool,
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
@@ -989,7 +1021,7 @@ pub(crate) mod tests {
         let cancel_registry = CancelRegistry::new();
         let workflow_exec = new_workflow_fibo(
             db_pool.clone(),
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             join_next_blocking_strategy,
             &fn_registry,
             cancel_registry,
@@ -1048,7 +1080,7 @@ pub(crate) mod tests {
 
         info!("Execution should call the activity and finish");
 
-        let activity_exec = new_activity_fibo(db_pool.clone(), sim_clock.clone(), TokioSleep);
+        let activity_exec = new_activity_fibo(db_pool.clone(), sim_clock.clone_box(), TokioSleep);
         let executed_activities = activity_exec
             .tick_test_await(sim_clock.now(), RunId::generate())
             .await;
@@ -1085,21 +1117,21 @@ pub(crate) mod tests {
         let cancel_registry = CancelRegistry::new();
         new_workflow_fibo(
             db_pool.clone(),
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             cancel_registry,
         );
     }
 
-    pub(crate) fn compile_workflow_worker<C: ClockFn>(
+    pub(crate) fn compile_workflow_worker(
         wasm_path: &str,
         db_pool: Arc<dyn DbPool>,
-        clock_fn: C,
+        clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
-    ) -> Arc<WorkflowWorker<C>> {
+    ) -> Arc<WorkflowWorker> {
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         Arc::new(
@@ -1116,7 +1148,7 @@ pub(crate) mod tests {
                     subscription_interruption: None,
                 },
                 workflow_engine,
-                clock_fn.clone(),
+                clock_fn.clone_box(),
             )
             .unwrap()
             .link(fn_registry.clone())
@@ -1145,7 +1177,7 @@ pub(crate) mod tests {
         let worker = compile_workflow_worker(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &TestingFnRegistry::new_from_components(vec![
                 compile_activity(
@@ -1157,7 +1189,7 @@ pub(crate) mod tests {
             ]),
             cancel_registry,
         );
-        // simulate a scheduling problem where deadline < now, meaning there is no point in running the execution.
+        // simulate a scheduling problem where deadline < Now.clone_box(), meaning there is no point in running the execution.
         let execution_deadline = sim_clock.now();
         sim_clock.move_time_forward(Duration::from_millis(100));
 
@@ -1228,7 +1260,7 @@ pub(crate) mod tests {
             let worker = compile_workflow_worker(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 db_pool.clone(),
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 join_next_blocking_strategy,
                 &fn_registry,
                 cancel_registry,
@@ -1247,7 +1279,7 @@ pub(crate) mod tests {
             ExecTask::new_test(
                 worker,
                 exec_config,
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 db_pool.clone(),
                 ffqns,
             )
@@ -1348,7 +1380,7 @@ pub(crate) mod tests {
             let worker = compile_workflow_worker(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 db_pool.clone(),
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 join_next_blocking_strategy,
                 &fn_registry,
                 cancel_registry,
@@ -1367,7 +1399,7 @@ pub(crate) mod tests {
             ExecTask::new_test(
                 worker,
                 exec_config.clone(),
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 db_pool.clone(),
                 ffqns,
             )
@@ -1493,7 +1525,7 @@ pub(crate) mod tests {
         let activity_exec = new_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
         );
@@ -1501,7 +1533,7 @@ pub(crate) mod tests {
         let workflow_exec = new_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
@@ -1578,7 +1610,7 @@ pub(crate) mod tests {
         let activity_exec = new_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
         );
@@ -1586,7 +1618,7 @@ pub(crate) mod tests {
         let workflow_exec = new_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
@@ -1671,14 +1703,14 @@ pub(crate) mod tests {
         let activity_exec = new_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
         );
         let workflow_exec = new_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
@@ -1779,7 +1811,7 @@ pub(crate) mod tests {
         let worker = compile_workflow_worker(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             join_next_strategy,
             &fn_registry,
             CancelRegistry::new(),
@@ -1816,7 +1848,7 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy: LockingStrategy::default(),
             },
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
             Arc::new([FFQN_WORKFLOW_SLEEP_SCHEDULE_NOOP_FFQN]),
         );
@@ -1888,7 +1920,7 @@ pub(crate) mod tests {
         let activity_exec = new_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
         );
@@ -1896,7 +1928,7 @@ pub(crate) mod tests {
         let workflow_exec = new_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
@@ -1982,7 +2014,7 @@ pub(crate) mod tests {
         let worker = compile_workflow_worker(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             db_pool.clone(),
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
@@ -2019,7 +2051,7 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy: LockingStrategy::default(),
             },
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
             Arc::new([FFQN_WORKFLOW_STUB]),
         );
@@ -2125,7 +2157,7 @@ pub(crate) mod tests {
         let worker = compile_workflow_worker(
             workflow_wasm_path,
             db_pool.clone(),
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
@@ -2142,7 +2174,7 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::WORKFLOW_TEST,
                 locking_strategy: LockingStrategy::default(),
             },
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
             Arc::new([ffqn.clone()]),
         );
@@ -2308,7 +2340,7 @@ pub(crate) mod tests {
         let worker = compile_workflow_worker(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             db_pool.clone(),
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
@@ -2342,7 +2374,7 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy: LockingStrategy::default(),
             },
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
             Arc::new([FFQN_WORKFLOW_STUB]),
         );
@@ -2454,7 +2486,7 @@ pub(crate) mod tests {
         let workflow_worker = compile_workflow_worker(
             test_programs_serde_workflow_builder::TEST_PROGRAMS_SERDE_WORKFLOW,
             db_pool.clone(),
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
@@ -2489,7 +2521,7 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy: LockingStrategy::default(),
             },
-            sim_clock.clone(),
+            sim_clock.clone_box(),
             db_pool.clone(),
             Arc::new([EXPECT_TRAP_FFQN]),
         );
@@ -2524,7 +2556,7 @@ pub(crate) mod tests {
             let (activity_worker, component_id) = new_activity_worker(
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
                 Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap(),
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 TokioSleep,
             );
             let exec_activity = ExecTask::new_all_ffqns_test(
@@ -2539,7 +2571,7 @@ pub(crate) mod tests {
                     retry_config: ComponentRetryConfig::ZERO,
                     locking_strategy: LockingStrategy::default(),
                 },
-                sim_clock.clone(),
+                sim_clock.clone_box(),
                 db_pool.clone(),
             );
             {
