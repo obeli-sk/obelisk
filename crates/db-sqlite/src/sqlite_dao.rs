@@ -3623,7 +3623,7 @@ impl DbExecutor for SqlitePool {
         {
             let mut pending_subscribers = self.0.pending_subscribers.lock().unwrap();
 
-            match pending_subscribers.remove_by_component(&component_digest) {
+            match pending_subscribers.remove_by_component(component_digest) {
                 Some((_, tag)) if tag == unique_tag => {
                     // Cleanup OK.
                 }

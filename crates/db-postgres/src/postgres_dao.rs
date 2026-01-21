@@ -3319,7 +3319,7 @@ impl DbExecutor for PostgresConnection {
                         &tx,
                         1,
                         pending_at_or_sooner,
-                        &component_digest,
+                        component_digest,
                         SelectStrategy::Read,
                     )
                     .await
@@ -3349,7 +3349,7 @@ impl DbExecutor for PostgresConnection {
         // Cleanup
         {
             let mut pending_subscribers = self.pending_subscribers.lock().unwrap();
-            match pending_subscribers.remove_by_component(&component_digest) {
+            match pending_subscribers.remove_by_component(component_digest) {
                 Some((_, tag)) if tag == unique_tag => {}
                 Some(other) => {
                     pending_subscribers.insert_by_component(component_digest.clone(), other);
