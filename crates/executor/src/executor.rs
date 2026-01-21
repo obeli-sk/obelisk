@@ -201,7 +201,7 @@ impl ExecTask {
                 if let Ok(db_exec) = res {
                     let _ = task.tick(db_exec.as_ref(), clock_fn.now(), RunId::generate()).await;
                     db_exec
-                        .wait_for_pending_by_component_id(clock_fn.now(), &task.config.component_id, {
+                        .wait_for_pending_by_component_digest(clock_fn.now(), &task.config.component_id.input_digest, {
                             let sleep = sleep.clone();
                             Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })})
                         .await;

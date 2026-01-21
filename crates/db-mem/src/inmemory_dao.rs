@@ -7,6 +7,7 @@ use self::index::JournalsIndex;
 use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::component_id::InputContentDigest;
 use concepts::prefixed_ulid::{DelayId, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
@@ -179,10 +180,10 @@ impl DbExecutor for InMemoryDbConnection {
         }
     }
 
-    async fn wait_for_pending_by_component_id(
+    async fn wait_for_pending_by_component_digest(
         &self,
         _pending_at_or_sooner: DateTime<Utc>,
-        _component_id: &ComponentId,
+        _component_digest: &InputContentDigest,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         timeout_fut.await;

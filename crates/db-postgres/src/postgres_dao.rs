@@ -3296,20 +3296,18 @@ impl DbExecutor for PostgresConnection {
     }
 
     #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
-    async fn wait_for_pending_by_component_id(
+    async fn wait_for_pending_by_component_digest(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
-        component_id: &ComponentId,
+        component_digest: &InputContentDigest,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         let unique_tag: u64 = rand::random();
         let (sender, mut receiver) = mpsc::channel(1);
         {
             let mut pending_subscribers = self.pending_subscribers.lock().unwrap();
-            pending_subscribers.insert_by_component(
-                component_id.input_digest.clone(),
-                (sender.clone(), unique_tag),
-            );
+            pending_subscribers
+                .insert_by_component(component_digest.clone(), (sender.clone(), unique_tag));
         }
 
         async {
@@ -3321,7 +3319,7 @@ impl DbExecutor for PostgresConnection {
                         &tx,
                         1,
                         pending_at_or_sooner,
-                        &component_id.input_digest,
+                        &component_digest,
                         SelectStrategy::Read,
                     )
                     .await
@@ -3351,11 +3349,10 @@ impl DbExecutor for PostgresConnection {
         // Cleanup
         {
             let mut pending_subscribers = self.pending_subscribers.lock().unwrap();
-            match pending_subscribers.remove_by_component(&component_id.input_digest) {
+            match pending_subscribers.remove_by_component(&component_digest) {
                 Some((_, tag)) if tag == unique_tag => {}
                 Some(other) => {
-                    pending_subscribers
-                        .insert_by_component(component_id.input_digest.clone(), other);
+                    pending_subscribers.insert_by_component(component_digest.clone(), other);
                 }
                 None => {}
             }

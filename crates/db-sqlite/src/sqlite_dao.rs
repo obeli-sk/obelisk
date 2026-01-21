@@ -3577,26 +3577,24 @@ impl DbExecutor for SqlitePool {
     // Supports only one subscriber (executor) per component id.
     // A new subscriber replaces the old one, which will eventually time out, which is fine.
     #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
-    async fn wait_for_pending_by_component_id(
+    async fn wait_for_pending_by_component_digest(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
-        component_id: &ComponentId,
+        component_digest: &InputContentDigest,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         let unique_tag: u64 = rand::random();
         let (sender, mut receiver) = mpsc::channel(1); // senders must use `try_send`
         {
             let mut pending_subscribers = self.0.pending_subscribers.lock().unwrap();
-            pending_subscribers.insert_by_component(
-                component_id.input_digest.clone(),
-                (sender.clone(), unique_tag),
-            );
+            pending_subscribers
+                .insert_by_component(component_digest.clone(), (sender.clone(), unique_tag));
         }
         async {
             let Ok(execution_ids_versions) = self
                 .transaction(
                     {
-                        let input_digest = component_id.input_digest.clone();
+                        let input_digest = component_digest.clone();
                         move |conn| Self::get_pending_by_component_input_digest(conn, 1, pending_at_or_sooner, &input_digest)
                     },
                     "get_pending_by_component_input_digest",
@@ -3625,14 +3623,13 @@ impl DbExecutor for SqlitePool {
         {
             let mut pending_subscribers = self.0.pending_subscribers.lock().unwrap();
 
-            match pending_subscribers.remove_by_component(&component_id.input_digest) {
+            match pending_subscribers.remove_by_component(&component_digest) {
                 Some((_, tag)) if tag == unique_tag => {
                     // Cleanup OK.
                 }
                 Some(other) => {
                     // Reinsert foreign sender.
-                    pending_subscribers
-                        .insert_by_component(component_id.input_digest.clone(), other);
+                    pending_subscribers.insert_by_component(component_digest.clone(), other);
                 }
                 None => {
                     // Value was replaced and cleaned up already.
