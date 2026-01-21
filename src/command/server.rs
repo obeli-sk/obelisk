@@ -1305,6 +1305,7 @@ struct LinkedComponents {
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookInstancesAndRoutes>,
 }
 
+#[expect(clippy::large_enum_variant)]
 enum CompiledComponent {
     ActivityOrWorkflow {
         worker: WorkerCompiled,

@@ -590,7 +590,7 @@ mod index {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct InMemoryPool(Arc<std::sync::Mutex<DbHolder>>, Arc<AtomicBool>);
 
 impl InMemoryPool {
