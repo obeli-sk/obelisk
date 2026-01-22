@@ -1537,6 +1537,7 @@ pub(crate) mod tests {
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
     use executor::executor::LockingStrategy;
+    use executor::worker::WorkerResultOk;
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
@@ -1560,7 +1561,9 @@ pub(crate) mod tests {
                 WorkerPartialResult::FatalError(err, version) => {
                     WorkerResult::Err(executor::worker::WorkerError::FatalError(err, version))
                 }
-                WorkerPartialResult::InterruptDbUpdated => WorkerResult::DbUpdatedByWorkerOrWatcher,
+                WorkerPartialResult::InterruptDbUpdated => {
+                    WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+                }
                 WorkerPartialResult::DbError(db_err) => {
                     WorkerResult::Err(executor::worker::WorkerError::DbError(db_err))
                 }
@@ -1817,15 +1820,15 @@ pub(crate) mod tests {
             let res = match workflow_ctx.join_sets_close_on_finish().await {
                 Ok(()) => {
                     info!("Finishing");
-                    WorkerResult::Ok(
-                        SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                        workflow_ctx.db_connection.version,
-                        None,
-                    )
+                    WorkerResult::Ok(WorkerResultOk::Finished {
+                        retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                        version: workflow_ctx.db_connection.version,
+                        http_client_traces: None,
+                    })
                 }
                 Err(ApplyError::InterruptDbUpdated) => {
                     info!("Interrupting");
-                    return WorkerResult::DbUpdatedByWorkerOrWatcher;
+                    return WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
                 }
                 other => panic!("Unexpected error: {other:?}"),
             };
@@ -2178,7 +2181,10 @@ pub(crate) mod tests {
             // Run it SUBMITS times to close all join sets.
             for run in 0..SUBMITS {
                 info!("Run {run}");
-                assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher);
+                assert_matches!(
+                    worker_result,
+                    WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+                );
                 let execution_log = db_connection.get(&execution_id).await.unwrap();
                 let closing_join_nexts: hashbrown::HashSet<_> = execution_log
                     .event_history()
@@ -2221,7 +2227,7 @@ pub(crate) mod tests {
             }
             let (finished_value, version) = assert_matches!(
                 worker_result,
-                WorkerResult::Ok(finished_value, version, _http_client_traces) => (finished_value, version),
+                WorkerResult::Ok(WorkerResultOk::Finished { retval, version, http_client_traces:_ }) => (retval, version),
                 "should be finished"
             );
             info!("Appending finished result");

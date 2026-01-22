@@ -24,19 +24,7 @@ pub trait Worker: Send + Sync + 'static {
     fn exported_functions_noext(&self) -> &[FunctionMetadata];
 }
 
-#[must_use]
-#[derive(Debug)]
-pub enum WorkerResult {
-    // FIXME: Use Result<WorkerResultOk, WorkerError>
-    Ok(
-        SupportedFunctionReturnValue,
-        Version,
-        Option<Vec<HttpClientTrace>>,
-    ),
-    // If no write occured, the watcher will timeout the execution and retry after backoff which avoids the busy loop
-    DbUpdatedByWorkerOrWatcher,
-    Err(WorkerError),
-}
+pub type WorkerResult = Result<WorkerResultOk, WorkerError>;
 
 #[derive(Debug)]
 pub enum WorkerResultOk {
@@ -44,20 +32,8 @@ pub enum WorkerResultOk {
     Finished {
         retval: SupportedFunctionReturnValue,
         version: Version,
-        traces: Option<Vec<HttpClientTrace>>,
+        http_client_traces: Option<Vec<HttpClientTrace>>,
     },
-}
-impl From<WorkerResultOk> for WorkerResult {
-    fn from(value: WorkerResultOk) -> Self {
-        match value {
-            WorkerResultOk::DbUpdatedByWorkerOrWatcher => WorkerResult::DbUpdatedByWorkerOrWatcher,
-            WorkerResultOk::Finished {
-                retval,
-                version,
-                traces,
-            } => WorkerResult::Ok(retval, version, traces),
-        }
-    }
 }
 
 #[derive(Debug)]

@@ -13,7 +13,7 @@ use concepts::storage::{LogInfoAppendRow, LogStreamType};
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue, TrapKind};
 use concepts::{FunctionMetadata, ResultParsingError};
-use executor::worker::{FatalError, WorkerContext, WorkerResult};
+use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
 use std::path::Path;
@@ -496,7 +496,11 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                         });
                     }
                 }
-                WorkerResult::Ok(result, ctx.version.clone(), http_client_traces)
+                WorkerResult::Ok(WorkerResultOk::Finished {
+                    retval: result,
+                    version: ctx.version.clone(),
+                    http_client_traces,
+                })
             }
             Ok(Err(result_parsing_err)) => WorkerResult::Err(WorkerError::FatalError(
                 FatalError::ResultParsingError(result_parsing_err),

@@ -1,4 +1,4 @@
-use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
+use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::RunId;
@@ -427,7 +427,11 @@ impl ExecTask {
         unlock_expiry_on_limit_reached: Duration,
     ) -> Result<Option<AppendOrCancel>, DbErrorWrite> {
         Ok(match worker_result {
-            WorkerResult::Ok(result, new_version, http_client_traces) => {
+            WorkerResult::Ok(WorkerResultOk::Finished {
+                retval: result,
+                version,
+                http_client_traces,
+            }) => {
                 info!("Execution finished: {result}");
                 let child_finished =
                     parent.map(
@@ -449,11 +453,11 @@ impl ExecTask {
                     created_at: result_obtained_at,
                     primary_event,
                     execution_id,
-                    version: new_version,
+                    version,
                     child_finished,
                 }))
             }
-            WorkerResult::DbUpdatedByWorkerOrWatcher => None,
+            WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher) => None,
             WorkerResult::Err(err) => {
                 let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
 
@@ -951,9 +955,11 @@ mod tests {
             db_pool,
             exec_config,
             Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-                SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                Version::new(2),
-                None,
+                WorkerResultOk::Finished {
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    version: Version::new(2),
+                    http_client_traces: None,
+                },
             ))),
             tick_fn,
         )
@@ -994,9 +1000,11 @@ mod tests {
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-            SUPPORTED_RETURN_VALUE_OK_EMPTY,
-            Version::new(2),
-            None,
+            WorkerResultOk::Finished {
+                retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                version: Version::new(2),
+                http_client_traces: None,
+            },
         )));
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -1176,7 +1184,11 @@ mod tests {
                 Version::new(4),
                 (
                     vec![],
-                    WorkerResult::Ok(SUPPORTED_RETURN_VALUE_OK_EMPTY, Version::new(4), None),
+                    WorkerResult::Ok(WorkerResultOk::Finished {
+                        retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                        version: Version::new(4),
+                        http_client_traces: None,
+                    }),
                 ),
             )])),
         )));
@@ -1341,7 +1353,7 @@ mod tests {
             detail: None,
         };
         child_execution_permanently_failed_should_notify_parent(
-            WorkerResult::DbUpdatedByWorkerOrWatcher,
+            WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher),
             expected_child_err,
             locking_strategy,
         )
@@ -1360,9 +1372,9 @@ mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
 
-        let parent_worker = Arc::new(SimpleWorker::with_single_result(
-            WorkerResult::DbUpdatedByWorkerOrWatcher,
-        ));
+        let parent_worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
+            WorkerResultOk::DbUpdatedByWorkerOrWatcher,
+        )));
         let parent_execution_id = ExecutionId::generate();
         db_pool
             .connection()
@@ -1569,7 +1581,11 @@ mod tests {
     impl Worker for SleepyWorker {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             tokio::time::sleep(self.duration).await;
-            WorkerResult::Ok(self.result.clone(), ctx.version, None)
+            WorkerResult::Ok(WorkerResultOk::Finished {
+                retval: self.result.clone(),
+                version: ctx.version,
+                http_client_traces: None,
+            })
         }
 
         fn exported_functions_noext(&self) -> &[FunctionMetadata] {

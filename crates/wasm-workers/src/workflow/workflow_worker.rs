@@ -604,7 +604,7 @@ impl WorkflowWorker {
                     Ok(CloseJoinSetOk::Ok) => Ok(WorkerResultOk::Finished {
                         retval,
                         version: workflow_ctx.db_connection.version,
-                        traces: None,
+                        http_client_traces: None,
                     }),
                     Ok(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher) => {
                         Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
@@ -877,7 +877,7 @@ impl Worker for WorkflowWorker {
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         match self.run_internal(ctx).await {
-            Ok(ok) => WorkerResult::from(ok),
+            Ok(ok) => WorkerResult::Ok(ok),
             Err(workflow_err) => WorkerResult::Err(WorkerError::from(workflow_err)),
         }
     }
@@ -1279,7 +1279,10 @@ pub(crate) mod tests {
             },
         };
         let worker_result = worker.run(ctx).await;
-        assert_matches!(worker_result, WorkerResult::DbUpdatedByWorkerOrWatcher); // Do not write anything, let the watcher mark execution as timed out.
+        assert_matches!(
+            worker_result,
+            WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+        ); // Do not write anything, let the watcher mark execution as timed out.
         db_close.close().await;
     }
 
