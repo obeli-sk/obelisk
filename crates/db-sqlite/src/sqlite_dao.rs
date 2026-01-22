@@ -1313,7 +1313,7 @@ impl SqlitePool {
         Ok(())
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(execution_id = %req.execution_id))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
     fn create_inner(
         tx: &Transaction,
         req: CreateRequest,
@@ -3883,7 +3883,7 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
-    #[instrument(level = Level::DEBUG, skip(self, batch, child_req))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %version))]
     async fn append_batch_create_new_execution(
         &self,
         current_time: DateTime<Utc>,

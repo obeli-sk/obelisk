@@ -398,10 +398,7 @@ enum PrepareFuncOk {
 
 impl WorkflowWorker {
     async fn prepare_func(&self, ctx: WorkerContext) -> Result<PrepareFuncOk, WorkflowError> {
-        assert_eq!(
-            self.config.component_id.clone(),
-            ctx.locked_event.component_id
-        );
+        assert_eq!(self.config.component_id, ctx.locked_event.component_id);
 
         let deadline_tracker = match self
             .deadline_factory
@@ -901,6 +898,7 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use chrono::DateTime;
+    use concepts::component_id::InputContentDigest;
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::{
         AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, JoinSetResponse, Locked,
@@ -935,6 +933,7 @@ pub(crate) mod tests {
     use test_utils::sim_clock::SimClock;
     use tracing::debug;
     use tracing::info_span;
+    use utils::sha256sum::calculate_sha256_file;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -961,39 +960,44 @@ pub(crate) mod tests {
     const FFQN_WORKFLOW_HTTP_GET_SUCCESSFUL: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
     const FFQN_WORKFLOW_HTTP_GET_RESP: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_RESP);
 
-    pub(crate) fn compile_workflow(wasm_path: &str) -> (RunnableComponent, ComponentId) {
+    pub(crate) async fn compile_workflow(wasm_path: &str) -> (RunnableComponent, ComponentId) {
         let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        compile_workflow_with_engine(wasm_path, &engine)
+        compile_workflow_with_engine(wasm_path, &engine).await
     }
 
-    pub(crate) fn compile_workflow_with_engine(
+    pub(crate) async fn compile_workflow_with_engine(
         wasm_path: &str,
         engine: &Engine,
     ) -> (RunnableComponent, ComponentId) {
-        let component_id = ComponentId::dummy_workflow();
+        let component_id = ComponentId::new(
+            ComponentType::Workflow,
+            StrVariant::empty(),
+            InputContentDigest(calculate_sha256_file(wasm_path).await.unwrap()),
+        )
+        .unwrap();
         (
             RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
             component_id,
         )
     }
 
-    fn new_workflow(
+    pub(crate) async fn compile_workflow_worker(
+        wasm_path: &str,
         db_pool: Arc<dyn DbPool>,
-        wasm_path: &'static str,
         clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
-    ) -> ExecTask {
+    ) -> Arc<WorkflowWorker> {
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let component_id = ComponentId::dummy_workflow();
-        let worker = Arc::new(
+        let (runnable_component, component_id) =
+            compile_workflow_with_engine(wasm_path, &workflow_engine).await;
+        Arc::new(
             WorkflowWorkerCompiled::new_with_config(
-                RunnableComponent::new(wasm_path, &workflow_engine, component_id.component_type)
-                    .unwrap(),
+                runnable_component,
                 WorkflowConfig {
-                    component_id: component_id.clone(),
+                    component_id,
                     join_next_blocking_strategy,
                     backtrace_persist: false,
                     stub_wasi: false,
@@ -1008,44 +1012,67 @@ pub(crate) mod tests {
             .link(fn_registry.clone())
             .unwrap()
             .into_worker(
-                db_pool.clone(),
+                db_pool,
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
-                    clock_fn: clock_fn.clone_box(),
+                    clock_fn,
                 }),
                 cancel_registry,
                 None, // log_storage_config
             ),
-        );
+        )
+    }
+
+    async fn new_workflow_exec_task(
+        db_pool: Arc<dyn DbPool>,
+        wasm_path: &'static str,
+        clock_fn: Box<dyn ClockFn>,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        fn_registry: &Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
+        locking_strategy: LockingStrategy,
+    ) -> ExecTask {
+        let worker = compile_workflow_worker(
+            wasm_path,
+            db_pool.clone(),
+            clock_fn.clone_box(),
+            join_next_blocking_strategy,
+            fn_registry,
+            cancel_registry,
+        )
+        .await;
         info!("Instantiated worker");
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
-            component_id,
+            component_id: worker.config.component_id.clone(),
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::WORKFLOW,
-            locking_strategy: LockingStrategy::default(),
+            locking_strategy,
         };
         ExecTask::new_all_ffqns_test(worker, exec_config, clock_fn, db_pool)
     }
 
-    pub(crate) fn new_workflow_fibo(
+    pub(crate) async fn new_workflow_fibo(
         db_pool: Arc<dyn DbPool>,
         clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: &Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
+        locking_strategy: LockingStrategy,
     ) -> ExecTask {
-        new_workflow(
+        new_workflow_exec_task(
             db_pool,
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             clock_fn,
             join_next_blocking_strategy,
             fn_registry,
             cancel_registry,
+            locking_strategy,
         )
+        .await
     }
 
     #[expand_enum_database]
@@ -1055,6 +1082,8 @@ pub(crate) mod tests {
         db: Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
     ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = db.set_up().await;
@@ -1062,6 +1091,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock,
             join_next_blocking_strategy,
+            locking_strategy,
         )
         .await;
         db_close.close().await;
@@ -1071,12 +1101,15 @@ pub(crate) mod tests {
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
+        locking_strategy: LockingStrategy,
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         test_utils::set_up();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
-            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW),
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                .await,
         ]);
         let cancel_registry = CancelRegistry::new();
         let workflow_exec = new_workflow_fibo(
@@ -1085,7 +1118,9 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
             &fn_registry,
             cancel_registry,
-        );
+            locking_strategy,
+        )
+        .await;
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -1102,7 +1137,7 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                component_id: ComponentId::dummy_workflow(),
+                component_id: workflow_exec.config.component_id.clone(),
                 scheduled_by: None,
             })
             .await
@@ -1140,7 +1175,13 @@ pub(crate) mod tests {
 
         info!("Execution should call the activity and finish");
 
-        let activity_exec = new_activity_fibo(db_pool.clone(), sim_clock.clone_box(), TokioSleep);
+        let activity_exec = new_activity_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            TokioSleep,
+            locking_strategy,
+        )
+        .await;
         let executed_activities = activity_exec
             .tick_test_await(sim_clock.now(), RunId::generate())
             .await;
@@ -1181,48 +1222,9 @@ pub(crate) mod tests {
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             cancel_registry,
-        );
-    }
-
-    pub(crate) fn compile_workflow_worker(
-        wasm_path: &str,
-        db_pool: Arc<dyn DbPool>,
-        clock_fn: Box<dyn ClockFn>,
-        join_next_blocking_strategy: JoinNextBlockingStrategy,
-        fn_registry: &Arc<dyn FunctionRegistry>,
-        cancel_registry: CancelRegistry,
-    ) -> Arc<WorkflowWorker> {
-        let workflow_engine =
-            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        Arc::new(
-            WorkflowWorkerCompiled::new_with_config(
-                RunnableComponent::new(wasm_path, &workflow_engine, ComponentType::Workflow)
-                    .unwrap(),
-                WorkflowConfig {
-                    component_id: ComponentId::dummy_workflow(),
-                    join_next_blocking_strategy,
-                    backtrace_persist: false,
-                    stub_wasi: false,
-                    fuel: None,
-                    lock_extension: Duration::ZERO,
-                    subscription_interruption: None,
-                },
-                workflow_engine,
-                clock_fn.clone_box(),
-            )
-            .unwrap()
-            .link(fn_registry.clone())
-            .unwrap()
-            .into_worker(
-                db_pool,
-                Arc::new(DeadlineTrackerFactoryTokio {
-                    leeway: Duration::ZERO,
-                    clock_fn,
-                }),
-                cancel_registry,
-                None, // log_storage_config
-            ),
+            LockingStrategy::ByComponentDigest, // does not matter
         )
+        .await;
     }
 
     #[tokio::test]
@@ -1242,13 +1244,17 @@ pub(crate) mod tests {
             &TestingFnRegistry::new_from_components(vec![
                 compile_activity(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                ),
+                )
+                .await,
                 compile_workflow(
+                    // TODO: compling workflow twice
                     test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
-                ),
+                )
+                .await,
             ]),
             cancel_registry,
-        );
+        )
+        .await;
         // simulate a scheduling problem where deadline < Now.clone_box(), meaning there is no point in running the execution.
         let execution_deadline = sim_clock.now();
         sim_clock.move_time_forward(Duration::from_millis(100));
@@ -1264,7 +1270,7 @@ pub(crate) mod tests {
             can_be_retried: false,
             worker_span: info_span!("worker-test"),
             locked_event: Locked {
-                component_id: ComponentId::dummy_workflow(),
+                component_id: worker.config.component_id.clone(),
                 executor_id: ExecutorId::generate(),
                 run_id: RunId::generate(),
                 lock_expires_at: execution_deadline,
@@ -1276,8 +1282,12 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn sleep2_happy_path() {
+    async fn sleep2_happy_path(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         const SLEEP_SCHEDULE_AT_HOST_ACTIVITY_FFQN: FunctionFqn =
         FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_SCHEDULE_AT); // sleep-host-activity: func(s: schedule-at);
 
@@ -1286,35 +1296,19 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-        let sim_clock = SimClock::epoch();
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection().await.unwrap();
-        {
-            let params = Params::from_json_values_test(vec![json!("now")]);
-            db_connection
-                .create(CreateRequest {
-                    created_at: sim_clock.now(),
-                    execution_id: execution_id.clone(),
-                    ffqn: SLEEP_SCHEDULE_AT_HOST_ACTIVITY_FFQN,
-                    params,
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: sim_clock.now(),
-                    component_id: ComponentId::dummy_workflow(),
-                    scheduled_by: None,
-                })
-                .await
-                .unwrap();
-        }
         let sim_clock = SimClock::epoch();
         let sleep_exec = {
             let fn_registry = TestingFnRegistry::new_from_components(vec![
                 compile_activity(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                ), // not used here
+                )
+                .await, // not used here
                 compile_workflow(
                     test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
-                ),
+                )
+                .await,
             ]);
             let cancel_registry = CancelRegistry::new();
             let worker = compile_workflow_worker(
@@ -1324,21 +1318,39 @@ pub(crate) mod tests {
                 join_next_blocking_strategy,
                 &fn_registry,
                 cancel_registry,
-            );
+            )
+            .await;
+            db_connection
+                .create(CreateRequest {
+                    created_at: sim_clock.now(),
+                    execution_id: execution_id.clone(),
+                    ffqn: SLEEP_SCHEDULE_AT_HOST_ACTIVITY_FFQN,
+                    params: Params::from_json_values_test(vec![json!("now")]),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: sim_clock.now(),
+                    component_id: match locking_strategy {
+                        LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
+                        LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
+                    },
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
             let exec_config = ExecConfig {
                 batch_size: 1,
                 lock_expiry: LOCK_DURATION,
                 tick_sleep: Duration::ZERO, // irrelevant here as we call tick manually
-                component_id: ComponentId::dummy_workflow(),
+                component_id: worker.config.component_id.clone(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy: LockingStrategy::default(),
+                locking_strategy,
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
             ExecTask::new_test(
-                worker,
                 exec_config,
+                worker,
                 sim_clock.clone_box(),
                 db_pool.clone(),
                 ffqns,
@@ -1405,6 +1417,8 @@ pub(crate) mod tests {
         database: Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
     ) {
         const SLEEP_MILLIS: u32 = 100;
         const LOCK_DURATION: Duration = Duration::from_secs(1);
@@ -1413,26 +1427,14 @@ pub(crate) mod tests {
         let (_guard, db_pool, db_close) = database.set_up().await;
 
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY), // not used here
-            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW),
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY)
+                .await, // not used here
+            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW)
+                .await,
         ]);
 
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection().await.unwrap();
-        db_connection
-            .create(CreateRequest {
-                created_at: sim_clock.now(),
-                execution_id: execution_id.clone(),
-                ffqn: SLEEP1_HOST_ACTIVITY_FFQN,
-                params: Params::from_json_values_test(vec![json!({"milliseconds": SLEEP_MILLIS})]),
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_workflow(),
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
 
         let executor_id = ExecutorId::generate();
         let sleep_exec = {
@@ -1444,21 +1446,43 @@ pub(crate) mod tests {
                 join_next_blocking_strategy,
                 &fn_registry,
                 cancel_registry,
-            );
+            )
+            .await;
+
+            db_connection
+                .create(CreateRequest {
+                    created_at: sim_clock.now(),
+                    execution_id: execution_id.clone(),
+                    ffqn: SLEEP1_HOST_ACTIVITY_FFQN,
+                    params: Params::from_json_values_test(vec![
+                        json!({"milliseconds": SLEEP_MILLIS}),
+                    ]),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: sim_clock.now(),
+                    component_id: match locking_strategy {
+                        LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
+                        LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
+                    },
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+
             let exec_config = ExecConfig {
                 batch_size: 1,
                 lock_expiry: LOCK_DURATION,
                 tick_sleep: Duration::ZERO, // irrelevant here as we call tick manually
-                component_id: ComponentId::dummy_workflow(),
+                component_id: worker.config.component_id.clone(),
                 task_limiter: None,
                 executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy: LockingStrategy::default(),
+                locking_strategy,
             };
             let ffqns = extract_exported_ffqns_noext_test(worker.as_ref());
             ExecTask::new_test(
-                worker,
                 exec_config.clone(),
+                worker,
                 sim_clock.clone_box(),
                 db_pool.clone(),
                 ffqns,
@@ -1568,7 +1592,11 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn stargazers_should_be_deserialized_after_interrupt(db: Database) {
+    async fn stargazers_should_be_deserialized_after_interrupt(
+        db: Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_close) = db.set_up().await;
@@ -1577,10 +1605,12 @@ pub(crate) mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            ),
+            )
+            .await,
             compile_workflow(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            ),
+            )
+            .await,
         ]);
         let activity_exec = new_activity(
             db_pool.clone(),
@@ -1588,16 +1618,20 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
-        );
+            locking_strategy,
+        )
+        .await;
 
-        let workflow_exec = new_workflow(
+        let workflow_exec = new_workflow_exec_task(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
-        );
+            locking_strategy,
+        )
+        .await;
         let execution_id = ExecutionId::generate();
         db_connection
             .create(CreateRequest {
@@ -1608,7 +1642,7 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                component_id: ComponentId::dummy_workflow(),
+                component_id: workflow_exec.config.component_id.clone(),
                 scheduled_by: None,
             })
             .await
@@ -1651,6 +1685,8 @@ pub(crate) mod tests {
             FFQN_WORKFLOW_HTTP_GET_SUCCESSFUL
         )]
         ffqn: FunctionFqn,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
     ) {
         const BODY: &str = "ok";
 
@@ -1662,10 +1698,12 @@ pub(crate) mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            ),
+            )
+            .await,
             compile_workflow(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            ),
+            )
+            .await,
         ]);
         let activity_exec = new_activity(
             db_pool.clone(),
@@ -1673,16 +1711,20 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
-        );
+            locking_strategy,
+        )
+        .await;
 
-        let workflow_exec = new_workflow(
+        let workflow_exec = new_workflow_exec_task(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
-        );
+            locking_strategy,
+        )
+        .await;
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/"))
@@ -1704,7 +1746,7 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                component_id: ComponentId::dummy_workflow(),
+                component_id: workflow_exec.config.component_id.clone(),
                 scheduled_by: None,
             })
             .await
@@ -1740,7 +1782,11 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn http_get_concurrent(db: db_tests::Database) {
+    async fn http_get_concurrent(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         const BODY: &str = "ok";
         const GET_SUCCESSFUL_CONCURRENTLY_STRESS: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY_STRESS);
@@ -1754,10 +1800,12 @@ pub(crate) mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            ),
+            )
+            .await,
             compile_workflow(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            ),
+            )
+            .await,
         ]);
 
         let activity_exec = new_activity(
@@ -1766,15 +1814,19 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
-        );
-        let workflow_exec = new_workflow(
+            locking_strategy,
+        )
+        .await;
+        let workflow_exec = new_workflow_exec_task(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
-        );
+            locking_strategy,
+        )
+        .await;
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/"))
@@ -1796,7 +1848,7 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                component_id: ComponentId::dummy_workflow(),
+                component_id: workflow_exec.config.component_id.clone(),
                 scheduled_by: None,
             })
             .await
@@ -1854,6 +1906,8 @@ pub(crate) mod tests {
         db: db_tests::Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_strategy: JoinNextBlockingStrategy,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
     ) {
         const SLEEP_DURATION: Duration = Duration::from_millis(100);
         const FFQN_WORKFLOW_SLEEP_SCHEDULE_NOOP_FFQN: FunctionFqn =
@@ -1865,8 +1919,10 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY),
-            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW),
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW)
+                .await,
         ]);
         let worker = compile_workflow_worker(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
@@ -1875,7 +1931,8 @@ pub(crate) mod tests {
             join_next_strategy,
             &fn_registry,
             CancelRegistry::new(),
-        );
+        )
+        .await;
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection().await.unwrap();
 
@@ -1891,23 +1948,26 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_workflow(),
+                component_id: match locking_strategy {
+                    LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
+                    LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
+                },
                 scheduled_by: None,
             })
             .await
             .unwrap();
         let exec_task = ExecTask::new_test(
-            worker,
             ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                component_id: ComponentId::dummy_workflow(),
+                component_id: worker.config.component_id.clone(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy: LockingStrategy::default(),
+                locking_strategy,
             },
+            worker,
             sim_clock.clone_box(),
             db_pool.clone(),
             Arc::new([FFQN_WORKFLOW_SLEEP_SCHEDULE_NOOP_FFQN]),
@@ -1963,7 +2023,11 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn http_get_fallible_err(database: Database) {
+    async fn http_get_fallible_err(
+        database: Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_close) = database.set_up().await;
@@ -1972,10 +2036,12 @@ pub(crate) mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            ),
+            )
+            .await,
             compile_workflow(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            ),
+            )
+            .await,
         ]);
         let activity_exec = new_activity(
             db_pool.clone(),
@@ -1983,16 +2049,20 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
-        );
+            locking_strategy,
+        )
+        .await;
 
-        let workflow_exec = new_workflow(
+        let workflow_exec = new_workflow_exec_task(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
-        );
+            locking_strategy,
+        )
+        .await;
 
         let url = "http://";
         let params = Params::from_json_values_test(vec![json!(url)]);
@@ -2007,7 +2077,7 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                component_id: ComponentId::dummy_workflow(),
+                component_id: workflow_exec.config.component_id.clone(),
                 scheduled_by: None,
             })
             .await
@@ -2058,7 +2128,11 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn stubbing_should_work(db: db_tests::Database) {
+    async fn stubbing_should_work(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         const FFQN_WORKFLOW_STUB: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_STUB_AWAIT,
         );
@@ -2067,8 +2141,10 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
-            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW),
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW)
+                .await,
         ]);
 
         let worker = compile_workflow_worker(
@@ -2078,7 +2154,8 @@ pub(crate) mod tests {
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
-        );
+        )
+        .await;
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -2093,24 +2170,28 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_workflow(),
+                component_id: match locking_strategy {
+                    LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
+                    LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
+                },
                 scheduled_by: None,
             })
             .await
             .unwrap();
         let executor_id = ExecutorId::generate();
+
         let exec_task = ExecTask::new_test(
-            worker,
             ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                component_id: ComponentId::dummy_workflow(),
+                component_id: worker.config.component_id.clone(),
                 task_limiter: None,
                 executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy: LockingStrategy::default(),
+                locking_strategy,
             },
+            worker,
             sim_clock.clone_box(),
             db_pool.clone(),
             Arc::new([FFQN_WORKFLOW_STUB]),
@@ -2168,7 +2249,11 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn two_delays_in_same_join_set(db: db_tests::Database) {
+    async fn two_delays_in_same_join_set(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::TWO_DELAYS_IN_SAME_JOIN_SET
         );
@@ -2177,6 +2262,7 @@ pub(crate) mod tests {
             FFQN,
             Some(Duration::from_millis(10)),
             db,
+            locking_strategy,
         )
         .await;
     }
@@ -2184,7 +2270,11 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn join_next_produces_all_processed_error(db: db_tests::Database) {
+    async fn join_next_produces_all_processed_error(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::JOIN_NEXT_PRODUCES_ALL_PROCESSED_ERROR
         );
@@ -2193,6 +2283,7 @@ pub(crate) mod tests {
             FFQN,
             Some(Duration::from_millis(10)),
             db,
+            locking_strategy,
         )
         .await;
     }
@@ -2202,6 +2293,7 @@ pub(crate) mod tests {
         ffqn: FunctionFqn,
         delay: Option<Duration>,
         db: db_tests::Database,
+        locking_strategy: LockingStrategy,
     ) -> ExecutionLog {
         const MAX_RUNS: u128 = 100;
 
@@ -2209,9 +2301,11 @@ pub(crate) mod tests {
         let sim_clock = SimClock::epoch();
         let (_guard, db_pool, db_close) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY),
-            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
-            compile_workflow(workflow_wasm_path),
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY)
+                .await,
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+            compile_workflow(workflow_wasm_path).await,
         ]);
 
         let worker = compile_workflow_worker(
@@ -2221,24 +2315,8 @@ pub(crate) mod tests {
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
-        );
-        let exec_task = ExecTask::new_test(
-            worker,
-            ExecConfig {
-                batch_size: 1,
-                lock_expiry: Duration::from_secs(1),
-                tick_sleep: TICK_SLEEP,
-                component_id: ComponentId::dummy_workflow(),
-                task_limiter: None,
-                executor_id: ExecutorId::from_parts(0, 0),
-                retry_config: ComponentRetryConfig::WORKFLOW,
-                locking_strategy: LockingStrategy::default(),
-            },
-            sim_clock.clone_box(),
-            db_pool.clone(),
-            Arc::new([ffqn.clone()]),
-        );
-
+        )
+        .await;
         let execution_id = ExecutionId::from_parts(0, 0);
         let db_connection = db_pool.connection_test().await.unwrap();
         db_connection
@@ -2250,11 +2328,31 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_workflow(),
+                component_id: match locking_strategy {
+                    LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // should not matter,
+                    LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
+                },
                 scheduled_by: None,
             })
             .await
             .unwrap();
+
+        let exec_task = ExecTask::new_test(
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: TICK_SLEEP,
+                component_id: worker.config.component_id.clone(),
+                task_limiter: None,
+                executor_id: ExecutorId::from_parts(0, 0),
+                retry_config: ComponentRetryConfig::WORKFLOW,
+                locking_strategy,
+            },
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            Arc::new([ffqn.clone()]),
+        );
 
         let mut run_id = {
             let mut id = 0;
@@ -2327,7 +2425,11 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn await_next_produces_all_processed_error(db: db_tests::Database) {
+    async fn await_next_produces_all_processed_error(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         execute_workflow_fn_with_single_delay(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             FunctionFqn::new_static_tuple(
@@ -2335,6 +2437,7 @@ pub(crate) mod tests {
             ),
             None,
             db,
+            locking_strategy
         )
         .await;
     }
@@ -2346,12 +2449,15 @@ pub(crate) mod tests {
     async fn stub_submit_race_join_next_stub(
         db: db_tests::Database,
         #[case] ffqn_tuple: (&'static str, &'static str),
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
     ) {
         execute_workflow_fn_with_single_delay(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             FunctionFqn::new_static_tuple(ffqn_tuple),
             None,
             db,
+            locking_strategy,
         )
         .await;
     }
@@ -2359,12 +2465,17 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn stub_submit_race_join_next_delay(db: db_tests::Database) {
+    async fn stub_submit_race_join_next_delay(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         execute_workflow_fn_with_single_delay(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_RACE_JOIN_NEXT_DELAY),
             Some(Duration::from_millis(10)),
             db,
+            locking_strategy
         )
         .await;
     }
@@ -2372,12 +2483,17 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn stub_join_next_in_scope(db: db_tests::Database) {
+    async fn stub_join_next_in_scope(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         execute_workflow_fn_with_single_delay(
             test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::JOIN_NEXT_IN_SCOPE),
             None,
             db,
+            locking_strategy
         )
         .await;
     }
@@ -2385,7 +2501,11 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn invoke_expect_execution_error(db: db_tests::Database) {
+    async fn invoke_expect_execution_error(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         const FFQN_WORKFLOW_STUB: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::INVOKE_EXPECT_EXECUTION_ERROR,
         );
@@ -2393,8 +2513,10 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = db.set_up().await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY),
-            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW),
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW)
+                .await,
         ]);
 
         let worker = compile_workflow_worker(
@@ -2404,7 +2526,8 @@ pub(crate) mod tests {
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
-        );
+        )
+        .await;
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -2417,23 +2540,27 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_workflow(),
+                component_id: match locking_strategy {
+                    LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
+                    LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
+                },
                 scheduled_by: None,
             })
             .await
             .unwrap();
+
         let exec_task = ExecTask::new_test(
-            worker,
             ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                component_id: ComponentId::dummy_workflow(),
+                component_id: worker.config.component_id.clone(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy: LockingStrategy::default(),
+                locking_strategy,
             },
+            worker,
             sim_clock.clone_box(),
             db_pool.clone(),
             Arc::new([FFQN_WORKFLOW_STUB]),
@@ -2529,6 +2656,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn activity_trap_should_be_converted_as_custom_err_execution_failed_variant(
         db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
     ) {
         const EXPECT_TRAP_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_serde_workflow_builder::exports::testing::serde_workflow::serde_workflow::EXPECT_TRAP,
@@ -2536,11 +2665,17 @@ pub(crate) mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = db.set_up().await;
+        let (activity_runnable_component, activity_component_id_first) = compile_activity_stub(
+            test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+        )
+        .await;
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity_stub(
-                test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+            (
+                activity_runnable_component,
+                activity_component_id_first.clone(),
             ),
-            compile_workflow(test_programs_serde_workflow_builder::TEST_PROGRAMS_SERDE_WORKFLOW),
+            compile_workflow(test_programs_serde_workflow_builder::TEST_PROGRAMS_SERDE_WORKFLOW)
+                .await,
         ]);
 
         let workflow_worker = compile_workflow_worker(
@@ -2550,7 +2685,8 @@ pub(crate) mod tests {
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
             CancelRegistry::new(),
-        );
+        )
+        .await;
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection().await.unwrap();
 
@@ -2563,24 +2699,29 @@ pub(crate) mod tests {
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
-                component_id: ComponentId::dummy_workflow(),
+                component_id: match locking_strategy {
+                    LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
+                    LockingStrategy::ByComponentDigest => {
+                        workflow_worker.config.component_id.clone()
+                    }
+                },
                 scheduled_by: None,
             })
             .await
             .unwrap();
 
         let exec_workflow = ExecTask::new_test(
-            workflow_worker,
             ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                component_id: ComponentId::dummy_workflow(),
+                component_id: workflow_worker.config.component_id.clone(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy: LockingStrategy::default(),
+                locking_strategy,
             },
+            workflow_worker,
             sim_clock.clone_box(),
             db_pool.clone(),
             Arc::new([EXPECT_TRAP_FFQN]),
@@ -2613,11 +2754,16 @@ pub(crate) mod tests {
 
         // 2. Tick the activity executor
         {
-            let (activity_worker, component_id) = new_activity_worker(
+            let (activity_worker, activity_component_id) = new_activity_worker(
                 test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
                 Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap(),
                 sim_clock.clone_box(),
                 TokioSleep,
+            )
+            .await;
+            assert_eq!(
+                activity_component_id_first.input_digest,
+                activity_component_id.input_digest
             );
             let exec_activity = ExecTask::new_all_ffqns_test(
                 activity_worker,
@@ -2625,11 +2771,11 @@ pub(crate) mod tests {
                     batch_size: 1,
                     lock_expiry: Duration::from_secs(1),
                     tick_sleep: TICK_SLEEP,
-                    component_id,
+                    component_id: activity_component_id,
                     task_limiter: None,
                     executor_id: ExecutorId::generate(),
                     retry_config: ComponentRetryConfig::ZERO,
-                    locking_strategy: LockingStrategy::default(),
+                    locking_strategy,
                 },
                 sim_clock.clone_box(),
                 db_pool.clone(),
@@ -2677,12 +2823,17 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn sleep_activity_submit_should_cancel_the_activity(db: db_tests::Database) {
+    async fn sleep_activity_submit_should_cancel_the_activity(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         let execution_log = execute_workflow_fn_with_single_delay(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_ACTIVITY_SUBMIT),
             None,
             db,
+            locking_strategy
         )
         .await;
         // There must be a single activity that is already cancelled
@@ -2700,12 +2851,17 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn sleep_activity_submit_then_trap_should_cancel_the_activity(db: db_tests::Database) {
+    async fn sleep_activity_submit_then_trap_should_cancel_the_activity(
+        db: db_tests::Database,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         let execution_log = execute_workflow_fn_with_single_delay(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_ACTIVITY_SUBMIT_THEN_TRAP),
             None,
             db,
+            locking_strategy
         )
         .await;
         // There must be a single activity that is already cancelled

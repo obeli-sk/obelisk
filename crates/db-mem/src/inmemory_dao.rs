@@ -432,7 +432,7 @@ impl concepts::storage::DbConnectionTest for InMemoryDbConnection {
 mod index {
     use super::{BTreeMap, DateTime, ExecutionId, HashMap, HashSet, JoinSetId, PendingState, Utc};
     use crate::journal::ExecutionJournal;
-    use concepts::ComponentId;
+    use concepts::component_id::InputContentDigest;
     use concepts::prefixed_ulid::DelayId;
     use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse, PendingStateLocked};
     use tracing::trace;
@@ -469,12 +469,12 @@ mod index {
             pending
         }
 
-        pub(super) fn fetch_pending_by_component_id<'a>(
+        pub(super) fn fetch_pending_by_component_digest<'a>(
             &self,
             journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
             batch_size: u32,
             expiring_at_or_before: DateTime<Utc>,
-            component_id: &ComponentId,
+            component_digest: &InputContentDigest,
         ) -> Vec<(&'a ExecutionJournal, DateTime<Utc> /* scheduled at */)> {
             let mut pending = self
                 .pending_scheduled
@@ -485,7 +485,9 @@ mod index {
                 })
                 .collect::<Vec<_>>();
             // filter by ffqn
-            pending.retain(|(journal, _)| component_id == journal.component_id_last());
+            pending.retain(|(journal, _)| {
+                *component_digest == journal.component_id_last().input_digest
+            });
             pending.truncate(usize::try_from(batch_size).expect("16 bit systems are unsupported"));
             pending
         }
@@ -730,11 +732,11 @@ impl DbHolder {
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> LockPendingResponse {
-        let pending = self.index.fetch_pending_by_component_id(
+        let pending = self.index.fetch_pending_by_component_digest(
             &self.journals,
             batch_size,
             pending_at_or_sooner,
-            component_id,
+            &component_id.input_digest,
         );
         let mut resp = Vec::with_capacity(pending.len());
         for (journal, _scheduled_at) in pending {

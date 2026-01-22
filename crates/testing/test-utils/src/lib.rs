@@ -1,7 +1,7 @@
-use concepts::component_id::InputContentDigest;
+use concepts::component_id::{CONTENT_DIGEST_DUMMY, InputContentDigest};
 use concepts::storage::{
-    ExecutionEvent, ExecutionLog, ExecutionRequest, JoinSetResponseEventOuter, PendingState,
-    Version,
+    ExecutionEvent, ExecutionLog, ExecutionRequest, JoinSetResponseEventOuter, Locked,
+    PendingState, Version,
 };
 use concepts::{
     ExecutionFailureKind, ExecutionId, FinishedExecutionError, SupportedFunctionReturnValue,
@@ -125,16 +125,20 @@ pub fn get_seed() -> Box<dyn Iterator<Item = u64>> {
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ExecutionLogSanitized {
     pub execution_id: ExecutionId,
-    pub events: Vec<ExecutionEvent>, // `execution_error`'s detail (backtrace) removed
-    pub responses: Vec<JoinSetResponseEventOuter>, // `created_at`, `cursor` removed
+    pub events: Vec<ExecutionEvent>,
+    pub responses: Vec<JoinSetResponseEventOuter>,
     pub next_version: Version,
     pub pending_state: PendingState,
     pub component_digest: InputContentDigest,
 }
 impl From<ExecutionLog> for ExecutionLogSanitized {
     fn from(mut value: ExecutionLog) -> Self {
-        if let Some(ExecutionEvent {
-            event:
+        for event in value.events.as_mut_slice() {
+            match &mut event.event {
+                ExecutionRequest::Created { component_id, .. }
+                | ExecutionRequest::Locked(Locked { component_id, .. }) => {
+                    component_id.input_digest = InputContentDigest(CONTENT_DIGEST_DUMMY);
+                }
                 ExecutionRequest::Finished {
                     result:
                         SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
@@ -143,19 +147,21 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
                             detail,
                         }),
                     ..
-                },
-            ..
-        }) = value.events.last_mut()
-        {
-            detail.take();
+                } => {
+                    // `execution_error`'s detail (backtrace) removed
+                    *detail = None;
+                }
+                _ => {}
+            }
         }
+
         ExecutionLogSanitized {
             execution_id: value.execution_id,
             events: value.events,
-            responses: value.responses.into_iter().map(|resp| resp.event).collect(),
+            responses: value.responses.into_iter().map(|resp| resp.event).collect(), // `created_at`, `cursor` removed
             next_version: value.next_version,
             pending_state: value.pending_state,
-            component_digest: value.component_digest,
+            component_digest: InputContentDigest(CONTENT_DIGEST_DUMMY),
         }
     }
 }

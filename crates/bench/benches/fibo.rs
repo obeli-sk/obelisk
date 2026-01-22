@@ -104,7 +104,7 @@ mod bench {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
-            locking_strategy: LockingStrategy::default(),
+            locking_strategy: LockingStrategy::ByComponentDigest,
         };
         ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, TokioSleep)
     }
@@ -214,7 +214,7 @@ mod bench {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
-            locking_strategy: LockingStrategy::default(),
+            locking_strategy: LockingStrategy::ByComponentDigest,
         };
         ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, TokioSleep)
     }

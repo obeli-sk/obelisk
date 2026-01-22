@@ -1907,15 +1907,15 @@ pub(crate) mod tests {
                     batch_size: 1,
                     lock_expiry: Duration::from_secs(1),
                     tick_sleep: TICK_SLEEP,
-                    component_id: ComponentId::dummy_activity(),
+                    component_id: ComponentId::dummy_workflow(),
                     task_limiter: None,
                     executor_id: ExecutorId::from_parts(0, 0), // only appears in Locked events
                     retry_config: ComponentRetryConfig::ZERO,
-                    locking_strategy: LockingStrategy::default(),
+                    locking_strategy: LockingStrategy::ByFfqns,
                 };
                 ExecTask::new_test(
-                    worker,
                     exec_config,
+                    worker,
                     sim_clock.clone_box(),
                     db_pool.clone(),
                     Arc::new([FFQN_MOCK]),
@@ -2400,18 +2400,18 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                component_id: ComponentId::dummy_activity(),
+                component_id: ComponentId::dummy_workflow(),
                 task_limiter: None,
                 executor_id: ExecutorId::from_parts(
                     u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
                     next_u128(),
                 ),
                 retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy: LockingStrategy::default(),
+                locking_strategy: LockingStrategy::ByFfqns,
             };
             ExecTask::new_test(
-                worker,
                 exec_config,
+                worker,
                 sim_clock.clone_box(),
                 db_pool.clone(),
                 Arc::new([FFQN_MOCK]),

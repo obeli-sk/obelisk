@@ -57,8 +57,11 @@ async fn test_append_batch_respond_to_parent(database: Database) {
 #[tokio::test]
 async fn test_lock_pending_should_sort_by_scheduled_at(
     database: Database,
-    #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
-    locking_strategy: LockingStrategy,
+    #[values(
+        LockingStrategyLifecycle::ByFfqns,
+        LockingStrategyLifecycle::ByComponentDigest
+    )]
+    locking_strategy: LockingStrategyLifecycle,
 ) {
     set_up();
     let sim_clock = SimClock::default();
@@ -114,8 +117,11 @@ async fn test_get_expired_delay(database: Database) {
 #[tokio::test]
 async fn append_after_finish_should_not_be_possible(
     database: Database,
-    #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
-    locking_strategy: LockingStrategy,
+    #[values(
+        LockingStrategyLifecycle::ByFfqns,
+        LockingStrategyLifecycle::ByComponentDigest
+    )]
+    locking_strategy: LockingStrategyLifecycle,
 ) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -203,12 +209,12 @@ async fn lock_pending(
     component_id: &ComponentId,
     db_connection: &dyn DbConnection,
     sim_clock: &SimClock,
-    locking_strategy: LockingStrategy,
+    locking_strategy: LockingStrategyLifecycle,
 ) -> Version {
     let created_at = sim_clock.now();
     info!(now = %created_at, "LockPending");
     let locked_executions = match locking_strategy {
-        LockingStrategy::ByFfqns => db_connection
+        LockingStrategyLifecycle::ByFfqns => db_connection
             .lock_pending_by_ffqns(
                 1,
                 created_at,
@@ -225,7 +231,7 @@ async fn lock_pending(
             )
             .await
             .unwrap(),
-        LockingStrategy::ByComponentId => db_connection
+        LockingStrategyLifecycle::ByComponentDigest => db_connection
             .lock_pending_by_component_id(
                 1,
                 created_at,
@@ -256,8 +262,11 @@ async fn lock_pending(
 #[tokio::test]
 async fn locking_in_unlock_backoff_should_not_be_possible(
     database: Database,
-    #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
-    locking_strategy: LockingStrategy,
+    #[values(
+        LockingStrategyLifecycle::ByFfqns,
+        LockingStrategyLifecycle::ByComponentDigest
+    )]
+    locking_strategy: LockingStrategyLifecycle,
 ) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -1090,15 +1099,15 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
     assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
 }
 
-enum LockingStrategy {
+enum LockingStrategyLifecycle {
     ByFfqns,
-    ByComponentId,
+    ByComponentDigest,
 }
 
 async fn lock_pending_should_sort_by_scheduled_at(
     db_connection: &dyn DbConnection,
     sim_clock: SimClock,
-    locking_strategy: LockingStrategy,
+    locking_strategy: LockingStrategyLifecycle,
 ) {
     let created_at = sim_clock.now();
     let older_id = ExecutionId::generate();
@@ -1152,7 +1161,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
         .unwrap();
 
     let locked_ids = match locking_strategy {
-        LockingStrategy::ByFfqns => {
+        LockingStrategyLifecycle::ByFfqns => {
             db_connection
                 .lock_pending_by_ffqns(
                     3,
@@ -1170,7 +1179,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
                 )
                 .await
         }
-        LockingStrategy::ByComponentId => {
+        LockingStrategyLifecycle::ByComponentDigest => {
             db_connection
                 .lock_pending_by_component_id(
                     3,
@@ -1442,8 +1451,11 @@ async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock
 #[tokio::test]
 async fn get_expired_times_with_execution_that_made_progress(
     database: Database,
-    #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentId)]
-    locking_strategy: LockingStrategy,
+    #[values(
+        LockingStrategyLifecycle::ByFfqns,
+        LockingStrategyLifecycle::ByComponentDigest
+    )]
+    locking_strategy: LockingStrategyLifecycle,
 ) {
     set_up();
 

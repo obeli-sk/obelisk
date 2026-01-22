@@ -863,7 +863,7 @@ fn check_expected_next_and_appending_version(
     Ok(())
 }
 
-#[instrument(level = Level::TRACE, skip_all, fields(execution_id = %req.execution_id))]
+#[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
 async fn create_inner(
     tx: &Transaction<'_>,
     req: CreateRequest,
@@ -3444,7 +3444,7 @@ impl DbConnection for PostgresConnection {
         Ok(version)
     }
 
-    #[instrument(level = Level::DEBUG, skip(self, batch, child_req))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %version))]
     async fn append_batch_create_new_execution(
         &self,
         current_time: DateTime<Utc>,

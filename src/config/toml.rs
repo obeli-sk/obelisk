@@ -548,7 +548,7 @@ impl From<executor::executor::LockingStrategy> for LockingStrategy {
 }
 impl Default for LockingStrategy {
     fn default() -> Self {
-        executor::executor::LockingStrategy::default().into()
+        executor::executor::LockingStrategy::ByComponentDigest.into()
     }
 }
 

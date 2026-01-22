@@ -40,7 +40,7 @@ pub struct ExecConfig {
 
 pub struct ExecTask {
     worker: Arc<dyn Worker>,
-    config: ExecConfig,
+    pub config: ExecConfig,
     clock_fn: Box<dyn ClockFn>, // Used for obtaining current time when the execution finishes.
     db_pool: Arc<dyn DbPool>,
     locking_strategy_holder: LockingStrategyHolder,
@@ -118,10 +118,9 @@ fn extract_exported_ffqns_noext(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
         .collect::<Arc<_>>()
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum LockingStrategy {
     ByFfqns,
-    #[default]
     ByComponentDigest,
 }
 impl LockingStrategy {
@@ -141,8 +140,8 @@ enum LockingStrategyHolder {
 impl ExecTask {
     #[cfg(feature = "test")]
     pub fn new_test(
-        worker: Arc<dyn Worker>,
         config: ExecConfig,
+        worker: Arc<dyn Worker>,
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
         ffqns: Arc<[FunctionFqn]>,
@@ -894,7 +893,7 @@ mod tests {
     ) -> Vec<ExecutionId> {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
-        let executor = ExecTask::new_test(worker, config, clock_fn, db_pool, ffqns);
+        let executor = ExecTask::new_test(config, worker, clock_fn, db_pool, ffqns);
         executor
             .tick_test_await(executed_at, RunId::generate())
             .await
@@ -973,8 +972,12 @@ mod tests {
         );
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn execute_simple_lifecycle_task_based_mem() {
+    async fn execute_simple_lifecycle_task_based_mem(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         set_up();
         let created_at = Now.now();
         let clock_fn = Box::new(ConstClock(created_at));
@@ -987,7 +990,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
-            locking_strategy: LockingStrategy::default(),
+            locking_strategy,
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -1095,8 +1098,12 @@ mod tests {
         execution_log
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn activity_trap_should_trigger_an_execution_retry() {
+    async fn activity_trap_should_trigger_an_execution_retry(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
@@ -1113,7 +1120,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config,
-            locking_strategy: LockingStrategy::default(),
+            locking_strategy,
         };
         let expected_reason = "error reason";
         let expected_detail = "error detail";
@@ -1227,8 +1234,12 @@ mod tests {
         db_close.close().await;
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn activity_trap_should_not_be_retried_if_no_retries_are_set() {
+    async fn activity_trap_should_not_be_retried_if_no_retries_are_set(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         set_up();
         let created_at = Now.now();
         let clock_fn = Box::new(ConstClock(created_at));
@@ -1241,7 +1252,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
-            locking_strategy: LockingStrategy::default(),
+            locking_strategy,
         };
 
         let reason = "error reason";
@@ -1292,8 +1303,12 @@ mod tests {
         db_close.close().await;
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn child_execution_permanently_failed_should_notify_parent_permanent_failure() {
+    async fn child_execution_permanently_failed_should_notify_parent_permanent_failure(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         let worker_error = WorkerError::ActivityTrap {
             reason: "error reason".to_string(),
             trap_kind: TrapKind::Trap,
@@ -1309,12 +1324,17 @@ mod tests {
         child_execution_permanently_failed_should_notify_parent(
             WorkerResult::Err(worker_error),
             expected_child_err,
+            locking_strategy,
         )
         .await;
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn child_execution_permanently_failed_handled_by_watcher_should_notify_parent_timeout() {
+    async fn child_execution_permanently_failed_handled_by_watcher_should_notify_parent_timeout(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         let expected_child_err = FinishedExecutionError {
             kind: ExecutionFailureKind::TimedOut,
             reason: None,
@@ -1323,6 +1343,7 @@ mod tests {
         child_execution_permanently_failed_should_notify_parent(
             WorkerResult::DbUpdatedByWorkerOrWatcher,
             expected_child_err,
+            locking_strategy,
         )
         .await;
     }
@@ -1330,6 +1351,7 @@ mod tests {
     async fn child_execution_permanently_failed_should_notify_parent(
         worker_result: WorkerResult,
         expected_child_err: FinishedExecutionError,
+        locking_strategy: LockingStrategy,
     ) {
         use concepts::storage::JoinSetResponseEventOuter;
         const LOCK_EXPIRY: Duration = Duration::from_secs(1);
@@ -1369,7 +1391,7 @@ mod tests {
                 task_limiter: None,
                 executor_id: parent_executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy: LockingStrategy::default(),
+                locking_strategy,
             },
             sim_clock.clone_box(),
             db_pool.clone(),
@@ -1456,7 +1478,7 @@ mod tests {
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy: LockingStrategy::default(),
+                locking_strategy,
             },
             sim_clock.clone_box(),
             db_pool.clone(),
@@ -1555,8 +1577,12 @@ mod tests {
         }
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn hanging_lock_should_be_cleaned_and_execution_retried() {
+    async fn hanging_lock_should_be_cleaned_and_execution_retried(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
         set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
@@ -1574,7 +1600,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config,
-            locking_strategy: LockingStrategy::default(),
+            locking_strategy,
         };
 
         let worker = Arc::new(SleepyWorker {
@@ -1608,8 +1634,8 @@ mod tests {
 
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
         let executor = ExecTask::new_test(
-            worker,
             exec_config.clone(),
+            worker,
             sim_clock.clone_box(),
             db_pool.clone(),
             ffqns,

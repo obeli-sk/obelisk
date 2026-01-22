@@ -42,7 +42,7 @@ impl ComponentType {
 #[derive(
     derive_more::Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Serialize, Deserialize,
 )]
-#[display("{component_type}:{name}")]
+#[display("{component_type}:{name}:{input_digest}")]
 #[debug("{}", self)]
 #[non_exhaustive] // force using the constructor as much as possible due to validation
 pub struct ComponentId {

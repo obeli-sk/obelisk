@@ -1207,6 +1207,7 @@ pub(crate) mod tests {
         use crate::workflow::workflow_worker::tests::{
             FIBOA_WORKFLOW_FFQN, compile_workflow, new_workflow_fibo,
         };
+        use concepts::component_id::InputContentDigest;
         use concepts::prefixed_ulid::RunId;
         use concepts::storage::DbPoolCloseable;
         use concepts::time::ClockFn;
@@ -1214,7 +1215,7 @@ pub(crate) mod tests {
         use concepts::{ComponentId, ComponentType, Params, StrVariant};
         use concepts::{ExecutionId, storage::DbPool};
         use db_tests::{Database, DbGuard, DbPoolCloseableWrapper};
-        use executor::executor::ExecTask;
+        use executor::executor::{ExecTask, LockingStrategy};
         use rstest::rstest;
         use serde_json::json;
         use std::net::SocketAddr;
@@ -1226,6 +1227,7 @@ pub(crate) mod tests {
         use tokio::net::TcpListener;
         use tokio::sync::{mpsc, watch};
         use tracing::info;
+        use utils::sha256sum::calculate_sha256_file;
 
         struct AbortOnDrop(tokio::task::AbortHandle);
         impl Drop for AbortOnDrop {
@@ -1255,19 +1257,32 @@ pub(crate) mod tests {
         }
 
         impl SetUpFiboWebhook {
-            async fn new(db: db_tests::Database) -> SetUpFiboWebhook {
+            async fn new(
+                db: db_tests::Database,
+                locking_strategy: LockingStrategy,
+            ) -> SetUpFiboWebhook {
                 let addr = SocketAddr::from(([127, 0, 0, 1], 0));
                 let sim_clock = SimClock::default();
                 let (guard, db_pool, db_close) = db.set_up().await;
-                let activity_exec =
-                    new_activity_fibo(db_pool.clone(), sim_clock.clone_box(), TokioSleep);
+                let activity_exec = new_activity_fibo(
+                    db_pool.clone(),
+                    sim_clock.clone_box(),
+                    TokioSleep,
+                    locking_strategy,
+                )
+                .await;
+
+                let (workflow_runnable, workflow_component_id) = compile_workflow(
+                    test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+                )
+                .await;
+
                 let fn_registry = TestingFnRegistry::new_from_components(vec![
                     compile_activity(
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                    ),
-                    compile_workflow(
-                        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-                    ),
+                    )
+                    .await,
+                    (workflow_runnable, workflow_component_id),
                 ]);
                 let cancel_registry = CancelRegistry::new();
                 let engine =
@@ -1278,12 +1293,20 @@ pub(crate) mod tests {
                     JoinNextBlockingStrategy::Interrupt,
                     &fn_registry,
                     cancel_registry,
-                );
+                    locking_strategy,
+                )
+                .await;
                 let (db_forwarder_sender, _) = mpsc::channel(1);
+                let wasm_file = test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK;
                 let router = {
                     let instance = WebhookEndpointCompiled::new(
                         WebhookEndpointConfig {
-                            component_id: ComponentId::dummy_activity(),
+                            component_id: ComponentId::new(
+                                ComponentType::WebhookEndpoint,
+                                StrVariant::empty(),
+                                InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
+                            )
+                            .unwrap(),
                             forward_stdout: None,
                             forward_stderr: None,
                             env_vars: Arc::from([]),
@@ -1292,7 +1315,7 @@ pub(crate) mod tests {
                             subscription_interruption: None,
                             log_store_min_level: None,
                         },
-                        test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
+                        wasm_file,
                         &engine,
                     )
                     .unwrap()
@@ -1353,10 +1376,15 @@ pub(crate) mod tests {
             }
         }
 
+        #[rstest]
         #[tokio::test]
-        async fn hardcoded_result_should_work() {
+        async fn hardcoded_result_should_work(
+            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+            locking_strategy: LockingStrategy,
+        ) {
             test_utils::set_up();
-            let fibo_webhook_harness = SetUpFiboWebhook::new(Database::Memory).await;
+            let fibo_webhook_harness =
+                SetUpFiboWebhook::new(Database::Memory, locking_strategy).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             assert_eq!(
                 "fiboa(1, 0) = hardcoded: 1",
@@ -1367,14 +1395,16 @@ pub(crate) mod tests {
         #[expand_enum_database]
         #[rstest]
         #[tokio::test]
-        async fn direct_call_should_work_non_deterministic(db: Database) {
+        async fn direct_call_should_work_nondeterministic(
+            db: Database,
+            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+            locking_strategy: LockingStrategy,
+        ) {
             test_utils::set_up();
-            let fibo_webhook_harness = SetUpFiboWebhook::new(db).await;
+            let fibo_webhook_harness = SetUpFiboWebhook::new(db, locking_strategy).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             let fetch_task =
                 tokio::spawn(async move { SetUpFiboWebhook::fetch(&server_addr, 2, 1, 200).await });
-
-            // TODO: Non determinism: wait_for_finished_result can either have the result or subscribe and await.
 
             let now = fibo_webhook_harness.sim_clock.now();
             while fibo_webhook_harness
@@ -1383,7 +1413,7 @@ pub(crate) mod tests {
                 .await
                 .is_empty()
             {
-                tokio::time::sleep(Duration::from_millis(1)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
             // At this point the workflow was started successfuly.
             assert_eq!(
@@ -1410,9 +1440,13 @@ pub(crate) mod tests {
         #[expand_enum_database]
         #[rstest]
         #[tokio::test]
-        async fn scheduling_should_work(db: db_tests::Database) {
+        async fn scheduling_should_work(
+            db: db_tests::Database,
+            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+            locking_strategy: LockingStrategy,
+        ) {
             test_utils::set_up();
-            let fibo_webhook_harness = SetUpFiboWebhook::new(db).await;
+            let fibo_webhook_harness = SetUpFiboWebhook::new(db, locking_strategy).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             let n = 10;
             let iterations = 1;
@@ -1432,10 +1466,15 @@ pub(crate) mod tests {
             );
         }
 
+        #[rstest]
         #[tokio::test]
-        async fn test_routing_error_handling() {
+        async fn test_routing_error_handling(
+            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+            locking_strategy: LockingStrategy,
+        ) {
             test_utils::set_up();
-            let fibo_webhook_harness = SetUpFiboWebhook::new(Database::Memory).await;
+            let fibo_webhook_harness =
+                SetUpFiboWebhook::new(Database::Memory, locking_strategy).await;
             // Check wrong URL
             let resp = reqwest::get(format!(
                 "http://{}/unknown",
