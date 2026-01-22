@@ -871,7 +871,7 @@ impl From<WorkflowError> for ReplayError {
 
 #[async_trait]
 impl Worker for WorkflowWorker {
-    fn exported_functions(&self) -> &[FunctionMetadata] {
+    fn exported_functions_noext(&self) -> &[FunctionMetadata] {
         &self.exported_functions_noext
     }
 

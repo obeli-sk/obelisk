@@ -1833,7 +1833,7 @@ pub(crate) mod tests {
             res
         }
 
-        fn exported_functions(&self) -> &[FunctionMetadata] {
+        fn exported_functions_noext(&self) -> &[FunctionMetadata] {
             &self.exports
         }
     }

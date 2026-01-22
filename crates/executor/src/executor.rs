@@ -112,7 +112,7 @@ pub fn extract_exported_ffqns_noext_test(worker: &dyn Worker) -> Arc<[FunctionFq
 
 fn extract_exported_ffqns_noext(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
     worker
-        .exported_functions()
+        .exported_functions_noext()
         .iter()
         .map(|FunctionMetadata { ffqn, .. }| ffqn.clone())
         .collect::<Arc<_>>()
@@ -850,7 +850,7 @@ pub mod simple_worker {
             worker_result
         }
 
-        fn exported_functions(&self) -> &[FunctionMetadata] {
+        fn exported_functions_noext(&self) -> &[FunctionMetadata] {
             &self.exported
         }
     }
@@ -1572,7 +1572,7 @@ mod tests {
             WorkerResult::Ok(self.result.clone(), ctx.version, None)
         }
 
-        fn exported_functions(&self) -> &[FunctionMetadata] {
+        fn exported_functions_noext(&self) -> &[FunctionMetadata] {
             &self.exported
         }
     }

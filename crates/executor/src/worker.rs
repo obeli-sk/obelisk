@@ -21,8 +21,7 @@ pub trait Worker: Send + Sync + 'static {
 
     // List exported functions without extensions.
     // Used by executor.
-    // TODO: Rename to `exported_functions_noext`
-    fn exported_functions(&self) -> &[FunctionMetadata];
+    fn exported_functions_noext(&self) -> &[FunctionMetadata];
 }
 
 #[must_use]

@@ -182,7 +182,7 @@ impl<S: Sleep> ActivityWorker<S> {
 
 #[async_trait]
 impl<S: Sleep + 'static> Worker for ActivityWorker<S> {
-    fn exported_functions(&self) -> &[FunctionMetadata] {
+    fn exported_functions_noext(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(false)
     }
 
