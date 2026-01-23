@@ -34,7 +34,7 @@ use tokio::{
     sync::{mpsc, watch},
 };
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{Instrument as _, debug, info_span, trace, warn};
+use tracing::{Instrument as _, Span, debug, info_span, instrument, trace, warn};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
     activity::cancel_registry::CancelRegistry, engines::Engines,
@@ -78,6 +78,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::get(logs::execution_logs),
         )
         .route(
+            "/executions/{execution-id}/replay",
+            routing::put(execution_replay),
+        )
+        .route(
             "/executions/{execution-id}/responses",
             routing::get(execution_responses),
         )
@@ -111,6 +115,7 @@ async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader)
     }
 }
 
+#[instrument(skip_all, fields(delay_id))]
 async fn delay_cancel(
     Path(delay_id): Path<DelayId>,
     state: State<Arc<WebApiState>>,
@@ -160,6 +165,7 @@ enum ExecutionListCursorDeser {
     ExecutionId(ExecutionId),
 }
 
+#[instrument(skip_all)]
 async fn executions_list(
     state: State<Arc<WebApiState>>,
     Query(params): Query<ExecutionsListParams>,
@@ -291,6 +297,7 @@ async fn executions_list(
     })
 }
 
+#[instrument(skip_all, fields(execution_id))]
 async fn execution_cancel(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
@@ -330,6 +337,7 @@ struct ExecutionEventsParams {
     #[serde(default)]
     include_backtrace_id: bool,
 }
+#[instrument(skip_all, fields(execution_id))]
 async fn execution_events(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
@@ -537,6 +545,7 @@ mod logs {
         }
     }
 
+    #[instrument(skip_all, fields(execution_id))]
     pub(crate) async fn execution_logs(
         Path(execution_id): Path<ExecutionId>,
         state: State<Arc<WebApiState>>,
@@ -647,6 +656,7 @@ struct ExecutionResponsesParams {
     #[serde(default)]
     including_cursor: bool,
 }
+#[instrument(skip_all, fields(execution_id))]
 async fn execution_responses(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
@@ -691,6 +701,7 @@ async fn execution_responses(
     })
 }
 
+#[instrument(skip_all, fields(execution_id))]
 async fn execution_status_get(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
@@ -713,6 +724,7 @@ async fn execution_status_get(
 #[derive(Deserialize)]
 struct ExecutionStubPayload(serde_json::Value);
 
+#[instrument(skip_all, fields(execution_id))]
 async fn execution_stub(
     Path(execution_id): Path<ExecutionIdDerived>,
     state: State<Arc<WebApiState>>,
@@ -803,6 +815,7 @@ impl From<SupportedFunctionReturnValue> for RetVal {
     }
 }
 
+#[instrument(skip_all, fields(execution_id))]
 async fn execution_get_retval(
     Path(execution_id): Path<ExecutionId>,
     Query(params): Query<ExecutionFollowParam>,
@@ -869,6 +882,7 @@ async fn execution_submit_post(
     execution_submit(execution_id, state, payload, params.follow, accept).await
 }
 
+#[instrument(skip_all, fields(execution_id))]
 async fn execution_submit(
     execution_id: ExecutionId,
     state: State<Arc<WebApiState>>,
@@ -1007,6 +1021,65 @@ async fn stream_execution_response_task(
     }
 }
 
+#[instrument(skip_all, fields(execution_id))]
+async fn execution_replay(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let conn = state
+        .db_pool
+        .connection()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    // Find the execution's ffqn.
+    let create_req = conn.get_create_request(&execution_id).await.map_err(|e| {
+        if e == DbErrorRead::NotFound {
+            HttpResponse::not_found(accept, "execution")
+        } else {
+            ErrorWrapper(e, accept).into()
+        }
+    })?;
+    // Check that ffqn exists
+    let Some((component_id, _fn_metadata)) = state
+        .component_registry_ro
+        .find_by_exported_ffqn_submittable(&create_req.ffqn)
+    else {
+        return Err(HttpResponse::not_found(accept, "component"));
+    };
+    Span::current().record("component_id", tracing::field::display(component_id));
+
+    let (component_id, runnable_component) = state
+        .component_registry_ro
+        .get_workflow_component(&component_id.input_digest)
+        .expect("digest taken from found component id");
+
+    let replay_res = WorkflowWorker::replay(
+        component_id.clone(),
+        runnable_component.wasmtime_component.clone(),
+        &runnable_component.wasm_component.exim,
+        state.engines.workflow_engine.clone(),
+        Arc::new(state.component_registry_ro.clone()),
+        conn.as_ref(),
+        execution_id.clone(),
+    )
+    .await;
+    if let Err(err) = replay_res {
+        debug!("Replay failed: {err:?}");
+        return Err(HttpResponse {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: format!("Replay failed: {err}"),
+            accept,
+        });
+    }
+    Ok(HttpResponse {
+        status: StatusCode::OK,
+        message: "replayed".to_string(),
+        accept,
+    }
+    .into_response())
+}
+
 #[derive(Deserialize)]
 struct ExecutionUpgradePayload {
     pub old: InputContentDigest,
@@ -1015,6 +1088,7 @@ struct ExecutionUpgradePayload {
     pub skip_determinism_check: bool,
 }
 
+#[instrument(skip_all, fields(execution_id))]
 async fn execution_upgrade(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
@@ -1028,7 +1102,8 @@ async fn execution_upgrade(
             .ok_or_else(|| HttpResponse::not_found(accept, Some("new component")))?;
         let replay_res = WorkflowWorker::replay(
             component_id.clone(),
-            runnable_component.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
             state.engines.workflow_engine.clone(),
             Arc::new(state.component_registry_ro.clone()),
             state
@@ -1290,10 +1365,10 @@ impl HttpResponse {
         }
     }
 
-    fn not_found(accept: AcceptHeader, what: Option<&str>) -> Self {
+    fn not_found(accept: AcceptHeader, what: impl Into<Option<&'static str>>) -> Self {
         HttpResponse {
             status: StatusCode::NOT_FOUND,
-            message: if let Some(what) = what {
+            message: if let Some(what) = what.into() {
                 format!("{what} not found")
             } else {
                 "not found".to_string()

@@ -25,7 +25,7 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{Span, debug, error, info, instrument, trace, warn};
-use utils::wasm_tools::DecodeError;
+use utils::wasm_tools::{DecodeError, ExIm};
 use wasmtime::Store;
 use wasmtime::component::types::ComponentFunc;
 use wasmtime::component::{ComponentExportIndex, InstancePre};
@@ -99,9 +99,23 @@ impl WorkflowWorkerCompiled {
         engine: Arc<Engine>,
         clock_fn: Box<dyn ClockFn>,
     ) -> Result<Self, DecodeError> {
-        let exported_functions_ext = runnable_component
-            .wasm_component
-            .exim
+        Self::new_with_config_inner(
+            runnable_component.wasmtime_component,
+            &runnable_component.wasm_component.exim,
+            config,
+            engine,
+            clock_fn,
+        )
+    }
+
+    fn new_with_config_inner(
+        wasmtime_component: wasmtime::component::Component,
+        exim: &ExIm,
+        config: WorkflowConfig,
+        engine: Arc<Engine>,
+        clock_fn: Box<dyn ClockFn>,
+    ) -> Result<Self, DecodeError> {
+        let exported_functions_ext = exim
             .get_exports(true)
             .iter()
             .filter(|&fn_meta| {
@@ -114,9 +128,7 @@ impl WorkflowWorkerCompiled {
             })
             .cloned()
             .collect();
-        let exports_hierarchy_ext = runnable_component
-            .wasm_component
-            .exim
+        let exports_hierarchy_ext = exim
             .get_exports_hierarchy_ext()
             .iter()
             .filter(|&package_ifc_fns| {
@@ -130,7 +142,8 @@ impl WorkflowWorkerCompiled {
             .cloned()
             .collect();
 
-        let mut exported_ffqn_to_index = runnable_component.index_exported_functions()?;
+        let mut exported_ffqn_to_index =
+            RunnableComponent::index_exported_functions(&wasmtime_component, exim)?;
         exported_ffqn_to_index.retain(|ffqn, _| {
             if config.stub_wasi {
                 // Hide wasi exports
@@ -140,9 +153,7 @@ impl WorkflowWorkerCompiled {
             }
         });
 
-        let exported_functions_noext = runnable_component
-            .wasm_component
-            .exim
+        let exported_functions_noext = exim
             .get_exports(false)
             .iter()
             .filter(|&fn_meta| {
@@ -156,9 +167,7 @@ impl WorkflowWorkerCompiled {
             .cloned()
             .collect();
 
-        let imported_functions = runnable_component
-            .wasm_component
-            .exim
+        let imported_functions = exim
             .imports_flat
             .iter()
             .filter(|fn_meta| {
@@ -176,7 +185,7 @@ impl WorkflowWorkerCompiled {
             config,
             engine,
             clock_fn,
-            wasmtime_component: runnable_component.wasmtime_component,
+            wasmtime_component,
             exported_functions_ext,
             exports_hierarchy_ext,
             exported_ffqn_to_index,
@@ -769,7 +778,8 @@ impl WorkflowWorker {
     #[instrument(skip_all, fields(%execution_id))]
     pub async fn replay(
         component_id: ComponentId,
-        runnable_component: RunnableComponent,
+        wasmtime_component: wasmtime::component::Component,
+        exim: &ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
         db_conn: &dyn DbConnection,
@@ -810,8 +820,9 @@ impl WorkflowWorker {
             },
         };
 
-        let compiled = WorkflowWorkerCompiled::new_with_config(
-            runnable_component,
+        let compiled = WorkflowWorkerCompiled::new_with_config_inner(
+            wasmtime_component,
+            exim,
             config,
             engine,
             clock_fn.clone_box(),

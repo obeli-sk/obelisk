@@ -23,6 +23,7 @@ service ExecutionRepository {
     rpc Cancel(CancelRequest) returns (CancelResponse);
     rpc ListLogs(ListLogsRequest) returns (ListLogsResponse);
 
+    rpc ReplayExecution(ReplayExecutionRequest) returns (ReplayExecutionResponse);
     rpc UpgradeExecutionComponent(UpgradeExecutionComponentRequest) returns (UpgradeExecutionComponentResponse);
 }
 
@@ -593,6 +594,13 @@ message CancelResponse {
     }
     CancelOutcome outcome = 1;
 }
+
+message ReplayExecutionRequest {
+  ExecutionId execution_id = 1;
+}
+message ReplayExecutionResponse {
+}
+
 
 message UpgradeExecutionComponentRequest {
   ExecutionId execution_id = 1;

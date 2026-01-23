@@ -2,7 +2,7 @@ use concepts::{ComponentType, FunctionFqn, FunctionMetadata, StrVariant};
 use std::{error::Error, fmt::Debug, path::Path};
 use tracing::{debug, trace};
 use tracing_error::SpanTrace;
-use utils::wasm_tools::{self, DecodeError, WasmComponent};
+use utils::wasm_tools::{self, DecodeError, ExIm, WasmComponent};
 
 pub mod activity;
 pub mod component_logger;
@@ -89,24 +89,22 @@ impl RunnableComponent {
     }
 
     pub fn index_exported_functions(
-        &self,
+        wasmtime_component: &wasmtime::component::Component,
+        exim: &ExIm,
     ) -> Result<
         hashbrown::HashMap<FunctionFqn, wasmtime::component::ComponentExportIndex>,
         DecodeError,
     > {
         let mut exported_ffqn_to_index = hashbrown::HashMap::new();
-        for FunctionMetadata { ffqn, .. } in self.wasm_component.exim.get_exports(false) {
-            let Some(ifc_export_index) = self
-                .wasmtime_component
-                .get_export_index(None, &ffqn.ifc_fqn)
+        for FunctionMetadata { ffqn, .. } in exim.get_exports(false) {
+            let Some(ifc_export_index) = wasmtime_component.get_export_index(None, &ffqn.ifc_fqn)
             else {
                 return Err(DecodeError::new_without_source(format!(
                     "cannot find exported interface {ffqn}"
                 )));
             };
-            let Some(fn_export_index) = self
-                .wasmtime_component
-                .get_export_index(Some(&ifc_export_index), &ffqn.function_name)
+            let Some(fn_export_index) =
+                wasmtime_component.get_export_index(Some(&ifc_export_index), &ffqn.function_name)
             else {
                 return Err(DecodeError::new_without_source(format!(
                     "cannot find exported function {ffqn}"

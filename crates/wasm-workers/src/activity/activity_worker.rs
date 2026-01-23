@@ -94,9 +94,11 @@ impl<S: Sleep> ActivityWorkerCompiled<S> {
             .instantiate_pre(&runnable_component.wasmtime_component)
             .map_err(|err| WasmFileError::linking_error("cannot link activity", err))?;
 
-        let exported_ffqn_to_index = runnable_component
-            .index_exported_functions()
-            .map_err(WasmFileError::DecodeError)?;
+        let exported_ffqn_to_index = RunnableComponent::index_exported_functions(
+            &runnable_component.wasmtime_component,
+            &runnable_component.wasm_component.exim,
+        )
+        .map_err(WasmFileError::DecodeError)?;
         Ok(Self {
             engine,
             exim: runnable_component.wasm_component.exim,

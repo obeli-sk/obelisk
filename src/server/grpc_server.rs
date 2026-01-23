@@ -686,6 +686,51 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
     }
 
     #[instrument(skip_all, fields(execution_id))]
+    async fn replay_execution(
+        &self,
+        request: tonic::Request<grpc_gen::ReplayExecutionRequest>,
+    ) -> Result<tonic::Response<grpc_gen::ReplayExecutionResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let conn = self.db_pool.connection().await.map_err(map_to_status)?;
+        // Find the execution's ffqn.
+        let create_req = conn.get_create_request(&execution_id).await.to_status()?;
+
+        // Check that ffqn exists
+        let (component_id, _fn_metadata) = self
+            .component_registry_ro
+            .find_by_exported_ffqn_submittable(&create_req.ffqn)
+            .must_exist("component")?;
+
+        Span::current().record("component_id", tracing::field::display(component_id));
+
+        let (component_id, runnable_component) = self
+            .component_registry_ro
+            .get_workflow_component(&component_id.input_digest)
+            .expect("digest taken from found component id");
+
+        let replay_res = WorkflowWorker::replay(
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            self.engines.workflow_engine.clone(),
+            Arc::new(self.component_registry_ro.clone()),
+            conn.as_ref(),
+            execution_id.clone(),
+        )
+        .await;
+        if let Err(err) = replay_res {
+            debug!("Replay failed: {err:?}");
+            return Err(tonic::Status::internal(format!("replay failed: {err}")));
+        }
+        Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {}))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
     async fn upgrade_execution_component(
         &self,
         request: tonic::Request<grpc_gen::UpgradeExecutionComponentRequest>,
@@ -711,7 +756,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .must_exist("new component")?;
             let replay_res = WorkflowWorker::replay(
                 component_id.clone(),
-                runnable_component.clone(),
+                runnable_component.wasmtime_component.clone(),
+                &runnable_component.wasm_component.exim,
                 self.engines.workflow_engine.clone(),
                 Arc::new(self.component_registry_ro.clone()),
                 self.db_pool

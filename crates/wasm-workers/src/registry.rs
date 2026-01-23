@@ -89,12 +89,10 @@ impl ComponentConfigRegistry {
                 .export_hierarchy
                 .extend_from_slice(&workflow_or_activity_config.exports_hierarchy_ext);
         }
-        // insert to `ids_to_components`
-        let old = self
-            .inner
+
+        self.inner
             .ids_to_components
             .insert(component.component_id.input_digest.clone(), component);
-        assert!(old.is_none());
 
         Ok(())
     }
