@@ -231,13 +231,12 @@ impl<S: Sleep> WebhookEndpointInstanceLinked<S> {
             proxy_pre: self.proxy_pre,
             stdout,
             stderr,
-            log_storage_config: self
-                .config
-                .log_store_min_level
-                .map(|min_level| LogStrageConfig {
+            logs_storage_config: self.config.logs_store_min_level.map(|min_level| {
+                LogStrageConfig {
                     min_level,
                     log_sender: log_forwarder_sender.clone(),
-                }),
+                }
+            }),
             config: self.config,
         }
     }
@@ -252,7 +251,7 @@ pub struct WebhookEndpointInstance<S: Sleep> {
     stdout: Option<StdOutputConfigWithSender>,
     #[debug(skip)]
     stderr: Option<StdOutputConfigWithSender>,
-    log_storage_config: Option<LogStrageConfig>,
+    logs_storage_config: Option<LogStrageConfig>,
 }
 
 pub struct MethodAwareRouter<T> {
@@ -382,7 +381,7 @@ pub struct WebhookEndpointConfig {
     pub fuel: Option<u64>,
     pub backtrace_persist: bool,
     pub subscription_interruption: Option<Duration>,
-    pub log_store_min_level: Option<LogLevel>,
+    pub logs_store_min_level: Option<LogLevel>,
 }
 
 struct WebhookEndpointCtx<S: Sleep> {
@@ -796,7 +795,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
         stdout: Option<StdOutput>,
         stderr: Option<StdOutput>,
         run_id: RunId,
-        log_storage_config: Option<LogStrageConfig>,
+        logs_storage_config: Option<LogStrageConfig>,
     ) -> Store<WebhookEndpointCtx<S>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
         if let Some(stdout) = stdout {
@@ -843,7 +842,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
                 span: request_span,
                 execution_id: ExecutionId::TopLevel(execution_id),
                 run_id,
-                log_storage_config,
+                logs_storage_config,
             },
             subscription_interruption: config.subscription_interruption,
             connection_drop_watcher,
@@ -1095,7 +1094,7 @@ impl<S: Sleep> RequestHandler<S> {
                 stdout,
                 stderr,
                 run_id,
-                found_instance.log_storage_config.clone(),
+                found_instance.logs_storage_config.clone(),
             );
             let req = store
                 .data_mut()
@@ -1313,7 +1312,7 @@ pub(crate) mod tests {
                             fuel: None,
                             backtrace_persist: false,
                             subscription_interruption: None,
-                            log_store_min_level: None,
+                            logs_store_min_level: None,
                         },
                         wasm_file,
                         &engine,

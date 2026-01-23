@@ -126,7 +126,7 @@ impl<S: Sleep> ActivityWorkerCompiled<S> {
         self,
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
-        log_storage_config: Option<LogStrageConfig>,
+        logs_storage_config: Option<LogStrageConfig>,
     ) -> ActivityWorker<S> {
         let stdout = StdOutputConfigWithSender::new(
             self.config.forward_stdout,
@@ -149,7 +149,7 @@ impl<S: Sleep> ActivityWorkerCompiled<S> {
             cancel_registry,
             stdout,
             stderr,
-            log_storage_config,
+            logs_storage_config,
         }
     }
 }
@@ -165,7 +165,7 @@ pub struct ActivityWorker<S: Sleep> {
     cancel_registry: CancelRegistry,
     stdout: Option<StdOutputConfigWithSender>,
     stderr: Option<StdOutputConfigWithSender>,
-    log_storage_config: Option<LogStrageConfig>,
+    logs_storage_config: Option<LogStrageConfig>,
 }
 
 impl<S: Sleep> ActivityWorker<S> {
@@ -322,7 +322,7 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
             self.stderr
                 .as_ref()
                 .map(|it| it.build(&ctx.execution_id, ctx.locked_event.run_id)),
-            self.log_storage_config.clone(),
+            self.logs_storage_config.clone(),
         ) {
             Ok(store) => store,
             Err(ActivityPreopenIoError { err }) => {

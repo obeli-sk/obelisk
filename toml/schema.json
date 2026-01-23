@@ -188,7 +188,7 @@
         "location": {
           "$ref": "#/$defs/ComponentLocation"
         },
-        "log_store_min_level": {
+        "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml"
         },
         "max_retries": {
@@ -1064,7 +1064,7 @@
         "location": {
           "$ref": "#/$defs/ComponentLocation"
         },
-        "log_store_min_level": {
+        "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml"
         },
         "name": {
@@ -1136,7 +1136,7 @@
         "lock_extension": {
           "$ref": "#/$defs/DurationConfig"
         },
-        "log_store_min_level": {
+        "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml"
         },
         "name": {

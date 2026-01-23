@@ -618,7 +618,7 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     #[serde(default)]
     pub(crate) directories: ActivityDirectoriesConfigToml,
     #[serde(default)]
-    pub(crate) log_store_min_level: LogLevelToml,
+    pub(crate) logs_store_min_level: LogLevelToml,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -714,7 +714,7 @@ pub(crate) struct ActivityWasmConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
-    pub(crate) log_store_min_level: Option<LogLevel>,
+    pub(crate) logs_store_min_level: Option<LogLevel>,
 }
 
 impl ActivityWasmConfigVerified {
@@ -783,7 +783,7 @@ impl ActivityWasmComponentConfigToml {
                 global_executor_instance_limiter,
                 retry_config,
             ),
-            log_store_min_level: self.log_store_min_level.into(),
+            logs_store_min_level: self.logs_store_min_level.into(),
         })
     }
 }
@@ -808,7 +808,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     #[serde(default = "default_lock_extension")]
     lock_extension: DurationConfig,
     #[serde(default)]
-    pub(crate) log_store_min_level: LogLevelToml,
+    pub(crate) logs_store_min_level: LogLevelToml,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
@@ -913,7 +913,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
-    pub(crate) log_store_min_level: Option<LogLevel>,
+    pub(crate) logs_store_min_level: Option<LogLevel>,
 }
 
 impl WorkflowConfigVerified {
@@ -986,7 +986,7 @@ impl WorkflowComponentConfigToml {
                 retry_config,
             ),
             backtrace_config,
-            log_store_min_level: self.log_store_min_level.into(),
+            logs_store_min_level: self.logs_store_min_level.into(),
         })
     }
 }
@@ -1345,7 +1345,7 @@ pub(crate) mod webhook {
         #[serde(default)]
         pub(crate) backtrace: ComponentBacktraceConfig,
         #[serde(default)]
-        pub(crate) log_store_min_level: LogLevelToml,
+        pub(crate) logs_store_min_level: LogLevelToml,
     }
 
     impl WebhookComponentConfigToml {
@@ -1384,7 +1384,7 @@ pub(crate) mod webhook {
                     env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
                     backtrace_config,
                     subscription_interruption,
-                    log_store_min_level: self.log_store_min_level.into(),
+                    logs_store_min_level: self.logs_store_min_level.into(),
                 },
             ))
         }
@@ -1422,7 +1422,7 @@ pub(crate) mod webhook {
         pub(crate) env_vars: Arc<[EnvVar]>,
         pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
         pub(crate) subscription_interruption: Option<Duration>,
-        pub(crate) log_store_min_level: Option<LogLevel>,
+        pub(crate) logs_store_min_level: Option<LogLevel>,
     }
 
     #[derive(Debug)]

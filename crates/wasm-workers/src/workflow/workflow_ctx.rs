@@ -801,7 +801,7 @@ impl WorkflowCtx {
         locked_event: Locked,
         lock_extension: Duration,
         subscription_interruption: Option<Duration>,
-        log_storage_config: Option<LogStrageConfig>,
+        logs_storage_config: Option<LogStrageConfig>,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -830,7 +830,7 @@ impl WorkflowCtx {
                 span: worker_span,
                 execution_id,
                 run_id,
-                log_storage_config,
+                logs_storage_config,
             },
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace_persist,
@@ -1690,7 +1690,7 @@ pub(crate) mod tests {
                 ctx.locked_event,
                 Duration::from_secs(1), // lock extension
                 None,                   // subscription_interruption
-                None,                   // log_storage_config
+                None,                   // logs_storage_config
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");

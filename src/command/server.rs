@@ -737,7 +737,7 @@ impl ServerVerified {
                     )),
                 }],
                 backtrace: ComponentBacktraceConfig::default(),
-                log_store_min_level: LogLevelToml::Off,
+                logs_store_min_level: LogLevelToml::Off,
             });
         }
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
@@ -1435,7 +1435,7 @@ async fn compile_and_verify(
                                 fuel,
                                 backtrace_persist: global_backtrace_persist,
                                 subscription_interruption: webhook.subscription_interruption,
-                                log_store_min_level: webhook.log_store_min_level,
+                                logs_store_min_level: webhook.logs_store_min_level,
                             };
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
@@ -1575,7 +1575,7 @@ fn prespawn_activity(
         worker,
         activity.exec_config,
         wit,
-        activity.log_store_min_level,
+        activity.logs_store_min_level,
     ))
 }
 
@@ -1618,7 +1618,7 @@ struct WorkflowWorkerCompiledWithConfig {
 struct WorkerCompiled {
     worker: Either<ActivityWorkerCompiled<TokioSleep>, WorkflowWorkerCompiledWithConfig>,
     exec_config: ExecConfig,
-    log_store_min_level: Option<LogLevel>,
+    logs_store_min_level: Option<LogLevel>,
 }
 
 impl WorkerCompiled {
@@ -1626,7 +1626,7 @@ impl WorkerCompiled {
         worker: ActivityWorkerCompiled<TokioSleep>,
         exec_config: ExecConfig,
         wit: Option<String>,
-        log_store_min_level: Option<LogLevel>,
+        logs_store_min_level: Option<LogLevel>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
@@ -1642,7 +1642,7 @@ impl WorkerCompiled {
             WorkerCompiled {
                 worker: Either::Left(worker),
                 exec_config,
-                log_store_min_level,
+                logs_store_min_level,
             },
             component,
         )
@@ -1678,7 +1678,7 @@ impl WorkerCompiled {
                     workflows_lock_extension_leeway,
                 }),
                 exec_config: workflow.exec_config,
-                log_store_min_level: workflow.log_store_min_level,
+                logs_store_min_level: workflow.logs_store_min_level,
             },
             component,
         ))
@@ -1696,7 +1696,7 @@ impl WorkerCompiled {
                 }),
             },
             exec_config: self.exec_config,
-            log_store_min_level: self.log_store_min_level,
+            logs_store_min_level: self.logs_store_min_level,
         })
     }
 }
@@ -1709,7 +1709,7 @@ struct WorkflowWorkerLinkedWithConfig {
 struct WorkerLinked {
     worker: Either<ActivityWorkerCompiled<TokioSleep>, WorkflowWorkerLinkedWithConfig>,
     exec_config: ExecConfig,
-    log_store_min_level: Option<LogLevel>,
+    logs_store_min_level: Option<LogLevel>,
 }
 impl WorkerLinked {
     fn spawn(
@@ -1722,7 +1722,7 @@ impl WorkerLinked {
             Either::Left(activity_compiled) => Arc::from(activity_compiled.into_worker(
                 cancel_registry,
                 log_forwarder_sender,
-                self.log_store_min_level.map(|min_level| LogStrageConfig {
+                self.logs_store_min_level.map(|min_level| LogStrageConfig {
                     min_level,
                     log_sender: log_forwarder_sender.clone(),
                 }),
@@ -1734,7 +1734,7 @@ impl WorkerLinked {
                     clock_fn: Now.clone_box(),
                 }),
                 cancel_registry,
-                self.log_store_min_level.map(|min_level| LogStrageConfig {
+                self.logs_store_min_level.map(|min_level| LogStrageConfig {
                     min_level,
                     log_sender: log_forwarder_sender.clone(),
                 }),

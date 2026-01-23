@@ -132,7 +132,7 @@ mod bench {
                 .into_worker(
                     cancel_registry,
                     &db_forwarder_sender,
-                    None, // log_storage_config
+                    None, // logs_storage_config
                 ),
             ),
             component_id,
@@ -203,7 +203,7 @@ mod bench {
                     clock_fn: clock_fn.clone_box(),
                 }),
                 cancel_registry,
-                None, // log_storage_config
+                None, // logs_storage_config
             ),
         );
         let exec_config = ExecConfig {

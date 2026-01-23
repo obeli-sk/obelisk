@@ -37,7 +37,7 @@ location.path = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/r
 http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
-log_store_min_level = "info"
+logs_store_min_level = "info"
 forward_stdout = "db"
 forward_stderr = "db"
 

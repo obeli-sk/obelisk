@@ -134,7 +134,7 @@ pub(crate) fn store(
     preopened_dir: Option<PathBuf>,
     stdout: Option<StdOutput>,
     stderr: Option<StdOutput>,
-    log_storage_config: Option<LogStrageConfig>,
+    logs_storage_config: Option<LogStrageConfig>,
 ) -> Result<Store<ActivityCtx>, ActivityPreopenIoError> {
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = stdout {
@@ -176,7 +176,7 @@ pub(crate) fn store(
             span: worker_span,
             execution_id,
             run_id,
-            log_storage_config,
+            logs_storage_config,
         },
         http_client_traces: HttpClientTracesContainer::default(),
         clock_fn,

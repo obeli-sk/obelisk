@@ -86,7 +86,7 @@ pub struct WorkflowWorker {
     fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
     deadline_factory: Arc<dyn DeadlineTrackerFactory>,
-    log_storage_config: Option<LogStrageConfig>,
+    logs_storage_config: Option<LogStrageConfig>,
 }
 
 const WASI_NAMESPACE: &str = "wasi";
@@ -333,7 +333,7 @@ impl WorkflowWorkerLinked {
         db_pool: Arc<dyn DbPool>,
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
         cancel_registry: CancelRegistry,
-        log_storage_config: Option<LogStrageConfig>,
+        logs_storage_config: Option<LogStrageConfig>,
     ) -> WorkflowWorker {
         WorkflowWorker {
             config: self.config,
@@ -346,7 +346,7 @@ impl WorkflowWorkerLinked {
             fn_registry: self.fn_registry,
             deadline_factory,
             cancel_registry,
-            log_storage_config,
+            logs_storage_config,
         }
     }
 }
@@ -447,7 +447,7 @@ impl WorkflowWorker {
             ctx.locked_event,
             self.config.lock_extension,
             self.config.subscription_interruption,
-            self.log_storage_config.clone(),
+            self.logs_storage_config.clone(),
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);
@@ -813,7 +813,7 @@ impl WorkflowWorker {
             worker_span: Span::current(),
             locked_event: Locked {
                 component_id: config.component_id.clone(),
-                executor_id: ExecutorId::generate(), // TODO: Remove
+                executor_id: ExecutorId::generate(),
                 run_id: RunId::generate(),
                 lock_expires_at: clock_fn.now(), // does not matter, using DeadlineTrackerFactoryForReplay
                 retry_config: concepts::ComponentRetryConfig::WORKFLOW,
@@ -829,12 +829,12 @@ impl WorkflowWorker {
         )?;
         let linked = compiled.link(fn_registry)?;
         let db_pool = Arc::new(InMemoryPool::new());
-        let log_storage_config = None;
+        let logs_storage_config = None; // No log storage during replay.
         let worker = linked.into_worker(
             db_pool,
             Arc::new(DeadlineTrackerFactoryForReplay {}),
             CancelRegistry::new(),
-            log_storage_config,
+            logs_storage_config,
         );
         worker
             .run_internal(ctx)
@@ -1030,7 +1030,7 @@ pub(crate) mod tests {
                     clock_fn,
                 }),
                 cancel_registry,
-                None, // log_storage_config
+                None, // logs_storage_config
             ),
         )
     }

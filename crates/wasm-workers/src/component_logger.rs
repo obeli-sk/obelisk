@@ -11,7 +11,7 @@ pub(crate) struct ComponentLogger {
     pub(crate) span: Span,
     pub(crate) execution_id: ExecutionId,
     pub(crate) run_id: RunId,
-    pub(crate) log_storage_config: Option<LogStrageConfig>,
+    pub(crate) logs_storage_config: Option<LogStrageConfig>,
 }
 
 #[derive(Clone, derive_more::Debug)]
@@ -33,8 +33,8 @@ impl ComponentLogger {
             LogLevel::Error => error!(target: TARGET, "{message}"),
         });
         // store
-        if let Some(log_storage_config) = &mut self.log_storage_config {
-            let res = log_storage_config.log_sender.try_send(LogInfoAppendRow {
+        if let Some(logs_storage_config) = &mut self.logs_storage_config {
+            let res = logs_storage_config.log_sender.try_send(LogInfoAppendRow {
                 execution_id: self.execution_id.clone(),
                 run_id: self.run_id,
                 log_entry: LogEntry::Log {
