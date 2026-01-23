@@ -26,11 +26,11 @@ impl ComponentLogger {
     pub(crate) fn log(&mut self, level: LogLevel, message: String) {
         // publish via tracing subscriber
         self.span.in_scope(|| match level {
-            LogLevel::Trace => trace!(target = TARGET, "{message}"),
-            LogLevel::Debug => debug!(target = TARGET, "{message}"),
-            LogLevel::Info => info!(target = TARGET, "{message}"),
-            LogLevel::Warn => warn!(target = TARGET, "{message}"),
-            LogLevel::Error => error!(target = TARGET, "{message}"),
+            LogLevel::Trace => trace!(target: TARGET, "{message}"),
+            LogLevel::Debug => debug!(target: TARGET, "{message}"),
+            LogLevel::Info => info!(target: TARGET, "{message}"),
+            LogLevel::Warn => warn!(target: TARGET, "{message}"),
+            LogLevel::Error => error!(target: TARGET, "{message}"),
         });
         // store
         if let Some(log_storage_config) = &mut self.log_storage_config {
