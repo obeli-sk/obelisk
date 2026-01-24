@@ -2,24 +2,15 @@
 source: crates/wasm-workers/src/activity/activity_worker.rs
 expression: variant
 ---
-Some(
-    WastValWithType {
-        type: Variant(
-            {
-                "var1": Some(
-                    Option(
-                        Bool,
-                    ),
-                ),
-            },
-        ),
-        value: Variant(
-            "var1",
-            Some(
-                Option(
-                    None,
-                ),
-            ),
-        ),
-    },
-)
+{
+  "type": {
+    "variant": {
+      "var1": {
+        "option": "bool"
+      }
+    }
+  },
+  "value": {
+    "var1": null
+  }
+}

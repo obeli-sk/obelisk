@@ -2,33 +2,21 @@
 source: crates/wasm-workers/src/activity/activity_worker.rs
 expression: record
 ---
-Some(
-    WastValWithType {
-        type: Record(
-            {
-                "a": Bool,
-                "image": String,
-                "b": Bool,
-                "opt": Option(
-                    Bool,
-                ),
-            },
-        ),
-        value: Record(
-            {
-                "a": Bool(
-                    false,
-                ),
-                "image": String(
-                    "foo",
-                ),
-                "b": Bool(
-                    false,
-                ),
-                "opt": Option(
-                    None,
-                ),
-            },
-        ),
-    },
-)
+{
+  "type": {
+    "record": {
+      "a": "bool",
+      "image": "string",
+      "b": "bool",
+      "opt": {
+        "option": "bool"
+      }
+    }
+  },
+  "value": {
+    "a": false,
+    "image": "foo",
+    "b": false,
+    "opt": null
+  }
+}

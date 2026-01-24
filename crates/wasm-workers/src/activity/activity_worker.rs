@@ -790,7 +790,7 @@ pub(crate) mod tests {
             storage::{ExecutionRequest, Version},
         };
         use executor::executor::LockingStrategy;
-        use insta::assert_debug_snapshot;
+        use insta::assert_json_snapshot;
         use test_utils::{env_or_default, sim_clock::SimClock};
         use tracing::{debug, info, info_span};
 
@@ -1874,7 +1874,7 @@ pub(crate) mod tests {
                 .unwrap();
             let record =
                 assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: record} => record);
-            assert_debug_snapshot!(record);
+            assert_json_snapshot!(record);
             db_close.close().await;
         }
 
@@ -1937,7 +1937,7 @@ pub(crate) mod tests {
                 .unwrap();
             let variant =
                 assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: variant} => variant);
-            assert_debug_snapshot!(variant);
+            assert_json_snapshot!(variant);
             db_close.close().await;
         }
     }
