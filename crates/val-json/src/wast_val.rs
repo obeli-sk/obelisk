@@ -42,19 +42,22 @@ impl ValKey {
         assert!(!val.contains('-'));
         Self(val)
     }
-    pub fn from_kebab(val: String) -> Self {
+    #[must_use]
+    pub fn from_kebab(val: &str) -> Self {
         Self(val.replace('-', "_").into())
     }
+    #[must_use]
     pub fn as_snake_str(&self) -> &str {
         &self.0
     }
+    #[must_use]
     pub fn to_kebab_string(&self) -> String {
         self.0.replace('_', "-")
     }
 }
 impl From<&TypeKey> for ValKey {
     fn from(value: &TypeKey) -> Self {
-        ValKey::from_kebab(value.as_kebab_str().to_string())
+        ValKey::from_kebab(value.as_kebab_str())
     }
 }
 
@@ -129,7 +132,7 @@ impl TryFrom<wasmtime::component::Val> for WastVal {
             )),
             Val::Record(v) => Ok(Self::Record(
                 v.into_iter()
-                    .map(|(name, v)| WastVal::try_from(v).map(|v| (ValKey::from_kebab(name), v)))
+                    .map(|(name, v)| WastVal::try_from(v).map(|v| (ValKey::from_kebab(&name), v)))
                     .collect::<Result<_, _>>()?,
             )),
             Val::Tuple(v) => Ok(Self::Tuple(
@@ -138,10 +141,10 @@ impl TryFrom<wasmtime::component::Val> for WastVal {
                     .collect::<Result<_, _>>()?,
             )),
             Val::Variant(str, v) => Ok(Self::Variant(
-                ValKey::from_kebab(str),
+                ValKey::from_kebab(&str),
                 v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new),
             )),
-            Val::Enum(v) => Ok(Self::Enum(ValKey::from_kebab(v))),
+            Val::Enum(v) => Ok(Self::Enum(ValKey::from_kebab(&v))),
             Val::Option(v) => Ok(Self::Option(
                 v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new),
             )),

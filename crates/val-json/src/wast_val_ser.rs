@@ -44,8 +44,9 @@ impl Serialize for WastVal {
                 }
                 ser.end()
             }
-            WastVal::Enum(key) => serializer.serialize_str(key.as_snake_str()),
-            WastVal::Variant(key, None) => serializer.serialize_str(key.as_snake_str()),
+            WastVal::Enum(key) | WastVal::Variant(key, None) => {
+                serializer.serialize_str(key.as_snake_str())
+            }
             WastVal::Variant(key, Some(value)) => {
                 use serde::ser::SerializeMap;
                 let mut ser = serializer.serialize_map(Some(1))?;
@@ -355,9 +356,7 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                 match self.0 {
                     TypeWrapper::String => Ok(WastVal::String(str_val.into())),
                     TypeWrapper::Variant(possible_variants) => {
-                        if let Some(found) =
-                            possible_variants.get(&TypeKey::from_snake(str_val.to_string()))
-                        {
+                        if let Some(found) = possible_variants.get(&TypeKey::from_snake(str_val)) {
                             if found.is_none() {
                                 Ok(WastVal::Variant(
                                     ValKey::new_snake(str_val.to_string()),
@@ -379,7 +378,7 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                         }
                     }
                     TypeWrapper::Enum(possible_variants) => {
-                        if possible_variants.contains(&TypeKey::from_snake(str_val.to_string())) {
+                        if possible_variants.contains(&TypeKey::from_snake(str_val)) {
                             Ok(WastVal::Enum(ValKey::new_snake(str_val.to_string())))
                         } else {
                             Err(Error::custom(format!(
@@ -437,7 +436,7 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                     TypeWrapper::Record(record) => {
                         let mut input_map = hashbrown::HashMap::new();
                         while let Some(field_name) = map.next_key::<String>()? {
-                            let type_key = TypeKey::from_snake(field_name.clone());
+                            let type_key = TypeKey::from_snake(&field_name);
                             if let Some(field_type) = record.get(&type_key) {
                                 let value = map.next_value_seed(WastValDeserialize(field_type))?;
                                 input_map.insert(type_key, value);
@@ -475,7 +474,7 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                     TypeWrapper::Variant(possible_variants) => {
                         if let Some(variant_name) = map.next_key::<String>()? {
                             if let Some(found) =
-                                possible_variants.get(&TypeKey::from_snake(variant_name.clone()))
+                                possible_variants.get(&TypeKey::from_snake(&variant_name))
                             {
                                 if let Some(variant_field_type) = found {
                                     let value = map
@@ -583,7 +582,7 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                             return Err(Error::custom(format!(
                                 "cannot deserialize flags: flag `{element}` was found more than once"
                             )));
-                        } else if possible_flags.contains(&TypeKey::from_snake(element.clone())) {
+                        } else if possible_flags.contains(&TypeKey::from_snake(&element)) {
                             vec.push(element);
                         } else {
                             return Err(Error::custom(format!(
@@ -1281,7 +1280,10 @@ mod tests {
         let fields = assert_matches!(deser.value, WastVal::Record(fields) => fields);
         assert_eq!(
             expected_keys,
-            fields.keys().map(|vk| vk.to_kebab_string()).collect_vec()
+            fields
+                .keys()
+                .map(super::super::wast_val::ValKey::to_kebab_string)
+                .collect_vec()
         );
 
         let fields = assert_matches!(deser.r#type, TypeWrapper::Record(fields) => fields);

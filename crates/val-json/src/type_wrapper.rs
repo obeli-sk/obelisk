@@ -43,12 +43,15 @@ impl TypeKey {
         assert!(!s.contains('_'));
         TypeKey(s)
     }
-    pub fn from_snake(s: String) -> Self {
+    #[must_use]
+    pub fn from_snake(s: &str) -> Self {
         Self(s.replace('_', "-").into())
     }
+    #[must_use]
     pub fn as_kebab_str(&self) -> &str {
         &self.0
     }
+    #[must_use]
     pub fn to_snake_string(&self) -> String {
         self.0.replace('-', "_")
     }

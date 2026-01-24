@@ -756,7 +756,7 @@ pub fn execution_error_to_wast_val(ret_type: &TypeWrapperTopLevel) -> WastVal {
                     == Some(&None)
                 {
                     return WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                        ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT.to_string()),
+                        ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT),
                         None,
                     )))));
                 }
