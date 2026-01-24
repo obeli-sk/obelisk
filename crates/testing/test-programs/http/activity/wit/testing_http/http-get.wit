@@ -8,13 +8,7 @@ interface http-get {
     }
 
 
-    record stargazers {
-        logins: string,
-        cursor: string,
-    }
-
     get: func(url: string) -> result<string, string>;
     get-resp: func(url: string) -> result<response, string>;
-    get-stargazers: func() -> result<stargazers, string>;
     get-successful: func(url: string) -> result<string, string>;
 }

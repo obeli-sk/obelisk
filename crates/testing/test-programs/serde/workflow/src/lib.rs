@@ -18,4 +18,9 @@ impl Guest for Component {
         };
         Ok(())
     }
+
+    fn get_stargazers() -> Result<(), ()> {
+        serde::get_stargazers().unwrap();
+        Ok(())
+    }
 }

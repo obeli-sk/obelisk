@@ -963,8 +963,8 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-    const FFQN_WORKFLOW_HTTP_GET_STARGAZERS: FunctionFqn = FunctionFqn::new_static_tuple(
-        test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_STARGAZERS);
+    const FFQN_WORKFLOW_SERDE_STARGAZERS: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_serde_workflow_builder::exports::testing::serde_workflow::serde_workflow::GET_STARGAZERS);
 
     const FFQN_WORKFLOW_HTTP_GET: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET,
@@ -1618,18 +1618,14 @@ pub(crate) mod tests {
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection().await.unwrap();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(
-                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            )
-            .await,
-            compile_workflow(
-                test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            )
-            .await,
+            compile_activity(test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_serde_workflow_builder::TEST_PROGRAMS_SERDE_WORKFLOW)
+                .await,
         ]);
         let activity_exec = new_activity(
             db_pool.clone(),
-            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
             sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
@@ -1639,7 +1635,7 @@ pub(crate) mod tests {
 
         let workflow_exec = new_workflow_exec_task(
             db_pool.clone(),
-            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            test_programs_serde_workflow_builder::TEST_PROGRAMS_SERDE_WORKFLOW,
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
@@ -1652,7 +1648,7 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id: execution_id.clone(),
-                ffqn: FFQN_WORKFLOW_HTTP_GET_STARGAZERS,
+                ffqn: FFQN_WORKFLOW_SERDE_STARGAZERS,
                 params: Params::empty(),
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),

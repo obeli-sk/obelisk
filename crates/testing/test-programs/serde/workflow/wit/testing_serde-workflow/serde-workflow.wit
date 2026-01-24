@@ -4,5 +4,7 @@ interface serde-workflow {
 
     expect-trap: func() -> result;
 
+    get-stargazers: func() -> result;
+
 }
 

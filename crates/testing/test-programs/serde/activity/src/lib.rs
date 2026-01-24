@@ -1,3 +1,4 @@
+use crate::generated::exports::testing::serde::serde::Stargazers;
 use generated::export;
 use generated::exports::testing::serde::serde::{Guest, MyError, MyRecord, MyVariant};
 
@@ -20,5 +21,12 @@ impl Guest for Component {
 
     fn trap() -> Result<(), MyError> {
         panic!()
+    }
+
+    fn get_stargazers() -> Result<Stargazers, String> {
+        Ok(Stargazers {
+            cursor: "cursor".to_string(),
+            logins: "logins".to_string(),
+        })
     }
 }

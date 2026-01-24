@@ -23,5 +23,12 @@ interface serde {
     }
     trap: func() -> result<_, my-error>;
 
+    record stargazers {
+        logins: string,
+        cursor: string,
+    }
+
+    get-stargazers: func() -> result<stargazers, string>;
+
 }
 

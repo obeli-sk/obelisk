@@ -173,16 +173,9 @@ package testing:http {
       status-code: u16,
     }
 
-    record stargazers {
-      logins: string,
-      cursor: string,
-    }
-
     get: func(url: string) -> result<string, string>;
 
     get-resp: func(url: string) -> result<response, string>;
-
-    get-stargazers: func() -> result<stargazers, string>;
 
     get-successful: func(url: string) -> result<string, string>;
   }
@@ -206,8 +199,6 @@ package testing:http-workflow {
     get: func(url: string) -> result<string, string>;
 
     get-resp: func(url: string) -> result<string, string>;
-
-    get-stargazers: func() -> result;
 
     get-successful: func(url: string) -> result<string, string>;
 
@@ -235,12 +226,6 @@ package testing:http-workflow-obelisk-ext {
     get-resp-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
 
     get-resp-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
-
-    get-stargazers-submit: func(join-set: borrow<join-set>) -> execution-id;
-
-    get-stargazers-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
-
-    get-stargazers-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
     get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
@@ -271,8 +256,6 @@ package testing:http-workflow-obelisk-schedule {
     get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
     get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
-
-    get-stargazers-schedule: func(schedule-at: schedule-at) -> execution-id;
 
     get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 

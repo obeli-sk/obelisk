@@ -46,11 +46,4 @@ impl Guest for Component {
     fn get_resp(url: String) -> Result<http_get::Response, String> {
         block_on(async { get_resp(url).await }).map_err(|err| err.to_string())
     }
-
-    fn get_stargazers() -> Result<http_get::Stargazers, String> {
-        Ok(http_get::Stargazers {
-            cursor: "cursor".to_string(),
-            logins: "logins".to_string(),
-        })
-    }
 }

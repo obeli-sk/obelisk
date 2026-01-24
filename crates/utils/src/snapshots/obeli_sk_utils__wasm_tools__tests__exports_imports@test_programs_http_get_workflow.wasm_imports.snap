@@ -182,26 +182,6 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "testing:http/http-get.get-stargazers": {
-    "ffqn": "testing:http/http-get.get-stargazers",
-    "parameter_types": [],
-    "return_type": {
-      "extendable": {
-        "type_wrapper_tl": {
-          "ok": {
-            "record": {
-              "cursor": "string",
-              "logins": "string"
-            }
-          },
-          "err": "string"
-        },
-        "wit_type": "result<stargazers, string>"
-      }
-    },
-    "extension": null,
-    "submittable": false
-  },
   "testing:http/http-get.get-successful": {
     "ffqn": "testing:http/http-get.get-successful",
     "parameter_types": [

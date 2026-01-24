@@ -63,9 +63,4 @@ impl Guest for Component {
         }
         Ok(list)
     }
-
-    fn get_stargazers() -> Result<(), ()> {
-        http_get::get_stargazers().unwrap();
-        Ok(())
-    }
 }

@@ -45,21 +45,6 @@ expression: exports
     "extension": null,
     "submittable": true
   },
-  "testing:http-workflow/workflow.get-stargazers": {
-    "ffqn": "testing:http-workflow/workflow.get-stargazers",
-    "parameter_types": [],
-    "return_type": {
-      "extendable": {
-        "type_wrapper_tl": {
-          "ok": null,
-          "err": null
-        },
-        "wit_type": "result"
-      }
-    },
-    "extension": null,
-    "submittable": true
-  },
   "testing:http-workflow/workflow.get-successful": {
     "ffqn": "testing:http-workflow/workflow.get-successful",
     "parameter_types": [
