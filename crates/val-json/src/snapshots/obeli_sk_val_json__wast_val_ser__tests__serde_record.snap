@@ -6,11 +6,11 @@ expression: json
   "type": {
     "record": {
       "field1": "bool",
-      "field2": "u32"
+      "field-2": "u32"
     }
   },
   "value": {
     "field1": true,
-    "field2": 1
+    "field_2": 1
   }
 }

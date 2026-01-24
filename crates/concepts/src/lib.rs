@@ -31,8 +31,8 @@ use std::{
 use storage::{PendingStateFinishedError, PendingStateFinishedResultKind};
 use tracing::{Span, error};
 use val_json::{
-    type_wrapper::{TypeConversionError, TypeWrapper},
-    wast_val::{WastVal, WastValWithType},
+    type_wrapper::{TypeConversionError, TypeKey, TypeWrapper},
+    wast_val::{ValKey, WastVal, WastValWithType},
     wast_val_ser::params,
 };
 use wasmtime::component::{Type, Val};
@@ -752,9 +752,11 @@ pub fn execution_error_to_wast_val(ret_type: &TypeWrapperTopLevel) -> WastVal {
                 )))));
             }
             TypeWrapper::Variant(variants) => {
-                if variants.get(EXECUTION_FAILED_STRING_OR_VARIANT) == Some(&None) {
+                if variants.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT))
+                    == Some(&None)
+                {
                     return WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                        EXECUTION_FAILED_STRING_OR_VARIANT.to_string(),
+                        ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT.to_string()),
                         None,
                     )))));
                 }
@@ -1966,7 +1968,8 @@ impl ReturnType {
                     wit_type,
                 });
             } else if let TypeWrapper::Variant(fields) = err.as_ref()
-                && let Some(None) = fields.get(EXECUTION_FAILED_STRING_OR_VARIANT)
+                && let Some(None) =
+                    fields.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT))
             {
                 return ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },

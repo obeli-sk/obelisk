@@ -1,8 +1,9 @@
 use crate::{
-    type_wrapper::TypeWrapper,
-    wast_val::{WastVal, WastValWithType},
+    type_wrapper::{TypeKey, TypeWrapper},
+    wast_val::{ValKey, WastVal, WastValWithType},
 };
 use indexmap::IndexMap;
+use itertools::Itertools;
 use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
@@ -43,7 +44,8 @@ impl Serialize for WastVal {
                 }
                 ser.end()
             }
-            WastVal::Variant(key, None) | WastVal::Enum(key) => serializer.serialize_str(key),
+            WastVal::Enum(key) => serializer.serialize_str(key.as_snake_str()),
+            WastVal::Variant(key, None) => serializer.serialize_str(key.as_snake_str()),
             WastVal::Variant(key, Some(value)) => {
                 use serde::ser::SerializeMap;
                 let mut ser = serializer.serialize_map(Some(1))?;
@@ -148,7 +150,9 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
             type Value = WastVal;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(formatter, "value matching {type:?}", type = self.0) // TODO: wit_type instead of TypeWrapper
+                let type_wrapper = serde_json::to_string(&self.0)
+                    .expect("all type wrappers must be JSON serializable, no NaNs or custom ser");
+                write!(formatter, "value matching {type_wrapper}") //  WIT type cannot be displayed without names
             }
 
             fn visit_bool<E>(self, val: bool) -> Result<Self::Value, E>
@@ -350,10 +354,15 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
             {
                 match self.0 {
                     TypeWrapper::String => Ok(WastVal::String(str_val.into())),
-                    TypeWrapper::Variant(variants) => {
-                        if let Some(found) = variants.get(str_val) {
+                    TypeWrapper::Variant(possible_variants) => {
+                        if let Some(found) =
+                            possible_variants.get(&TypeKey::from_snake(str_val.to_string()))
+                        {
                             if found.is_none() {
-                                Ok(WastVal::Variant(str_val.to_string(), None))
+                                Ok(WastVal::Variant(
+                                    ValKey::new_snake(str_val.to_string()),
+                                    None,
+                                ))
                             } else {
                                 Err(Error::custom(format!(
                                     "cannot deserialize variant: `{str_val}` must be serialized as map"
@@ -361,16 +370,24 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                             }
                         } else {
                             Err(Error::custom(format!(
-                                "cannot deserialize enum: `{str_val}` not found in the following list: `{variants:?}`"
+                                "cannot deserialize enum: `{str_val}` not found in the following list: `{:?}`",
+                                possible_variants
+                                    .keys()
+                                    .map(TypeKey::to_snake_string) // display error in `snake_case`
+                                    .collect_vec()
                             )))
                         }
                     }
-                    TypeWrapper::Enum(variants) => {
-                        if variants.contains(str_val) {
-                            Ok(WastVal::Enum(str_val.to_string()))
+                    TypeWrapper::Enum(possible_variants) => {
+                        if possible_variants.contains(&TypeKey::from_snake(str_val.to_string())) {
+                            Ok(WastVal::Enum(ValKey::new_snake(str_val.to_string())))
                         } else {
                             Err(Error::custom(format!(
-                                "cannot deserialize enum: `{str_val}` not found in the following list: `{variants:?}`"
+                                "cannot deserialize enum: `{str_val}` not found in the following list: `{:?}`",
+                                possible_variants
+                                    .iter()
+                                    .map(TypeKey::to_snake_string) // display error in `snake_case`
+                                    .collect_vec()
                             )))
                         }
                     }
@@ -420,12 +437,13 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                     TypeWrapper::Record(record) => {
                         let mut input_map = hashbrown::HashMap::new();
                         while let Some(field_name) = map.next_key::<String>()? {
-                            if let Some(field_type) = record.get(field_name.as_str()) {
+                            let type_key = TypeKey::from_snake(field_name.clone());
+                            if let Some(field_type) = record.get(&type_key) {
                                 let value = map.next_value_seed(WastValDeserialize(field_type))?;
-                                input_map.insert(field_name, value);
+                                input_map.insert(type_key, value);
                             } else {
                                 return Err(Error::custom(format!(
-                                    "unexpected field name `{field_name}`"
+                                    "unexpected record field name `{field_name}`" // display field in original `snake_case`
                                 )));
                             }
                         }
@@ -434,16 +452,16 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                         let mut missing = vec![];
                         for (requested_field_name, requested_ty) in record {
                             if let Some((requested_field_name, value)) =
-                                input_map.remove_entry(requested_field_name.as_ref())
+                                input_map.remove_entry(requested_field_name)
                             {
-                                dst_map.insert(requested_field_name, value);
+                                dst_map.insert(ValKey::from(&requested_field_name), value);
                             } else if matches!(requested_ty, TypeWrapper::Option(_)) {
                                 dst_map.insert(
-                                    requested_field_name.clone().into_string(),
+                                    ValKey::from(requested_field_name),
                                     WastVal::Option(None),
                                 );
                             } else {
-                                missing.push(requested_field_name);
+                                missing.push(requested_field_name.to_snake_string()); // display in `snake_case`
                             }
                         }
                         if missing.is_empty() {
@@ -454,13 +472,18 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                             )))
                         }
                     }
-                    TypeWrapper::Variant(variants) => {
+                    TypeWrapper::Variant(possible_variants) => {
                         if let Some(variant_name) = map.next_key::<String>()? {
-                            if let Some(found) = variants.get(variant_name.as_str()) {
+                            if let Some(found) =
+                                possible_variants.get(&TypeKey::from_snake(variant_name.clone()))
+                            {
                                 if let Some(variant_field_type) = found {
                                     let value = map
                                         .next_value_seed(WastValDeserialize(variant_field_type))?;
-                                    Ok(WastVal::Variant(variant_name, Some(Box::new(value))))
+                                    Ok(WastVal::Variant(
+                                        ValKey::new_snake(variant_name), // display error in `snake_case`
+                                        Some(Box::new(value)),
+                                    ))
                                 } else {
                                     Err(Error::custom(format!(
                                         "cannot deserialize variant: `{variant_name}` must be serialized as string"
@@ -469,13 +492,19 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                             } else {
                                 Err(Error::custom(format!(
                                     "cannot deserialize variant: `{variant_name}` not found in the following list: `{:?}`",
-                                    variants.keys().collect::<Vec<_>>()
+                                    possible_variants
+                                        .keys()
+                                        .map(TypeKey::to_snake_string) // display error in `snake_case`
+                                        .collect_vec()
                                 )))
                             }
                         } else {
                             Err(Error::custom(format!(
                                 "cannot deserialize variant: expected single map key from following list: `{:?}`",
-                                variants.keys().collect::<Vec<_>>()
+                                possible_variants
+                                    .keys()
+                                    .map(TypeKey::to_snake_string) // display error in `snake_case`
+                                    .collect_vec()
                             )))
                         }
                     }
@@ -554,11 +583,15 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                             return Err(Error::custom(format!(
                                 "cannot deserialize flags: flag `{element}` was found more than once"
                             )));
-                        } else if possible_flags.contains(element.as_str()) {
+                        } else if possible_flags.contains(&TypeKey::from_snake(element.clone())) {
                             vec.push(element);
                         } else {
                             return Err(Error::custom(format!(
-                                "cannot deserialize flags: flag `{element}` not found in the list: `{possible_flags:?}`"
+                                "cannot deserialize flags: flag `{element}` not found in the list: `{:?}`",
+                                possible_flags
+                                    .iter()
+                                    .map(TypeKey::to_snake_string) // display error in `snake_case`
+                                    .collect_vec()
                             )));
                         }
                     }
@@ -709,8 +742,8 @@ pub fn deserialize_value(
 mod tests {
     use super::params::deserialize_str;
     use crate::{
-        type_wrapper::TypeWrapper,
-        wast_val::{WastVal, WastValWithType},
+        type_wrapper::{TypeKey, TypeWrapper},
+        wast_val::{ValKey, WastVal, WastValWithType},
         wast_val_ser::WastValDeserialize,
     };
     use assert_matches::assert_matches;
@@ -806,7 +839,7 @@ mod tests {
             .unwrap_err();
         assert_starts_with(
             &err,
-            "invalid type: floating point `6.805646932770577e+38`, expected value matching F32",
+            "invalid type: floating point `6.805646932770577e+38`, expected value matching \"f32\"",
         );
     }
 
@@ -1035,12 +1068,12 @@ mod tests {
     fn serde_record() {
         let expected = WastValWithType {
             r#type: TypeWrapper::Record(IndexMap::from([
-                (Box::from("field1"), TypeWrapper::Bool),
-                (Box::from("field2"), TypeWrapper::U32),
+                (TypeKey::new_kebab("field1"), TypeWrapper::Bool),
+                (TypeKey::new_kebab("field-2"), TypeWrapper::U32),
             ])),
             value: WastVal::Record(IndexMap::from([
-                ("field1".to_string(), WastVal::Bool(true)),
-                ("field2".to_string(), WastVal::U32(1)),
+                (ValKey::new_snake("field1"), WastVal::Bool(true)),
+                (ValKey::new_snake("field_2".to_string()), WastVal::U32(1)),
             ])),
         };
         let json = serde_json::to_string_pretty(&expected).unwrap();
@@ -1052,15 +1085,18 @@ mod tests {
     #[test]
     fn serde_variant_with_field() {
         let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("milliseconds") => Some(TypeWrapper::U64),
-            Box::from("seconds") => Some(TypeWrapper::U64),
-            Box::from("minutes") => Some(TypeWrapper::U32),
-            Box::from("hours") => Some(TypeWrapper::U32),
-            Box::from("days") => Some(TypeWrapper::U32),
+            TypeKey::new_kebab("milli-seconds") => Some(TypeWrapper::U64),
+            TypeKey::new_kebab("seconds") => Some(TypeWrapper::U64),
+            TypeKey::new_kebab("minutes") => Some(TypeWrapper::U32),
+            TypeKey::new_kebab("hours") => Some(TypeWrapper::U32),
+            TypeKey::new_kebab("days") => Some(TypeWrapper::U32),
         });
         let expected = WastValWithType {
             r#type: duration_type_wrapper,
-            value: WastVal::Variant("seconds".to_string(), Some(Box::new(WastVal::U64(1)))),
+            value: WastVal::Variant(
+                ValKey::new_snake("milli_seconds"),
+                Some(Box::new(WastVal::U64(1))),
+            ),
         };
         let json = serde_json::to_string_pretty(&expected).unwrap();
         insta::assert_snapshot!(json);
@@ -1072,10 +1108,10 @@ mod tests {
     fn serde_variant_without_field() {
         let expected = WastValWithType {
             r#type: TypeWrapper::Variant(indexmap! {
-                Box::from("a") => None,
-                Box::from("b") => None,
+                TypeKey::new_kebab("a") => None,
+                TypeKey::new_kebab("b") => None,
             }),
-            value: WastVal::Variant("a".to_string(), None),
+            value: WastVal::Variant(ValKey::new_snake("a"), None),
         };
         let json = serde_json::to_string_pretty(&expected).unwrap();
         insta::assert_snapshot!(json);
@@ -1123,10 +1159,10 @@ mod tests {
     fn serde_enum() {
         let expected = WastValWithType {
             r#type: TypeWrapper::Enum(indexset! {
-                Box::from("a"),
-                Box::from("b"),
+                TypeKey::new_kebab("a-a"),
+                TypeKey::new_kebab("b"),
             }),
-            value: WastVal::Enum("a".to_string()),
+            value: WastVal::Enum(ValKey::new_snake("a_a")),
         };
         let json = serde_json::to_string_pretty(&expected).unwrap();
         insta::assert_snapshot!(json);
@@ -1141,7 +1177,7 @@ mod tests {
             "#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "cannot deserialize enum: `c` not found in the following list: `{\"a\", \"b\"}` at line 2 column 50",
+            "cannot deserialize enum: `c` not found in the following list: `[\"a\", \"b\"]` at line 2 column 50",
             err.to_string()
         );
     }
@@ -1153,7 +1189,7 @@ mod tests {
             "#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid type: map, expected value matching Enum({\"a\", \"b\"}) at line 2 column 48",
+            "invalid type: map, expected value matching {\"enum\":[\"a\",\"b\"]} at line 2 column 48",
             err.to_string()
         );
     }
@@ -1163,7 +1199,7 @@ mod tests {
         let json = r#"{"type":{"tuple":["bool","u32"]},"value":[false]}"#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid length 1, expected value matching Tuple([Bool, U32]) at line 1 column 48",
+            "invalid length 1, expected value matching {\"tuple\":[\"bool\",\"u32\"]} at line 1 column 48",
             err.to_string()
         );
     }
@@ -1173,7 +1209,7 @@ mod tests {
         let json = r#"{"type":{"tuple":["bool","u32"]},"value":[false, 1, false]}"#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid length 3, expected value matching Tuple([Bool, U32]) at line 1 column 58",
+            "invalid length 3, expected value matching {\"tuple\":[\"bool\",\"u32\"]} at line 1 column 58",
             err.to_string()
         );
     }
@@ -1193,8 +1229,10 @@ mod tests {
     #[test]
     fn serde_flags() {
         let expected = WastValWithType {
-            r#type: TypeWrapper::Flags(indexset! {Box::from("a"), Box::from("b"), Box::from("c")}),
-            value: WastVal::Flags(vec!["a".to_string(), "b".to_string()]),
+            r#type: TypeWrapper::Flags(
+                indexset! {TypeKey::new_kebab("a-a"), TypeKey::new_kebab("b"), TypeKey::new_kebab("c")},
+            ),
+            value: WastVal::Flags(vec!["a_a".to_string(), "b".to_string()]),
         };
         let json = serde_json::to_string_pretty(&expected).unwrap();
         insta::assert_snapshot!(json);
@@ -1217,7 +1255,7 @@ mod tests {
         let json = r#"{"type":{"flags":["a","b","c"]},"value":["a","d"]}"#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "cannot deserialize flags: flag `d` not found in the list: `{\"a\", \"b\", \"c\"}` at line 1 column 49",
+            "cannot deserialize flags: flag `d` not found in the list: `[\"a\", \"b\", \"c\"]` at line 1 column 49",
             err.to_string()
         );
     }
@@ -1241,15 +1279,15 @@ mod tests {
         "#;
         let deser: WastValWithType = serde_json::from_str(json).unwrap();
         let fields = assert_matches!(deser.value, WastVal::Record(fields) => fields);
-        assert_eq!(expected_keys, fields.keys().collect_vec());
+        assert_eq!(
+            expected_keys,
+            fields.keys().map(|vk| vk.to_kebab_string()).collect_vec()
+        );
 
         let fields = assert_matches!(deser.r#type, TypeWrapper::Record(fields) => fields);
         assert_eq!(
             expected_keys,
-            fields
-                .keys()
-                .map(std::string::ToString::to_string)
-                .collect_vec()
+            fields.keys().map(TypeKey::as_kebab_str).collect_vec()
         );
     }
 }

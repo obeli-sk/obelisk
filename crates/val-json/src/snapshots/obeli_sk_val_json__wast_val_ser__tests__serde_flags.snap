@@ -5,13 +5,13 @@ expression: json
 {
   "type": {
     "flags": [
-      "a",
+      "a-a",
       "b",
       "c"
     ]
   },
   "value": [
-    "a",
+    "a_a",
     "b"
   ]
 }

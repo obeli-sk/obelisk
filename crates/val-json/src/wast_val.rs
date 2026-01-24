@@ -1,4 +1,5 @@
 use crate::type_wrapper::TypeConversionError;
+use crate::type_wrapper::TypeKey;
 use crate::type_wrapper::TypeWrapper;
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -23,14 +24,38 @@ pub enum WastVal {
     Char(char),
     String(String),
     List(Vec<WastVal>),
-    Record(IndexMap<String, WastVal>), // TODO: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
+    Record(IndexMap<ValKey, WastVal>), // TODO: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
     Tuple(Vec<WastVal>),
-    Variant(String, Option<Box<WastVal>>),
-    Enum(String),
+    Variant(ValKey, Option<Box<WastVal>>),
+    Enum(ValKey),
     Option(Option<Box<WastVal>>),
     Result(Result<Option<Box<WastVal>>, Option<Box<WastVal>>>),
     Flags(Vec<String>),
     // TODO: Add Map(IndexMap<MapKey, WastVal>), when wasmtime supports it
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize)]
+pub struct ValKey(Box<str>);
+impl ValKey {
+    pub fn new_snake(val: impl Into<Box<str>>) -> Self {
+        let val = val.into();
+        assert!(!val.contains('-'));
+        Self(val)
+    }
+    pub fn from_kebab(val: String) -> Self {
+        Self(val.replace('-', "_").into())
+    }
+    pub fn as_snake_str(&self) -> &str {
+        &self.0
+    }
+    pub fn to_kebab_string(&self) -> String {
+        self.0.replace('_', "-")
+    }
+}
+impl From<&TypeKey> for ValKey {
+    fn from(value: &TypeKey) -> Self {
+        ValKey::from_kebab(value.as_kebab_str().to_string())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -104,7 +129,7 @@ impl TryFrom<wasmtime::component::Val> for WastVal {
             )),
             Val::Record(v) => Ok(Self::Record(
                 v.into_iter()
-                    .map(|(name, v)| WastVal::try_from(v).map(|v| (name, v)))
+                    .map(|(name, v)| WastVal::try_from(v).map(|v| (ValKey::from_kebab(name), v)))
                     .collect::<Result<_, _>>()?,
             )),
             Val::Tuple(v) => Ok(Self::Tuple(
@@ -113,10 +138,10 @@ impl TryFrom<wasmtime::component::Val> for WastVal {
                     .collect::<Result<_, _>>()?,
             )),
             Val::Variant(str, v) => Ok(Self::Variant(
-                str,
+                ValKey::from_kebab(str),
                 v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new),
             )),
-            Val::Enum(v) => Ok(Self::Enum(v)),
+            Val::Enum(v) => Ok(Self::Enum(ValKey::from_kebab(v))),
             Val::Option(v) => Ok(Self::Option(
                 v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new),
             )),
@@ -228,15 +253,15 @@ impl WastVal {
             Self::Record(vals) => {
                 let mut fields = Vec::new();
                 for (name, v) in vals {
-                    fields.push((name.clone(), v.as_val()));
+                    fields.push((name.to_kebab_string(), v.as_val()));
                 }
                 Val::Record(fields)
             }
             Self::Tuple(vals) => Val::Tuple(vals.iter().map(Self::as_val).collect()),
-            Self::Enum(name) => Val::Enum(name.clone()),
+            Self::Enum(name) => Val::Enum(name.to_kebab_string()),
             Self::Variant(name, payload) => {
                 let payload = Self::payload_val(payload.as_deref());
-                Val::Variant(name.clone(), payload)
+                Val::Variant(name.to_kebab_string(), payload)
             }
             Self::Option(v) => Val::Option(v.as_ref().map(|v| Box::new(v.as_val()))),
             Self::Result(v) => Val::Result(match v {

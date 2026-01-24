@@ -16,7 +16,7 @@ use std::{
 use strum::IntoEnumIterator as _;
 use tracing::{debug, error, info, instrument, trace, warn};
 use tracing_error::SpanTrace;
-use val_json::type_wrapper::TypeWrapper;
+use val_json::type_wrapper::{TypeKey, TypeWrapper};
 use wit_component::{ComponentEncoder, WitPrinter};
 use wit_parser::{InterfaceId, PackageId, Resolve, World, WorldKey, decoding::DecodedWasm};
 
@@ -433,9 +433,9 @@ impl ExIm {
         }
         // initialize values for reuse
         let execution_id_type_wrapper =
-            TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
+            TypeWrapper::Record(indexmap! {TypeKey::new_kebab("id") => TypeWrapper::String});
         let delay_id_type_wrapper =
-            TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
+            TypeWrapper::Record(indexmap! {TypeKey::new_kebab("id") => TypeWrapper::String});
         let join_set_id_type_wrapper = TypeWrapper::Borrow;
 
         let return_type_execution_id = ReturnType::NonExtendable(ReturnTypeNonExtendable {
@@ -453,57 +453,57 @@ impl ExIm {
             wit_type: StrVariant::Static("borrow<join-set>"),
         };
         let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("milliseconds") => Some(TypeWrapper::U64),
-            Box::from("seconds") => Some(TypeWrapper::U64),
-            Box::from("minutes") => Some(TypeWrapper::U32),
-            Box::from("hours") => Some(TypeWrapper::U32),
-            Box::from("days") => Some(TypeWrapper::U32),
+            TypeKey::new_kebab("milliseconds") => Some(TypeWrapper::U64),
+            TypeKey::new_kebab("seconds") => Some(TypeWrapper::U64),
+            TypeKey::new_kebab("minutes") => Some(TypeWrapper::U32),
+            TypeKey::new_kebab("hours") => Some(TypeWrapper::U32),
+            TypeKey::new_kebab("days") => Some(TypeWrapper::U32),
         });
         let param_type_scheduled_at = ParameterType {
             type_wrapper: TypeWrapper::Variant(indexmap! {
-                Box::from("now") => None,
-                Box::from("at") => Some(TypeWrapper::Record(indexmap! {
-                    Box::from("seconds") => TypeWrapper::U64,
-                    Box::from("nanoseconds") => TypeWrapper::U32,
+                TypeKey::new_kebab("now") => None,
+                TypeKey::new_kebab("at") => Some(TypeWrapper::Record(indexmap! {
+                    TypeKey::new_kebab("seconds") => TypeWrapper::U64,
+                    TypeKey::new_kebab("nanoseconds") => TypeWrapper::U32,
                 })),
-                Box::from("in") => Some(duration_type_wrapper),
+                TypeKey::new_kebab("in") => Some(duration_type_wrapper),
             }),
             name: StrVariant::Static("scheduled-at"),
             wit_type: StrVariant::Static("schedule-at"),
         };
 
         let function_type_wrapper = TypeWrapper::Record(indexmap! {
-            Box::from("interface-name") => TypeWrapper::String,
-            Box::from("function-name") => TypeWrapper::String,
+            TypeKey::new_kebab("interface-name") => TypeWrapper::String,
+            TypeKey::new_kebab("function-name") => TypeWrapper::String,
         });
 
         let response_id = TypeWrapper::Variant(indexmap! {
-            Box::from("execution-id") => Some(execution_id_type_wrapper.clone()),
-            Box::from("delay-id") => Some(delay_id_type_wrapper.clone()),
+            TypeKey::new_kebab("execution-id") => Some(execution_id_type_wrapper.clone()),
+            TypeKey::new_kebab("delay-id") => Some(delay_id_type_wrapper.clone()),
         });
 
         // record function-mismatch
         let function_mismatch_type_wrapper = TypeWrapper::Record(indexmap! {
-            Box::from("specified-function") => function_type_wrapper.clone(),
-            Box::from("actual-function") => TypeWrapper::Option(Box::from(function_type_wrapper)),
-            Box::from("actual-id") => response_id,
+            TypeKey::new_kebab("specified-function") => function_type_wrapper.clone(),
+            TypeKey::new_kebab("actual-function") => TypeWrapper::Option(Box::from(function_type_wrapper)),
+            TypeKey::new_kebab("actual-id") => response_id,
         });
 
         // await-next-extension-error
         let await_next_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("all-processed") => None,
-            Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
+            TypeKey::new_kebab("all-processed") => None,
+            TypeKey::new_kebab("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
         });
 
         // get-extension-error
         let get_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
-            Box::from("not-found-in-processed-responses") => None,
+            TypeKey::new_kebab("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
+            TypeKey::new_kebab("not-found-in-processed-responses") => None,
         });
 
         // stub-error
         let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("conflict") => None,
+            TypeKey::new_kebab("conflict") => None,
         });
 
         let mut extensions = Vec::new();

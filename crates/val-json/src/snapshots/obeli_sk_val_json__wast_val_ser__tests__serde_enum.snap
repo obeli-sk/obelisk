@@ -5,9 +5,9 @@ expression: json
 {
   "type": {
     "enum": [
-      "a",
+      "a-a",
       "b"
     ]
   },
-  "value": "a"
+  "value": "a_a"
 }

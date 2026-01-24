@@ -59,6 +59,7 @@ use tracing::info;
 use tracing::instrument;
 use tracing::{debug, error, trace};
 use tracing_error::SpanTrace;
+use val_json::wast_val::ValKey;
 use val_json::wast_val::WastVal;
 use wasmtime::component::Val;
 
@@ -994,7 +995,7 @@ impl EventHistory {
                 let wat_val = match target_result {
                     Ok(()) => WastVal::Result(Ok(None)),
                     Err(()) => WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                        "conflict".to_string(),
+                        ValKey::new_snake("conflict"),
                         None,
                     ))))),
                 };
@@ -1732,27 +1733,29 @@ impl AwaitNextExtensionError {
                 actual_id,
             } => {
                 let (actual_id_field_name, actual_str_value) = match actual_id {
-                    ResponseId::ChildExecutionId(id) => ("execution-id", id.to_string()),
-                    ResponseId::DelayId(id) => ("delay-id", id.to_string()),
+                    ResponseId::ChildExecutionId(id) => {
+                        (ValKey::new_snake("execution_id"), id.to_string())
+                    }
+                    ResponseId::DelayId(id) => (ValKey::new_snake("delay_id"), id.to_string()),
                 };
                 WastVal::Variant(
-                    "function-mismatch".to_string(),
+                    ValKey::new_snake("function_mismatch"),
                     Some(Box::new(WastVal::Record(indexmap! {
-                        "specified-function".to_string() => ffqn_into_wast_val(specified),
-                        "actual-function".to_string() =>  WastVal::Option(
+                        ValKey::new_snake("specified_function") => ffqn_into_wast_val(specified),
+                        ValKey::new_snake("actual_function") =>  WastVal::Option(
                             actual.as_ref().map(|actual| Box::from(ffqn_into_wast_val(actual)))),
-                        "actual-id".to_string() =>
-                            WastVal::Variant(actual_id_field_name.to_string(),
+                        ValKey::new_snake("actual_id") =>
+                            WastVal::Variant(actual_id_field_name,
                             Some(Box::new(
                             WastVal::Record(indexmap!{
-                                "id".to_string() => WastVal::String(actual_str_value)
+                                ValKey::new_snake("id") => WastVal::String(actual_str_value)
                             }))
                         ))
                     }))),
                 )
             }
             AwaitNextExtensionError::AllProcessed => {
-                WastVal::Variant("all-processed".to_string(), None)
+                WastVal::Variant(ValKey::new_snake("all_processed"), None)
             }
         }
     }

@@ -22,17 +22,36 @@ pub enum TypeWrapper {
     String,
     Own,
     Borrow,
-    Record(IndexMap<Box<str>, TypeWrapper>), // TODO: use ordermap, ordering of keys matter!
-    Variant(IndexMap<Box<str>, Option<TypeWrapper>>), // TODO: use ordermap, ordering of keys matter!
+    Record(IndexMap<TypeKey, TypeWrapper>), // TODO: use ordermap, ordering of keys matter!
+    Variant(IndexMap<TypeKey, Option<TypeWrapper>>), // TODO: use ordermap, ordering of keys matter!
     List(Box<TypeWrapper>),
     Tuple(Box<[TypeWrapper]>),
-    Enum(IndexSet<Box<str>>),
+    Enum(IndexSet<TypeKey>),
     Option(Box<TypeWrapper>),
     Result {
         ok: Option<Box<TypeWrapper>>,
         err: Option<Box<TypeWrapper>>,
     },
-    Flags(IndexSet<Box<str>>),
+    Flags(IndexSet<TypeKey>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct TypeKey(Box<str>);
+impl TypeKey {
+    pub fn new_kebab(s: impl Into<Box<str>>) -> Self {
+        let s = s.into();
+        assert!(!s.contains('_'));
+        TypeKey(s)
+    }
+    pub fn from_snake(s: String) -> Self {
+        Self(s.replace('_', "-").into())
+    }
+    pub fn as_kebab_str(&self) -> &str {
+        &self.0
+    }
+    pub fn to_snake_string(&self) -> String {
+        self.0.replace('-', "_")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -216,7 +235,9 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
             Type::Record(record) => {
                 let map = record
                     .fields()
-                    .map(|field| Self::try_from(field.ty).map(|ty| (Box::from(field.name), ty)))
+                    .map(|field| {
+                        Self::try_from(field.ty).map(|ty| (TypeKey(Box::from(field.name)), ty))
+                    })
                     .collect::<Result<_, _>>()?;
                 Ok(Self::Record(map))
             }
@@ -224,10 +245,11 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
                 let map = variant
                     .cases()
                     .map(|case| {
+                        let key = TypeKey::new_kebab(case.name);
                         if let Some(ty) = case.ty {
-                            Self::try_from(ty).map(|ty| (Box::from(case.name), Some(ty)))
+                            Self::try_from(ty).map(|ty| (key, Some(ty)))
                         } else {
-                            Ok((Box::from(case.name), None))
+                            Ok((key, None))
                         }
                     })
                     .collect::<Result<_, _>>()?;
@@ -239,10 +261,10 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
                     .map(Self::try_from)
                     .collect::<Result<_, _>>()?,
             )),
-            Type::Enum(names) => Ok(Self::Enum(names.names().map(Box::from).collect())),
+            Type::Enum(names) => Ok(Self::Enum(names.names().map(TypeKey::new_kebab).collect())),
             Type::Borrow(_) => Ok(Self::Borrow),
             Type::Own(_) => Ok(Self::Own),
-            Type::Flags(flags) => Ok(Self::Flags(flags.names().map(Box::from).collect())),
+            Type::Flags(flags) => Ok(Self::Flags(flags.names().map(TypeKey::new_kebab).collect())),
             Type::Future(_) => Err(TypeConversionError::UnsupportedType("future")),
             Type::Stream(_) => Err(TypeConversionError::UnsupportedType("stream")),
             Type::ErrorContext => Err(TypeConversionError::UnsupportedType("error-context")),
@@ -338,7 +360,7 @@ impl TypeWrapper {
                             .iter()
                             .map(|field| {
                                 TypeWrapper::from_wit_parser_type(resolve, &field.ty)
-                                    .map(|ty| (Box::from(field.name.clone()), ty))
+                                    .map(|ty| (TypeKey(Box::from(field.name.clone())), ty))
                             })
                             .collect::<Result<_, _>>()?;
                         Ok(TypeWrapper::Record(map))
@@ -347,13 +369,13 @@ impl TypeWrapper {
                         flags
                             .flags
                             .iter()
-                            .map(|f| Box::from(f.name.clone()))
+                            .map(|f| TypeKey::new_kebab(f.name.clone()))
                             .collect(),
                     )),
                     TypeDefKind::Enum(en) => Ok(TypeWrapper::Enum(
                         en.cases
                             .iter()
-                            .map(|case| Box::from(case.name.clone()))
+                            .map(|case| TypeKey::new_kebab(case.name.clone()))
                             .collect(),
                     )),
                     TypeDefKind::Variant(variant) => {
@@ -361,11 +383,12 @@ impl TypeWrapper {
                             .cases
                             .iter()
                             .map(|case| {
+                                let key = TypeKey::new_kebab(case.name.clone());
                                 if let Some(ty) = &case.ty {
                                     TypeWrapper::from_wit_parser_type(resolve, ty)
-                                        .map(|ty| (Box::from(case.name.clone()), Some(ty)))
+                                        .map(|ty| (key, Some(ty)))
                                 } else {
-                                    Ok((Box::from(case.name.clone()), None))
+                                    Ok((key, None))
                                 }
                             })
                             .collect::<Result<_, _>>()?;
@@ -391,6 +414,7 @@ impl TypeWrapper {
 #[cfg(test)]
 mod tests {
     use super::TypeWrapper;
+    use crate::type_wrapper::TypeKey;
     use assert_matches::assert_matches;
     use indexmap::indexmap;
     use itertools::Itertools;
@@ -415,16 +439,13 @@ mod tests {
         let deser: TypeWrapper = serde_json::from_str(json).unwrap();
         let fields = assert_matches!(deser, TypeWrapper::Record(fields) => fields);
         let expected = indexmap! {
-            Box::from("logins") => TypeWrapper::String,
-            Box::from("cursor") => TypeWrapper::String,
+            TypeKey(Box::from("logins")) => TypeWrapper::String,
+            TypeKey(Box::from("cursor")) => TypeWrapper::String,
         };
         assert_eq!(expected, fields);
         assert_eq!(
             vec!["logins", "cursor"],
-            fields
-                .keys()
-                .map(std::string::ToString::to_string)
-                .collect_vec()
+            fields.keys().map(TypeKey::as_kebab_str).collect_vec()
         );
     }
 }

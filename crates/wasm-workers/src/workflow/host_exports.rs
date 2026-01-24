@@ -7,6 +7,7 @@ use concepts::storage::HistoryEventScheduleAt;
 use indexmap::indexmap;
 use std::ops::Deref as _;
 use std::time::Duration;
+use val_json::wast_val::ValKey;
 use val_json::wast_val::WastVal;
 
 pub(crate) use concepts::SUFFIX_FN_AWAIT_NEXT;
@@ -209,11 +210,11 @@ pub fn history_event_schedule_at_from_wast_val(
     let WastVal::Variant(variant, val) = scheduled_at else {
         return Err("wrong type");
     };
-    match (variant.as_str(), val) {
+    match (variant.as_snake_str(), val) {
         ("now", None) => Ok(HistoryEventScheduleAt::Now),
         ("in", Some(duration)) => {
             if let &WastVal::Variant(key, value) = &duration.deref() {
-                let duration = match (key.as_str(), value.as_deref()) {
+                let duration = match (key.as_snake_str(), value.as_deref()) {
                     ("milliseconds", Some(WastVal::U64(value))) => Duration::from_millis(*value),
                     ("seconds", Some(WastVal::U64(value))) => Duration::from_secs(*value),
                     ("minutes", Some(WastVal::U64(value))) => Duration::from_secs(*value * 60),
@@ -236,7 +237,7 @@ pub fn history_event_schedule_at_from_wast_val(
             let date_time =
                 assert_matches!(date_time.deref(), WastVal::Record(keys_vals) => keys_vals)
                     .iter()
-                    .map(|(k, v)| (k.as_str(), v))
+                    .map(|(k, v)| (k.as_snake_str(), v))
                     .collect::<std::collections::HashMap<_, _>>();
             let seconds = date_time.get("seconds");
             let nanoseconds = date_time.get("nanoseconds");
@@ -259,16 +260,20 @@ pub fn history_event_schedule_at_from_wast_val(
 }
 
 pub(crate) fn execution_id_into_wast_val(execution_id: &ExecutionId) -> WastVal {
-    WastVal::Record(indexmap! {"id".to_string() => WastVal::String(execution_id.to_string())})
+    WastVal::Record(
+        indexmap! {ValKey::new_snake("id") => WastVal::String(execution_id.to_string())},
+    )
 }
 
 pub(crate) fn execution_id_derived_into_wast_val(execution_id: &ExecutionIdDerived) -> WastVal {
-    WastVal::Record(indexmap! {"id".to_string() => WastVal::String(execution_id.to_string())})
+    WastVal::Record(
+        indexmap! {ValKey::new_snake("id") => WastVal::String(execution_id.to_string())},
+    )
 }
 
 pub(crate) fn ffqn_into_wast_val(ffqn: &FunctionFqn) -> WastVal {
     WastVal::Record(indexmap! {
-        "interface-name".to_string() => WastVal::String(ffqn.ifc_fqn.to_string()),
-        "function-name".to_string() => WastVal::String(ffqn.function_name.to_string()),
+        ValKey::new_snake("interface_name") => WastVal::String(ffqn.ifc_fqn.to_string()),
+        ValKey::new_snake("function_name") => WastVal::String(ffqn.function_name.to_string()),
     })
 }
