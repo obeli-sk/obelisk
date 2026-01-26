@@ -1107,9 +1107,9 @@ impl From<DurationConfigOptional> for Option<Duration> {
     }
 }
 pub(crate) mod log {
-    use crate::config::toml::default_out_enabled;
+    use crate::config::toml::default_console_enabled;
 
-    use super::{Deserialize, JsonSchema, default_out_style};
+    use super::{Deserialize, JsonSchema, default_console_style};
     use serde_with::serde_as;
     use std::str::FromStr;
 
@@ -1119,7 +1119,7 @@ pub(crate) mod log {
         #[serde(default)]
         pub(crate) file: Option<AppenderRollingFile>,
         #[serde(default)]
-        pub(crate) stdout: AppenderOut,
+        pub(crate) console: AppenderConsole,
     }
 
     #[derive(Debug, Deserialize, JsonSchema, Default, Copy, Clone)]
@@ -1198,20 +1198,20 @@ pub(crate) mod log {
 
     #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub(crate) struct AppenderOut {
-        #[serde(default = "default_out_enabled")]
+    pub(crate) struct AppenderConsole {
+        #[serde(default = "default_console_enabled")]
         pub(crate) enabled: bool,
         #[serde(flatten, default)]
         pub(crate) common: AppenderCommon,
-        #[serde(default = "default_out_style")]
+        #[serde(default = "default_console_style")]
         pub(crate) style: LoggingStyle,
     }
-    impl Default for AppenderOut {
+    impl Default for AppenderConsole {
         fn default() -> Self {
             Self {
-                enabled: default_out_enabled(),
+                enabled: default_console_enabled(),
                 common: AppenderCommon::default(),
-                style: default_out_style(),
+                style: default_console_style(),
             }
         }
     }
@@ -1556,10 +1556,10 @@ const fn default_lock_extension() -> DurationConfig {
 const fn default_subscription_interruption() -> DurationConfigOptional {
     DurationConfigOptional::Seconds(1)
 }
-fn default_out_enabled() -> bool {
+fn default_console_enabled() -> bool {
     true
 }
-fn default_out_style() -> LoggingStyle {
+fn default_console_style() -> LoggingStyle {
     LoggingStyle::PlainCompact
 }
 

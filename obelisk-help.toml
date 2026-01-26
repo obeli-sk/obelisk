@@ -172,8 +172,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # service_name = "obelisk-server"
 # otlp_endpoint = "http://localhost:4317"
 
-### Stdout configuration, by default logs INFO and above.
-# [log.stdout]
+### Console logging configuration, by default logs INFO and above.
+# [log.console]
 ## Defaults:
 # enabled = true
 # level = "info,app=trace"

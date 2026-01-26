@@ -84,23 +84,23 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
 
     let mut guard = Guard::default();
 
-    let out_layer = if config.log.stdout.enabled {
-        let env_filter = config.log.stdout.common.level.0.clone();
+    let console_layer = if config.log.console.enabled {
+        let env_filter = config.log.console.common.level.0.clone();
 
         // Code repetition because of https://github.com/tokio-rs/tracing/issues/575
-        Some(match config.log.stdout.style {
+        Some(match config.log.console.style {
             LoggingStyle::Plain => tracing_subscriber::fmt::layer()
                 .with_file(true)
                 .with_line_number(true)
-                .with_target(config.log.stdout.common.target)
-                .with_span_events(config.log.stdout.common.span.into())
+                .with_target(config.log.console.common.target)
+                .with_span_events(config.log.console.common.span.into())
                 .with_ansi(std::io::stdout().is_terminal())
                 .with_filter(env_filter)
                 .boxed(),
             LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
                 .compact()
-                .with_target(config.log.stdout.common.target)
-                .with_span_events(config.log.stdout.common.span.into())
+                .with_target(config.log.console.common.target)
+                .with_span_events(config.log.console.common.span.into())
                 .with_ansi(std::io::stdout().is_terminal())
                 .with_filter(env_filter)
                 .boxed(),
@@ -108,8 +108,8 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
                 .json()
                 .with_file(true)
                 .with_line_number(true)
-                .with_target(config.log.stdout.common.target)
-                .with_span_events(config.log.stdout.common.span.into())
+                .with_target(config.log.console.common.target)
+                .with_span_events(config.log.console.common.span.into())
                 .with_filter(env_filter)
                 .boxed(),
         })
@@ -163,7 +163,7 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
         .with(tokio_console_layer())
         .with(tokio_tracing_otlp(config)?)
         .with(rolling_file_layer) // Must be before `out_layer`: https://github.com/tokio-rs/tracing/issues/3116
-        .with(out_layer)
+        .with(console_layer)
         .init();
 
     std::panic::set_hook(Box::new(tracing_panic_hook));

@@ -226,7 +226,7 @@
       },
       "additionalProperties": false
     },
-    "AppenderOut": {
+    "AppenderConsole": {
       "type": "object",
       "properties": {
         "enabled": {
@@ -651,6 +651,9 @@
     "LoggingConfig": {
       "type": "object",
       "properties": {
+        "console": {
+          "$ref": "#/$defs/AppenderConsole"
+        },
         "file": {
           "anyOf": [
             {
@@ -660,9 +663,6 @@
               "type": "null"
             }
           ]
-        },
-        "stdout": {
-          "$ref": "#/$defs/AppenderOut"
         }
       },
       "additionalProperties": false
