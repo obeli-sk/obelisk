@@ -26,8 +26,10 @@ pub(crate) struct Args {
 pub(crate) enum Subcommand {
     #[command(subcommand)]
     Server(Server),
-    #[command()]
-    Client(Client),
+    #[command(subcommand)]
+    Execution(Execution),
+    #[command(subcommand)]
+    Component(Component),
     #[command(subcommand)]
     Generate(Generate),
 }
@@ -119,24 +121,6 @@ pub(crate) enum Server {
     },
 }
 
-#[derive(Debug, clap::Args)]
-pub(crate) struct Client {
-    /// Address of the obelisk server
-    #[arg(short, long, default_value = "http://127.0.0.1:5005")]
-    pub(crate) api_url: String,
-    #[command(subcommand)]
-    pub(crate) command: ClientSubcommand,
-}
-
-#[derive(Debug, clap::Subcommand)]
-
-pub(crate) enum ClientSubcommand {
-    #[command(subcommand)]
-    Component(Component),
-    #[command(subcommand)]
-    Execution(Execution),
-}
-
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Component {
     /// Parse WASM file and output its metadata.
@@ -163,6 +147,9 @@ pub(crate) enum Component {
     },
     /// List components.
     List {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
         /// Show component imports
         #[arg(short, long)]
         imports: bool,
@@ -185,6 +172,9 @@ pub(crate) enum Component {
 pub(crate) enum Execution {
     /// Submit new execution and optionally follow its status stream until the it finishes.
     Submit {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
         #[arg(short, long)]
         execution_id: Option<ExecutionId>,
         /// Function in the fully qualified format
@@ -215,6 +205,9 @@ pub(crate) enum Execution {
     Stub(Stub),
     /// Get the current state of an execution.
     Get {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
         /// Follow the status stream until the execution finishes.
         #[arg(short, long)]
         follow: bool,
@@ -307,6 +300,9 @@ pub(crate) mod params {
 #[derive(Debug, clap::Args)]
 #[command()]
 pub(crate) struct Stub {
+    /// Address of the obelisk server
+    #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+    pub(crate) api_url: String,
     /// Execution ID of the stub execution waiting for its return value.
     #[arg(value_name = "EXECUTION_ID")]
     pub(crate) execution_id: ExecutionIdDerived,
@@ -319,6 +315,9 @@ pub(crate) struct Stub {
 #[derive(Debug, clap::Args)]
 #[command()]
 pub(crate) struct CancelCommand {
+    /// Address of the obelisk server
+    #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+    pub(crate) api_url: String,
     #[arg(value_name = "ID")]
     pub(crate) id: String,
 }

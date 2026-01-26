@@ -17,7 +17,7 @@ use utils::sha256sum::calculate_sha256_file;
 use utils::wasm_tools::WasmComponent;
 
 impl args::Component {
-    pub(crate) async fn run(self, api_url: &str) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
             args::Component::Inspect {
                 location,
@@ -40,10 +40,11 @@ impl args::Component {
                 .await
             }
             args::Component::List {
+                api_url,
                 imports,
                 extensions,
             } => {
-                let channel = to_channel(api_url).await?;
+                let channel = to_channel(&api_url).await?;
                 let client = get_fn_repository_client(channel).await?;
                 list_components(
                     client,

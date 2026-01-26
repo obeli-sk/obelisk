@@ -6,7 +6,7 @@ mod init;
 mod oci;
 mod server;
 
-use args::{Args, Client, ClientSubcommand, Subcommand};
+use args::{Args, Subcommand};
 use clap::Parser;
 use directories::ProjectDirs;
 use grpc::{grpc_gen, injector::TracingInjector};
@@ -20,14 +20,8 @@ async fn main() -> Result<(), anyhow::Error> {
             .run()
             .await
             .inspect_err(|err| error!("Server error: {err:#?}")),
-        Subcommand::Client(Client {
-            api_url,
-            command: ClientSubcommand::Component(component),
-        }) => component.run(&api_url).await,
-        Subcommand::Client(Client {
-            api_url,
-            command: ClientSubcommand::Execution(execution),
-        }) => execution.run(&api_url).await,
+        Subcommand::Component(component) => component.run().await,
+        Subcommand::Execution(execution) => execution.run().await,
         Subcommand::Generate(generate) => generate.run().await,
     }
 }

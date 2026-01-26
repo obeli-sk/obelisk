@@ -31,9 +31,10 @@ use std::time::Duration;
 use tracing::instrument;
 
 impl args::Execution {
-    pub(crate) async fn run(self, api_url: &str) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
             args::Execution::Submit {
+                api_url,
                 execution_id,
                 ffqn,
                 params,
@@ -52,22 +53,24 @@ impl args::Execution {
                         no_reconnect,
                     }
                 };
-                submit(api_url, execution_id, ffqn, parse_params(params)?, opts).await
+                submit(&api_url, execution_id, ffqn, parse_params(params)?, opts).await
             }
             args::Execution::Stub(args::Stub {
+                api_url,
                 execution_id,
                 return_value,
             }) => {
-                let channel = to_channel(api_url).await?;
+                let channel = to_channel(&api_url).await?;
                 let client = get_execution_repository_client(channel).await?;
                 stub(client, execution_id, return_value).await
             }
             args::Execution::Get {
+                api_url,
                 execution_id,
                 follow,
                 no_reconnect,
             } => {
-                let channel = to_channel(api_url).await?;
+                let channel = to_channel(&api_url).await?;
                 let client = get_execution_repository_client(channel).await?;
                 let opts = GetStatusOptions {
                     follow,
@@ -75,7 +78,7 @@ impl args::Execution {
                 };
                 get_status(client, execution_id, opts).await
             }
-            args::Execution::Cancel(cancel_request) => cancel_request.execute(api_url).await,
+            args::Execution::Cancel(cancel_request) => cancel_request.execute().await,
         }
     }
 }
@@ -448,8 +451,8 @@ async fn poll_get_status_stream(
 
 impl CancelCommand {
     #[instrument(skip_all)]
-    pub(crate) async fn execute(self, api_url: &str) -> anyhow::Result<()> {
-        let channel = to_channel(api_url).await?;
+    pub(crate) async fn execute(self) -> anyhow::Result<()> {
+        let channel = to_channel(&self.api_url).await?;
         let mut client = get_execution_repository_client(channel).await?;
         let request = if let Ok(execution_id) = ExecutionId::from_str(&self.id) {
             cancel_request::Request::Activity(CancelRequestActivity {
