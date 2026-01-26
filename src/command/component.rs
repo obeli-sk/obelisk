@@ -4,6 +4,8 @@ use crate::args;
 use crate::config::ComponentLocationToml;
 use crate::config::config_holder::ConfigHolder;
 use crate::get_fn_repository_client;
+use crate::init;
+use crate::init::Guard;
 use crate::oci;
 use crate::project_dirs;
 use anyhow::Context;
@@ -70,7 +72,8 @@ pub(crate) async fn inspect(
     extensions: bool,
 ) -> anyhow::Result<()> {
     let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), config, true)?;
-    let config = config_holder.load_config().await?;
+    let mut config = config_holder.load_config().await?;
+    let _guard: Guard = init::init(&mut config)?;
     let path_prefixes = &config_holder.path_prefixes;
 
     let wasm_cache_dir = config
