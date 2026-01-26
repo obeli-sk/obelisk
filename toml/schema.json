@@ -245,9 +245,19 @@
         "target": {
           "type": "boolean",
           "default": false
+        },
+        "writer": {
+          "$ref": "#/$defs/AppenderConsoleWriter"
         }
       },
       "additionalProperties": false
+    },
+    "AppenderConsoleWriter": {
+      "type": "string",
+      "enum": [
+        "Stderr",
+        "Stdout"
+      ]
     },
     "AppenderRollingFile": {
       "type": "object",

@@ -1196,6 +1196,13 @@ pub(crate) mod log {
         }
     }
 
+    #[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
+    pub(crate) enum AppenderConsoleWriter {
+        #[default]
+        Stderr,
+        Stdout,
+    }
+
     #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderConsole {
@@ -1205,6 +1212,8 @@ pub(crate) mod log {
         pub(crate) common: AppenderCommon,
         #[serde(default = "default_console_style")]
         pub(crate) style: LoggingStyle,
+        #[serde(default)]
+        pub(crate) writer: AppenderConsoleWriter,
     }
     impl Default for AppenderConsole {
         fn default() -> Self {
@@ -1212,6 +1221,7 @@ pub(crate) mod log {
                 enabled: default_console_enabled(),
                 common: AppenderCommon::default(),
                 style: default_console_style(),
+                writer: AppenderConsoleWriter::default(),
             }
         }
     }

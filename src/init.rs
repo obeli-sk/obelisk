@@ -1,6 +1,9 @@
 use std::io::IsTerminal as _;
 
-use crate::config::toml::{ConfigToml, log::LoggingStyle};
+use crate::config::toml::{
+    ConfigToml,
+    log::{AppenderConsoleWriter, LoggingStyle},
+};
 use tracing::warn;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::Layer;
@@ -86,10 +89,17 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
 
     let console_layer = if config.log.console.enabled {
         let env_filter = config.log.console.common.level.0.clone();
-
+        let writer = config.log.console.writer;
         // Code repetition because of https://github.com/tokio-rs/tracing/issues/575
-        Some(match config.log.console.style {
+        let console_layer = match config.log.console.style {
             LoggingStyle::Plain => tracing_subscriber::fmt::layer()
+                .with_writer(move || -> Box<dyn std::io::Write> {
+                    if writer == AppenderConsoleWriter::Stderr {
+                        Box::new(std::io::stderr())
+                    } else {
+                        Box::new(std::io::stdout())
+                    }
+                })
                 .with_file(true)
                 .with_line_number(true)
                 .with_target(config.log.console.common.target)
@@ -98,6 +108,13 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
                 .with_filter(env_filter)
                 .boxed(),
             LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
+                .with_writer(move || -> Box<dyn std::io::Write> {
+                    if writer == AppenderConsoleWriter::Stderr {
+                        Box::new(std::io::stderr())
+                    } else {
+                        Box::new(std::io::stdout())
+                    }
+                })
                 .compact()
                 .with_target(config.log.console.common.target)
                 .with_span_events(config.log.console.common.span.into())
@@ -105,6 +122,13 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
                 .with_filter(env_filter)
                 .boxed(),
             LoggingStyle::Json => tracing_subscriber::fmt::layer()
+                .with_writer(move || -> Box<dyn std::io::Write> {
+                    if writer == AppenderConsoleWriter::Stderr {
+                        Box::new(std::io::stderr())
+                    } else {
+                        Box::new(std::io::stdout())
+                    }
+                })
                 .json()
                 .with_file(true)
                 .with_line_number(true)
@@ -112,7 +136,9 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
                 .with_span_events(config.log.console.common.span.into())
                 .with_filter(env_filter)
                 .boxed(),
-        })
+        };
+
+        Some(console_layer)
     } else {
         None
     };
