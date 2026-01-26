@@ -13,12 +13,12 @@ use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
+use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::DatabaseConfigToml;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
-use crate::config::toml::StdOutput;
 use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowComponentConfigToml;
@@ -725,8 +725,8 @@ impl ServerVerified {
                 },
                 http_server: http_server_name,
                 routes: vec![WebhookRoute::default()],
-                forward_stdout: StdOutput::default(),
-                forward_stderr: StdOutput::default(),
+                forward_stdout: ComponentStdOutputToml::default(),
+                forward_stderr: ComponentStdOutputToml::default(),
                 env_vars: vec![EnvVarConfig {
                     key: "TARGET_URL".to_string(),
                     val: Some(format!(

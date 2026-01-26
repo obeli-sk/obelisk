@@ -587,9 +587,9 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default)]
-    pub(crate) forward_stdout: StdOutput,
+    pub(crate) forward_stdout: ComponentStdOutputToml,
     #[serde(default)]
-    pub(crate) forward_stderr: StdOutput,
+    pub(crate) forward_stderr: ComponentStdOutputToml,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
     #[serde(default = "default_retry_on_err")]
@@ -1253,27 +1253,28 @@ pub(crate) mod log {
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum StdOutput {
+pub(crate) enum ComponentStdOutputToml {
     #[default]
     None,
     Stdout,
     Stderr,
     Db,
 }
-impl From<StdOutput> for Option<StdOutputConfig> {
-    fn from(value: StdOutput) -> Self {
+impl From<ComponentStdOutputToml> for Option<StdOutputConfig> {
+    fn from(value: ComponentStdOutputToml) -> Self {
         match value {
-            StdOutput::None => None,
-            StdOutput::Stdout => Some(StdOutputConfig::Stdout),
-            StdOutput::Stderr => Some(StdOutputConfig::Stderr),
-            StdOutput::Db => Some(StdOutputConfig::Db),
+            ComponentStdOutputToml::None => None,
+            ComponentStdOutputToml::Stdout => Some(StdOutputConfig::Stdout),
+            ComponentStdOutputToml::Stderr => Some(StdOutputConfig::Stderr),
+            ComponentStdOutputToml::Db => Some(StdOutputConfig::Db),
         }
     }
 }
 
 pub(crate) mod webhook {
     use super::{
-        ComponentBacktraceConfig, ComponentCommon, ConfigName, StdOutput, resolve_env_vars,
+        ComponentBacktraceConfig, ComponentCommon, ComponentStdOutputToml, ConfigName,
+        resolve_env_vars,
     };
     use crate::config::{
         config_holder::PathPrefixes,
@@ -1311,9 +1312,9 @@ pub(crate) mod webhook {
         pub(crate) http_server: ConfigName,
         pub(crate) routes: Vec<WebhookRoute>,
         #[serde(default)]
-        pub(crate) forward_stdout: StdOutput,
+        pub(crate) forward_stdout: ComponentStdOutputToml,
         #[serde(default)]
-        pub(crate) forward_stderr: StdOutput,
+        pub(crate) forward_stderr: ComponentStdOutputToml,
         #[serde(default)]
         pub(crate) env_vars: Vec<EnvVarConfig>,
         #[serde(default)]

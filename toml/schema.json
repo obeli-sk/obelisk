@@ -180,10 +180,10 @@
           "$ref": "#/$defs/ExecConfigToml"
         },
         "forward_stderr": {
-          "$ref": "#/$defs/StdOutput"
+          "$ref": "#/$defs/ComponentStdOutputToml"
         },
         "forward_stdout": {
-          "$ref": "#/$defs/StdOutput"
+          "$ref": "#/$defs/ComponentStdOutputToml"
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
@@ -400,6 +400,15 @@
             "oci"
           ]
         }
+      ]
+    },
+    "ComponentStdOutputToml": {
+      "type": "string",
+      "enum": [
+        "none",
+        "stdout",
+        "stderr",
+        "db"
       ]
     },
     "ConfigName": {
@@ -828,15 +837,6 @@
       },
       "additionalProperties": false
     },
-    "StdOutput": {
-      "type": "string",
-      "enum": [
-        "none",
-        "stdout",
-        "stderr",
-        "db"
-      ]
-    },
     "TimersWatcherTomlConfig": {
       "type": "object",
       "properties": {
@@ -1053,10 +1053,10 @@
           }
         },
         "forward_stderr": {
-          "$ref": "#/$defs/StdOutput"
+          "$ref": "#/$defs/ComponentStdOutputToml"
         },
         "forward_stdout": {
-          "$ref": "#/$defs/StdOutput"
+          "$ref": "#/$defs/ComponentStdOutputToml"
         },
         "http_server": {
           "$ref": "#/$defs/ConfigName"
