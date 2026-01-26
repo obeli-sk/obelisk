@@ -1791,23 +1791,28 @@ async fn list_logs_tx(
                 cursor: item.cursor,
                 including_cursor: false,
             })
-            .unwrap_or(Pagination::NewerThan {
-                length: pagination.length(),
-                cursor: 0,
-                including_cursor: false, // does not matter, no row has id = 0
+            .unwrap_or(if pagination.is_asc() {
+                *pagination // no new results, keep the same cursor
+            } else {
+                // no prev results, let's start from beginning
+                Pagination::NewerThan {
+                    length: pagination.length(),
+                    cursor: 0,
+                    including_cursor: false, // does not matter, no row has id = 0
+                }
             }),
-        prev_page: items
-            .first()
-            .map(|item| Pagination::OlderThan {
+        prev_page: match items.first() {
+            Some(item) => Some(Pagination::OlderThan {
                 length: pagination.length(),
                 cursor: item.cursor,
                 including_cursor: false,
-            })
-            .unwrap_or(Pagination::OlderThan {
-                length: pagination.length(),
-                cursor: 0,
-                including_cursor: false, // does not matter, no row has id = 0
             }),
+            None if pagination.is_asc() && *pagination.cursor() > 0 => {
+                // asked for a next page that does not exists (yet).
+                Some(pagination.invert())
+            }
+            None => None,
+        },
         items,
     })
 }

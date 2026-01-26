@@ -950,8 +950,8 @@ pub trait DbExternalApi: DbConnection {
 #[derive(Debug)]
 pub struct ListLogsResponse {
     pub items: Vec<LogEntryRow>,
-    pub next_page: Pagination<u32>,
-    pub prev_page: Pagination<u32>,
+    pub next_page: Pagination<u32>, // Newer logs can always arrive e.g. via replay
+    pub prev_page: Option<Pagination<u32>>, // None if we are already at the beginning
 }
 
 #[derive(Debug)]
@@ -1456,7 +1456,7 @@ pub enum Pagination<T> {
         including_cursor: bool,
     },
 }
-impl<T> Pagination<T> {
+impl<T: Clone> Pagination<T> {
     pub fn length(&self) -> u16 {
         match self {
             Pagination::NewerThan { length, .. } | Pagination::OlderThan { length, .. } => *length,
@@ -1485,9 +1485,34 @@ impl<T> Pagination<T> {
     pub fn is_desc(&self) -> bool {
         matches!(self, Pagination::OlderThan { .. })
     }
+    pub fn is_asc(&self) -> bool {
+        !self.is_desc()
+    }
     pub fn cursor(&self) -> &T {
         match self {
             Pagination::NewerThan { cursor, .. } | Pagination::OlderThan { cursor, .. } => cursor,
+        }
+    }
+    pub fn invert(&self) -> Self {
+        match self {
+            Pagination::NewerThan {
+                length,
+                cursor,
+                including_cursor,
+            } => Pagination::OlderThan {
+                length: *length,
+                cursor: cursor.clone(),
+                including_cursor: !including_cursor,
+            },
+            Pagination::OlderThan {
+                length,
+                cursor,
+                including_cursor,
+            } => Pagination::NewerThan {
+                length: *length,
+                cursor: cursor.clone(),
+                including_cursor: !including_cursor,
+            },
         }
     }
 }

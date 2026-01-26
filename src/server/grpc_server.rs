@@ -902,7 +902,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .map(std::convert::Into::into)
                 .collect(),
             next_page_token: to_base64(resp.next_page),
-            prev_page_token: to_base64(resp.next_page),
+            prev_page_token: resp.prev_page.map(|prev_page| to_base64(prev_page)),
         }))
     }
 }

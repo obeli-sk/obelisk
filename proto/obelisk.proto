@@ -661,5 +661,5 @@ message ListLogsResponse {
 
     repeated LogEntry logs = 1;
     string next_page_token = 2;
-    string prev_page_token = 3;
+    optional string prev_page_token = 3;
 }
