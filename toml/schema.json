@@ -152,7 +152,7 @@
       "type": "object",
       "properties": {
         "location": {
-          "$ref": "#/$defs/ComponentLocation"
+          "$ref": "#/$defs/ComponentLocationToml"
         },
         "name": {
           "$ref": "#/$defs/ConfigName"
@@ -186,7 +186,7 @@
           "$ref": "#/$defs/StdOutput"
         },
         "location": {
-          "$ref": "#/$defs/ComponentLocation"
+          "$ref": "#/$defs/ComponentLocationToml"
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml"
@@ -374,7 +374,7 @@
         "sources"
       ]
     },
-    "ComponentLocation": {
+    "ComponentLocationToml": {
       "oneOf": [
         {
           "type": "object",
@@ -1062,7 +1062,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "$ref": "#/$defs/ComponentLocation"
+          "$ref": "#/$defs/ComponentLocationToml"
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml"
@@ -1123,15 +1123,11 @@
         "blocking_strategy": {
           "$ref": "#/$defs/BlockingStrategyConfigToml"
         },
-        "convert_core_module": {
-          "type": "boolean",
-          "default": true
-        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml"
         },
         "location": {
-          "$ref": "#/$defs/ComponentLocation"
+          "$ref": "#/$defs/ComponentLocationToml"
         },
         "lock_extension": {
           "$ref": "#/$defs/DurationConfig"
