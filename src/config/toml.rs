@@ -778,8 +778,6 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default)]
     pub(crate) blocking_strategy: BlockingStrategyConfigToml,
-    #[serde(default = "default_convert_core_module")]
-    pub(crate) convert_core_module: bool,
     #[serde(default)]
     pub(crate) backtrace: ComponentBacktraceConfig,
     #[serde(default)]
@@ -925,17 +923,14 @@ impl WorkflowComponentConfigToml {
             .common
             .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
-        let wasm_path = if self.convert_core_module {
-            WasmComponent::convert_core_module_to_component(
-                &wasm_path,
-                &common.content_digest,
-                &wasm_cache_dir,
-            )
-            .await?
-            .unwrap_or(wasm_path) // None means the original is already Component
-        } else {
-            wasm_path
-        };
+        let wasm_path = WasmComponent::convert_core_module_to_component(
+            &wasm_path,
+            &common.content_digest,
+            &wasm_cache_dir,
+        )
+        .await?
+        .unwrap_or(wasm_path); // None means the original is already Component
+
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(common.name),
@@ -1552,10 +1547,6 @@ const fn default_lock_expiry() -> DurationConfig {
 
 const fn default_tick_sleep() -> DurationConfig {
     DurationConfig::Milliseconds(200)
-}
-
-const fn default_convert_core_module() -> bool {
-    true
 }
 
 const fn default_lock_extension() -> DurationConfig {
