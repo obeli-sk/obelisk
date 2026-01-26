@@ -109,11 +109,7 @@ impl ComponentConfigRegistry {
     ) {
         let mut errors = Vec::new();
         for examined_component in self.inner.ids_to_components.values() {
-            self.verify_imports_component(
-                &examined_component.component_id,
-                &examined_component.imports,
-                &mut errors,
-            );
+            self.verify_imports_component(examined_component, &mut errors);
         }
         let errors = if !errors.is_empty() {
             let errors = errors.join("\n");
@@ -132,8 +128,11 @@ impl ComponentConfigRegistry {
         )
     }
 
-    fn additional_import_allowlist(import: &FunctionMetadata, component_id: &ComponentId) -> bool {
-        match component_id.component_type {
+    fn additional_import_allowlist(
+        import: &FunctionMetadata,
+        component_type: ComponentType,
+    ) -> bool {
+        match component_type {
             ComponentType::ActivityWasm => {
                 // wasi + log
                 match import.ffqn.ifc_fqn.namespace() {
@@ -167,13 +166,9 @@ impl ComponentConfigRegistry {
         }
     }
 
-    fn verify_imports_component(
-        &self,
-        component_id: &ComponentId,
-        imports: &[FunctionMetadata],
-        errors: &mut Vec<String>,
-    ) {
-        for imported_fn_metadata in imports {
+    fn verify_imports_component(&self, component: &ComponentConfig, errors: &mut Vec<String>) {
+        let component_id = &component.component_id;
+        for imported_fn_metadata in &component.imports {
             if let Some((exported_component_id, exported_fn_metadata)) = self
                 .inner
                 .exported_ffqns_ext
@@ -210,7 +205,10 @@ impl ComponentConfigRegistry {
                     );
                     errors.push(format!("return types do not match: {component_id} imports {imported_fn_metadata} , {exported_component_id} exports {exported_fn_metadata}"));
                 }
-            } else if !Self::additional_import_allowlist(imported_fn_metadata, component_id) {
+            } else if !Self::additional_import_allowlist(
+                imported_fn_metadata,
+                component_id.component_type,
+            ) {
                 errors.push(format!(
                     "function imported by {component_id} not found: {imported_fn_metadata}"
                 ));
