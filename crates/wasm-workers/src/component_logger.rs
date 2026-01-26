@@ -33,7 +33,9 @@ impl ComponentLogger {
             LogLevel::Error => error!(target: TARGET, "{message}"),
         });
         // store
-        if let Some(logs_storage_config) = &mut self.logs_storage_config {
+        if let Some(logs_storage_config) = &mut self.logs_storage_config
+            && level as u8 >= logs_storage_config.min_level as u8
+        {
             let res = logs_storage_config.log_sender.try_send(LogInfoAppendRow {
                 execution_id: self.execution_id.clone(),
                 run_id: self.run_id,
