@@ -17,7 +17,6 @@ use hashbrown::HashMap;
 use log::{LoggingConfig, LoggingStyle};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_with::serde_as;
 use std::str::FromStr;
 use std::{
     net::SocketAddr,
@@ -463,35 +462,13 @@ pub(crate) struct ConfigStoreCommon {
     pub(crate) content_digest: ContentDigest,
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ComponentLocationDeserHelper {
-    String(String),
-    Enum(ComponentLocationToml),
-}
-
-impl<'de> Deserialize<'de> for ComponentLocationToml {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        match ComponentLocationDeserHelper::deserialize(deserializer)? {
-            ComponentLocationDeserHelper::String(s) => {
-                ComponentLocationToml::from_str(&s).map_err(serde::de::Error::custom)
-            }
-            ComponentLocationDeserHelper::Enum(e) => Ok(e),
-        }
-    }
-}
-
-#[serde_as]
-#[derive(Debug, Clone, Hash, JsonSchema)]
+#[derive(Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr)]
 #[serde(rename_all = "snake_case")]
+#[schemars(with = "String")]
 pub(crate) enum ComponentLocationToml {
     Path(String), // String because it can contain path prefix
     Oci(
-        #[serde_as(as = "serde_with::DisplayFromStr")]
-        #[schemars(with = "String")]
+        // #[serde_as(as = "serde_with::DisplayFromStr")]
         oci_client::Reference,
     ),
 }
@@ -525,11 +502,12 @@ impl ComponentLocationToml {
         }
     }
 }
+pub(crate) const OCI_SCHEMA_PREFIX: &str = "oci://";
 impl FromStr for ComponentLocationToml {
     type Err = oci_client::ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some(location) = s.strip_prefix("oci://") {
+        if let Some(location) = s.strip_prefix(OCI_SCHEMA_PREFIX) {
             Ok(ComponentLocationToml::Oci(oci_client::Reference::from_str(
                 location,
             )?))

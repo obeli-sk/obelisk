@@ -61,8 +61,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Common settings for all components
 # name = "name" # Each component must be named.
 ## Location can be a file path or an OCI registry reference.
-# location.path = "path/to/wasm"
-# location.oci = "docker.io/repo/image:tag"
+# location = "path/to/wasm"
+# location = "oci://docker.io/repo/image:tag"
 # content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash.
 
 ## Database storage setting for logs emitted by the component

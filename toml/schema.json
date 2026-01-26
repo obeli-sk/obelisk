@@ -152,7 +152,7 @@
       "type": "object",
       "properties": {
         "location": {
-          "$ref": "#/$defs/ComponentLocationToml"
+          "type": "string"
         },
         "name": {
           "$ref": "#/$defs/ConfigName"
@@ -186,7 +186,7 @@
           "$ref": "#/$defs/ComponentStdOutputToml"
         },
         "location": {
-          "$ref": "#/$defs/ComponentLocationToml"
+          "type": "string"
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml"
@@ -382,34 +382,6 @@
       "additionalProperties": false,
       "required": [
         "sources"
-      ]
-    },
-    "ComponentLocationToml": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "path": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "path"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "oci": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "oci"
-          ]
-        }
       ]
     },
     "ComponentStdOutputToml": {
@@ -1072,7 +1044,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "$ref": "#/$defs/ComponentLocationToml"
+          "type": "string"
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml"
@@ -1137,7 +1109,7 @@
           "$ref": "#/$defs/ExecConfigToml"
         },
         "location": {
-          "$ref": "#/$defs/ComponentLocationToml"
+          "type": "string"
         },
         "lock_extension": {
           "$ref": "#/$defs/DurationConfig"

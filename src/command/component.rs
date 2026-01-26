@@ -4,6 +4,7 @@ use crate::args;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::OBELISK_HELP_TOML;
 use crate::config::toml::ComponentLocationToml;
+use crate::config::toml::OCI_SCHEMA_PREFIX;
 use crate::get_fn_repository_client;
 use crate::init;
 use crate::init::Guard;
@@ -119,7 +120,7 @@ pub(crate) async fn add(
         )
     };
 
-    let (name, target, location_raw) = match location {
+    let (name, location_raw) = match location {
         ComponentLocationToml::Path(path) => {
             let name = {
                 let path = Path::new(&path);
@@ -132,7 +133,7 @@ pub(crate) async fn add(
                 }
                 .to_string()
             };
-            (name, "path", path)
+            (name, path)
         }
         ComponentLocationToml::Oci(reference) => {
             let name = name.unwrap_or_else(|| {
@@ -142,8 +143,7 @@ pub(crate) async fn add(
                     .map(|(_, name)| name.to_string())
                     .unwrap_or_else(|| reference.repository().to_string())
             });
-
-            (name, "oci", reference.whole())
+            (name, format!("{OCI_SCHEMA_PREFIX}{}", reference.whole()))
         }
     };
     let name = sanitize_name(&name);
@@ -153,7 +153,7 @@ pub(crate) async fn add(
 {contents}
 [[{component_type}]]
 name = "{name}"
-location.{target} = "{location_raw}"
+location = "{location_raw}"
 "#
     );
 
