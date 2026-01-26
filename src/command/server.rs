@@ -1,6 +1,5 @@
 use crate::args::Server;
 use crate::command::termination_notifier::termination_notifier;
-use crate::config::ComponentLocationToml;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
@@ -13,6 +12,7 @@ use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
+use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;

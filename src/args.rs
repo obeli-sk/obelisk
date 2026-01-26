@@ -1,4 +1,4 @@
-use crate::config::ComponentLocationToml;
+use crate::config::toml::ComponentLocationToml;
 use clap::Parser;
 use concepts::{ComponentType, ExecutionId, FunctionFqn, prefixed_ulid::ExecutionIdDerived};
 use std::path::PathBuf;

@@ -1,9 +1,9 @@
 use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
 use crate::args;
-use crate::config::ComponentLocationToml;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::OBELISK_HELP_TOML;
+use crate::config::toml::ComponentLocationToml;
 use crate::get_fn_repository_client;
 use crate::init;
 use crate::init::Guard;
