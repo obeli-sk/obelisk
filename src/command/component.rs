@@ -3,6 +3,7 @@ use crate::FunctionRepositoryClient;
 use crate::args;
 use crate::config::ComponentLocationToml;
 use crate::config::config_holder::ConfigHolder;
+use crate::config::config_holder::OBELISK_HELP_TOML;
 use crate::get_fn_repository_client;
 use crate::init;
 use crate::init::Guard;
@@ -14,7 +15,10 @@ use concepts::{FunctionFqn, FunctionMetadata};
 use directories::BaseDirs;
 use grpc::grpc_gen;
 use grpc::to_channel;
+use std::path::Path;
 use std::path::PathBuf;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt as _;
 use utils::sha256sum::calculate_sha256_file;
 use utils::wasm_tools::WasmComponent;
 
@@ -60,8 +64,102 @@ impl args::Component {
                 .await
             }
             args::Component::Push { path, image_name } => oci::push(path, &image_name).await,
+            args::Component::Add {
+                component_type,
+                name,
+                location,
+                config,
+            } => add(component_type, name, location, config).await,
         }
     }
+}
+
+pub(crate) async fn add(
+    component_type: ComponentType,
+    name: Option<String>,
+    location: ComponentLocationToml,
+    config: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    fn sanitize_name(input: &str) -> String {
+        input
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+
+    let toml_path = config.unwrap_or_else(|| PathBuf::from("obelisk.toml"));
+    // If file exists => append to it
+    // otherwise generate from default
+    let (mut file, contents) = if toml_path.try_exists().unwrap_or_default() {
+        (
+            OpenOptions::new()
+                .create(false)
+                .append(true)
+                .open(&toml_path)
+                .await
+                .with_context(|| format!("configuration file {toml_path:?} must exist "))?,
+            "",
+        )
+    } else {
+        (
+            OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .append(false)
+                .open(&toml_path)
+                .await
+                .with_context(|| format!("cannot create configuration file {toml_path:?}"))?,
+            OBELISK_HELP_TOML,
+        )
+    };
+
+    let (name, target, location_raw) = match location {
+        ComponentLocationToml::Path(path) => {
+            let name = {
+                let path = Path::new(&path);
+                if let Some(stem) = path.file_stem()
+                    && let Some(name) = stem.to_str()
+                {
+                    name
+                } else {
+                    "unknown"
+                }
+                .to_string()
+            };
+            (name, "path", path)
+        }
+        ComponentLocationToml::Oci(reference) => {
+            let name = name.unwrap_or_else(|| {
+                reference
+                    .repository()
+                    .rsplit_once('/')
+                    .map(|(_, name)| name.to_string())
+                    .unwrap_or_else(|| reference.repository().to_string())
+            });
+
+            (name, "oci", reference.whole())
+        }
+    };
+    let name = sanitize_name(&name);
+
+    let appended = format!(
+        r#"
+{contents}
+[[{component_type}]]
+name = "{name}"
+location.{target} = "{location_raw}"
+"#
+    );
+
+    file.write_all(appended.as_bytes()).await?;
+    file.flush().await?;
+    Ok(())
 }
 
 pub(crate) async fn inspect(

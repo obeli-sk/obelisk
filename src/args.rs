@@ -166,6 +166,20 @@ pub(crate) enum Component {
         #[arg(required(true))]
         image_name: oci_client::Reference,
     },
+    /// Add a component to the TOML configuration file.
+    Add {
+        /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
+        #[arg(required(true))]
+        component_type: ComponentType,
+        /// Path to the WASM file
+        #[arg(required(true))]
+        location: ComponentLocationToml,
+        #[arg(long, short)]
+        name: Option<String>,
+        /// Path to the TOML configuration
+        #[arg(long, short)]
+        config: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]

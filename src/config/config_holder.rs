@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt as _;
 use tracing::info;
 use tracing::warn;
 
-const OBELISK_HELP_TOML: &str = include_str!("../../obelisk-help.toml");
+pub(crate) const OBELISK_HELP_TOML: &str = include_str!("../../obelisk-help.toml");
 const OBELISK_GEN_TOML: &str = include_str!("../../obelisk-generate.toml");
 
 // Path prefixes
