@@ -1,14 +1,10 @@
 use super::{
-    ComponentLocation, ConfigStoreCommon, config_holder::PathPrefixes, env_var::EnvVarConfig,
+    ComponentLocationToml, ConfigStoreCommon, config_holder::PathPrefixes, env_var::EnvVarConfig,
 };
-use crate::{
-    config::{
-        config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX},
-        env_var::replace_env_vars,
-    },
-    oci,
+use crate::config::{
+    config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX},
+    env_var::replace_env_vars,
 };
-use anyhow::Context;
 use anyhow::{anyhow, bail};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
@@ -480,37 +476,20 @@ impl<'de> Deserialize<'de> for ConfigName {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
     pub(crate) name: ConfigName,
-    pub(crate) location: ComponentLocation,
+    pub(crate) location: ComponentLocationToml,
 }
 
 impl ComponentCommon {
-    /// Fetch wasm file, calculate its content digest.
-    ///
-    /// Read wasm file either from local fs or pull from an OCI registry and cache it.
-    /// Calculate the `content_digest`. File is not converted from Core to Component format.
     async fn fetch(
         self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
         path_prefixes: &PathPrefixes,
     ) -> Result<(ConfigStoreCommon, PathBuf), anyhow::Error> {
-        use utils::sha256sum::calculate_sha256_file;
-
-        let (content_digest, wasm_path) = match &self.location {
-            ComponentLocation::Path(wasm_path) => {
-                let wasm_path = path_prefixes.replace_file_prefix_verify_exists(wasm_path)?;
-                // Future optimization: If the content digest is specified in TOML and wasm is already in the cache dir, do not recalculate it.
-                let content_digest = calculate_sha256_file(&wasm_path)
-                    .await
-                    .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
-                Ok((content_digest, wasm_path))
-            }
-            ComponentLocation::Oci(image) => {
-                oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
-                    .await
-                    .context("try cleaning the cache directory with `--clean-cache`")
-            }
-        }?;
+        let (content_digest, wasm_path) = self
+            .location
+            .fetch(wasm_cache_dir, metadata_dir, path_prefixes)
+            .await?;
         let verified = ConfigStoreCommon {
             name: self.name,
             location: self.location,

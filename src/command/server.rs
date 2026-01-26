@@ -1,6 +1,6 @@
 use crate::args::Server;
 use crate::command::termination_notifier::termination_notifier;
-use crate::config::ComponentLocation;
+use crate::config::ComponentLocationToml;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
@@ -346,7 +346,7 @@ pub(crate) async fn run(
     config: Option<PathBuf>,
     params: RunParams,
 ) -> anyhow::Result<()> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config, false)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
     let (termination_sender, termination_watcher) = watch::channel(());
@@ -377,7 +377,7 @@ pub(crate) async fn verify(
     config: Option<PathBuf>,
     verify_params: VerifyParams,
 ) -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config)?;
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config, false)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
@@ -717,7 +717,7 @@ impl ServerVerified {
             webhooks.push(webhook::WebhookComponentConfigToml {
                 common: ComponentCommon {
                     name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
-                    location: ComponentLocation::Oci(
+                    location: ComponentLocationToml::Oci(
                         WEBUI_OCI_REFERENCE
                             .parse()
                             .expect("hard-coded webui reference must be parsed"),
@@ -1830,7 +1830,7 @@ mod tests {
         let obelisk_toml = get_workspace_dir().join(obelisk_toml);
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
-        let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(obelisk_toml))?;
+        let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(obelisk_toml), false)?;
         let config = config_holder.load_config().await?;
 
         let wasm_cache_dir = config

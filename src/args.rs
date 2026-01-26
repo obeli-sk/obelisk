@@ -1,3 +1,4 @@
+use crate::config::ComponentLocationToml;
 use clap::Parser;
 use concepts::{ComponentType, ExecutionId, FunctionFqn, prefixed_ulid::ExecutionIdDerived};
 use std::path::PathBuf;
@@ -60,8 +61,9 @@ pub(crate) enum Generate {
     },
     /// Generate WIT dependency folder based on activities and workflows found in provided TOML configuration.
     WitDeps {
-        /// Path to the TOML configuration.
-        config: PathBuf,
+        /// Path to the TOML configuration
+        #[arg(long, short)]
+        config: Option<PathBuf>,
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
         /// Overwrite existing files.
@@ -145,7 +147,7 @@ pub(crate) enum Component {
 
         /// Path to the WASM file
         #[arg(required(true))]
-        path: PathBuf,
+        location: ComponentLocationToml,
 
         /// Show component imports
         #[arg(short, long)]
@@ -155,9 +157,9 @@ pub(crate) enum Component {
         #[arg(short, long)]
         extensions: bool,
 
-        /// Attempt to convert Core WASM Module to a WASM Component
-        #[arg(short, long)]
-        convert_core_module: bool,
+        /// Path to the TOML configuration
+        #[arg(long, short)]
+        config: Option<PathBuf>,
     },
     /// List components.
     List {

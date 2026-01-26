@@ -135,7 +135,7 @@ impl PathPrefixes {
 }
 
 pub(crate) struct ConfigHolder {
-    obelisk_toml: PathBuf,
+    obelisk_toml: Option<PathBuf>,
     pub(crate) path_prefixes: PathPrefixes,
 }
 
@@ -176,29 +176,37 @@ impl ConfigHolder {
         project_dirs: Option<ProjectDirs>,
         base_dirs: Option<BaseDirs>,
         config: Option<PathBuf>,
+        allow_missing: bool,
     ) -> Result<Self, anyhow::Error> {
         let obelisk_toml = if let Some(config) = config {
-            config
+            Some(config)
         } else {
             let local = PathBuf::from("obelisk.toml");
-            if !local.try_exists().unwrap_or_default() {
+            let exists = local.try_exists().unwrap_or_default();
+            if !allow_missing && !exists {
                 bail!("cannot find `obelisk.toml` in current directory");
             }
-            info!("Using configuration file {:?}", local);
-            local
+            if exists {
+                info!("Using configuration file {:?}", local);
+                Some(local)
+            } else {
+                None
+            }
         };
+
         Ok(Self {
             path_prefixes: PathPrefixes {
-                obelisk_toml_dir: obelisk_toml
-                    .canonicalize()
-                    .with_context(|| {
-                        format!(
-                            "error while calling canonicalize on parent path of {obelisk_toml:?}"
-                        )
-                    })?
-                    .parent()
-                    .with_context(|| format!("error getting parent path of {obelisk_toml:?}"))?
-                    .to_path_buf(),
+                obelisk_toml_dir: match &obelisk_toml {
+                    None => std::env::current_dir().context("failed to get CWD")?,
+                    Some(obelisk_toml) => {
+                        obelisk_toml.canonicalize().with_context(|| {
+                            format!("error while calling canonicalize on parent path of {obelisk_toml:?}")
+                        })?
+                        .parent()
+                        .with_context(|| format!("error getting parent path of {obelisk_toml:?}"))?
+                        .to_path_buf()
+                    }
+                },
                 project_dirs,
                 base_dirs,
             },
@@ -208,11 +216,13 @@ impl ConfigHolder {
 
     pub(crate) async fn load_config(&self) -> Result<ConfigToml, anyhow::Error> {
         let mut builder = ConfigBuilder::<AsyncState>::default();
-        builder = builder.add_source(
-            File::from(self.obelisk_toml.as_ref())
-                .required(true)
-                .format(FileFormat::Toml),
-        );
+        if let Some(obelisk_toml) = self.obelisk_toml.as_deref() {
+            builder = builder.add_source(
+                File::from(obelisk_toml)
+                    .required(true)
+                    .format(FileFormat::Toml),
+            );
+        }
         let settings = builder
             .add_source(Environment::with_prefix("obelisk").separator("__"))
             .build()

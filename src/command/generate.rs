@@ -194,11 +194,11 @@ pub(crate) async fn generate_support_wits(
 pub(crate) async fn generate_wit_deps(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    config: PathBuf,
+    config: Option<PathBuf>,
     output_directory: PathBuf,
     overwrite: bool,
 ) -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(config))?;
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config, true)?;
     let mut config = config_holder.load_config().await?;
     let _guard = init::init(&mut config)?;
     let (termination_sender, mut termination_watcher) = watch::channel(());

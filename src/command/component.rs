@@ -1,11 +1,15 @@
 use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
 use crate::args;
+use crate::config::ComponentLocationToml;
+use crate::config::config_holder::ConfigHolder;
 use crate::get_fn_repository_client;
 use crate::oci;
+use crate::project_dirs;
 use anyhow::Context;
 use concepts::ComponentType;
 use concepts::{FunctionFqn, FunctionMetadata};
+use directories::BaseDirs;
 use grpc::grpc_gen;
 use grpc::to_channel;
 use std::path::PathBuf;
@@ -16,14 +20,15 @@ impl args::Component {
     pub(crate) async fn run(self, api_url: &str) -> Result<(), anyhow::Error> {
         match self {
             args::Component::Inspect {
-                path,
+                location,
                 component_type,
                 imports,
                 extensions,
-                convert_core_module,
+                config,
             } => {
                 inspect(
-                    path,
+                    config,
+                    location,
                     component_type,
                     if imports {
                         FunctionMetadataVerbosity::ExportsAndImports
@@ -31,7 +36,6 @@ impl args::Component {
                         FunctionMetadataVerbosity::ExportsOnly
                     },
                     extensions,
-                    convert_core_module,
                 )
                 .await
             }
@@ -58,13 +62,31 @@ impl args::Component {
 }
 
 pub(crate) async fn inspect(
-    wasm_path: PathBuf,
+    config: Option<PathBuf>,
+    location: ComponentLocationToml,
     component_type: ComponentType,
     verbosity: FunctionMetadataVerbosity,
     extensions: bool,
-    convert_core_module: bool,
 ) -> anyhow::Result<()> {
-    let wasm_path = if convert_core_module {
+    let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), config, true)?;
+    let config = config_holder.load_config().await?;
+    let path_prefixes = &config_holder.path_prefixes;
+
+    let wasm_cache_dir = config
+        .wasm_global_config
+        .get_wasm_cache_directory(&path_prefixes)
+        .await?;
+
+    let metadata_dir = wasm_cache_dir.join("metadata");
+    tokio::fs::create_dir_all(&metadata_dir)
+        .await
+        .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
+
+    let (_content_digest, wasm_path) = location
+        .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+        .await?;
+
+    let wasm_path = {
         let output_parent = wasm_path
             .parent()
             .expect("direct parent of a file is never None");
@@ -81,8 +103,6 @@ pub(crate) async fn inspect(
         } else {
             wasm_path
         }
-    } else {
-        wasm_path
     };
 
     let content_digest = calculate_sha256_file(&wasm_path).await?;
