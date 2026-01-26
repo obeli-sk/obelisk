@@ -463,8 +463,29 @@ pub(crate) struct ConfigStoreCommon {
     pub(crate) content_digest: ContentDigest,
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ComponentLocationDeserHelper {
+    String(String),
+    Enum(ComponentLocationToml),
+}
+
+impl<'de> Deserialize<'de> for ComponentLocationToml {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match ComponentLocationDeserHelper::deserialize(deserializer)? {
+            ComponentLocationDeserHelper::String(s) => {
+                ComponentLocationToml::from_str(&s).map_err(serde::de::Error::custom)
+            }
+            ComponentLocationDeserHelper::Enum(e) => Ok(e),
+        }
+    }
+}
+
 #[serde_as]
-#[derive(Debug, Clone, Hash, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Hash, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentLocationToml {
     Path(String), // String because it can contain path prefix
