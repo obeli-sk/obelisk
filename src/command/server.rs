@@ -1610,14 +1610,14 @@ fn prespawn_workflow(
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
         .ok();
 
-    Ok(WorkerCompiled::new_workflow(
+    WorkerCompiled::new_workflow(
         runnable_component,
         engine,
         workflow,
         wit,
         workflows_lock_extension_leeway,
     )
-    .with_context(|| format!("cannot compile {component_id}"))?)
+    .with_context(|| format!("cannot compile {component_id}"))
 }
 
 struct WorkflowWorkerCompiledWithConfig {

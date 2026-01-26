@@ -176,7 +176,7 @@ pub(crate) async fn inspect(
 
     let wasm_cache_dir = config
         .wasm_global_config
-        .get_wasm_cache_directory(&path_prefixes)
+        .get_wasm_cache_directory(path_prefixes)
         .await?;
 
     let metadata_dir = wasm_cache_dir.join("metadata");
@@ -185,7 +185,7 @@ pub(crate) async fn inspect(
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
 
     let (_content_digest, wasm_path) = location
-        .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+        .fetch(&wasm_cache_dir, &metadata_dir, path_prefixes)
         .await?;
 
     let wasm_path = {

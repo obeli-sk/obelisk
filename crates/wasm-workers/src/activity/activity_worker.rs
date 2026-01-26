@@ -103,7 +103,7 @@ impl<S: Sleep> ActivityWorkerCompiled<S> {
                 let reason = if err.to_string()
                     == "component imports instance `obelisk:activity/process@1.0.0`, but a matching implementation was not found in the linker"
                 {
-                    format!("activity comopnent imports Process API, but it is not enabled. Use e.g. `directories  = {{ enabled = true, process_provider = \"native\"}}`").into()
+                    "activity comopnent imports Process API, but it is not enabled. Use e.g. `directories  = { enabled = true, process_provider = \"native\"}`".to_string().into()
                 } else {
                     StrVariant::Static("cannot link activity")
                 };
