@@ -1492,7 +1492,12 @@ async fn compile_and_verify(
             let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
             let webhooks_by_names = webhooks_compiled_by_names
                 .into_iter()
-                .map(|(name, (compiled, routes))| compiled.link(&engines.webhook_engine, fn_registry.as_ref()).map(|instance| (name, (instance, routes))))
+                .map(|(name, (compiled, routes))|{
+                    let component_id = compiled.config.component_id.clone();
+                    compiled.link(&engines.webhook_engine, fn_registry.as_ref())
+                        .map(|instance| (name, (instance, routes)))
+                        .with_context(||format!("cannot compile {component_id}"))
+                })
                 .collect::<Result<hashbrown::HashMap<_,_>,_>>()?;
             Ok((LinkedComponents {
                 workers_linked,
@@ -1553,24 +1558,27 @@ fn prespawn_activity(
     activity: ActivityWasmConfigVerified,
     engines: &Engines,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
-    assert!(activity.component_id().component_type == ComponentType::ActivityWasm);
+    let component_id = activity.component_id().clone();
+    assert!(component_id.component_type == ComponentType::ActivityWasm);
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
     let engine = engines.activity_engine.clone();
-    let component_type = activity.component_id().component_type;
-    let runnable_component = RunnableComponent::new(activity.wasm_path, &engine, component_type)?;
+    let runnable_component =
+        RunnableComponent::new(activity.wasm_path, &engine, component_id.component_type)?;
     let wit = runnable_component
         .wasm_component
         .wit()
         .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
         .ok();
+
     let worker = ActivityWorkerCompiled::new_with_config(
         runnable_component,
         activity.activity_config,
         engine,
         Now.clone_box(),
         TokioSleep,
-    )?;
+    )
+    .with_context(|| format!("cannot compile {component_id}"))?;
     Ok(WorkerCompiled::new_activity(
         worker,
         activity.exec_config,
@@ -1589,12 +1597,13 @@ fn prespawn_workflow(
     engines: &Engines,
     workflows_lock_extension_leeway: Duration,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
-    assert!(workflow.component_id().component_type == ComponentType::Workflow);
+    let component_id = workflow.component_id().clone();
+    assert!(component_id.component_type == ComponentType::Workflow);
     debug!("Instantiating workflow");
     trace!(?workflow, "Full configuration");
     let engine = engines.workflow_engine.clone();
-    let component_type = workflow.component_id().component_type;
-    let runnable_component = RunnableComponent::new(&workflow.wasm_path, &engine, component_type)?;
+    let runnable_component =
+        RunnableComponent::new(&workflow.wasm_path, &engine, component_id.component_type)?;
     let wit = runnable_component
         .wasm_component
         .wit()
@@ -1607,7 +1616,8 @@ fn prespawn_workflow(
         workflow,
         wit,
         workflows_lock_extension_leeway,
-    )?)
+    )
+    .with_context(|| format!("cannot compile {component_id}"))?)
 }
 
 struct WorkflowWorkerCompiledWithConfig {

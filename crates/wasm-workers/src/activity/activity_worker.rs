@@ -11,7 +11,9 @@ use chrono::{DateTime, Utc};
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::storage::{LogInfoAppendRow, LogStreamType};
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
-use concepts::{ComponentId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue, TrapKind};
+use concepts::{
+    ComponentId, FunctionFqn, PackageIfcFns, StrVariant, SupportedFunctionReturnValue, TrapKind,
+};
 use concepts::{FunctionMetadata, ResultParsingError};
 use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
@@ -49,11 +51,16 @@ pub enum ProcessProvider {
     Native,
 }
 
+#[derive(derive_more::Debug)]
 pub struct ActivityWorkerCompiled<S: Sleep> {
+    #[debug(skip)]
     engine: Arc<Engine>,
+    #[debug(skip)]
     instance_pre: InstancePre<ActivityCtx>,
     exim: ExIm,
+    #[debug(skip)]
     clock_fn: Box<dyn ClockFn>,
+    #[debug(skip)]
     sleep: S,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
@@ -92,7 +99,16 @@ impl<S: Sleep> ActivityWorkerCompiled<S> {
         // Attempt to pre-instantiate to catch missing imports
         let instance_pre = linker
             .instantiate_pre(&runnable_component.wasmtime_component)
-            .map_err(|err| WasmFileError::linking_error("cannot link activity", err))?;
+            .map_err(|err| {
+                let reason = if err.to_string()
+                    == "component imports instance `obelisk:activity/process@1.0.0`, but a matching implementation was not found in the linker"
+                {
+                    format!("activity comopnent imports Process API, but it is not enabled. Use e.g. `directories  = {{ enabled = true, process_provider = \"native\"}}`").into()
+                } else {
+                    StrVariant::Static("cannot link activity")
+                };
+                WasmFileError::linking_error(reason, err)}
+            )?;
 
         let exported_ffqn_to_index = RunnableComponent::index_exported_functions(
             &runnable_component.wasmtime_component,
@@ -1708,6 +1724,44 @@ pub(crate) mod tests {
                 .unwrap();
             assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
             db_close.close().await;
+        }
+
+        #[tokio::test]
+        async fn process_api_not_enabled_should_produce_meaningful_error() {
+            test_utils::set_up();
+            let sim_clock = SimClock::default();
+
+            let engine =
+                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+            let (wasm_component, component_id) = compile_activity_with_engine(
+                test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
+                &engine,
+                ComponentType::ActivityWasm,
+            )
+            .await;
+
+            let err = ActivityWorkerCompiled::new_with_config(
+                wasm_component,
+                ActivityConfig {
+                    component_id,
+                    forward_stdout: Some(StdOutputConfig::Stderr),
+                    forward_stderr: Some(StdOutputConfig::Stderr),
+                    env_vars: Arc::default(),
+                    retry_on_err: true,
+                    directories_config: None,
+                    fuel: None,
+                },
+                engine,
+                sim_clock.clone_box(),
+                TokioSleep,
+            )
+            .unwrap_err();
+            let reason = assert_matches!(err, WasmFileError::LinkingError { reason, .. } => reason);
+            assert_eq!(
+                r#"activity comopnent imports Process API, but it is not enabled. Use e.g. `directories  = { enabled = true, process_provider = "native"}`"#,
+                reason.to_string()
+            );
         }
 
         #[cfg(unix)]
