@@ -21,7 +21,7 @@ impl Generate {
             #[cfg(debug_assertions)]
             Generate::ConfigSchema { output } => generate_toml_schema(output),
             Generate::Config { output, overwrite } => {
-                ConfigHolder::generate_default_config(output.as_deref(), overwrite).await
+                ConfigHolder::generate_default_config(output, overwrite).await
             }
 
             Generate::WitExtensions {

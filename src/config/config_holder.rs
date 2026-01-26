@@ -2,7 +2,6 @@ use super::toml::ConfigToml;
 use anyhow::{Context as _, bail};
 use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
-use std::path::Path;
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
@@ -142,36 +141,34 @@ pub(crate) struct ConfigHolder {
 
 impl ConfigHolder {
     pub(crate) async fn generate_default_config(
-        dst: Option<&Path>,
+        dst: Option<PathBuf>,
         overwrite: bool,
     ) -> Result<(), anyhow::Error> {
         let contents = format!("{OBELISK_HELP_TOML}\n{OBELISK_GEN_TOML}");
+        let dst = dst.unwrap_or(PathBuf::from("obelisk.toml"));
 
-        if let Some(dst) = dst {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create(true) // Always allow creating new files.
-                .truncate(true) // Truncate existing files.
-                .create_new(!overwrite) // if true, `create` is ignored, and only new file creation is allowed, meaning overwriting is disabled.
-                .open(dst)
-                .await
-                .with_context(|| {
-                    format!(
-                        "cannot open {dst:?} for writing{}",
-                        if !overwrite {
-                            ", try using `--overwrite`"
-                        } else {
-                            ""
-                        }
-                    )
-                })?;
-            file.write_all(contents.as_bytes())
-                .await
-                .with_context(|| format!("cannot write to {dst:?}"))?;
-            println!("Generated {dst:?}");
-        } else {
-            println!("{contents}");
-        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true) // Always allow creating new files.
+            .truncate(true) // Truncate existing files.
+            .create_new(!overwrite) // if true, `create` is ignored, and only new file creation is allowed, meaning overwriting is disabled.
+            .open(&dst)
+            .await
+            .with_context(|| {
+                format!(
+                    "cannot open {dst:?} for writing{}",
+                    if !overwrite {
+                        ", try using `--overwrite`"
+                    } else {
+                        ""
+                    }
+                )
+            })?;
+        file.write_all(contents.as_bytes())
+            .await
+            .with_context(|| format!("cannot write to {dst:?}"))?;
+        println!("Generated {dst:?}");
+
         Ok(())
     }
 
