@@ -969,6 +969,8 @@ async fn update_state_pending_after_response_appended(
                 state = $3,
                 updated_at = CURRENT_TIMESTAMP,
 
+                max_retries = NULL,
+                retry_exp_backoff_millis = NULL,
                 last_lock_version = NULL,
 
                 join_set_id = NULL,
@@ -1025,6 +1027,8 @@ async fn update_state_pending_after_event_appended(
                 updated_at = CURRENT_TIMESTAMP,
                 intermittent_event_count = intermittent_event_count + $4,
 
+                max_retries = NULL,
+                retry_exp_backoff_millis = NULL,
                 last_lock_version = NULL,
 
                 join_set_id = NULL,
@@ -1096,7 +1100,7 @@ async fn update_state_locked_get_intermittent_event_count(
 
                 max_retries = $4,
                 retry_exp_backoff_millis = $5,
-                last_lock_version = $1, -- appending_version again
+                last_lock_version = $1,
                 executor_id = $6,
                 run_id = $7,
 
@@ -1158,6 +1162,8 @@ async fn update_state_blocked(
                 state = $3,
                 updated_at = CURRENT_TIMESTAMP,
 
+                max_retries = NULL,
+                retry_exp_backoff_millis = NULL,
                 last_lock_version = NULL,
 
                 join_set_id = $4,
@@ -1204,6 +1210,8 @@ async fn update_state_finished(
                 state = $3,
                 updated_at = CURRENT_TIMESTAMP,
 
+                max_retries = NULL,
+                retry_exp_backoff_millis = NULL,
                 last_lock_version = NULL,
                 executor_id = NULL,
                 run_id = NULL,

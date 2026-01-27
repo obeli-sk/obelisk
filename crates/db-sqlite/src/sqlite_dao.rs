@@ -159,13 +159,15 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 
 /// Stores executions in `PendingState`
 /// `state` to column mapping:
-/// `PendingAt`:            (nothing but required columns), optionally contains all `Locked` columns.
-/// `Locked`:               `max_retries`, `retry_exp_backoff_millis`, `last_lock_version`, `executor_id`, `run_id`
-/// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
+/// `PendingAt`:            (nothing but required columns), contains `executor_id`, `run_id` only if locked previously. `last_lock_version` must be null.
+/// `Locked`:               `max_retries`, `retry_exp_backoff_millis`, `last_lock_version`, `executor_id`, `run_id`.
+/// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`. Contains `executor_id`, `run_id` from `Locked` state.
 /// `Finished` :            `result_kind`.
 ///
+/// Column details:
 /// `pending_expires_finished` - either pending at, lock expires at or finished at based on state.
-///
+/// `max_retries` and `retry_exp_backoff_millis` are only needed for selecting expired locks
+/// `last_lock_version` is needed for selecting expired locks, see `ExpiredLock::locked_at_version`
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
@@ -1421,6 +1423,8 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
 
+                    max_retries = NULL,
+                    retry_exp_backoff_millis = NULL,
                     last_lock_version = NULL,
 
                     join_set_id = NULL,
@@ -1485,6 +1489,8 @@ impl SqlitePool {
                     updated_at = CURRENT_TIMESTAMP,
                     intermittent_event_count = intermittent_event_count + :intermittent_delta,
 
+                    max_retries = NULL,
+                    retry_exp_backoff_millis = NULL,
                     last_lock_version = NULL,
 
                     join_set_id = NULL,
@@ -1617,6 +1623,8 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
 
+                    max_retries = NULL,
+                    retry_exp_backoff_millis = NULL,
                     last_lock_version = NULL,
 
                     join_set_id = :join_set_id,
@@ -1659,6 +1667,8 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
 
+                    max_retries = NULL,
+                    retry_exp_backoff_millis = NULL,
                     last_lock_version = NULL,
                     executor_id = NULL,
                     run_id = NULL,
