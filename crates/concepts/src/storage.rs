@@ -1462,6 +1462,7 @@ impl<T: Clone> Pagination<T> {
             Pagination::NewerThan { length, .. } | Pagination::OlderThan { length, .. } => *length,
         }
     }
+
     pub fn rel(&self) -> &'static str {
         match self {
             Pagination::NewerThan {
@@ -1482,17 +1483,22 @@ impl<T: Clone> Pagination<T> {
             } => "<=",
         }
     }
+
     pub fn is_desc(&self) -> bool {
         matches!(self, Pagination::OlderThan { .. })
     }
+
     pub fn is_asc(&self) -> bool {
         !self.is_desc()
     }
+
     pub fn cursor(&self) -> &T {
         match self {
             Pagination::NewerThan { cursor, .. } | Pagination::OlderThan { cursor, .. } => cursor,
         }
     }
+
+    #[must_use]
     pub fn invert(&self) -> Self {
         match self {
             Pagination::NewerThan {
