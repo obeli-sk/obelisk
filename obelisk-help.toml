@@ -87,9 +87,9 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # Activities are retried on timeouts and traps.
 # Moreover, with `retry_on_err`, a function that returns the `err` variant will be retried as well.
 # retry_on_err = true # default is true
-## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".
-# forward_stdout="stderr" # forwards stdout to host's stderr
-# forward_stderr="stderr" # forwards stderr to host's stderr
+## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "db".
+# forward_stdout="db" # Persist guest's stdout to the database.
+# forward_stderr="db" # Persist guest's stderr to the database.
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
 # env_vars = ["ENV1", "ENV2=somevalue"]
 ## Preopened directory support

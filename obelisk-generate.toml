@@ -2,8 +2,6 @@
 # [[activity_wasm]]
 # name = "activity_docker"
 # location = "oci://docker.io/getobelisk/components_docker_activity_docker:2026-01-10@sha256:60f655080c46a65f04361c4180545f8a55694e2df3cc6ffad100ffaaacc0606e"
-# forward_stdout = "stderr"
-# forward_stderr = "stderr"
 # directories  = { enabled = true, process_provider = "native"}
 
 # see https://github.com/obeli-sk/components/tree/main/fly/activity-fly-http
@@ -12,8 +10,6 @@
 # location = "oci://docker.io/getobelisk/components_fly_activity_fly_http:2026-01-13-1@sha256:7b39b252793821b0b7a1cfb4c330fa41c869a8895cfd0ee69c9a9b7e2d3d1b9d"
 # exec.lock_expiry.seconds = 15
 # env_vars = ["FLY_API_TOKEN"]
-# forward_stdout = "stderr"
-# forward_stderr = "stderr"
 
 # see https://github.com/obeli-sk/components/tree/main/fly/webhook-fly-secrets-updater
 # [[webhook_endpoint]]
@@ -22,8 +18,6 @@
 # http_server = "webhook_server"
 # routes = [{ methods = ["POST"], route = "/" }]
 # env_vars = ["FLY_API_TOKEN"]
-# forward_stdout = "stderr"
-# forward_stderr = "stderr"
 #
 # [[http_server]]
 # name = "webhook_server"
@@ -35,21 +29,15 @@
 # location = "oci://docker.io/getobelisk/components_github_activity_github_graphql:2026-01-13@sha256:f3486f825825a6a16c98b50d517b26e928badcac7310f8066b27723f8cb285a3"
 # exec.lock_expiry.seconds = 5
 # env_vars = ["GITHUB_TOKEN"]
-# forward_stdout = "stderr"
-# forward_stderr = "stderr"
 
 # see https://github.com/obeli-sk/components/tree/main/http/activity-http-generic
 # [[activity_wasm]]
 # name = "activity_http_generic"
 # location = "oci://docker.io/getobelisk/components_http_activity_http_generic:2026-01-13@sha256:f64b64aa176224645a21d583312ad1e832afae57af138998711771c4411e3b3e"
-# forward_stdout = "stderr"
-# forward_stderr = "stderr"
 # exec.lock_expiry.seconds = 5
 
 # see https://github.com/obeli-sk/components/tree/main/obelisk/activity-obelisk-client-http
 # [[activity_wasm]]
 # name = "activity_obelisk_client_http"
 # location = "oci://docker.io/getobelisk/components_obelisk_activity_obelisk_client_http:2026-01-10@sha256:ca99fa1f0b08d1883784baff2966e07abe36b450b63d8deac25f8abf8cecd0ce"
-# forward_stdout = "stderr"
-# forward_stderr = "stderr"
 

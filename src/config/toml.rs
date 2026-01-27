@@ -1330,10 +1330,10 @@ pub(crate) mod log {
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentStdOutputToml {
-    #[default]
     None,
     Stdout,
     Stderr,
+    #[default]
     Db,
 }
 impl From<ComponentStdOutputToml> for Option<StdOutputConfig> {

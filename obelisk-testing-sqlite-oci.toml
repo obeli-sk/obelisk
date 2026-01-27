@@ -32,8 +32,6 @@ backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/tes
 [[activity_wasm]]
 name = "test_programs_http_get_activity"
 location = "oci://docker.io/getobelisk/test_programs_http_get_activity:2026-01-24@sha256:951653efae77521b24299f87bbb19079ebbf6a0a0ea84b8df806a19a93025da1"
-forward_stdout = "stderr"
-forward_stderr = "stderr"
 
 [[workflow]]
 name = "test_programs_http_get_workflow"
