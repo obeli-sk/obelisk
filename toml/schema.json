@@ -33,6 +33,13 @@
     "database": {
       "$ref": "#/$defs/DatabaseConfigToml"
     },
+    "deployment_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
     "http_server": {
       "type": "array",
       "items": {

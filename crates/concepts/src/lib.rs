@@ -1342,12 +1342,14 @@ pub mod prefixed_ulid {
         pub struct Exr;
         pub struct Run;
         pub struct Delay;
+        pub struct Dep;
     }
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
     pub type ExecutionIdTopLevel = PrefixedUlid<prefix::E>;
     pub type RunId = PrefixedUlid<prefix::Run>;
     pub type DelayIdTopLevel = PrefixedUlid<prefix::Delay>; // Never used directly, tracking top level ExecutionId
+    pub type DeploymentId = PrefixedUlid<prefix::Dep>;
 
     #[cfg(any(test, feature = "test"))]
     impl<'a, T> arbitrary::Arbitrary<'a> for PrefixedUlid<T> {

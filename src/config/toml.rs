@@ -6,11 +6,11 @@ use crate::config::{
 use crate::oci;
 use anyhow::Context;
 use anyhow::{anyhow, bail};
-use concepts::ContentDigest;
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
     component_id::InputContentDigest, prefixed_ulid::ExecutorId, storage::LogLevel,
 };
+use concepts::{ContentDigest, prefixed_ulid::DeploymentId};
 use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use hashbrown::HashMap;
@@ -51,6 +51,9 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigToml {
     #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) deployment_id: Option<DeploymentId>,
+    #[serde(default)]
     pub(crate) api: ApiConfig,
     #[serde(default)]
     pub(crate) database: DatabaseConfigToml,
@@ -83,6 +86,12 @@ pub(crate) struct ConfigToml {
     pub(crate) http_servers: Vec<HttpServer>,
     #[serde(default, rename = "webhook_endpoint")]
     pub(crate) webhooks: Vec<WebhookComponentConfigToml>,
+}
+impl ConfigToml {
+    pub(crate) fn get_deployment_id(&self) -> DeploymentId {
+        self.deployment_id
+            .unwrap_or_else(|| DeploymentId::generate())
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
