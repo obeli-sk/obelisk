@@ -53,7 +53,9 @@ fn get<'a, T: FromSql<'a>, I: RowIndex + std::fmt::Display + Copy>(
 }
 
 mod ddl {
+    use super::STATE_LOCKED;
     use concepts::storage::HISTORY_EVENT_TYPE_JOIN_NEXT;
+    use const_format::formatcp;
 
     pub const ADMIN_DB_NAME: &str = "postgres";
 
@@ -165,9 +167,10 @@ CREATE TABLE IF NOT EXISTS t_state (
 CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, ffqn);
 ";
 
-    pub const IDX_T_STATE_EXPIRED_TIMERS: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (pending_expires_finished) WHERE executor_id IS NOT NULL;
-";
+    pub const IDX_T_STATE_EXPIRED_LOCKS: &str = formatcp!(
+        "CREATE INDEX IF NOT EXISTS idx_t_state_expired_locks ON t_state (pending_expires_finished) WHERE state = '{}';",
+        STATE_LOCKED
+    );
 
     pub const IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_execution_id_is_root ON t_state (execution_id, is_top_level);
@@ -487,7 +490,7 @@ impl PostgresPool {
             ddl::CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_DELAY_ID,
             ddl::CREATE_TABLE_T_STATE,
             ddl::IDX_T_STATE_LOCK_PENDING,
-            ddl::IDX_T_STATE_EXPIRED_TIMERS,
+            ddl::IDX_T_STATE_EXPIRED_LOCKS,
             ddl::IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL,
             ddl::IDX_T_STATE_FFQN,
             ddl::IDX_T_STATE_CREATED_AT,

@@ -22,6 +22,7 @@ use concepts::{
         Version, VersionType,
     },
 };
+use const_format::formatcp;
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
 use hashbrown::HashMap;
 use rusqlite::{
@@ -202,9 +203,10 @@ CREATE TABLE IF NOT EXISTS t_state (
 const IDX_T_STATE_LOCK_PENDING: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, ffqn);
 ";
-const IDX_T_STATE_EXPIRED_TIMERS: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (pending_expires_finished) WHERE executor_id IS NOT NULL;
-";
+const IDX_T_STATE_EXPIRED_LOCKS: &str = formatcp!(
+    "CREATE INDEX IF NOT EXISTS idx_t_state_expired_locks ON t_state (pending_expires_finished) WHERE state = \"{}\";",
+    STATE_LOCKED
+);
 const IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_execution_id_is_root ON t_state (execution_id, is_top_level);
 ";
@@ -958,7 +960,7 @@ impl SqlitePool {
         // t_state
         conn_execute(&conn, CREATE_TABLE_T_STATE, [])?;
         conn_execute(&conn, IDX_T_STATE_LOCK_PENDING, [])?;
-        conn_execute(&conn, IDX_T_STATE_EXPIRED_TIMERS, [])?;
+        conn_execute(&conn, IDX_T_STATE_EXPIRED_LOCKS, [])?;
         conn_execute(&conn, IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL, [])?;
         conn_execute(&conn, IDX_T_STATE_FFQN, [])?;
         conn_execute(&conn, IDX_T_STATE_CREATED_AT, [])?;
