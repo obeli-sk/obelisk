@@ -66,7 +66,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash.
 
 ## Database storage setting for logs emitted by the component
-# logs_store_min_level = "off" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
+# logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 
 ## Common executor settings
 # exec.batch_size = 5 # Number of executions to lock for every event loop tick.

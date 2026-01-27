@@ -669,9 +669,9 @@ pub(crate) struct ActivityWasmComponentConfigToml {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LogLevelToml {
-    #[default]
     Off,
     Trace,
+    #[default]
     Debug,
     Info,
     Warn,

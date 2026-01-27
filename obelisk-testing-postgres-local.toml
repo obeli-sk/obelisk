@@ -22,7 +22,6 @@ listening_addr = "127.0.0.1:9090"
 name = "test_programs_fibo_activity"
 location = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_fibo_activity.wasm"
 max_retries = 0
-backtrace.ignore_component_digest = true
 
 [[workflow]]
 name = "test_programs_fibo_workflow"
@@ -44,7 +43,6 @@ location = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/releas
 http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
-logs_store_min_level = "info"
 forward_stdout = "db"
 forward_stderr = "db"
 
