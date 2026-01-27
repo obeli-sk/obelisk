@@ -7,6 +7,7 @@ use concepts::FunctionRegistry;
 use concepts::PackageIfcFns;
 use concepts::StrVariant;
 use concepts::component_id::InputContentDigest;
+use concepts::storage::LogLevel;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -19,7 +20,13 @@ pub struct ComponentConfig {
     pub imports: Vec<FunctionMetadata>,
     pub workflow_or_activity_config: Option<ComponentConfigImportable>,
     pub wit: Option<String>,
-    pub workflow_component: Option<RunnableComponent>, // For replaying workflows.
+    pub workflow_replay_info: Option<WorkflowReplayInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowReplayInfo {
+    pub runnable_component: RunnableComponent,
+    pub logs_store_min_level: Option<LogLevel>,
 }
 
 #[derive(Debug, Clone)]
@@ -233,16 +240,16 @@ impl ComponentConfigRegistryRO {
     }
 
     #[must_use]
-    pub fn get_workflow_component(
+    pub fn get_workflow_replay_info(
         &self,
         input_digest: &InputContentDigest,
-    ) -> Option<(&ComponentId, &RunnableComponent)> {
+    ) -> Option<(&ComponentId, &WorkflowReplayInfo)> {
         self.inner
             .ids_to_components
             .get(input_digest)
             .and_then(|component_config| {
                 component_config
-                    .workflow_component
+                    .workflow_replay_info
                     .as_ref()
                     .map(|it| (&component_config.component_id, it))
             })

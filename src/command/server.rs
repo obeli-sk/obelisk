@@ -110,6 +110,7 @@ use wasm_workers::registry::ComponentConfig;
 use wasm_workers::registry::ComponentConfigImportable;
 use wasm_workers::registry::ComponentConfigRegistry;
 use wasm_workers::registry::ComponentConfigRegistryRO;
+use wasm_workers::registry::WorkflowReplayInfo;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointCompiled;
@@ -580,6 +581,7 @@ async fn run_internal(
         component_source_map,
         cancel_registry.clone(),
         server_init.engines.clone(),
+        server_init.log_forwarder_sender.clone(),
     ));
 
     let mut grpc = RoutesBuilder::default();
@@ -625,6 +627,7 @@ async fn run_internal(
         termination_watcher: termination_watcher.clone(),
         subscription_interruption,
         engines: server_init.engines.clone(),
+        log_forwarder_sender: server_init.log_forwarder_sender.clone(),
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
@@ -973,6 +976,7 @@ async fn spawn_tasks_and_threads(
         preopens_cleaner,
         log_db_forarder,
         engines: server_compiled_linked.engines,
+        log_forwarder_sender,
     };
     Ok((server_init, server_compiled_linked.component_registry_ro))
 }
@@ -988,6 +992,7 @@ struct ServerInit {
     epoch_ticker: EpochTicker,
     preopens_cleaner: Option<AbortOnDropHandle>,
     log_db_forarder: AbortOnDropHandle,
+    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 }
 impl ServerInit {
     async fn close(self) {
@@ -1004,6 +1009,7 @@ impl ServerInit {
             epoch_ticker,
             preopens_cleaner,
             log_db_forarder,
+            log_forwarder_sender,
         } = self;
         // Explicit drop to avoid the pattern match footgun.
         drop(db_pool);
@@ -1013,6 +1019,7 @@ impl ServerInit {
         drop(epoch_ticker);
         drop(preopens_cleaner);
         drop(engines);
+        drop(log_forwarder_sender);
         debug!("Closing executors");
         // Close most of the services. Worker tasks might still be running.
         for exec_join_handle in exec_join_handles {
@@ -1391,7 +1398,7 @@ async fn compile_and_verify(
                         imports: vec![],
                         workflow_or_activity_config: Some(component_config_importable),
                         wit,
-                        workflow_component: None,
+                        workflow_replay_info: None,
                     };
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
                 })
@@ -1476,7 +1483,7 @@ async fn compile_and_verify(
                             wit: webhook_compiled.runnable_component.wasm_component.wit()
                                 .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
                                 .ok(),
-                            workflow_component: None,
+                            workflow_replay_info: None,
                         };
                         component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
@@ -1646,7 +1653,7 @@ impl WorkerCompiled {
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
-            workflow_component: None,
+            workflow_replay_info: None,
         };
         (
             WorkerCompiled {
@@ -1679,7 +1686,10 @@ impl WorkerCompiled {
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
-            workflow_component: Some(runnable_component),
+            workflow_replay_info: Some(WorkflowReplayInfo {
+                runnable_component,
+                logs_store_min_level: workflow.logs_store_min_level,
+            }),
         };
         Ok((
             WorkerCompiled {

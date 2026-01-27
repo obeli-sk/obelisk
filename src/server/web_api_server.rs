@@ -19,8 +19,8 @@ use concepts::{
     storage::{
         self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
         DbErrorWriteNonRetriable, DbPool, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ListExecutionsFilter, Pagination, PendingState, TimeoutOutcome,
-        Version, VersionType,
+        ExecutionWithState, ListExecutionsFilter, LogInfoAppendRow, Pagination, PendingState,
+        TimeoutOutcome, Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -37,7 +37,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{Instrument as _, Span, debug, info_span, instrument, trace, warn};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
-    activity::cancel_registry::CancelRegistry, engines::Engines,
+    activity::cancel_registry::CancelRegistry, component_logger::LogStrageConfig, engines::Engines,
     registry::ComponentConfigRegistryRO, workflow::workflow_worker::WorkflowWorker,
 };
 
@@ -49,6 +49,7 @@ pub(crate) struct WebApiState {
     pub(crate) termination_watcher: watch::Receiver<()>,
     pub(crate) subscription_interruption: Option<Duration>,
     pub(crate) engines: Engines,
+    pub(crate) log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
@@ -1049,19 +1050,25 @@ async fn execution_replay(
     };
     Span::current().record("component_id", tracing::field::display(component_id));
 
-    let (component_id, runnable_component) = state
+    let (component_id, replay_info) = state
         .component_registry_ro
-        .get_workflow_component(&component_id.input_digest)
+        .get_workflow_replay_info(&component_id.input_digest)
         .expect("digest taken from found component id");
 
     let replay_res = WorkflowWorker::replay(
         component_id.clone(),
-        runnable_component.wasmtime_component.clone(),
-        &runnable_component.wasm_component.exim,
+        replay_info.runnable_component.wasmtime_component.clone(),
+        &replay_info.runnable_component.wasm_component.exim,
         state.engines.workflow_engine.clone(),
         Arc::new(state.component_registry_ro.clone()),
         conn.as_ref(),
         execution_id.clone(),
+        replay_info
+            .logs_store_min_level
+            .map(|min_level| LogStrageConfig {
+                min_level,
+                log_sender: state.log_forwarder_sender.clone(),
+            }),
     )
     .await;
     if let Err(err) = replay_res {
@@ -1096,14 +1103,14 @@ async fn execution_upgrade(
     Json(payload): Json<ExecutionUpgradePayload>,
 ) -> Result<Response, HttpResponse> {
     if !payload.skip_determinism_check {
-        let (component_id, runnable_component) = state
+        let (component_id, replay_info) = state
             .component_registry_ro
-            .get_workflow_component(&payload.new)
+            .get_workflow_replay_info(&payload.new)
             .ok_or_else(|| HttpResponse::not_found(accept, Some("new component")))?;
         let replay_res = WorkflowWorker::replay(
             component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
+            replay_info.runnable_component.wasmtime_component.clone(),
+            &replay_info.runnable_component.wasm_component.exim,
             state.engines.workflow_engine.clone(),
             Arc::new(state.component_registry_ro.clone()),
             state
@@ -1113,6 +1120,12 @@ async fn execution_upgrade(
                 .map_err(|e| ErrorWrapper(e, accept))?
                 .as_ref(),
             execution_id.clone(),
+            replay_info
+                .logs_store_min_level
+                .map(|min_level| LogStrageConfig {
+                    min_level,
+                    log_sender: state.log_forwarder_sender.clone(),
+                }),
         )
         .await;
         if let Err(err) = replay_res {

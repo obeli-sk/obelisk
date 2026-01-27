@@ -26,6 +26,7 @@ use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
 use concepts::storage::ListExecutionsFilter;
 use concepts::storage::LogFilter;
+use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
 use concepts::storage::LogStreamType;
 use concepts::storage::Pagination;
@@ -64,6 +65,7 @@ use tracing::info_span;
 use tracing::instrument;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
+use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::workflow::workflow_worker::WorkflowWorker;
@@ -82,6 +84,8 @@ pub(crate) struct GrpcServer {
     cancel_registry: CancelRegistry,
     #[debug(skip)]
     engines: Engines,
+    #[debug(skip)]
+    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 }
 
 impl GrpcServer {
@@ -92,6 +96,7 @@ impl GrpcServer {
         component_source_map: ComponentSourceMap,
         cancel_registry: CancelRegistry,
         engines: Engines,
+        log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     ) -> Self {
         Self {
             db_pool,
@@ -100,6 +105,7 @@ impl GrpcServer {
             component_source_map,
             cancel_registry,
             engines,
+            log_forwarder_sender,
         }
     }
 }
@@ -708,19 +714,25 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         Span::current().record("component_id", tracing::field::display(component_id));
 
-        let (component_id, runnable_component) = self
+        let (component_id, replay_info) = self
             .component_registry_ro
-            .get_workflow_component(&component_id.input_digest)
+            .get_workflow_replay_info(&component_id.input_digest)
             .expect("digest taken from found component id");
 
         let replay_res = WorkflowWorker::replay(
             component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
+            replay_info.runnable_component.wasmtime_component.clone(),
+            &replay_info.runnable_component.wasm_component.exim,
             self.engines.workflow_engine.clone(),
             Arc::new(self.component_registry_ro.clone()),
             conn.as_ref(),
             execution_id.clone(),
+            replay_info
+                .logs_store_min_level
+                .map(|min_level| LogStrageConfig {
+                    min_level,
+                    log_sender: self.log_forwarder_sender.clone(),
+                }),
         )
         .await;
         if let Err(err) = replay_res {
@@ -750,14 +762,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("new_component_digest")?
             .try_into()?;
         if !request.skip_determinism_check {
-            let (component_id, runnable_component) = self
+            let (component_id, replay_info) = self
                 .component_registry_ro
-                .get_workflow_component(&new)
+                .get_workflow_replay_info(&new)
                 .must_exist("new component")?;
             let replay_res = WorkflowWorker::replay(
                 component_id.clone(),
-                runnable_component.wasmtime_component.clone(),
-                &runnable_component.wasm_component.exim,
+                replay_info.runnable_component.wasmtime_component.clone(),
+                &replay_info.runnable_component.wasm_component.exim,
                 self.engines.workflow_engine.clone(),
                 Arc::new(self.component_registry_ro.clone()),
                 self.db_pool
@@ -766,6 +778,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     .map_err(map_to_status)?
                     .as_ref(),
                 execution_id.clone(),
+                replay_info
+                    .logs_store_min_level
+                    .map(|min_level| LogStrageConfig {
+                        min_level,
+                        log_sender: self.log_forwarder_sender.clone(),
+                    }),
             )
             .await;
             if let Err(err) = replay_res {

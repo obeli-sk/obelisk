@@ -776,6 +776,7 @@ impl WorkflowWorker {
     }
 
     #[instrument(skip_all, fields(%execution_id))]
+    #[expect(clippy::too_many_arguments)]
     pub async fn replay(
         component_id: ComponentId,
         wasmtime_component: wasmtime::component::Component,
@@ -784,6 +785,7 @@ impl WorkflowWorker {
         fn_registry: Arc<dyn FunctionRegistry>,
         db_conn: &dyn DbConnection,
         execution_id: ExecutionId,
+        logs_storage_config: Option<LogStrageConfig>,
     ) -> Result<(), ReplayError> {
         let clock_fn = ConstClock(DateTime::from_timestamp_nanos(0));
 
@@ -829,7 +831,6 @@ impl WorkflowWorker {
         )?;
         let linked = compiled.link(fn_registry)?;
         let db_pool = Arc::new(InMemoryPool::new());
-        let logs_storage_config = None; // No log storage during replay.
         let worker = linked.into_worker(
             db_pool,
             Arc::new(DeadlineTrackerFactoryForReplay {}),
