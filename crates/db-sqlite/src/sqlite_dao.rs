@@ -209,12 +209,22 @@ CREATE TABLE IF NOT EXISTS t_state (
 ) STRICT
 ";
 
-// TODO: partial indexes
-const IDX_T_STATE_LOCK_PENDING: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, ffqn);
-";
+// For `get_pending_by_ffqns`
+const IDX_T_STATE_LOCK_PENDING_BY_FFQN: &str = formatcp!(
+    r"
+CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (pending_expires_finished, ffqn) WHERE state = '{}';
+",
+    STATE_PENDING_AT
+);
+// For `get_pending_by_component_input_digest`
+const IDX_T_STATE_LOCK_PENDING_BY_COMPONENT: &str = formatcp!(
+    r"
+CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (pending_expires_finished, component_id_input_digest) WHERE state = '{}';
+",
+    STATE_PENDING_AT
+);
 const IDX_T_STATE_EXPIRED_LOCKS: &str = formatcp!(
-    "CREATE INDEX IF NOT EXISTS idx_t_state_expired_locks ON t_state (pending_expires_finished) WHERE state = \"{}\";",
+    "CREATE INDEX IF NOT EXISTS idx_t_state_expired_locks ON t_state (pending_expires_finished) WHERE state = '{}';",
     STATE_LOCKED
 );
 const IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL: &str = r"
@@ -227,6 +237,11 @@ CREATE INDEX IF NOT EXISTS idx_t_state_ffqn ON t_state (ffqn);
 // For `list_executions` by creation date
 const IDX_T_STATE_CREATED_AT: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_created_at ON t_state (created_at);
+";
+
+// For `list_deployment_states`
+const IDX_T_STATE_DEPLOYMENT_STATE: &str = r"
+CREATE INDEX idx_t_state_deployment_state ON t_state (deployment_id, state);
 ";
 
 /// Represents [`ExpiredTimer::AsyncDelay`] . Rows are deleted when the delay is processed.
@@ -969,11 +984,13 @@ impl SqlitePool {
         )?;
         // t_state
         conn_execute(&conn, CREATE_TABLE_T_STATE, [])?;
-        conn_execute(&conn, IDX_T_STATE_LOCK_PENDING, [])?;
+        conn_execute(&conn, IDX_T_STATE_LOCK_PENDING_BY_FFQN, [])?;
+        conn_execute(&conn, IDX_T_STATE_LOCK_PENDING_BY_COMPONENT, [])?;
         conn_execute(&conn, IDX_T_STATE_EXPIRED_LOCKS, [])?;
         conn_execute(&conn, IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL, [])?;
         conn_execute(&conn, IDX_T_STATE_FFQN, [])?;
         conn_execute(&conn, IDX_T_STATE_CREATED_AT, [])?;
+        conn_execute(&conn, IDX_T_STATE_DEPLOYMENT_STATE, [])?;
         // t_delay
         conn_execute(&conn, CREATE_TABLE_T_DELAY, [])?;
         // backtrace
@@ -3319,9 +3336,7 @@ impl SqlitePool {
             SUM(state = '{STATE_PENDING_AT}' AND pending_expires_finished > :now) AS scheduled,
             SUM(state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
             SUM(state = '{STATE_FINISHED}') AS finished
-        FROM t_state
-        WHERE 1 = 1
-    "
+        FROM t_state"
         );
 
         params.push((":now", Box::new(current_time)));
@@ -3330,7 +3345,7 @@ impl SqlitePool {
             params.push((":cursor", Box::new(*cursor)));
             write!(
                 sql,
-                " AND deployment_id {rel} :cursor",
+                " WHERE deployment_id {rel} :cursor",
                 rel = pagination.rel()
             )
             .expect("writing to string");

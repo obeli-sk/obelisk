@@ -53,7 +53,7 @@ fn get<'a, T: FromSql<'a>, I: RowIndex + std::fmt::Display + Copy>(
 }
 
 mod ddl {
-    use super::STATE_LOCKED;
+    use super::{STATE_LOCKED, STATE_PENDING_AT};
     use concepts::storage::HISTORY_EVENT_TYPE_JOIN_NEXT;
     use const_format::formatcp;
 
@@ -164,9 +164,16 @@ CREATE TABLE IF NOT EXISTS t_state (
 ";
 
     // Indexes for t_state
-    pub const IDX_T_STATE_LOCK_PENDING: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, ffqn);
-";
+    // For `get_pending_of_single_ffqn`
+    pub const IDX_T_STATE_LOCK_PENDING_BY_FFQN: &str = formatcp!(
+        "CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, ffqn) WHERE state = '{}';",
+        STATE_PENDING_AT
+    );
+    // For `get_pending_by_component_input_digest`
+    pub const IDX_T_STATE_LOCK_PENDING_BY_COMPONENT: &str = formatcp!(
+        "CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, component_id_input_digest) WHERE state = '{}';",
+        STATE_PENDING_AT
+    );
 
     pub const IDX_T_STATE_EXPIRED_LOCKS: &str = formatcp!(
         "CREATE INDEX IF NOT EXISTS idx_t_state_expired_locks ON t_state (pending_expires_finished) WHERE state = '{}';",
@@ -183,6 +190,10 @@ CREATE INDEX IF NOT EXISTS idx_t_state_ffqn ON t_state (ffqn);
 
     pub const IDX_T_STATE_CREATED_AT: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_created_at ON t_state (created_at);
+";
+    // For `list_deployment_states`
+    pub const IDX_T_STATE_DEPLOYMENT_STATE: &str = r"
+CREATE INDEX idx_t_state_deployment_state ON t_state (deployment_id, state);
 ";
 
     // T_DELAY
@@ -490,11 +501,13 @@ impl PostgresPool {
             ddl::CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_CHILD_ID,
             ddl::CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_DELAY_ID,
             ddl::CREATE_TABLE_T_STATE,
-            ddl::IDX_T_STATE_LOCK_PENDING,
+            ddl::IDX_T_STATE_LOCK_PENDING_BY_FFQN,
+            ddl::IDX_T_STATE_LOCK_PENDING_BY_COMPONENT,
             ddl::IDX_T_STATE_EXPIRED_LOCKS,
             ddl::IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL,
             ddl::IDX_T_STATE_FFQN,
             ddl::IDX_T_STATE_CREATED_AT,
+            ddl::IDX_T_STATE_DEPLOYMENT_STATE,
             ddl::CREATE_TABLE_T_DELAY,
             ddl::CREATE_TABLE_T_WASM_BACKTRACE,
             ddl::CREATE_TABLE_T_EXECUTION_BACKTRACE,
@@ -1873,9 +1886,7 @@ async fn list_deployment_states(
             COUNT(*) FILTER (WHERE state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
 
             COUNT(*) FILTER (WHERE state = '{STATE_FINISHED}') AS finished
-        FROM t_state
-        WHERE 1 = 1
-        "
+        FROM t_state"
     );
 
     // Pagination
@@ -1883,7 +1894,7 @@ async fn list_deployment_states(
         let p_cursor = add_param(Box::new(cursor.to_string()));
         write!(
             sql,
-            " AND deployment_id {rel} {p_cursor}",
+            " WHERE deployment_id {rel} {p_cursor}",
             rel = pagination.rel()
         )
         .expect("writing to string");
