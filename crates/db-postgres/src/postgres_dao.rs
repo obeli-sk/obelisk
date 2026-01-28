@@ -94,7 +94,8 @@ CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant ON t_executi
 ";
 
     pub const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_JOIN_SET: &str = const_format::formatcp!(
-        "CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_join_set ON t_execution_log (execution_id, join_set_id, history_event_type) WHERE history_event_type='{}';",
+        "CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_join_set ON t_execution_log
+        (execution_id, join_set_id, history_event_type) WHERE history_event_type='{}';",
         HISTORY_EVENT_TYPE_JOIN_NEXT
     );
 
