@@ -1521,9 +1521,7 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use chrono::DateTime;
-    use concepts::prefixed_ulid::{
-        DEPLOYMENT_ID_DUMMY, DeploymentId, ExecutionIdDerived, ExecutorId, RunId,
-    };
+    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest, DbPool,
         ExecutionEvent, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest,

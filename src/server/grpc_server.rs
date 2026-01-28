@@ -91,6 +91,7 @@ pub(crate) struct GrpcServer {
 }
 
 impl GrpcServer {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         deployment_id: DeploymentId,
         db_pool: Arc<dyn DbPool>,

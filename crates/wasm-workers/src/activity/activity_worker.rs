@@ -576,10 +576,8 @@ pub(crate) mod tests {
     use concepts::time::TokioSleep;
     use concepts::{ComponentRetryConfig, ComponentType, StrVariant};
     use concepts::{
-        ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
-        prefixed_ulid::{DeploymentId, ExecutorId},
-        storage::CreateRequest,
-        storage::DbPoolCloseable,
+        ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue, prefixed_ulid::ExecutorId,
+        storage::CreateRequest, storage::DbPoolCloseable,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, LockingStrategy};

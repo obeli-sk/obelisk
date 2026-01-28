@@ -2631,9 +2631,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
-    use concepts::prefixed_ulid::{
-        DEPLOYMENT_ID_DUMMY, DeploymentId, ExecutionIdDerived, ExecutorId, RunId,
-    };
+    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{CreateRequest, DbConnectionTest, HistoryEventScheduleAt, Locked};
     use concepts::storage::{
         DbConnection, DbPoolCloseable, JoinSetResponse, JoinSetResponseEvent, Version,

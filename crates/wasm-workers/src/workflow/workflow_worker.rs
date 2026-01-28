@@ -932,7 +932,7 @@ pub(crate) mod tests {
     };
     use concepts::{
         ComponentType,
-        prefixed_ulid::{DeploymentId, ExecutorId, RunId},
+        prefixed_ulid::{ExecutorId, RunId},
         storage::{
             CreateRequest, DbPoolCloseable, PendingState, PendingStateFinished,
             PendingStateFinishedResultKind, Version, wait_for_pending_state_fn,

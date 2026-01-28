@@ -4,7 +4,6 @@ use concepts::ExecutionId;
 use concepts::Params;
 use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
-use concepts::prefixed_ulid::DeploymentId;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::DbConnection;

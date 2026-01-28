@@ -1074,6 +1074,7 @@ async fn update_state_pending_after_event_appended(
     ))
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn update_state_locked_get_intermittent_event_count(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,

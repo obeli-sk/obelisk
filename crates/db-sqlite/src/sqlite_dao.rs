@@ -1544,6 +1544,7 @@ impl SqlitePool {
         ))
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn update_state_locked_get_intermittent_event_count(
         tx: &Transaction,
         execution_id: &ExecutionId,

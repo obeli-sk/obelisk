@@ -89,8 +89,7 @@ pub(crate) struct ConfigToml {
 }
 impl ConfigToml {
     pub(crate) fn get_deployment_id(&self) -> DeploymentId {
-        self.deployment_id
-            .unwrap_or_else(|| DeploymentId::generate())
+        self.deployment_id.unwrap_or_else(DeploymentId::generate)
     }
 }
 
