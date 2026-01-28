@@ -1841,7 +1841,7 @@ async fn list_logs_tx(
 async fn list_deployment_states(
     tx: &Transaction<'_>,
     current_time: DateTime<Utc>,
-    pagination: Pagination<DeploymentId>,
+    pagination: Pagination<Option<DeploymentId>>,
 ) -> Result<Vec<DeploymentState>, DbErrorRead> {
     // Helper for numbered params ($1, $2, ...)
     let mut params: Vec<Box<dyn ToSql + Send + Sync>> = Vec::new();
@@ -1879,23 +1879,22 @@ async fn list_deployment_states(
     );
 
     // Pagination
-    let limit = match &pagination {
-        Pagination::NewerThan { cursor, .. } | Pagination::OlderThan { cursor, .. } => {
-            let p_cursor = add_param(Box::new(cursor.to_string()));
-            write!(sql, " AND deployment_id {} {}", pagination.rel(), p_cursor).unwrap();
-            Some(pagination.length())
-        }
-    };
+    if let Some(cursor) = pagination.cursor() {
+        let p_cursor = add_param(Box::new(cursor.to_string()));
+        write!(
+            sql,
+            " AND deployment_id {rel} {p_cursor}",
+            rel = pagination.rel()
+        )
+        .expect("writing to string");
+    }
 
     // Grouping + ordering
     sql.push_str(" GROUP BY deployment_id ORDER BY deployment_id ");
     sql.push_str(pagination.asc_or_desc());
 
     // Limit
-    if let Some(limit) = limit {
-        let p_limit = add_param(Box::new(i64::from(limit)));
-        write!(sql, " LIMIT {p_limit}").unwrap();
-    }
+    write!(sql, " LIMIT {}", pagination.length()).expect("writing to string");
 
     let params_refs: Vec<&(dyn ToSql + Sync)> = params
         .iter()
@@ -4181,7 +4180,7 @@ impl DbExternalApi for PostgresConnection {
     async fn list_deployment_states(
         &self,
         current_time: DateTime<Utc>,
-        pagination: Pagination<DeploymentId>,
+        pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;

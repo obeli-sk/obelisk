@@ -32,6 +32,11 @@ service FunctionRepository {
     rpc GetWit(GetWitRequest) returns (GetWitResponse);
 }
 
+service DeploymentRepository {
+    rpc ListDeploymentStates(ListDeploymentStatesRequest) returns (ListDeploymentStatesResponse);
+
+}
+
 message GenerateExecutionIdRequest {
 }
 
@@ -670,4 +675,36 @@ message ListLogsResponse {
     repeated LogEntry logs = 1;
     string next_page_token = 2;
     optional string prev_page_token = 3;
+}
+
+message ListDeploymentStatesRequest {
+    message NewerThan {
+        uint32 length = 1;
+        optional DeploymentId cursor = 2;
+        bool including_cursor = 3;
+    }
+    message OlderThan {
+        uint32 length = 1;
+        optional DeploymentId cursor = 2;
+        bool including_cursor = 3;
+    }
+
+    oneof pagination { // latest if not set
+        NewerThan newer_than = 1;
+        OlderThan older_than = 2;
+    };
+}
+
+message DeploymentState {
+    DeploymentId deployment_id = 1;
+    bool current = 2;
+    uint32 locked = 3;
+    uint32 pending = 4;
+    uint32 scheduled = 5;
+    uint32 blocked = 6;
+    uint32 finished = 7;
+}
+
+message ListDeploymentStatesResponse {
+    repeated DeploymentState deployments = 1;
 }

@@ -1,6 +1,9 @@
 use crate::{
     command::server::{self, SubmitError, SubmitOutcome},
-    server::web_api_server::components::{component_wit, components_list},
+    server::web_api_server::{
+        components::{component_wit, components_list},
+        deployment::list_deployments,
+    },
 };
 use axum::{
     Json, Router,
@@ -107,6 +110,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             "/executions/{execution-id}/upgrade",
             routing::put(execution_upgrade),
         )
+        .route("/deployments", routing::get(list_deployments))
 }
 
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
@@ -1348,6 +1352,105 @@ pub(crate) mod components {
                 wit_type: value.wit_type.to_string(),
             }
         }
+    }
+}
+
+mod deployment {
+    use crate::server::{
+        DEFAULT_DEPLOYMENT_STATES_LENGTH,
+        web_api_server::{AcceptHeader, ErrorWrapper, HttpResponse, WebApiState},
+    };
+    use axum::{
+        Json,
+        extract::{Query, State},
+        response::{IntoResponse, Response},
+    };
+    use chrono::Utc;
+    use concepts::{
+        prefixed_ulid::DeploymentId,
+        storage::{DeploymentState, Pagination},
+    };
+    use serde::{Deserialize, Serialize};
+    use std::{fmt::Write as _, sync::Arc};
+    use tracing::instrument;
+
+    #[derive(Debug, Serialize)]
+    pub struct DeploymentStateSer {
+        pub deployment_id: DeploymentId,
+        pub current: bool,
+        pub locked: u32,
+        pub pending: u32,
+        pub scheduled: u32,
+        pub blocked: u32,
+        pub finished: u32,
+    }
+
+    impl DeploymentStateSer {
+        fn from(deployment_state: &DeploymentState, current_deployment_id: DeploymentId) -> Self {
+            Self {
+                deployment_id: deployment_state.deployment_id,
+                current: deployment_state.deployment_id == current_deployment_id,
+                locked: deployment_state.locked,
+                pending: deployment_state.pending,
+                scheduled: deployment_state.scheduled,
+                blocked: deployment_state.blocked,
+                finished: deployment_state.finished,
+            }
+        }
+    }
+    #[derive(Debug, Deserialize)]
+    pub(crate) struct ListDeploymentsParams {
+        #[serde(default)]
+        cursor_from: Option<DeploymentId>,
+        length: Option<u16>,
+        #[serde(default)]
+        including_cursor: bool,
+    }
+
+    #[instrument(skip_all)]
+    pub(crate) async fn list_deployments(
+        state: State<Arc<WebApiState>>,
+        Query(params): Query<ListDeploymentsParams>,
+        accept: AcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        let conn = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        let states = conn
+            .list_deployment_states(
+                Utc::now(),
+                Pagination::OlderThan {
+                    length: params.length.unwrap_or(DEFAULT_DEPLOYMENT_STATES_LENGTH),
+                    cursor: params.cursor_from,
+                    including_cursor: params.including_cursor,
+                },
+            )
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        let states: Vec<DeploymentStateSer> = states
+            .into_iter()
+            .map(|dep| DeploymentStateSer::from(&dep, state.deployment_id))
+            .collect();
+
+        Ok(match accept {
+            AcceptHeader::Json => Json(states).into_response(),
+            AcceptHeader::Text => {
+                let mut output = String::new();
+                for s in states {
+                    writeln!(
+                        &mut output,
+                        "{} locked={} pending={} scheduled={} blocked={} finished={}",
+                        s.deployment_id, s.locked, s.pending, s.scheduled, s.blocked, s.finished,
+                    )
+                    .expect("writing to string");
+                }
+                output.into_response()
+            }
+        })
     }
 }
 

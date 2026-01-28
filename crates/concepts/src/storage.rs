@@ -959,7 +959,7 @@ pub trait DbExternalApi: DbConnection {
     async fn list_deployment_states(
         &self,
         current_time: DateTime<Utc>,
-        pagination: Pagination<DeploymentId>,
+        pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentState>, DbErrorRead>;
 }
 

@@ -3307,7 +3307,7 @@ impl SqlitePool {
     fn list_deployment_states(
         tx: &Transaction,
         current_time: DateTime<Utc>,
-        pagination: Pagination<DeploymentId>,
+        pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
         let mut sql = format!(
@@ -3326,17 +3326,16 @@ impl SqlitePool {
 
         params.push((":now", Box::new(current_time)));
 
-        match &pagination {
-            Pagination::NewerThan { cursor, .. } | Pagination::OlderThan { cursor, .. } => {
-                params.push((":cursor", Box::new(*cursor)));
-                write!(
-                    sql,
-                    " AND deployment_id {rel} :cursor",
-                    rel = pagination.rel()
-                )
-                .unwrap();
-            }
+        if let Some(cursor) = pagination.cursor() {
+            params.push((":cursor", Box::new(*cursor)));
+            write!(
+                sql,
+                " AND deployment_id {rel} :cursor",
+                rel = pagination.rel()
+            )
+            .expect("writing to string");
         }
+
         write!(
             sql,
             " GROUP BY deployment_id ORDER BY deployment_id {asc_or_desc} LIMIT {limit}",
@@ -3935,7 +3934,7 @@ impl DbExternalApi for SqlitePool {
     async fn list_deployment_states(
         &self,
         current_time: DateTime<Utc>,
-        pagination: Pagination<DeploymentId>,
+        pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         self.transaction(
             move |tx| Self::list_deployment_states(tx, current_time, pagination),

@@ -3,6 +3,7 @@ use crate::command::server::ComponentSourceMap;
 use crate::command::server::GET_STATUS_POLLING_SLEEP;
 use crate::command::server::MatchableSourceMap;
 use crate::command::server::SubmitError;
+use crate::server::DEFAULT_DEPLOYMENT_STATES_LENGTH;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
@@ -1202,5 +1203,75 @@ impl From<SubmitError> for tonic::Status {
             err @ SubmitError::Conflict => tonic::Status::already_exists(err.to_string()),
             SubmitError::DbErrorWrite(db_err) => db_error_write_to_status(&db_err),
         }
+    }
+}
+
+#[tonic::async_trait]
+impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer {
+    #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
+    async fn list_deployment_states(
+        &self,
+        request: tonic::Request<grpc_gen::ListDeploymentStatesRequest>,
+    ) -> TonicRespResult<grpc_gen::ListDeploymentStatesResponse> {
+        use grpc_gen::list_deployment_states_request;
+
+        let request = request.into_inner();
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+
+        let (length, cursor, including_cursor) = match request.pagination.as_ref() {
+            Some(list_deployment_states_request::Pagination::NewerThan(p)) => (
+                u16::try_from(p.length)
+                    .ok()
+                    .unwrap_or(DEFAULT_DEPLOYMENT_STATES_LENGTH),
+                p.cursor
+                    .as_ref()
+                    .map(|c| DeploymentId::try_from(c.clone()))
+                    .transpose()?,
+                p.including_cursor,
+            ),
+            Some(list_deployment_states_request::Pagination::OlderThan(p)) => (
+                u16::try_from(p.length)
+                    .ok()
+                    .unwrap_or(DEFAULT_DEPLOYMENT_STATES_LENGTH),
+                p.cursor
+                    .as_ref()
+                    .map(|c| DeploymentId::try_from(c.clone()))
+                    .transpose()?,
+                p.including_cursor,
+            ),
+            None => (DEFAULT_DEPLOYMENT_STATES_LENGTH, None, false),
+        };
+
+        let states = conn
+            .list_deployment_states(
+                Utc::now(),
+                Pagination::OlderThan {
+                    length,
+                    cursor,
+                    including_cursor,
+                },
+            )
+            .await
+            .to_status()?;
+
+        let deployments: Vec<_> = states
+            .into_iter()
+            .map(|dep| grpc_gen::DeploymentState {
+                deployment_id: Some(dep.deployment_id.into()),
+                current: dep.deployment_id == self.deployment_id,
+                locked: dep.locked,
+                pending: dep.pending,
+                scheduled: dep.scheduled,
+                blocked: dep.blocked,
+                finished: dep.finished,
+            })
+            .collect();
+        Ok(tonic::Response::new(
+            grpc_gen::ListDeploymentStatesResponse { deployments },
+        ))
     }
 }

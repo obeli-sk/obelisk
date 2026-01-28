@@ -94,6 +94,15 @@ impl From<DeploymentId> for grpc_gen::DeploymentId {
         }
     }
 }
+impl TryFrom<grpc_gen::DeploymentId> for DeploymentId {
+    type Error = tonic::Status;
+
+    fn try_from(value: grpc_gen::DeploymentId) -> Result<Self, Self::Error> {
+        DeploymentId::from_str(&value.id)
+            .map_err(|_| tonic::Status::invalid_argument("DeploymentId cannot be parsed"))
+    }
+}
+
 impl From<ComponentId> for grpc_gen::ComponentId {
     fn from(value: ComponentId) -> Self {
         Self {
