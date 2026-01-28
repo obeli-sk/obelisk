@@ -16,6 +16,7 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::component_id::CONTENT_DIGEST_DUMMY;
 use concepts::component_id::InputContentDigest;
 use concepts::prefixed_ulid::DelayId;
+use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
@@ -75,6 +76,7 @@ pub(crate) const IGNORING_COMPONENT_DIGEST: InputContentDigest =
 
 #[derive(derive_more::Debug)]
 pub(crate) struct GrpcServer {
+    deployment_id: DeploymentId,
     #[debug(skip)]
     db_pool: Arc<dyn DbPool>,
     termination_watcher: watch::Receiver<()>,
@@ -90,6 +92,7 @@ pub(crate) struct GrpcServer {
 
 impl GrpcServer {
     pub(crate) fn new(
+        deployment_id: DeploymentId,
         db_pool: Arc<dyn DbPool>,
         termination_watcher: watch::Receiver<()>,
         component_registry_ro: ComponentConfigRegistryRO,
@@ -99,6 +102,7 @@ impl GrpcServer {
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     ) -> Self {
         Self {
+            deployment_id,
             db_pool,
             termination_watcher,
             component_registry_ro,
@@ -165,6 +169,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         };
 
         let outcome = server::submit(
+            self.deployment_id,
             self.db_pool
                 .external_api_conn()
                 .await
@@ -720,6 +725,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .expect("digest taken from found component id");
 
         let replay_res = WorkflowWorker::replay(
+            self.deployment_id,
             component_id.clone(),
             replay_info.runnable_component.wasmtime_component.clone(),
             &replay_info.runnable_component.wasm_component.exim,
@@ -767,6 +773,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .get_workflow_replay_info(&new)
                 .must_exist("new component")?;
             let replay_res = WorkflowWorker::replay(
+                self.deployment_id,
                 component_id.clone(),
                 replay_info.runnable_component.wasmtime_component.clone(),
                 &replay_info.runnable_component.wasm_component.exim,

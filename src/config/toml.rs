@@ -52,7 +52,7 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 pub(crate) struct ConfigToml {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
-    pub(crate) deployment_id: Option<DeploymentId>,
+    deployment_id: Option<DeploymentId>,
     #[serde(default)]
     pub(crate) api: ApiConfig,
     #[serde(default)]

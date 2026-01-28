@@ -5,7 +5,7 @@ use concepts::{
     ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, JoinSetId, StrVariant,
     SupportedFunctionReturnValue,
     component_id::InputContentDigest,
-    prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
@@ -166,9 +166,18 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 /// `Finished` :            `result_kind`.
 ///
 /// Column details:
-/// `pending_expires_finished` - either pending at, lock expires at or finished at based on state.
-/// `max_retries` and `retry_exp_backoff_millis` are only needed for selecting expired locks
-/// `last_lock_version` is needed for selecting expired locks, see `ExpiredLock::locked_at_version`
+/// ## `deployment_id`:
+/// Which deployment created / last locked the execution. Transitioning to Blocked is issued by the same executor.
+/// Remote deployment can append response and transition the execution to Pending, but that does not change the `deployment_id`.
+///
+/// ## `pending_expires_finished`
+/// Either pending at, lock expires at or finished at based on state.
+///
+/// ## `max_retries` and `retry_exp_backoff_millis`
+/// Only needed for selecting expired locks.
+///
+/// ## `last_lock_version`
+/// Needed for selecting expired locks, see `ExpiredLock::locked_at_version`.
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
@@ -178,6 +187,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     created_at TEXT NOT NULL,
     component_id_input_digest BLOB NOT NULL,
     first_scheduled_at TEXT NOT NULL,
+    deployment_id TEXT NOT NULL,
 
     pending_expires_finished TEXT NOT NULL,
     state TEXT NOT NULL,
@@ -1278,6 +1288,7 @@ impl SqlitePool {
             parent,
             scheduled_at,
             component_id,
+            deployment_id,
             metadata,
             scheduled_by,
         } = event
@@ -1290,6 +1301,7 @@ impl SqlitePool {
                 parent,
                 scheduled_at,
                 component_id,
+                deployment_id,
                 metadata,
                 scheduled_by,
             })
@@ -1331,6 +1343,7 @@ impl SqlitePool {
         let created_at = req.created_at;
         let scheduled_at = req.scheduled_at;
         let component_id = req.component_id.clone();
+        let deployment_id = req.deployment_id;
         let event = ExecutionRequest::from(req);
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             error!("Cannot serialize {event:?} - {err:?}");
@@ -1362,6 +1375,7 @@ impl SqlitePool {
                     state,
                     created_at,
                     component_id_input_digest,
+                    deployment_id,
                     updated_at,
                     first_scheduled_at,
                     intermittent_event_count
@@ -1375,6 +1389,7 @@ impl SqlitePool {
                     :state,
                     :created_at,
                     :component_id_input_digest,
+                    :deployment_id,
                     CURRENT_TIMESTAMP,
                     :first_scheduled_at,
                     0
@@ -1390,6 +1405,7 @@ impl SqlitePool {
                 ":state": STATE_PENDING_AT,
                 ":created_at": created_at,
                 ":component_id_input_digest": component_id.input_digest,
+                ":deployment_id": deployment_id.to_string(),
                 ":first_scheduled_at": scheduled_at,
             })?;
             AppendNotifier {
@@ -1531,6 +1547,7 @@ impl SqlitePool {
     fn update_state_locked_get_intermittent_event_count(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        deployment_id: DeploymentId,
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
@@ -1556,6 +1573,7 @@ impl SqlitePool {
                     pending_expires_finished = :pending_expires_finished,
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
+                    deployment_id = :deployment_id,
 
                     max_retries = :max_retries,
                     retry_exp_backoff_millis = :retry_exp_backoff_millis,
@@ -1575,6 +1593,7 @@ impl SqlitePool {
             ":appending_version": appending_version.0,
             ":pending_expires_finished": lock_expires_at,
             ":state": STATE_LOCKED,
+            ":deployment_id": deployment_id.to_string(),
             ":max_retries": retry_config.max_retries,
             ":retry_exp_backoff_millis": backoff_millis,
             ":executor_id": executor_id.to_string(),
@@ -2073,6 +2092,7 @@ impl SqlitePool {
         tx: &Transaction,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         appending_version: &Version,
@@ -2092,6 +2112,7 @@ impl SqlitePool {
         // Append to `execution_log` table.
         let locked_event = Locked {
             component_id,
+            deployment_id,
             executor_id,
             lock_expires_at,
             run_id,
@@ -2138,6 +2159,7 @@ impl SqlitePool {
         let intermittent_event_count = Self::update_state_locked_get_intermittent_event_count(
             tx,
             execution_id,
+            deployment_id,
             executor_id,
             run_id,
             lock_expires_at,
@@ -2291,6 +2313,7 @@ impl SqlitePool {
             event:
                 ExecutionRequest::Locked(Locked {
                     component_id,
+                    deployment_id,
                     executor_id,
                     run_id,
                     lock_expires_at,
@@ -2303,6 +2326,7 @@ impl SqlitePool {
                 tx,
                 created_at,
                 component_id,
+                deployment_id,
                 execution_id,
                 run_id,
                 &appending_version,
@@ -3290,6 +3314,7 @@ impl DbExecutor for SqlitePool {
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
@@ -3317,6 +3342,7 @@ impl DbExecutor for SqlitePool {
                             tx,
                             created_at,
                             component_id.clone(),
+                            deployment_id,
                             execution_id,
                             run_id,
                             version,
@@ -3345,6 +3371,7 @@ impl DbExecutor for SqlitePool {
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
+        deployment_id: DeploymentId,
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
@@ -3382,6 +3409,7 @@ impl DbExecutor for SqlitePool {
                             tx,
                             created_at,
                             component_id.clone(),
+                            deployment_id,
                             execution_id,
                             run_id,
                             version,
@@ -3409,6 +3437,7 @@ impl DbExecutor for SqlitePool {
         &self,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
@@ -3424,6 +3453,7 @@ impl DbExecutor for SqlitePool {
                     tx,
                     created_at,
                     component_id.clone(),
+                    deployment_id,
                     &execution_id,
                     run_id,
                     &version,

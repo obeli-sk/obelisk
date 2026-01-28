@@ -571,13 +571,15 @@ pub(crate) mod tests {
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
     use concepts::component_id::InputContentDigest;
-    use concepts::prefixed_ulid::RunId;
+    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
     use concepts::storage::DbPool;
     use concepts::time::TokioSleep;
     use concepts::{ComponentRetryConfig, ComponentType, StrVariant};
     use concepts::{
-        ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue, prefixed_ulid::ExecutorId,
-        storage::CreateRequest, storage::DbPoolCloseable,
+        ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
+        prefixed_ulid::{DeploymentId, ExecutorId},
+        storage::CreateRequest,
+        storage::DbPoolCloseable,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, LockingStrategy};
@@ -769,6 +771,8 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 component_id: exec.config.component_id.clone(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -871,6 +875,7 @@ pub(crate) mod tests {
                         locked_event: Locked {
                             component_id: ComponentId::dummy_activity(),
                             executor_id: ExecutorId::generate(),
+                            deployment_id: DEPLOYMENT_ID_DUMMY,
                             run_id: RunId::generate(),
                             lock_expires_at: Now.now() + lock_expiry,
                             retry_config: ComponentRetryConfig::ZERO,
@@ -956,6 +961,7 @@ pub(crate) mod tests {
                 locking_strategy,
             };
             let exec_task = ExecTask::spawn_new(
+                DEPLOYMENT_ID_DUMMY,
                 worker,
                 exec_config,
                 Now.clone_box(),
@@ -982,6 +988,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: ComponentId::dummy_activity(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -1048,6 +1056,7 @@ pub(crate) mod tests {
                 locked_event: Locked {
                     component_id: ComponentId::dummy_activity(),
                     executor_id: ExecutorId::generate(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     run_id: RunId::generate(),
                     lock_expires_at: executed_at + TIMEOUT,
                     retry_config: ComponentRetryConfig::ZERO,
@@ -1103,6 +1112,7 @@ pub(crate) mod tests {
                 locked_event: Locked {
                     component_id: ComponentId::dummy_activity(),
                     executor_id: ExecutorId::generate(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     run_id: RunId::generate(),
                     lock_expires_at: execution_deadline,
                     retry_config: ComponentRetryConfig::ZERO,
@@ -1187,6 +1197,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: ComponentId::dummy_activity(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -1309,6 +1321,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: ComponentId::dummy_activity(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -1444,6 +1458,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: ComponentId::dummy_activity(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -1614,6 +1630,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: exec.config.component_id.clone(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -1709,6 +1727,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: exec.config.component_id.clone(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -1832,6 +1852,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: exec.config.component_id.clone(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -1913,6 +1935,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: exec.config.component_id.clone(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -1976,6 +2000,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: exec.config.component_id.clone(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await

@@ -18,7 +18,7 @@ use crate::workflow::event_history::JoinSetCreate;
 use crate::workflow::host_exports::v4_0_0::DelayId_4_0_0;
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::ExecutionIdDerived;
+use concepts::prefixed_ulid::{DeploymentId, ExecutionIdDerived};
 use concepts::storage::HistoryEvent;
 use concepts::storage::{
     self, DbErrorWrite, HistoryEventScheduleAt, Locked, LogLevel, ResponseWithCursor, Version,
@@ -787,6 +787,7 @@ const IFC_FQN_WORKFLOW_SUPPORT_4: &str = "obelisk:workflow/workflow-support@4.0.
 impl WorkflowCtx {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
+        deployment_id: DeploymentId,
         db_connection: CachingDbConnection,
         event_history: Vec<(HistoryEvent, Version)>,
         responses: Vec<ResponseWithCursor>,
@@ -813,6 +814,7 @@ impl WorkflowCtx {
             execution_id: execution_id.clone(),
             db_connection,
             event_history: EventHistory::new(
+                deployment_id,
                 event_history,
                 responses,
                 join_next_blocking_strategy,
@@ -1519,7 +1521,9 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use chrono::DateTime;
-    use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
+    use concepts::prefixed_ulid::{
+        DEPLOYMENT_ID_DUMMY, DeploymentId, ExecutionIdDerived, ExecutorId, RunId,
+    };
     use concepts::storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest, DbPool,
         ExecutionEvent, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest,
@@ -1671,6 +1675,7 @@ pub(crate) mod tests {
 
             let cancel_registry = CancelRegistry::new();
             let mut workflow_ctx = WorkflowCtx::new(
+                DEPLOYMENT_ID_DUMMY,
                 caching_db_connection,
                 ctx.event_history,
                 ctx.responses,
@@ -1936,6 +1941,8 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: sim_clock.now(),
                     component_id: ComponentId::dummy_activity(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -2133,6 +2140,8 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 component_id: ComponentId::dummy_activity(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -2172,6 +2181,7 @@ pub(crate) mod tests {
                     locked_event: Locked {
                         component_id: ComponentId::dummy_activity(),
                         executor_id: ExecutorId::generate(),
+                        deployment_id: DEPLOYMENT_ID_DUMMY,
                         run_id: RunId::generate(),
                         lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                         retry_config: ComponentRetryConfig::ZERO,
@@ -2218,6 +2228,7 @@ pub(crate) mod tests {
                         locked_event: Locked {
                             component_id: ComponentId::dummy_activity(),
                             executor_id: ExecutorId::generate(),
+                            deployment_id: DEPLOYMENT_ID_DUMMY,
                             run_id: RunId::generate(),
                             lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                             retry_config: ComponentRetryConfig::ZERO,
@@ -2275,6 +2286,7 @@ pub(crate) mod tests {
                 locked_event: Locked {
                     component_id: ComponentId::dummy_activity(),
                     executor_id: ExecutorId::generate(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     run_id: RunId::generate(),
                     lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                     retry_config: ComponentRetryConfig::ZERO,
@@ -2434,6 +2446,8 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 component_id: ComponentId::dummy_activity(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await

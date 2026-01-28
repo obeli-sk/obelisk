@@ -3,7 +3,7 @@ use concepts::{
     ComponentId, ComponentType, ContentDigest, ExecutionFailureKind, ExecutionId,
     FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
     component_id::{Digest, InputContentDigest},
-    prefixed_ulid::{DelayId, RunId},
+    prefixed_ulid::{DelayId, DeploymentId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState, HistoryEvent,
@@ -87,6 +87,13 @@ impl From<RunId> for grpc_gen::RunId {
     }
 }
 
+impl From<DeploymentId> for grpc_gen::DeploymentId {
+    fn from(value: DeploymentId) -> Self {
+        Self {
+            id: value.to_string(),
+        }
+    }
+}
 impl From<ComponentId> for grpc_gen::ComponentId {
     fn from(value: ComponentId) -> Self {
         Self {
@@ -584,6 +591,7 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                     parent: _,
                     scheduled_at,
                     component_id,
+                    deployment_id,
                     metadata: _,
                     scheduled_by,
                 } => grpc_gen::execution_event::Event::Created(grpc_gen::execution_event::Created {
@@ -594,16 +602,19 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                     function_name: Some(grpc_gen::FunctionName::from(ffqn)),
                     scheduled_at: Some(prost_wkt_types::Timestamp::from(scheduled_at)),
                     component_id: Some(component_id.into()),
+                    deployment_id: Some(deployment_id.into()),
                     scheduled_by: scheduled_by.map(|id| grpc_gen::ExecutionId { id: id.to_string() }),
                 }),
                 ExecutionRequest::Locked(Locked{
                     component_id,
+                    deployment_id,
                     executor_id: _,
                     run_id,
                     lock_expires_at,
                     retry_config: _,
                 }) => grpc_gen::execution_event::Event::Locked(grpc_gen::execution_event::Locked {
                     component_id: Some(component_id.into()),
+                    deployment_id: Some(deployment_id.into()),
                     run_id: run_id.to_string(),
                     lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
                 }),

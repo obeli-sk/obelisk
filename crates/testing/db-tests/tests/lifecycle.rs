@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{DelayId, RunId};
+use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, DeploymentId, RunId};
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest,
@@ -144,6 +144,7 @@ async fn append_after_finish_should_not_be_possible(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -221,6 +222,7 @@ async fn lock_pending(
                 Arc::from([SOME_FFQN]),
                 created_at,
                 component_id.clone(),
+                DEPLOYMENT_ID_DUMMY,
                 executor_id,
                 lock_expires_at,
                 run_id,
@@ -237,6 +239,7 @@ async fn lock_pending(
                 1,
                 created_at,
                 component_id,
+                DEPLOYMENT_ID_DUMMY,
                 created_at,
                 executor_id,
                 lock_expires_at,
@@ -290,6 +293,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -338,6 +342,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
                 Arc::from([SOME_FFQN]),
                 created_at,
                 component_id.clone(),
+                DEPLOYMENT_ID_DUMMY,
                 exec1,
                 created_at + lock_expiry,
                 RunId::generate(),
@@ -362,6 +367,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
                 Arc::from([SOME_FFQN]),
                 created_at,
                 component_id.clone(),
+                DEPLOYMENT_ID_DUMMY,
                 exec1,
                 created_at + lock_expiry,
                 RunId::generate(),
@@ -446,6 +452,7 @@ async fn lock_and_attept_to_extend(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -464,6 +471,7 @@ async fn lock_and_attept_to_extend(
                 Arc::from([SOME_FFQN]),
                 created_at,
                 component_id.clone(),
+                DEPLOYMENT_ID_DUMMY,
                 exec_pending,
                 created_at + lock_expiry,
                 run_pending,
@@ -490,6 +498,7 @@ async fn lock_and_attept_to_extend(
         .lock_one(
             created_at,
             component_id.clone(),
+            DEPLOYMENT_ID_DUMMY,
             &execution_id,
             run_extend,
             version,
@@ -528,6 +537,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(database: Database) {
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -544,6 +554,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(database: Database) {
                 Arc::from([SOME_FFQN]),
                 created_at,
                 component_id.clone(),
+                DEPLOYMENT_ID_DUMMY,
                 exec1,
                 created_at + lock_expiry,
                 RunId::generate(),
@@ -592,6 +603,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(database: Database) {
                 Arc::from([SOME_FFQN]),
                 created_at,
                 component_id.clone(),
+                DEPLOYMENT_ID_DUMMY,
                 exec1,
                 created_at + lock_expiry,
                 RunId::generate(),
@@ -628,6 +640,7 @@ async fn lock_pending_while_nothing_is_pending_should_be_noop(database: Database
                 Arc::from([SOME_FFQN]),
                 sim_clock.now(),
                 ComponentId::dummy_activity(),
+                DEPLOYMENT_ID_DUMMY,
                 exec1,
                 sim_clock.now() + lock_expiry,
                 RunId::generate(),
@@ -665,6 +678,7 @@ async fn creating_execution_twice_should_fail(database: Database) {
                 Arc::from([SOME_FFQN]),
                 sim_clock.now(),
                 ComponentId::dummy_activity(),
+                DEPLOYMENT_ID_DUMMY,
                 exec1,
                 sim_clock.now() + lock_expiry,
                 RunId::generate(),
@@ -689,6 +703,7 @@ async fn creating_execution_twice_should_fail(database: Database) {
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -705,6 +720,7 @@ async fn creating_execution_twice_should_fail(database: Database) {
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -746,6 +762,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -762,6 +779,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
                 Arc::from([SOME_FFQN]),
                 created_at,
                 component_id.clone(),
+                DEPLOYMENT_ID_DUMMY,
                 exec1,
                 created_at + LOCK_EXPIRY,
                 RunId::generate(),
@@ -791,6 +809,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
                     Arc::from([SOME_FFQN]),
                     sim_clock.now(),
                     ComponentId::dummy_activity(),
+                    DEPLOYMENT_ID_DUMMY,
                     exec1,
                     sim_clock.now() + LOCK_EXPIRY,
                     RunId::generate(),
@@ -825,6 +844,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -840,6 +860,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
                 Arc::from([SOME_FFQN]),
                 sim_clock.now(),
                 ComponentId::dummy_activity(),
+                DEPLOYMENT_ID_DUMMY,
                 exec1,
                 sim_clock.now() + lock_duration,
                 RunId::generate(),
@@ -887,6 +908,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -930,6 +952,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -1011,6 +1034,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -1122,6 +1146,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1139,6 +1164,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1156,6 +1182,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1170,6 +1197,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
                     Arc::from([SOME_FFQN]),
                     sim_clock.now(),
                     ComponentId::dummy_activity(),
+                    DEPLOYMENT_ID_DUMMY,
                     ExecutorId::generate(),
                     sim_clock.now() + Duration::from_secs(1),
                     RunId::generate(),
@@ -1186,6 +1214,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
                     3,
                     sim_clock.now(),
                     &ComponentId::dummy_activity(),
+                    DEPLOYMENT_ID_DUMMY,
                     sim_clock.now(),
                     ExecutorId::generate(),
                     sim_clock.now() + Duration::from_secs(1),
@@ -1220,6 +1249,7 @@ async fn test_lock_inner(db_connection: &dyn DbConnection, sim_clock: SimClock) 
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1276,6 +1306,7 @@ async fn lock(
             Arc::from([SOME_FFQN]),
             sim_clock.now(), // created at
             ComponentId::dummy_activity(),
+            DEPLOYMENT_ID_DUMMY,
             executor_id,
             lock_expires_at,
             run_id,
@@ -1307,6 +1338,7 @@ async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimClock)
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1368,6 +1400,7 @@ async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1480,6 +1513,7 @@ async fn get_expired_times_with_execution_that_made_progress(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1580,6 +1614,7 @@ async fn append_same_delay_id_twice_should_fail(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1763,6 +1798,7 @@ async fn append_response_with_same_id_twice_should_fail(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1854,6 +1890,7 @@ async fn delay_cancellation_should_be_idempotent(database: Database) {
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -1941,6 +1978,7 @@ async fn test_backtrace(database: Database) {
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await

@@ -6,6 +6,7 @@ fn main() {
 
 mod bench {
     use assert_matches::assert_matches;
+    use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
     use concepts::storage::{DbPool, DbPoolCloseable};
     use concepts::time::{ClockFn, Now, Sleep, TokioSleep};
     use concepts::{
@@ -106,7 +107,14 @@ mod bench {
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy: LockingStrategy::ByComponentDigest,
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, TokioSleep)
+        ExecTask::spawn_new(
+            DEPLOYMENT_ID_DUMMY,
+            worker,
+            exec_config,
+            clock_fn,
+            db_pool,
+            TokioSleep,
+        )
     }
 
     fn new_activity_worker_with_config(
@@ -197,6 +205,7 @@ mod bench {
             .link(fn_registry.clone())
             .unwrap()
             .into_worker(
+                DEPLOYMENT_ID_DUMMY,
                 db_pool.clone(),
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
@@ -216,7 +225,14 @@ mod bench {
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy: LockingStrategy::ByComponentDigest,
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, TokioSleep)
+        ExecTask::spawn_new(
+            DEPLOYMENT_ID_DUMMY,
+            worker,
+            exec_config,
+            clock_fn,
+            db_pool,
+            TokioSleep,
+        )
     }
 
     pub(crate) fn spawn_workflow_fibo(
@@ -333,6 +349,7 @@ mod bench {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 component_id: ComponentId::dummy_workflow(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await

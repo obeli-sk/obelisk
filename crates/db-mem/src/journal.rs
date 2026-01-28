@@ -137,6 +137,7 @@ impl ExecutionJournal {
             lock_expires_at,
             run_id,
             component_id: _,
+            deployment_id: _,
             retry_config: _,
         }) = &event
         {
@@ -263,6 +264,7 @@ impl ExecutionJournal {
                     lock_expires_at: _,
                     run_id,
                     component_id,
+                    deployment_id: _,
                     retry_config: _,
                 }) => Some((
                     LockedBy {
@@ -283,6 +285,7 @@ impl ExecutionJournal {
             parent,
             scheduled_at,
             component_id,
+            deployment_id,
             metadata,
             scheduled_by,
         } = execution_event.event.clone()
@@ -297,6 +300,7 @@ impl ExecutionJournal {
             parent,
             scheduled_at,
             component_id,
+            deployment_id,
             metadata,
             scheduled_by,
         }
@@ -344,6 +348,7 @@ impl ExecutionJournal {
                     lock_expires_at,
                     run_id,
                     component_id,
+                    deployment_id: _,
                     retry_config: _,
                 }) => Some((
                     PendingState::Locked(PendingStateLocked {

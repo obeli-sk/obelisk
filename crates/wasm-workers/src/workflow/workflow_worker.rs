@@ -9,7 +9,7 @@ use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ExecutorId, RunId};
+use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{DbConnection, DbErrorWrite, DbPool, Locked, Version};
 use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
 use concepts::{
@@ -76,6 +76,7 @@ pub struct WorkflowWorkerLinked {
 }
 
 pub struct WorkflowWorker {
+    deployment_id: DeploymentId,
     config: WorkflowConfig,
     engine: Arc<Engine>,
     exported_functions_noext: Vec<FunctionMetadata>,
@@ -330,12 +331,14 @@ impl WorkflowWorkerCompiled {
 impl WorkflowWorkerLinked {
     pub fn into_worker(
         self,
+        deployment_id: DeploymentId,
         db_pool: Arc<dyn DbPool>,
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
         cancel_registry: CancelRegistry,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> WorkflowWorker {
         WorkflowWorker {
+            deployment_id,
             config: self.config,
             engine: self.engine,
             db_pool,
@@ -433,6 +436,7 @@ impl WorkflowWorker {
             version: ctx.version,
         };
         let workflow_ctx = WorkflowCtx::new(
+            self.deployment_id,
             db_connection,
             ctx.event_history,
             ctx.responses,
@@ -778,6 +782,7 @@ impl WorkflowWorker {
     #[instrument(skip_all, fields(%execution_id))]
     #[expect(clippy::too_many_arguments)]
     pub async fn replay(
+        deployment_id: DeploymentId,
         component_id: ComponentId,
         wasmtime_component: wasmtime::component::Component,
         exim: &ExIm,
@@ -815,6 +820,7 @@ impl WorkflowWorker {
             worker_span: Span::current(),
             locked_event: Locked {
                 component_id: config.component_id.clone(),
+                deployment_id,
                 executor_id: ExecutorId::generate(),
                 run_id: RunId::generate(),
                 lock_expires_at: clock_fn.now(), // does not matter, using DeadlineTrackerFactoryForReplay
@@ -832,6 +838,7 @@ impl WorkflowWorker {
         let linked = compiled.link(fn_registry)?;
         let db_pool = Arc::new(InMemoryPool::new());
         let worker = linked.into_worker(
+            deployment_id,
             db_pool,
             Arc::new(DeadlineTrackerFactoryForReplay {}),
             CancelRegistry::new(),
@@ -912,7 +919,7 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use chrono::DateTime;
     use concepts::component_id::InputContentDigest;
-    use concepts::prefixed_ulid::ExecutionIdDerived;
+    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived};
     use concepts::storage::{
         AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, JoinSetResponse, Locked,
         LockedBy, PendingStateFinishedError,
@@ -925,7 +932,7 @@ pub(crate) mod tests {
     };
     use concepts::{
         ComponentType,
-        prefixed_ulid::{ExecutorId, RunId},
+        prefixed_ulid::{DeploymentId, ExecutorId, RunId},
         storage::{
             CreateRequest, DbPoolCloseable, PendingState, PendingStateFinished,
             PendingStateFinishedResultKind, Version, wait_for_pending_state_fn,
@@ -1025,6 +1032,7 @@ pub(crate) mod tests {
             .link(fn_registry.clone())
             .unwrap()
             .into_worker(
+                DEPLOYMENT_ID_DUMMY,
                 db_pool,
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: Duration::ZERO,
@@ -1151,6 +1159,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -1284,6 +1293,7 @@ pub(crate) mod tests {
             worker_span: info_span!("worker-test"),
             locked_event: Locked {
                 component_id: worker.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 executor_id: ExecutorId::generate(),
                 run_id: RunId::generate(),
                 lock_expires_at: execution_deadline,
@@ -1340,6 +1350,7 @@ pub(crate) mod tests {
                 .create(CreateRequest {
                     created_at: sim_clock.now(),
                     execution_id: execution_id.clone(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     ffqn: SLEEP_SCHEDULE_AT_HOST_ACTIVITY_FFQN,
                     params: Params::from_json_values_test(vec![json!("now")]),
                     parent: None,
@@ -1480,6 +1491,7 @@ pub(crate) mod tests {
                         LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
                         LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
                     },
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
@@ -1655,6 +1667,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -1759,6 +1772,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -1861,6 +1875,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -1964,6 +1979,7 @@ pub(crate) mod tests {
                     LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
                     LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
                 },
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -2016,6 +2032,7 @@ pub(crate) mod tests {
                 Arc::from([FFQN_ACTIVITY_SLEEP_NOOP_FFQN]),
                 sim_clock.now(),
                 ComponentId::dummy_workflow(),
+                DEPLOYMENT_ID_DUMMY,
                 ExecutorId::generate(),
                 sim_clock.now() + Duration::from_secs(1),
                 RunId::generate(),
@@ -2090,6 +2107,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -2186,6 +2204,7 @@ pub(crate) mod tests {
                     LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
                     LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
                 },
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -2344,6 +2363,7 @@ pub(crate) mod tests {
                     LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // should not matter,
                     LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
                 },
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -2556,6 +2576,7 @@ pub(crate) mod tests {
                     LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
                     LockingStrategy::ByComponentDigest => worker.config.component_id.clone(),
                 },
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -2717,6 +2738,7 @@ pub(crate) mod tests {
                         workflow_worker.config.component_id.clone()
                     }
                 },
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await

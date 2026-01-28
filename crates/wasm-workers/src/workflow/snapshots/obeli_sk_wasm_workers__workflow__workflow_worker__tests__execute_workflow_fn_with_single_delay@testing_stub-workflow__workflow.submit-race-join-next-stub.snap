@@ -1,6 +1,6 @@
 ---
 source: crates/wasm-workers/src/workflow/workflow_worker.rs
-expression: execution_log
+expression: "ExecutionLogSanitized::from(execution_log.clone())"
 ---
 {
   "execution_id": "E_00000000000000000000000000",
@@ -18,6 +18,7 @@ expression: execution_log
             "name": "",
             "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
+          "deployment_id": "Dep_00000000000000000000000000",
           "metadata": null,
           "scheduled_by": null
         }
@@ -34,6 +35,7 @@ expression: execution_log
             "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "executor_id": "Exr_00000000000000000000000000",
+          "deployment_id": "Dep_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000001",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {
@@ -150,6 +152,7 @@ expression: execution_log
             "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "executor_id": "Exr_00000000000000000000000000",
+          "deployment_id": "Dep_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000002",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {
@@ -188,6 +191,7 @@ expression: execution_log
             "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "executor_id": "Exr_00000000000000000000000000",
+          "deployment_id": "Dep_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000003",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {

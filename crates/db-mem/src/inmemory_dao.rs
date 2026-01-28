@@ -8,7 +8,7 @@ use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::component_id::InputContentDigest;
-use concepts::prefixed_ulid::{DelayId, ExecutorId, RunId};
+use concepts::prefixed_ulid::{DelayId, DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
     AppendResponse, AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection,
@@ -47,6 +47,7 @@ impl DbExecutor for InMemoryDbConnection {
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
@@ -58,6 +59,7 @@ impl DbExecutor for InMemoryDbConnection {
             &ffqns,
             created_at,
             &component_id,
+            deployment_id,
             executor_id,
             lock_expires_at,
             run_id,
@@ -71,6 +73,7 @@ impl DbExecutor for InMemoryDbConnection {
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
+        deployment_id: DeploymentId,
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
@@ -82,6 +85,7 @@ impl DbExecutor for InMemoryDbConnection {
             pending_at_or_sooner,
             created_at,
             component_id,
+            deployment_id,
             executor_id,
             lock_expires_at,
             run_id,
@@ -94,6 +98,7 @@ impl DbExecutor for InMemoryDbConnection {
         &self,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
@@ -103,6 +108,7 @@ impl DbExecutor for InMemoryDbConnection {
     ) -> Result<LockedExecution, DbErrorWrite> {
         let locked_event = Locked {
             component_id,
+            deployment_id,
             executor_id,
             run_id,
             lock_expires_at,
@@ -671,6 +677,7 @@ impl DbHolder {
         ffqns: &[FunctionFqn],
         created_at: DateTime<Utc>,
         component_id: &ComponentId,
+        deployment_id: DeploymentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
@@ -686,6 +693,7 @@ impl DbHolder {
         for (journal, _scheduled_at) in pending {
             let locked_event = Locked {
                 component_id: component_id.clone(),
+                deployment_id,
                 executor_id,
                 lock_expires_at,
                 run_id,
@@ -728,6 +736,7 @@ impl DbHolder {
         pending_at_or_sooner: DateTime<Utc>,
         created_at: DateTime<Utc>,
         component_id: &ComponentId,
+        deployment_id: DeploymentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
@@ -743,6 +752,7 @@ impl DbHolder {
         for (journal, _scheduled_at) in pending {
             let locked_event = Locked {
                 component_id: component_id.clone(),
+                deployment_id,
                 executor_id,
                 lock_expires_at,
                 run_id,

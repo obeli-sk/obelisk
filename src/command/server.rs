@@ -48,6 +48,7 @@ use concepts::ParameterType;
 use concepts::Params;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
+use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbErrorWriteNonRetriable;
@@ -195,6 +196,7 @@ pub(crate) enum SubmitOutcome {
 }
 
 pub(crate) async fn submit(
+    deployment_id: DeploymentId,
     db_connection: &dyn DbExternalApi,
     execution_id: ExecutionId,
     ffqn: FunctionFqn,
@@ -313,6 +315,7 @@ pub(crate) async fn submit(
             parent: None,
             scheduled_at,
             component_id: component_id.clone(),
+            deployment_id,
             scheduled_by: None,
         })
         .await;
@@ -477,7 +480,8 @@ async fn run_internal(
     params: RunParams,
     mut termination_watcher: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
-    let span = info_span!("init");
+    let deployment_id = config.get_deployment_id();
+    let span = info_span!("init", %deployment_id);
     let api_listening_addr = config.api.listening_addr;
 
     let global_webhook_instance_limiter = config
@@ -532,6 +536,7 @@ async fn run_internal(
                 }
             });
             spawn_tasks_and_threads(
+                deployment_id,
                 db_pool,
                 db_close,
                 compiled_and_linked,
@@ -560,6 +565,7 @@ async fn run_internal(
                 }
             });
             spawn_tasks_and_threads(
+                deployment_id,
                 db_pool,
                 db_close,
                 compiled_and_linked,
@@ -575,6 +581,7 @@ async fn run_internal(
     };
 
     let grpc_server = Arc::new(GrpcServer::new(
+        server_init.deployment_id,
         server_init.db_pool.clone(),
         termination_watcher.clone(),
         component_registry_ro.clone(),
@@ -621,6 +628,7 @@ async fn run_internal(
         .service(grpc.routes());
 
     let app_router = app_router(WebApiState {
+        deployment_id: server_init.deployment_id,
         db_pool: server_init.db_pool.clone(),
         component_registry_ro,
         cancel_registry,
@@ -758,6 +766,7 @@ impl ServerVerified {
             .get_directories()
             .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
+
         let mut config = ConfigVerified::fetch_and_verify_all(
             config.activities_wasm,
             config.activities_stub,
@@ -865,6 +874,7 @@ impl ServerCompiledLinked {
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
+    deployment_id: DeploymentId,
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
     mut server_compiled_linked: ServerCompiledLinked,
@@ -950,11 +960,19 @@ async fn spawn_tasks_and_threads(
         .compiled_components
         .workers_linked
         .into_iter()
-        .map(|pre_spawn| pre_spawn.spawn(&db_pool, cancel_registry.clone(), &log_forwarder_sender))
+        .map(|pre_spawn| {
+            pre_spawn.spawn(
+                deployment_id,
+                &db_pool,
+                cancel_registry.clone(),
+                &log_forwarder_sender,
+            )
+        })
         .collect();
 
     // Start webhook HTTP servers
     let http_servers_handles: Vec<AbortOnDropHandle> = start_http_servers(
+        deployment_id,
         http_servers_to_webhooks,
         &server_compiled_linked.engines,
         db_pool.clone(),
@@ -966,6 +984,7 @@ async fn spawn_tasks_and_threads(
     .await?;
 
     let server_init = ServerInit {
+        deployment_id,
         db_pool,
         db_close,
         exec_join_handles,
@@ -982,6 +1001,7 @@ async fn spawn_tasks_and_threads(
 }
 
 struct ServerInit {
+    deployment_id: DeploymentId,
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
     engines: Engines,
@@ -999,6 +1019,7 @@ impl ServerInit {
         info!("Server is shutting down");
 
         let ServerInit {
+            deployment_id: _,
             db_pool,
             db_close,
             engines,
@@ -1036,6 +1057,7 @@ type WebhookInstancesAndRoutes = (
 );
 
 async fn start_http_servers(
+    deployment_id: DeploymentId,
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)>,
     engines: &Engines,
     db_pool: Arc<dyn DbPool>,
@@ -1082,6 +1104,7 @@ async fn start_http_servers(
         );
         let server = AbortOnDropHandle::new(
             tokio::spawn(webhook_trigger::server(
+                deployment_id,
                 StrVariant::from(http_server.name),
                 tcp_listener,
                 engine.clone(),
@@ -1734,6 +1757,7 @@ struct WorkerLinked {
 impl WorkerLinked {
     fn spawn(
         self,
+        deployment_id: DeploymentId,
         db_pool: &Arc<dyn DbPool>,
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
@@ -1748,6 +1772,7 @@ impl WorkerLinked {
                 }),
             )),
             Either::Right(workflow_linked) => Arc::from(workflow_linked.worker.into_worker(
+                deployment_id,
                 db_pool.clone(),
                 Arc::new(DeadlineTrackerFactoryTokio {
                     leeway: workflow_linked.workflows_lock_extension_leeway,
@@ -1761,6 +1786,7 @@ impl WorkerLinked {
             )),
         };
         ExecTask::spawn_new(
+            deployment_id,
             worker,
             self.exec_config,
             Now.clone_box(),

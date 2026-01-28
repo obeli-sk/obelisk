@@ -5,7 +5,9 @@ use crate::webhook::webhook_trigger::types_v4_0_0::obelisk::types::join_set::Joi
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
-use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX, RunId};
+use concepts::prefixed_ulid::{
+    DeploymentId, ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX, RunId,
+};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric,
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent, JoinSetRequest,
@@ -303,6 +305,7 @@ impl<T> Default for MethodAwareRouter<T> {
 
 #[expect(clippy::too_many_arguments)]
 pub async fn server<S: Sleep>(
+    deployment_id: DeploymentId,
     http_server: StrVariant,
     listener: TcpListener,
     engine: Arc<Engine>,
@@ -347,6 +350,7 @@ pub async fn server<S: Sleep>(
                                     let execution_id = ExecutionId::generate().get_top_level();
                                     trace!(%execution_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                     RequestHandler {
+                                        deployment_id,
                                         engine: engine.clone(),
                                         clock_fn: clock_fn.clone_box(),
                                         sleep: sleep.clone(),
@@ -386,6 +390,7 @@ pub struct WebhookEndpointConfig {
 
 struct WebhookEndpointCtx<S: Sleep> {
     component_id: ComponentId,
+    deployment_id: DeploymentId,
     clock_fn: Box<dyn ClockFn>,
     sleep: S,
     db_pool: Arc<dyn DbPool>,
@@ -478,6 +483,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
             metadata,
             scheduled_at: created_at,
             component_id: self.component_id.clone(),
+            deployment_id: self.deployment_id,
             scheduled_by: None,
         };
         let conn = self.db_pool.connection().await?;
@@ -578,6 +584,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
                     metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
                     scheduled_at: schedule_at,
                     component_id: child_component_id.clone(),
+                    deployment_id: self.deployment_id,
                     scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
                 };
                 let db_connection = self.db_pool.connection().await?;
@@ -675,6 +682,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                 scheduled_at: created_at,
                 component_id: child_component_id.clone(),
+                deployment_id: self.deployment_id,
                 scheduled_by: None,
             };
             let db_connection = self.db_pool.connection().await?;
@@ -781,6 +789,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
     #[must_use]
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
+        deployment_id: DeploymentId,
         config: WebhookEndpointConfig,
         engine: &Engine,
         clock_fn: Box<dyn ClockFn>,
@@ -836,6 +845,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
             http_ctx: WasiHttpCtx::new(),
             version: None,
             component_id: config.component_id,
+            deployment_id,
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
             component_logger: ComponentLogger {
@@ -981,6 +991,7 @@ impl<S: Sleep> WasiHttpView for WebhookEndpointCtx<S> {
 }
 
 struct RequestHandler<S: Sleep> {
+    deployment_id: DeploymentId,
     engine: Arc<Engine>,
     clock_fn: Box<dyn ClockFn>,
     sleep: S,
@@ -1080,6 +1091,7 @@ impl<S: Sleep> RequestHandler<S> {
             });
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let mut store = WebhookEndpointCtx::new(
+                self.deployment_id,
                 found_instance.config.clone(),
                 &self.engine,
                 self.clock_fn,
@@ -1207,7 +1219,7 @@ pub(crate) mod tests {
             FIBOA_WORKFLOW_FFQN, compile_workflow, new_workflow_fibo,
         };
         use concepts::component_id::InputContentDigest;
-        use concepts::prefixed_ulid::RunId;
+        use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
         use concepts::storage::DbPoolCloseable;
         use concepts::time::ClockFn;
         use concepts::time::TokioSleep;
@@ -1331,6 +1343,7 @@ pub(crate) mod tests {
                 let (server_termination_sender, server_termination_watcher) = watch::channel(());
                 let server = AbortOnDrop(
                     tokio::spawn(webhook_trigger::server(
+                        DEPLOYMENT_ID_DUMMY,
                         StrVariant::Static("test"),
                         tcp_listener,
                         engine,

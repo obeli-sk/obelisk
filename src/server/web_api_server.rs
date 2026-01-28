@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use concepts::{
     ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
     component_id::InputContentDigest,
-    prefixed_ulid::{DelayId, ExecutionIdDerived},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
     storage::{
         self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
         DbErrorWriteNonRetriable, DbPool, ExecutionListPagination, ExecutionRequest,
@@ -43,6 +43,7 @@ use wasm_workers::{
 
 #[derive(Clone)]
 pub(crate) struct WebApiState {
+    pub(crate) deployment_id: DeploymentId,
     pub(crate) db_pool: Arc<dyn DbPool>,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     pub(crate) cancel_registry: CancelRegistry,
@@ -897,6 +898,7 @@ async fn execution_submit(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     let res = server::submit(
+        state.deployment_id,
         conn.as_ref(),
         execution_id.clone(),
         payload.ffqn,
@@ -1056,6 +1058,7 @@ async fn execution_replay(
         .expect("digest taken from found component id");
 
     let replay_res = WorkflowWorker::replay(
+        state.deployment_id,
         component_id.clone(),
         replay_info.runnable_component.wasmtime_component.clone(),
         &replay_info.runnable_component.wasm_component.exim,
@@ -1108,6 +1111,7 @@ async fn execution_upgrade(
             .get_workflow_replay_info(&payload.new)
             .ok_or_else(|| HttpResponse::not_found(accept, Some("new component")))?;
         let replay_res = WorkflowWorker::replay(
+            state.deployment_id,
             component_id.clone(),
             replay_info.runnable_component.wasmtime_component.clone(),
             &replay_info.runnable_component.wasm_component.exim,

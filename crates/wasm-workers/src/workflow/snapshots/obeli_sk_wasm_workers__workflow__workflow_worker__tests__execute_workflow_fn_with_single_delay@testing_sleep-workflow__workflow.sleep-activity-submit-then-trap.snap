@@ -18,6 +18,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
             "name": "",
             "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
+          "deployment_id": "Dep_00000000000000000000000000",
           "metadata": null,
           "scheduled_by": null
         }
@@ -34,6 +35,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
             "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "executor_id": "Exr_00000000000000000000000000",
+          "deployment_id": "Dep_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000001",
           "lock_expires_at": "1970-01-01T00:00:01Z",
           "retry_config": {

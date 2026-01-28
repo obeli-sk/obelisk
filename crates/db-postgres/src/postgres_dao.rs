@@ -5,7 +5,7 @@ use concepts::{
     ComponentId, ComponentRetryConfig, ContentDigest, ExecutionId, FunctionFqn, JoinSetId,
     StrVariant, SupportedFunctionReturnValue,
     component_id::{Digest, InputContentDigest},
-    prefixed_ulid::{DelayId, ExecutionIdDerived, ExecutorId, RunId},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     created_at TIMESTAMPTZ NOT NULL,
     component_id_input_digest BYTEA NOT NULL,
     first_scheduled_at TIMESTAMPTZ NOT NULL,
+    deployment_id TEXT NOT NULL,
 
     pending_expires_finished TIMESTAMPTZ NOT NULL,
     state TEXT NOT NULL,
@@ -827,6 +828,7 @@ async fn fetch_created_event(
         parent,
         scheduled_at,
         component_id,
+        deployment_id,
         metadata,
         scheduled_by,
     } = event
@@ -839,6 +841,7 @@ async fn fetch_created_event(
             parent,
             scheduled_at,
             component_id,
+            deployment_id,
             metadata,
             scheduled_by,
         })
@@ -880,6 +883,7 @@ async fn create_inner(
     let created_at = req.created_at;
     let scheduled_at = req.scheduled_at;
     let component_id = req.component_id.clone();
+    let deployment_id = req.deployment_id;
 
     let event = ExecutionRequest::from(req);
     let event = Json(event);
@@ -913,11 +917,12 @@ async fn create_inner(
                 state,
                 created_at,
                 component_id_input_digest,
+                deployment_id,
                 updated_at,
                 first_scheduled_at,
                 intermittent_event_count
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, $9, 0
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, $10, 0
             )",
             &[
                 &execution_id_str,
@@ -928,6 +933,7 @@ async fn create_inner(
                 &STATE_PENDING_AT,
                 &created_at,
                 &component_id.input_digest.as_slice(),
+                &deployment_id.to_string(),
                 &scheduled_at,
             ],
         )
@@ -1071,6 +1077,7 @@ async fn update_state_pending_after_event_appended(
 async fn update_state_locked_get_intermittent_event_count(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    deployment_id: DeploymentId,
     executor_id: ExecutorId,
     run_id: RunId,
     lock_expires_at: DateTime<Utc>,
@@ -1100,28 +1107,30 @@ async fn update_state_locked_get_intermittent_event_count(
                 pending_expires_finished = $2,
                 state = $3,
                 updated_at = CURRENT_TIMESTAMP,
+                deployment_id = $4,
 
-                max_retries = $4,
-                retry_exp_backoff_millis = $5,
+                max_retries = $5,
+                retry_exp_backoff_millis = $6,
                 last_lock_version = $1,
-                executor_id = $6,
-                run_id = $7,
+                executor_id = $7,
+                run_id = $8,
 
                 join_set_id = NULL,
                 join_set_closing = NULL,
 
                 result_kind = NULL
-            WHERE execution_id = $8
+            WHERE execution_id = $9
             ",
             &[
                 &i64::from(appending_version.0),          // $1
                 &lock_expires_at,                         // $2
                 &STATE_LOCKED,                            // $3
-                &retry_config.max_retries.map(i64::from), // $4
-                &backoff_millis,                          // $5
-                &executor_id.to_string(),                 // $6
-                &run_id.to_string(),                      // $7
-                &execution_id_str,                        // $8
+                &deployment_id.to_string(),               // $4
+                &retry_config.max_retries.map(i64::from), // $5
+                &backoff_millis,                          // $6
+                &executor_id.to_string(),                 // $7
+                &run_id.to_string(),                      // $8
+                &execution_id_str,                        // $9
             ],
         )
         .await?;
@@ -1904,6 +1913,7 @@ async fn lock_single_execution(
     tx: &Transaction<'_>,
     created_at: DateTime<Utc>,
     component_id: ComponentId,
+    deployment_id: DeploymentId,
     execution_id: &ExecutionId,
     run_id: RunId,
     appending_version: &Version,
@@ -1925,6 +1935,7 @@ async fn lock_single_execution(
     // Prepare Event
     let locked_event = Locked {
         component_id,
+        deployment_id,
         executor_id,
         lock_expires_at,
         run_id,
@@ -1964,6 +1975,7 @@ async fn lock_single_execution(
     let intermittent_event_count = update_state_locked_get_intermittent_event_count(
         tx,
         execution_id,
+        deployment_id,
         executor_id,
         run_id,
         lock_expires_at,
@@ -2124,6 +2136,7 @@ async fn append(
         event:
             ExecutionRequest::Locked(Locked {
                 component_id,
+                deployment_id,
                 executor_id,
                 run_id,
                 lock_expires_at,
@@ -2136,6 +2149,7 @@ async fn append(
             tx,
             created_at,
             component_id,
+            deployment_id,
             execution_id,
             run_id,
             &appending_version,
@@ -3014,6 +3028,7 @@ impl DbExecutor for PostgresConnection {
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
@@ -3047,6 +3062,7 @@ impl DbExecutor for PostgresConnection {
                 &tx,
                 created_at,
                 component_id.clone(),
+                deployment_id,
                 &execution_id,
                 run_id,
                 &version,
@@ -3074,6 +3090,7 @@ impl DbExecutor for PostgresConnection {
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
+        deployment_id: DeploymentId,
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
@@ -3105,6 +3122,7 @@ impl DbExecutor for PostgresConnection {
                 &tx,
                 created_at,
                 component_id.clone(),
+                deployment_id,
                 &execution_id,
                 run_id,
                 &version,
@@ -3130,6 +3148,7 @@ impl DbExecutor for PostgresConnection {
         &self,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
@@ -3145,6 +3164,7 @@ impl DbExecutor for PostgresConnection {
             &tx,
             created_at,
             component_id,
+            deployment_id,
             execution_id,
             run_id,
             &version,

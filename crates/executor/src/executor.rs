@@ -1,7 +1,7 @@
 use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::RunId;
+use concepts::prefixed_ulid::{DeploymentId, RunId};
 use concepts::storage::{
     AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbErrorGeneric,
     DbErrorWrite, DbExecutor, DbPool, ExecutionLog, LockedExecution,
@@ -173,6 +173,7 @@ impl ExecTask {
     }
 
     pub fn spawn_new(
+        deployment_id: DeploymentId,
         worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: Box<dyn ClockFn>,
@@ -199,7 +200,7 @@ impl ExecTask {
                 let res = task.db_pool.db_exec_conn().await;
                 let res = log_err_if_new(res, &mut old_err);
                 if let Ok(db_exec) = res {
-                    let _ = task.tick(db_exec.as_ref(), clock_fn.now(), RunId::generate()).await;
+                    let _ = task.tick(db_exec.as_ref(), clock_fn.now(), RunId::generate(), deployment_id).await;
                     db_exec
                         .wait_for_pending_by_component_digest(clock_fn.now(), &task.config.component_id.input_digest, {
                             let sleep = sleep.clone();
@@ -241,8 +242,10 @@ impl ExecTask {
 
     #[cfg(feature = "test")]
     pub async fn tick_test(&self, executed_at: DateTime<Utc>, run_id: RunId) -> ExecutionProgress {
+        use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
+
         let db_exec = self.db_pool.db_exec_conn().await.unwrap();
-        self.tick(db_exec.as_ref(), executed_at, run_id)
+        self.tick(db_exec.as_ref(), executed_at, run_id, DEPLOYMENT_ID_DUMMY)
             .await
             .unwrap()
     }
@@ -253,8 +256,10 @@ impl ExecTask {
         executed_at: DateTime<Utc>,
         run_id: RunId,
     ) -> Vec<ExecutionId> {
+        use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
+
         let db_exec = self.db_pool.db_exec_conn().await.unwrap();
-        self.tick(db_exec.as_ref(), executed_at, run_id)
+        self.tick(db_exec.as_ref(), executed_at, run_id, DEPLOYMENT_ID_DUMMY)
             .await
             .unwrap()
             .wait_for_tasks()
@@ -267,6 +272,7 @@ impl ExecTask {
         db_exec: &dyn DbExecutor,
         executed_at: DateTime<Utc>,
         run_id: RunId,
+        deployment_id: DeploymentId,
     ) -> Result<ExecutionProgress, DbErrorGeneric> {
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
@@ -284,6 +290,7 @@ impl ExecTask {
                             ffqns.clone(),
                             executed_at, // created at
                             self.config.component_id.clone(),
+                            deployment_id,
                             self.config.executor_id,
                             lock_expires_at,
                             run_id,
@@ -297,6 +304,7 @@ impl ExecTask {
                             batch_size,
                             executed_at, // pending_at_or_sooner
                             &self.config.component_id,
+                            deployment_id,
                             executed_at, // created at
                             self.config.executor_id,
                             lock_expires_at,
@@ -867,6 +875,7 @@ mod tests {
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
+    use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
     use concepts::storage::{
         CreateRequest, DbConnectionTest, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
     };
@@ -1067,6 +1076,7 @@ mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: config.created_at,
                 component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -1389,6 +1399,7 @@ mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -1426,6 +1437,7 @@ mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             };
             let current_time = sim_clock.now();
@@ -1643,6 +1655,7 @@ mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -1658,7 +1671,12 @@ mod tests {
         );
         let db_exec = db_pool.db_exec_conn().await.unwrap();
         let mut first_execution_progress = executor
-            .tick(db_exec.as_ref(), sim_clock.now(), RunId::generate())
+            .tick(
+                db_exec.as_ref(),
+                sim_clock.now(),
+                RunId::generate(),
+                DEPLOYMENT_ID_DUMMY,
+            )
             .await
             .unwrap();
         assert_eq!(1, first_execution_progress.executions.len());
@@ -1673,6 +1691,7 @@ mod tests {
                     db_pool.db_exec_conn().await.unwrap().as_ref(),
                     now_after_first_lock_expiry,
                     RunId::generate(),
+                    DEPLOYMENT_ID_DUMMY,
                 )
                 .await
                 .unwrap();
@@ -1727,6 +1746,7 @@ mod tests {
                 db_pool.db_exec_conn().await.unwrap().as_ref(),
                 now_after_first_timeout,
                 RunId::generate(),
+                DEPLOYMENT_ID_DUMMY,
             )
             .await
             .unwrap();
@@ -1743,6 +1763,7 @@ mod tests {
                     db_pool.db_exec_conn().await.unwrap().as_ref(),
                     now_after_second_lock_expiry,
                     RunId::generate(),
+                    DEPLOYMENT_ID_DUMMY,
                 )
                 .await
                 .unwrap();

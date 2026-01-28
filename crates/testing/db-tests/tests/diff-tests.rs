@@ -3,6 +3,8 @@ use concepts::ComponentRetryConfig;
 use concepts::ExecutionId;
 use concepts::Params;
 use concepts::SupportedFunctionReturnValue;
+use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
+use concepts::prefixed_ulid::DeploymentId;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::DbConnection;
@@ -47,6 +49,7 @@ async fn diff_proptest_inner(seed: u64) {
         metadata: concepts::ExecutionMetadata::empty(),
         scheduled_at: Now.now(),
         component_id: ComponentId::dummy_activity(),
+        deployment_id: DEPLOYMENT_ID_DUMMY,
         scheduled_by: None,
     };
     let mut append_requests = vec![];
@@ -176,6 +179,7 @@ async fn persist_finished_event(
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
             component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
         })
         .await
@@ -191,6 +195,7 @@ async fn persist_finished_event(
                 Arc::from([SOME_FFQN]),
                 created_at,
                 component_id.clone(),
+                DEPLOYMENT_ID_DUMMY,
                 exec1,
                 created_at + LOCK_EXPIRY,
                 RunId::generate(),

@@ -24,8 +24,7 @@ use concepts::InvalidNameError;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
 use concepts::SupportedFunctionReturnValue;
-use concepts::prefixed_ulid::DelayId;
-use concepts::prefixed_ulid::ExecutionIdDerived;
+use concepts::prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived};
 use concepts::storage;
 use concepts::storage::AppendEventsToExecution;
 use concepts::storage::AppendResponseToExecution;
@@ -98,6 +97,7 @@ pub(crate) enum ApplyError {
 
 #[expect(clippy::struct_field_names)]
 pub(crate) struct EventHistory {
+    deployment_id: DeploymentId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     // Contains requests (events produced by the workflow)
     event_history: Vec<(HistoryEvent, ProcessingStatus, Version)>,
@@ -129,6 +129,7 @@ enum FindMatchingResponse {
 impl EventHistory {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
+        deployment_id: DeploymentId,
         event_history: Vec<(HistoryEvent, Version)>,
         responses: Vec<ResponseWithCursor>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -141,6 +142,7 @@ impl EventHistory {
         worker_span: Span,
     ) -> EventHistory {
         EventHistory {
+            deployment_id,
             index_child_exe_to_processed_response_idx: HashMap::default(),
             index_child_exe_to_ffqn: HashMap::default(),
             index_delay_id_to_expires_at: IndexMap::default(),
@@ -1113,6 +1115,7 @@ impl EventHistory {
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
                     component_id: fn_component_id,
+                    deployment_id: self.deployment_id,
                     scheduled_by: None,
                 };
                 let cacheable_event = CacheableDbEvent::SubmitChildExecution {
@@ -1204,6 +1207,7 @@ impl EventHistory {
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     scheduled_at: scheduled_at_if_new,
                     component_id: fn_component_id,
+                    deployment_id: self.deployment_id,
                     scheduled_by: Some(db_connection.execution_id.clone()),
                 };
                 let non_blocking_event = CacheableDbEvent::Schedule {
@@ -1485,6 +1489,7 @@ impl EventHistory {
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
                     component_id: fn_component_id,
+                    deployment_id: self.deployment_id,
                     scheduled_by: None,
                 };
                 db_connection
@@ -2626,7 +2631,9 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
-    use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutorId, RunId};
+    use concepts::prefixed_ulid::{
+        DEPLOYMENT_ID_DUMMY, DeploymentId, ExecutionIdDerived, ExecutorId, RunId,
+    };
     use concepts::storage::{CreateRequest, DbConnectionTest, HistoryEventScheduleAt, Locked};
     use concepts::storage::{
         DbConnection, DbPoolCloseable, JoinSetResponse, JoinSetResponseEvent, Version,
@@ -3396,6 +3403,7 @@ mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
             })
             .await
@@ -3424,6 +3432,7 @@ mod tests {
         };
         let cancel_registry = CancelRegistry::new();
         let event_history = EventHistory::new(
+            DEPLOYMENT_ID_DUMMY,
             exec_log.event_history().collect(),
             exec_log.responses,
             join_next_blocking_strategy,
@@ -3433,6 +3442,7 @@ mod tests {
             Locked {
                 component_id: ComponentId::dummy_activity(),
                 executor_id: ExecutorId::generate(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,

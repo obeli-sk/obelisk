@@ -1352,6 +1352,9 @@ pub mod prefixed_ulid {
     pub type DeploymentId = PrefixedUlid<prefix::Dep>;
 
     #[cfg(any(test, feature = "test"))]
+    pub const DEPLOYMENT_ID_DUMMY: DeploymentId = DeploymentId::from_parts(0, 0);
+
+    #[cfg(any(test, feature = "test"))]
     impl<'a, T> arbitrary::Arbitrary<'a> for PrefixedUlid<T> {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
             Ok(Self::new(ulid::Ulid::from_parts(

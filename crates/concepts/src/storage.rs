@@ -11,6 +11,7 @@ use crate::StrVariant;
 use crate::SupportedFunctionReturnValue;
 use crate::component_id::InputContentDigest;
 use crate::prefixed_ulid::DelayId;
+use crate::prefixed_ulid::DeploymentId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::RunId;
@@ -271,6 +272,7 @@ pub const DUMMY_CREATED: ExecutionRequest = ExecutionRequest::Created {
     parent: None,
     scheduled_at: DateTime::from_timestamp_nanos(0),
     component_id: ComponentId::dummy_activity(),
+    deployment_id: DeploymentId::from_parts(0, 0),
     metadata: ExecutionMetadata::empty(),
     scheduled_by: None,
 };
@@ -299,6 +301,7 @@ pub enum ExecutionRequest {
         scheduled_at: DateTime<Utc>,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
         metadata: ExecutionMetadata,
         scheduled_by: Option<ExecutionId>,
@@ -397,6 +400,7 @@ pub struct Locked {
     #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
     pub component_id: ComponentId,
     pub executor_id: ExecutorId,
+    pub deployment_id: DeploymentId,
     pub run_id: RunId,
     pub lock_expires_at: DateTime<Utc>,
     #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentRetryConfig::ZERO))]
@@ -653,6 +657,7 @@ pub struct CreateRequest {
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub scheduled_at: DateTime<Utc>,
     pub component_id: ComponentId,
+    pub deployment_id: DeploymentId,
     pub metadata: ExecutionMetadata,
     pub scheduled_by: Option<ExecutionId>,
 }
@@ -665,6 +670,7 @@ impl From<CreateRequest> for ExecutionRequest {
             parent: value.parent,
             scheduled_at: value.scheduled_at,
             component_id: value.component_id,
+            deployment_id: value.deployment_id,
             metadata: value.metadata,
             scheduled_by: value.scheduled_by,
         }
@@ -715,6 +721,7 @@ pub trait DbExecutor: Send + Sync {
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
@@ -727,6 +734,7 @@ pub trait DbExecutor: Send + Sync {
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
         component_id: &ComponentId,
+        deployment_id: DeploymentId,
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
@@ -740,6 +748,7 @@ pub trait DbExecutor: Send + Sync {
         &self,
         created_at: DateTime<Utc>,
         component_id: ComponentId,
+        deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
@@ -889,6 +898,7 @@ pub struct ListExecutionsFilter {
     pub show_derived: bool,
     pub hide_finished: bool,
     pub execution_id_prefix: Option<String>,
+    // TODO: component_digest, deployment_id
 }
 
 #[async_trait]
@@ -945,6 +955,27 @@ pub trait DbExternalApi: DbConnection {
         filter: LogFilter,
         pagination: Pagination<u32>,
     ) -> Result<ListLogsResponse, DbErrorRead>;
+
+    // async fn get_deployment_state(
+    //     &self,
+    //     deployment_id: DeploymentId,
+    //     current_time: DateTime<Utc>,
+    // ) -> Result<DeploymentId, DbErrorRead>;
+
+    // async fn list_deployment_states(
+    //     &self,
+    //     current_time: DateTime<Utc>,
+    //     pagination: Pagination<u32>,
+    // ) -> Result<Vec<DeploymentState>, DbErrorRead>;
+}
+
+pub struct DeploymentState {
+    pub deployment_id: DeploymentId,
+    pub locked: u32,
+    pub pending: u32,
+    pub scheduled: u32,
+    pub blocked: u32,
+    pub finished: u32,
 }
 
 #[derive(Debug)]
@@ -1075,6 +1106,7 @@ pub trait DbConnection: DbExecutor {
             parent,
             scheduled_at,
             component_id,
+            deployment_id,
             metadata,
             scheduled_by,
         } = execution_event.event
@@ -1087,6 +1119,7 @@ pub trait DbConnection: DbExecutor {
                 parent,
                 scheduled_at,
                 component_id,
+                deployment_id,
                 metadata,
                 scheduled_by,
             })
