@@ -956,23 +956,19 @@ pub trait DbExternalApi: DbConnection {
         pagination: Pagination<u32>,
     ) -> Result<ListLogsResponse, DbErrorRead>;
 
-    // async fn get_deployment_state(
-    //     &self,
-    //     deployment_id: DeploymentId,
-    //     current_time: DateTime<Utc>,
-    // ) -> Result<DeploymentId, DbErrorRead>;
-
-    // async fn list_deployment_states(
-    //     &self,
-    //     current_time: DateTime<Utc>,
-    //     pagination: Pagination<u32>,
-    // ) -> Result<Vec<DeploymentState>, DbErrorRead>;
+    async fn list_deployment_states(
+        &self,
+        current_time: DateTime<Utc>,
+        pagination: Pagination<DeploymentId>,
+    ) -> Result<Vec<DeploymentState>, DbErrorRead>;
 }
 
 pub struct DeploymentState {
     pub deployment_id: DeploymentId,
     pub locked: u32,
+    // In `PendingAt` state, scheduled to present or past
     pub pending: u32,
+    // In `PendingAt` state, scheduled into the future
     pub scheduled: u32,
     pub blocked: u32,
     pub finished: u32,
@@ -1519,6 +1515,10 @@ impl<T: Clone> Pagination<T> {
 
     pub fn is_desc(&self) -> bool {
         matches!(self, Pagination::OlderThan { .. })
+    }
+
+    pub fn asc_or_desc(&self) -> &'static str {
+        if self.is_asc() { "asc" } else { "desc" }
     }
 
     pub fn is_asc(&self) -> bool {

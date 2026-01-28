@@ -11,15 +11,15 @@ use concepts::{
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, ListLogsResponse,
-        LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter,
-        LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, ResponseCursor, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Version, VersionType, WasmBacktrace,
+        DbPool, DbPoolCloseable, DeploymentState, ExecutionEvent, ExecutionListPagination,
+        ExecutionRequest, ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay,
+        ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter,
+        ListLogsResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry,
+        LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
+        PendingState, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
+        ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
     },
 };
 use deadpool_postgres::{Client, Config, ManagerConfig, Pool, RecyclingMethod};
@@ -1836,6 +1836,95 @@ async fn list_logs_tx(
         },
         items,
     })
+}
+
+async fn list_deployment_states(
+    tx: &Transaction<'_>,
+    current_time: DateTime<Utc>,
+    pagination: Pagination<DeploymentId>,
+) -> Result<Vec<DeploymentState>, DbErrorRead> {
+    // Helper for numbered params ($1, $2, ...)
+    let mut params: Vec<Box<dyn ToSql + Send + Sync>> = Vec::new();
+    let mut add_param = |p: Box<dyn ToSql + Send + Sync>| {
+        params.push(p);
+        format!("${}", params.len())
+    };
+
+    // Base params
+    let p_now = add_param(Box::new(current_time));
+
+    let mut sql = format!(
+        "
+        SELECT
+            deployment_id,
+
+            COUNT(*) FILTER (WHERE state = '{STATE_LOCKED}') AS locked,
+
+            COUNT(*) FILTER (
+                WHERE state = '{STATE_PENDING_AT}'
+                  AND pending_expires_finished <= {p_now}
+            ) AS pending,
+
+            COUNT(*) FILTER (
+                WHERE state = '{STATE_PENDING_AT}'
+                  AND pending_expires_finished > {p_now}
+            ) AS scheduled,
+
+            COUNT(*) FILTER (WHERE state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
+
+            COUNT(*) FILTER (WHERE state = '{STATE_FINISHED}') AS finished
+        FROM t_state
+        WHERE 1 = 1
+        "
+    );
+
+    // Pagination
+    let limit = match &pagination {
+        Pagination::NewerThan { cursor, .. } | Pagination::OlderThan { cursor, .. } => {
+            let p_cursor = add_param(Box::new(cursor.to_string()));
+            write!(sql, " AND deployment_id {} {}", pagination.rel(), p_cursor).unwrap();
+            Some(pagination.length())
+        }
+    };
+
+    // Grouping + ordering
+    sql.push_str(" GROUP BY deployment_id ORDER BY deployment_id ");
+    sql.push_str(pagination.asc_or_desc());
+
+    // Limit
+    if let Some(limit) = limit {
+        let p_limit = add_param(Box::new(i64::from(limit)));
+        write!(sql, " LIMIT {p_limit}").unwrap();
+    }
+
+    let params_refs: Vec<&(dyn ToSql + Sync)> = params
+        .iter()
+        .map(|p| p.as_ref() as &(dyn ToSql + Sync))
+        .collect();
+
+    let rows = tx
+        .query(&sql, &params_refs)
+        .await
+        .map_err(DbErrorRead::from)?;
+
+    let mut result = Vec::with_capacity(rows.len());
+    for row in rows {
+        let deployment_id: String = get(&row, "deployment_id")?;
+        result.push(DeploymentState {
+            deployment_id: DeploymentId::from_str(&deployment_id).map_err(DbErrorGeneric::from)?,
+            locked: u32::try_from(get::<i64, _>(&row, "locked")?).expect("count is never negative"),
+            pending: u32::try_from(get::<i64, _>(&row, "pending")?)
+                .expect("count is never negative"),
+            scheduled: u32::try_from(get::<i64, _>(&row, "scheduled")?)
+                .expect("count is never negative"),
+            blocked: u32::try_from(get::<i64, _>(&row, "blocked")?)
+                .expect("count is never negative"),
+            finished: u32::try_from(get::<i64, _>(&row, "finished")?)
+                .expect("count is never negative"),
+        });
+    }
+
+    Ok(result)
 }
 
 fn parse_response_with_cursor(
@@ -4086,6 +4175,19 @@ impl DbExternalApi for PostgresConnection {
         let responses = list_logs_tx(&tx, execution_id, &filter, &pagination).await?;
         tx.commit().await?;
         Ok(responses)
+    }
+
+    #[instrument(skip(self))]
+    async fn list_deployment_states(
+        &self,
+        current_time: DateTime<Utc>,
+        pagination: Pagination<DeploymentId>,
+    ) -> Result<Vec<DeploymentState>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let deployments = list_deployment_states(&tx, current_time, pagination).await?;
+        tx.commit().await?;
+        Ok(deployments)
     }
 }
 

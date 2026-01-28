@@ -11,15 +11,15 @@ use concepts::{
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter, ListLogsResponse,
-        LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter,
-        LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, ResponseCursor, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Version, VersionType,
+        DbPool, DbPoolCloseable, DeploymentState, ExecutionEvent, ExecutionListPagination,
+        ExecutionRequest, ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay,
+        ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter,
+        ListLogsResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry,
+        LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
+        PendingState, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
+        ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
     },
 };
 use const_format::formatcp;
@@ -3218,7 +3218,7 @@ impl SqlitePool {
 
         // Ordering
         query.push_str(" ORDER BY id ");
-        query.push_str(if pagination.is_desc() { "DESC" } else { "ASC" });
+        query.push_str(pagination.asc_or_desc());
 
         // Limit
         query.push_str(" LIMIT :length");
@@ -3302,6 +3302,69 @@ impl SqlitePool {
             },
             items,
         })
+    }
+
+    fn list_deployment_states(
+        tx: &Transaction,
+        current_time: DateTime<Utc>,
+        pagination: Pagination<DeploymentId>,
+    ) -> Result<Vec<DeploymentState>, DbErrorRead> {
+        let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
+        let mut sql = format!(
+            r"
+        SELECT
+            deployment_id,
+            SUM(state = '{STATE_LOCKED}') AS locked,
+            SUM(state = '{STATE_PENDING_AT}' AND pending_expires_finished <= :now) AS pending,
+            SUM(state = '{STATE_PENDING_AT}' AND pending_expires_finished > :now) AS scheduled,
+            SUM(state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
+            SUM(state = '{STATE_FINISHED}') AS finished
+        FROM t_state
+        WHERE 1 = 1
+    "
+        );
+
+        params.push((":now", Box::new(current_time)));
+
+        match &pagination {
+            Pagination::NewerThan { cursor, .. } | Pagination::OlderThan { cursor, .. } => {
+                params.push((":cursor", Box::new(*cursor)));
+                write!(
+                    sql,
+                    " AND deployment_id {rel} :cursor",
+                    rel = pagination.rel()
+                )
+                .unwrap();
+            }
+        }
+        write!(
+            sql,
+            " GROUP BY deployment_id ORDER BY deployment_id {asc_or_desc} LIMIT {limit}",
+            asc_or_desc = pagination.asc_or_desc(),
+            limit = pagination.length()
+        )
+        .expect("writing to string");
+
+        tx.prepare(&sql)?
+            .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
+                params
+                    .iter()
+                    .map(|(k, v)| (*k, v.as_ref()))
+                    .collect::<Vec<_>>()
+                    .as_ref(),
+                |row| {
+                    Ok(DeploymentState {
+                        deployment_id: row.get("deployment_id")?,
+                        locked: row.get("locked")?,
+                        pending: row.get("pending")?,
+                        scheduled: row.get("scheduled")?,
+                        blocked: row.get("blocked")?,
+                        finished: row.get("finished")?,
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()
+            .map_err(DbErrorRead::from)
     }
 }
 
@@ -3864,6 +3927,19 @@ impl DbExternalApi for SqlitePool {
         self.transaction(
             move |tx| Self::list_logs_tx(tx, &execution_id, &filter, &pagination),
             "list_logs",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn list_deployment_states(
+        &self,
+        current_time: DateTime<Utc>,
+        pagination: Pagination<DeploymentId>,
+    ) -> Result<Vec<DeploymentState>, DbErrorRead> {
+        self.transaction(
+            move |tx| Self::list_deployment_states(tx, current_time, pagination),
+            "list_deployment_states",
         )
         .await
     }
