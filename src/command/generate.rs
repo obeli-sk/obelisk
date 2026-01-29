@@ -20,8 +20,10 @@ impl Generate {
         match self {
             #[cfg(debug_assertions)]
             Generate::ConfigSchema { output } => generate_toml_schema(output),
-            Generate::Config { output, overwrite } => {
-                ConfigHolder::generate_default_config(output, overwrite).await
+            Generate::Config { config, overwrite } => {
+                let config_file = ConfigHolder::generate_default_config(config, overwrite).await?;
+                println!("Generated {config_file:?}");
+                Ok(())
             }
 
             Generate::WitExtensions {

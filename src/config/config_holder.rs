@@ -143,7 +143,7 @@ impl ConfigHolder {
     pub(crate) async fn generate_default_config(
         dst: Option<PathBuf>,
         overwrite: bool,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<PathBuf, anyhow::Error> {
         let contents = format!("{OBELISK_HELP_TOML}\n{OBELISK_GEN_TOML}");
         let dst = dst.unwrap_or(PathBuf::from("obelisk.toml"));
 
@@ -167,9 +167,8 @@ impl ConfigHolder {
         file.write_all(contents.as_bytes())
             .await
             .with_context(|| format!("cannot write to {dst:?}"))?;
-        println!("Generated {dst:?}");
 
-        Ok(())
+        Ok(dst)
     }
 
     pub(crate) fn new(

@@ -79,23 +79,24 @@ pub(crate) async fn add(
     component_type: ComponentType,
     name: String,
     location: ComponentLocationToml,
-    config: Option<PathBuf>,
+    toml_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     // Check name
     ConfigName::new(name.clone().into()).context("name is invalid")?;
-    let toml_path = config.unwrap_or_else(|| PathBuf::from("obelisk.toml"));
-    // If file exists => append to it
-    // otherwise generate from default
-    let (mut file, contents) = if toml_path.try_exists().unwrap_or_default() {
-        (
-            OpenOptions::new()
-                .create(false)
-                .append(true)
-                .open(&toml_path)
-                .await
-                .with_context(|| format!("configuration file {toml_path:?} must exist "))?,
-            "",
-        )
+    let toml_path = toml_path.unwrap_or_else(|| PathBuf::from("obelisk.toml"));
+    // Generate from default if file does not exist.
+    let (mut file, contents, prefix) = if toml_path.try_exists().unwrap_or_default() {
+        let contents = tokio::fs::read_to_string(&toml_path)
+            .await
+            .with_context(|| format!("cannot read {toml_path:?}"))?;
+        let file = OpenOptions::new()
+            .create(false)
+            .truncate(true)
+            .write(true)
+            .open(&toml_path)
+            .await
+            .with_context(|| format!("cannot open {toml_path:?}"))?;
+        (file, contents, "")
     } else {
         (
             OpenOptions::new()
@@ -104,7 +105,8 @@ pub(crate) async fn add(
                 .append(false)
                 .open(&toml_path)
                 .await
-                .with_context(|| format!("cannot create configuration file {toml_path:?}"))?,
+                .with_context(|| format!("cannot create {toml_path:?}"))?,
+            String::new(),
             OBELISK_HELP_TOML,
         )
     };
@@ -116,16 +118,44 @@ pub(crate) async fn add(
         }
     };
 
-    let appended = format!(
-        r#"
-{contents}
-[[{component_type}]]
-name = "{name}"
-location = "{location_raw}"
-"#
-    );
+    let contents = {
+        use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
-    file.write_all(appended.as_bytes()).await?;
+        let mut doc = contents.parse::<DocumentMut>()?;
+
+        let key = component_type.to_string();
+
+        // Ensure the entry exists in the document.
+        // If missing, `insert` appends it to the end of the key list (End of File).
+        if !doc.contains_key(&key) {
+            doc.insert(&key, Item::ArrayOfTables(ArrayOfTables::new()));
+        }
+
+        // Get or create the array-of-tables (e.g. [[workflow]] items)
+
+        // Get mutable reference to the array of tables
+        let components = doc[&key]
+            .as_array_of_tables_mut()
+            .with_context(|| format!("expected {component_type} to be an array of tables"))?;
+
+        // Find existing table by name
+        if let Some(table) = components.iter_mut().find(|t| {
+            t.get("name")
+                .and_then(|item| item.as_str())
+                .is_some_and(|s| s == name)
+        }) {
+            // Update existing
+            table["location"] = value(location_raw);
+        } else {
+            // Insert new standard table
+            let mut new_table = Table::new();
+            new_table["name"] = value(name);
+            new_table["location"] = value(location_raw);
+            components.push(new_table);
+        }
+        format!("{prefix}{doc}")
+    };
+    file.write_all(contents.as_bytes()).await?;
     file.flush().await?;
     Ok(())
 }

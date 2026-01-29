@@ -74,7 +74,7 @@ pub(crate) enum Generate {
     },
     Config {
         /// Filename to write the TOML to, defaults to <stdout>.
-        output: Option<PathBuf>,
+        config: Option<PathBuf>,
         /// Overwrite existing file.
         #[arg(long, short)]
         overwrite: bool,

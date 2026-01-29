@@ -2838,6 +2838,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
+ "toml_edit 0.24.0+spec-1.1.0",
  "tonic",
  "tonic-prost",
  "tonic-reflection",
@@ -3256,7 +3257,7 @@ version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "219cb19e96be00ab2e37d6e299658a0cfa83e52429179969b0f0121b4ac46983"
 dependencies = [
- "toml_edit",
+ "toml_edit 0.23.10+spec-1.0.0",
 ]
 
 [[package]]
@@ -4984,6 +4985,19 @@ dependencies = [
  "indexmap 2.13.0",
  "toml_datetime",
  "toml_parser",
+ "winnow",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.24.0+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c740b185920170a6d9191122cafef7010bd6270a3824594bff6784c04d7f09e"
+dependencies = [
+ "indexmap 2.13.0",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 

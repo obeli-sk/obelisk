@@ -54,6 +54,7 @@ strum.workspace = true
 thiserror.workspace = true
 tokio-stream.workspace = true
 tokio.workspace = true
+toml_edit.workspace = true
 toml.workspace = true
 tonic = { workspace = true, default-features = true, features = [
     "zstd",
@@ -291,6 +292,7 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.18"
+toml_edit = "0.24.0"
 toml = { version = "0.9.11", features = ["preserve_order"] }
 tonic = { version = "0.14.3", default-features = false }
 tonic-prost = "0.14.3"
