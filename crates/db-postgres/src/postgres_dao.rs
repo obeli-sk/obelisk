@@ -269,6 +269,7 @@ pub struct InitializationError;
 
 async fn create_database(
     config: &PostgresConfig,
+    provision_policy: ProvisionPolicy,
 ) -> Result<DbInitialzationOutcome, InitializationError> {
     let mut admin_cfg = deadpool_postgres::Config::new();
     admin_cfg.host = Some(config.host.clone());
@@ -303,24 +304,28 @@ async fn create_database(
             InitializationError
         })?;
 
-    let outcome = if row.is_none() {
-        client
-            .execute(&format!("CREATE DATABASE {}", config.db_name), &[])
-            .await
-            .map_err(|err| {
-                error!("Cannot create the database - {err:?}");
-                InitializationError
-            })?;
-
-        DbInitialzationOutcome::Created
-    } else {
-        DbInitialzationOutcome::Existing
-    };
-    match outcome {
-        DbInitialzationOutcome::Created => info!("Database '{}' created.", config.db_name),
-        DbInitialzationOutcome::Existing => info!("Database '{}' exists.", config.db_name),
+    match (row, provision_policy) {
+        (None, ProvisionPolicy::MustCreate | ProvisionPolicy::Auto) => {
+            client
+                .execute(&format!("CREATE DATABASE {}", config.db_name), &[])
+                .await
+                .map_err(|err| {
+                    error!("Cannot create the database - {err:?}");
+                    InitializationError
+                })?;
+            info!("Database '{}' created.", config.db_name);
+            Ok(DbInitialzationOutcome::Created)
+        }
+        (Some(_), ProvisionPolicy::Auto) => {
+            info!("Database '{}' exists.", config.db_name);
+            Ok(DbInitialzationOutcome::Existing)
+        }
+        (Some(_), ProvisionPolicy::MustCreate) => {
+            warn!("Database '{}' already exists.", config.db_name);
+            Err(InitializationError)
+        }
+        (_, ProvisionPolicy::NeverCreate) => unreachable!("checked by the caller"),
     }
-    Ok(outcome)
 }
 
 // All mutexes here have a very short critical section completely controlled by this module, thus using std mutex.
@@ -442,9 +447,11 @@ impl PendingFfqnSubscribersHolder {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProvisionPolicy {
-    Never,
+    NeverCreate,
     /// Create database if it does not exist.
     Auto,
+    /// Only for tests: Fail if database already exists.
+    MustCreate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -468,8 +475,11 @@ impl PostgresPool {
         config: PostgresConfig,
         provision_policy: ProvisionPolicy,
     ) -> Result<(PostgresPool, DbInitialzationOutcome), InitializationError> {
-        let outcome = if provision_policy == ProvisionPolicy::Auto {
-            create_database(&config).await?
+        let outcome = if matches!(
+            provision_policy,
+            ProvisionPolicy::Auto | ProvisionPolicy::MustCreate
+        ) {
+            create_database(&config, provision_policy).await?
         } else {
             DbInitialzationOutcome::Existing
         };

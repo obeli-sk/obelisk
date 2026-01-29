@@ -146,7 +146,7 @@ impl PostgresConfigToml {
     }
     pub fn as_provision_policy(&self) -> postgres_dao::ProvisionPolicy {
         match self.provision_policy {
-            PostgresProvisionPolicy::Never => postgres_dao::ProvisionPolicy::Never,
+            PostgresProvisionPolicy::Never => postgres_dao::ProvisionPolicy::NeverCreate,
             PostgresProvisionPolicy::Auto => postgres_dao::ProvisionPolicy::Auto,
         }
     }

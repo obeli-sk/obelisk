@@ -62,7 +62,7 @@ pub async fn initialize_fresh_postgres_db() -> PostgresPool {
         password: get_env_val("TEST_POSTGRES_PASSWORD"),
         db_name: get_env_val("TEST_POSTGRES_DATABASE_PREFIX"),
     };
-    loop {
+    for _ in 0..10 {
         let mut config = config.clone();
         let mut rng = rand::rngs::SmallRng::from_os_rng();
         let suffix = (0..5)
@@ -70,13 +70,14 @@ pub async fn initialize_fresh_postgres_db() -> PostgresPool {
             .collect::<String>();
         config.db_name = format!("{}_{}", config.db_name, suffix);
         debug!("Using database {}", config.db_name);
-        let (pool, outcome) = PostgresPool::new_with_outcome(config, ProvisionPolicy::Auto)
-            .await
-            .unwrap();
-        if outcome == DbInitialzationOutcome::Created {
+        if let Ok((pool, outcome)) =
+            PostgresPool::new_with_outcome(config, ProvisionPolicy::MustCreate).await
+        {
+            assert_eq!(DbInitialzationOutcome::Created, outcome);
             return pool;
         }
     }
+    panic!("cannot create an empty database")
 }
 
 fn get_env_val(name: &'static str) -> String {
