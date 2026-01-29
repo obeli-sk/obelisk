@@ -241,7 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_t_state_created_at ON t_state (created_at);
 
 // For `list_deployment_states`
 const IDX_T_STATE_DEPLOYMENT_STATE: &str = r"
-CREATE INDEX idx_t_state_deployment_state ON t_state (deployment_id, state);
+CREATE INDEX IF NOT EXISTS idx_t_state_deployment_state ON t_state (deployment_id, state);
 ";
 
 /// Represents [`ExpiredTimer::AsyncDelay`] . Rows are deleted when the delay is processed.
