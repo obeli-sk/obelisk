@@ -16,15 +16,44 @@ use concepts::time::Now;
 use concepts::{ComponentId, Params, StrVariant};
 use concepts::{ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VALUE_OK_EMPTY};
 use concepts::{ExecutionId, prefixed_ulid::ExecutorId};
-use obeli_db_tests::Database;
+use db_postgres::postgres_dao::{DbInitialzationOutcome, PostgresPool, ProvisionPolicy};
+use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use obeli_db_tests::SOME_FFQN;
+use obeli_db_tests::{Database, initialize_fresh_postgres_db};
 use rstest::rstest;
 use std::sync::Arc;
 use std::time::Duration;
+use tempfile::NamedTempFile;
 use test_db_macro::expand_enum_database;
 use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
+
+#[tokio::test]
+async fn initialize_sqlite_twice() {
+    let file = NamedTempFile::new().unwrap();
+    let path = file.path();
+
+    let pool = SqlitePool::new(path, SqliteConfig::default())
+        .await
+        .unwrap();
+    pool.close().await;
+    let pool = SqlitePool::new(path, SqliteConfig::default())
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn initialize_postgres_twice() {
+    let pool = initialize_fresh_postgres_db().await;
+    pool.close().await;
+    let (pool, init_outcome) = PostgresPool::new_with_outcome(pool.config, ProvisionPolicy::Auto)
+        .await
+        .unwrap();
+    assert_eq!(DbInitialzationOutcome::Existing, init_outcome);
+    pool.close().await;
+}
 
 #[expand_enum_database]
 #[rstest]

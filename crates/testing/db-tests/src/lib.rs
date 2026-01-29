@@ -45,32 +45,36 @@ impl Database {
                 (DbGuard::Sqlite(guard), Arc::new(sqlite.clone()), closeable)
             }
             Database::Postgres => {
-                use rand::SeedableRng;
-                let config = PostgresConfig {
-                    host: get_env_val("TEST_POSTGRES_HOST"),
-                    user: get_env_val("TEST_POSTGRES_USER"),
-                    password: get_env_val("TEST_POSTGRES_PASSWORD"),
-                    db_name: get_env_val("TEST_POSTGRES_DATABASE_PREFIX"),
-                };
-                loop {
-                    let mut config = config.clone();
-                    let mut rng = rand::rngs::SmallRng::from_os_rng();
-                    let suffix = (0..5)
-                        .map(|_| rand::Rng::random_range(&mut rng, b'a'..=b'z') as char)
-                        .collect::<String>();
-                    config.db_name = format!("{}_{}", config.db_name, suffix);
-                    debug!("Using database {}", config.db_name);
-                    let (pool, outcome) =
-                        PostgresPool::new_with_outcome(config, ProvisionPolicy::Auto)
-                            .await
-                            .unwrap();
-                    if outcome == DbInitialzationOutcome::Created {
-                        let pool = Arc::new(pool);
-                        let closeable = DbPoolCloseableWrapper::Postgres(pool.clone());
-                        return (DbGuard::Postgres, pool, closeable);
-                    }
-                }
+                let pool = initialize_fresh_postgres_db().await;
+                let pool = Arc::new(pool);
+                let closeable = DbPoolCloseableWrapper::Postgres(pool.clone());
+                return (DbGuard::Postgres, pool, closeable);
             }
+        }
+    }
+}
+
+pub async fn initialize_fresh_postgres_db() -> PostgresPool {
+    use rand::SeedableRng;
+    let config = PostgresConfig {
+        host: get_env_val("TEST_POSTGRES_HOST"),
+        user: get_env_val("TEST_POSTGRES_USER"),
+        password: get_env_val("TEST_POSTGRES_PASSWORD"),
+        db_name: get_env_val("TEST_POSTGRES_DATABASE_PREFIX"),
+    };
+    loop {
+        let mut config = config.clone();
+        let mut rng = rand::rngs::SmallRng::from_os_rng();
+        let suffix = (0..5)
+            .map(|_| rand::Rng::random_range(&mut rng, b'a'..=b'z') as char)
+            .collect::<String>();
+        config.db_name = format!("{}_{}", config.db_name, suffix);
+        debug!("Using database {}", config.db_name);
+        let (pool, outcome) = PostgresPool::new_with_outcome(config, ProvisionPolicy::Auto)
+            .await
+            .unwrap();
+        if outcome == DbInitialzationOutcome::Created {
+            return pool;
         }
     }
 }

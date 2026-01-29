@@ -336,8 +336,8 @@ pub struct PostgresPool {
     response_subscribers: ResponseSubscribers,
     pending_subscribers: PendingSubscribers,
     execution_finished_subscribers: Arc<ExecutionFinishedSubscribers>,
-    #[allow(dead_code)] // only for deleting the db in tests.
-    config: PostgresConfig,
+    // only for tests.
+    pub config: PostgresConfig,
 }
 
 #[async_trait]
