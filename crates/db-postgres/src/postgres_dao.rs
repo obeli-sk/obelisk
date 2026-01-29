@@ -22,7 +22,7 @@ use concepts::{
         STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
     },
 };
-use deadpool_postgres::{Client, Config, ManagerConfig, Pool, RecyclingMethod};
+use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
 use std::{collections::VecDeque, pin::Pin, str::FromStr as _, sync::Arc, time::Duration};
 use std::{fmt::Write as _, panic::Location};
@@ -270,21 +270,21 @@ pub struct InitializationError;
 async fn create_database(
     config: &PostgresConfig,
 ) -> Result<DbInitialzationOutcome, InitializationError> {
-    let mut cfg = Config::new();
-    cfg.host = Some(config.host.clone());
-    cfg.user = Some(config.user.clone());
-    cfg.password = Some(config.password.clone());
-    cfg.dbname = Some(ADMIN_DB_NAME.into());
-    cfg.manager = Some(ManagerConfig {
+    let mut admin_cfg = deadpool_postgres::Config::new();
+    admin_cfg.host = Some(config.host.clone());
+    admin_cfg.user = Some(config.user.clone());
+    admin_cfg.password = Some(config.password.clone());
+    admin_cfg.dbname = Some(ADMIN_DB_NAME.into());
+    admin_cfg.manager = Some(ManagerConfig {
         recycling_method: RecyclingMethod::Fast,
     });
 
-    let pool = cfg.create_pool(None, NoTls).map_err(|err| {
+    let admin_pool = admin_cfg.create_pool(None, NoTls).map_err(|err| {
         error!("Cannot create the default pool - {err:?}");
         InitializationError
     })?;
 
-    let client = pool.get().await.map_err(|err| {
+    let client = admin_pool.get().await.map_err(|err| {
         error!("Cannot get a connection from the default pool - {err:?}");
         InitializationError
     })?;
@@ -473,7 +473,7 @@ impl PostgresPool {
         } else {
             DbInitialzationOutcome::Existing
         };
-        let mut cfg = Config::new();
+        let mut cfg = deadpool_postgres::Config::new();
         cfg.host = Some(config.host.clone());
         cfg.user = Some(config.user.clone());
         cfg.password = Some(config.password.clone());
@@ -4241,7 +4241,7 @@ impl concepts::storage::DbConnectionTest for PostgresConnection {
 #[cfg(feature = "test")]
 impl PostgresPool {
     pub async fn drop_database(&self) {
-        let mut cfg = Config::new();
+        let mut cfg = deadpool_postgres::Config::new();
         cfg.host = Some(self.config.host.clone());
         cfg.user = Some(self.config.user.clone());
         cfg.password = Some(self.config.password.clone());
