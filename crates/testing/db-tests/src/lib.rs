@@ -48,7 +48,7 @@ impl Database {
                 let pool = initialize_fresh_postgres_db().await;
                 let pool = Arc::new(pool);
                 let closeable = DbPoolCloseableWrapper::Postgres(pool.clone());
-                return (DbGuard::Postgres, pool, closeable);
+                (DbGuard::Postgres, pool, closeable)
             }
         }
     }
