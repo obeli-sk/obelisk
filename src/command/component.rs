@@ -4,6 +4,7 @@ use crate::args;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::OBELISK_HELP_TOML;
 use crate::config::toml::ComponentLocationToml;
+use crate::config::toml::ConfigName;
 use crate::config::toml::OCI_SCHEMA_PREFIX;
 use crate::get_fn_repository_client;
 use crate::init;
@@ -16,7 +17,6 @@ use concepts::{FunctionFqn, FunctionMetadata};
 use directories::BaseDirs;
 use grpc::grpc_gen;
 use grpc::to_channel;
-use std::path::Path;
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
@@ -77,23 +77,12 @@ impl args::Component {
 
 pub(crate) async fn add(
     component_type: ComponentType,
-    name: Option<String>,
+    name: String,
     location: ComponentLocationToml,
     config: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    fn sanitize_name(input: &str) -> String {
-        input
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect()
-    }
-
+    // Check name
+    ConfigName::new(name.clone().into()).context("name is invalid")?;
     let toml_path = config.unwrap_or_else(|| PathBuf::from("obelisk.toml"));
     // If file exists => append to it
     // otherwise generate from default
@@ -120,33 +109,12 @@ pub(crate) async fn add(
         )
     };
 
-    let (name, location_raw) = match location {
-        ComponentLocationToml::Path(path) => {
-            let name = {
-                let path = Path::new(&path);
-                if let Some(stem) = path.file_stem()
-                    && let Some(name) = stem.to_str()
-                {
-                    name
-                } else {
-                    "unknown"
-                }
-                .to_string()
-            };
-            (name, path)
-        }
+    let location_raw = match location {
+        ComponentLocationToml::Path(path) => path,
         ComponentLocationToml::Oci(reference) => {
-            let name = name.unwrap_or_else(|| {
-                reference
-                    .repository()
-                    .rsplit_once('/')
-                    .map(|(_, name)| name.to_string())
-                    .unwrap_or_else(|| reference.repository().to_string())
-            });
-            (name, format!("{OCI_SCHEMA_PREFIX}{}", reference.whole()))
+            format!("{OCI_SCHEMA_PREFIX}{}", reference.whole())
         }
     };
-    let name = sanitize_name(&name);
 
     let appended = format!(
         r#"

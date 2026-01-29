@@ -175,7 +175,7 @@ pub(crate) enum Component {
         #[arg(required(true))]
         location: ComponentLocationToml,
         #[arg(long, short)]
-        name: Option<String>,
+        name: String,
         /// Path to the TOML configuration
         #[arg(long, short)]
         config: Option<PathBuf>,
