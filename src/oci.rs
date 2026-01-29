@@ -1,3 +1,4 @@
+use crate::config::toml::OCI_SCHEMA_PREFIX;
 use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, component_id::Digest};
 use futures_util::TryFutureExt;
@@ -160,9 +161,9 @@ pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<()
         .context("Unable to push image")?;
 
     if let Some(digest) = resp.manifest_url.rsplit("manifests/sha256:").next() {
-        println!("{reference}@sha256:{digest}");
+        println!("{OCI_SCHEMA_PREFIX}{reference}@sha256:{digest}");
     } else {
-        println!("{reference}");
+        println!("{OCI_SCHEMA_PREFIX}{reference}");
     }
     Ok(())
 }
