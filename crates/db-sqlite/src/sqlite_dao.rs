@@ -1970,9 +1970,7 @@ impl SqlitePool {
             let deployment_id = deployment_id_temporary
                 .to_sql()
                 .expect("DeploymentId conversion never fails");
-            statement_mod
-                .params
-                .push((":component_digest", deployment_id));
+            statement_mod.params.push((":deployment_id", deployment_id));
         }
 
         let where_str = if statement_mod.where_vec.is_empty() {
