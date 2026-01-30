@@ -388,6 +388,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             hide_finished: request.hide_finished,
             execution_id_prefix: request.execution_id_prefix,
             ffqn_prefix: request.function_name_prefix,
+            component_digest: request
+                .component_digest
+                .map(InputContentDigest::try_from)
+                .transpose()?,
+            deployment_id: request
+                .deployment_id
+                .map(DeploymentId::try_from)
+                .transpose()?,
         };
         let conn = self
             .db_pool

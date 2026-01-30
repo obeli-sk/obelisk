@@ -147,6 +147,10 @@ struct ExecutionsListParams {
     #[serde(default)]
     hide_finished: bool,
     execution_id_prefix: Option<String>,
+    #[serde(default)]
+    component_digest: Option<InputContentDigest>,
+    #[serde(default)]
+    deployment_id: Option<DeploymentId>,
     // pagination
     cursor: Option<ExecutionListCursorDeser>,
     length: Option<u16>,
@@ -278,6 +282,8 @@ async fn executions_list(
         show_derived: params.show_derived,
         hide_finished: params.hide_finished,
         execution_id_prefix: params.execution_id_prefix,
+        component_digest: params.component_digest,
+        deployment_id: params.deployment_id,
     };
 
     let executions = conn

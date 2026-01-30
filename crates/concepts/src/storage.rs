@@ -881,7 +881,8 @@ pub struct ListExecutionsFilter {
     pub show_derived: bool,
     pub hide_finished: bool,
     pub execution_id_prefix: Option<String>,
-    // TODO: component_digest, deployment_id
+    pub component_digest: Option<InputContentDigest>,
+    pub deployment_id: Option<DeploymentId>,
 }
 
 #[async_trait]

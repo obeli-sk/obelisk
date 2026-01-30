@@ -1916,11 +1916,12 @@ impl SqlitePool {
                 paginate(pagination, "execution_id", filter)?
             }
         };
+        let like = |str| format!("{str}%");
 
         let ffqn_temporary;
         if let Some(ffqn_prefix) = &filter.ffqn_prefix {
             statement_mod.where_vec.push("ffqn LIKE :ffqn".to_string());
-            ffqn_temporary = format!("{ffqn_prefix}%"); // added %
+            ffqn_temporary = like(ffqn_prefix);
             let ffqn = ffqn_temporary
                 .to_sql()
                 .expect("string conversion never fails");
@@ -1937,13 +1938,41 @@ impl SqlitePool {
             statement_mod
                 .where_vec
                 .push("execution_id LIKE :prefix".to_string());
-            prefix_temporary = format!("{prefix}%"); // concat %
+            prefix_temporary = like(prefix);
             statement_mod.params.push((
                 ":prefix",
                 prefix_temporary
                     .to_sql()
                     .expect("string conversion never fails"),
             ));
+        }
+
+        let component_digest_temporary;
+        if let Some(componnet_digest) = &filter.component_digest {
+            statement_mod
+                .where_vec
+                .push("component_id_input_digest = :component_digest".to_string());
+            component_digest_temporary = componnet_digest.clone();
+            let component_digest_sql = component_digest_temporary
+                .to_sql()
+                .expect("InputContentDigest conversion never fails");
+            statement_mod
+                .params
+                .push((":component_digest", component_digest_sql));
+        }
+
+        let deployment_id_temporary;
+        if let Some(deployment_id) = filter.deployment_id {
+            statement_mod
+                .where_vec
+                .push("deployment_id = :deployment_id".to_string());
+            deployment_id_temporary = deployment_id;
+            let deployment_id = deployment_id_temporary
+                .to_sql()
+                .expect("DeploymentId conversion never fails");
+            statement_mod
+                .params
+                .push((":component_digest", deployment_id));
         }
 
         let where_str = if statement_mod.where_vec.is_empty() {

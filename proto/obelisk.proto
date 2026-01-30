@@ -63,6 +63,7 @@ message ListExecutionsRequest {
     }
 
     optional string function_name_prefix = 1;
+
     // Do not return child executions
     bool top_level_only = 2;
     bool hide_finished = 5;
@@ -72,6 +73,9 @@ message ListExecutionsRequest {
         NewerThan newer_than = 3;
         OlderThan older_than = 4;
     };
+
+    optional ContentDigest component_digest = 7;
+    optional DeploymentId deployment_id = 8;
 }
 
 message ExecutionSummary {
