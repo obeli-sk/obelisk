@@ -1103,6 +1103,7 @@ async fn update_state_locked_get_intermittent_event_count(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     deployment_id: DeploymentId,
+    component_digest: &InputContentDigest,
     executor_id: ExecutorId,
     run_id: RunId,
     lock_expires_at: DateTime<Utc>,
@@ -1133,29 +1134,31 @@ async fn update_state_locked_get_intermittent_event_count(
                 state = $3,
                 updated_at = CURRENT_TIMESTAMP,
                 deployment_id = $4,
+                component_id_input_digest = $5,
 
-                max_retries = $5,
-                retry_exp_backoff_millis = $6,
+                max_retries = $6,
+                retry_exp_backoff_millis = $7,
                 last_lock_version = $1,
-                executor_id = $7,
-                run_id = $8,
+                executor_id = $8,
+                run_id = $9,
 
                 join_set_id = NULL,
                 join_set_closing = NULL,
 
                 result_kind = NULL
-            WHERE execution_id = $9
+            WHERE execution_id = $10
             ",
             &[
-                &i64::from(appending_version.0),          // $1
-                &lock_expires_at,                         // $2
-                &STATE_LOCKED,                            // $3
-                &deployment_id.to_string(),               // $4
-                &retry_config.max_retries.map(i64::from), // $5
-                &backoff_millis,                          // $6
-                &executor_id.to_string(),                 // $7
-                &run_id.to_string(),                      // $8
-                &execution_id_str,                        // $9
+                &i64::from(appending_version.0),
+                &lock_expires_at,
+                &STATE_LOCKED,
+                &deployment_id.to_string(),
+                &component_digest.as_slice(),
+                &retry_config.max_retries.map(i64::from),
+                &backoff_millis,
+                &executor_id.to_string(),
+                &run_id.to_string(),
+                &execution_id_str,
             ],
         )
         .await?;
@@ -2045,7 +2048,7 @@ async fn lock_single_execution(
 
     // Prepare Event
     let locked_event = Locked {
-        component_id,
+        component_id: component_id.clone(),
         deployment_id,
         executor_id,
         lock_expires_at,
@@ -2087,6 +2090,7 @@ async fn lock_single_execution(
         tx,
         execution_id,
         deployment_id,
+        &component_id.input_digest,
         executor_id,
         run_id,
         lock_expires_at,

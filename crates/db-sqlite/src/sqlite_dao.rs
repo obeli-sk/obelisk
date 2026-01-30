@@ -178,6 +178,9 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 ///
 /// ## `last_lock_version`
 /// Needed for selecting expired locks, see `ExpiredLock::locked_at_version`.
+///
+/// ## `component_id_input_digest`
+/// Inserted when Created, updated on every Locked event because of locking by ffqn.
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
@@ -1566,6 +1569,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         deployment_id: DeploymentId,
+        component_digest: &InputContentDigest,
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
@@ -1592,6 +1596,7 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
                     deployment_id = :deployment_id,
+                    component_id_input_digest = :component_id_input_digest,
 
                     max_retries = :max_retries,
                     retry_exp_backoff_millis = :retry_exp_backoff_millis,
@@ -1612,6 +1617,7 @@ impl SqlitePool {
             ":pending_expires_finished": lock_expires_at,
             ":state": STATE_LOCKED,
             ":deployment_id": deployment_id.to_string(),
+            ":component_id_input_digest": component_digest,
             ":max_retries": retry_config.max_retries,
             ":retry_exp_backoff_millis": backoff_millis,
             ":executor_id": executor_id.to_string(),
@@ -2129,7 +2135,7 @@ impl SqlitePool {
 
         // Append to `execution_log` table.
         let locked_event = Locked {
-            component_id,
+            component_id: component_id.clone(),
             deployment_id,
             executor_id,
             lock_expires_at,
@@ -2178,6 +2184,7 @@ impl SqlitePool {
             tx,
             execution_id,
             deployment_id,
+            &component_id.input_digest,
             executor_id,
             run_id,
             lock_expires_at,
