@@ -1420,7 +1420,7 @@ mod wasm_backtrace {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, derive_more::Display)]
+#[derive(Debug, Clone, derive_more::Display)]
 #[display("{execution_id} {pending_state} {component_digest}")]
 pub struct ExecutionWithState {
     pub execution_id: ExecutionId,

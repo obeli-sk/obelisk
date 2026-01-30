@@ -170,6 +170,38 @@ enum ExecutionListCursorDeser {
     CreatedBy(DateTime<Utc>),
     ExecutionId(ExecutionId),
 }
+#[derive(Serialize)]
+pub struct ExecutionWithStateSer {
+    pub execution_id: ExecutionId,
+    pub ffqn: FunctionFqn,
+    pub pending_state: PendingState,
+    pub created_at: DateTime<Utc>,
+    pub first_scheduled_at: DateTime<Utc>,
+    pub component_digest: InputContentDigest,
+    pub deployment_id: DeploymentId,
+}
+impl From<ExecutionWithState> for ExecutionWithStateSer {
+    fn from(value: ExecutionWithState) -> Self {
+        let ExecutionWithState {
+            execution_id,
+            ffqn,
+            pending_state,
+            created_at,
+            first_scheduled_at,
+            component_digest,
+            deployment_id,
+        } = value;
+        ExecutionWithStateSer {
+            execution_id,
+            ffqn,
+            pending_state,
+            created_at,
+            first_scheduled_at,
+            component_digest,
+            deployment_id,
+        }
+    }
+}
 
 #[instrument(skip_all)]
 async fn executions_list(
@@ -177,16 +209,6 @@ async fn executions_list(
     Query(params): Query<ExecutionsListParams>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    #[derive(Serialize)]
-    pub struct ExecutionWithStateSer {
-        pub execution_id: ExecutionId,
-        pub ffqn: FunctionFqn,
-        pub pending_state: PendingState,
-        pub created_at: DateTime<Utc>,
-        pub first_scheduled_at: DateTime<Utc>,
-        pub component_digest: InputContentDigest,
-        pub deployment_id: DeploymentId,
-    }
     let default_pagination = ExecutionListPagination::default();
     let pagination = {
         let ExecutionsListParams {
@@ -281,25 +303,7 @@ async fn executions_list(
         AcceptHeader::Json => {
             let executions: Vec<_> = executions
                 .into_iter()
-                .map(
-                    |ExecutionWithState {
-                         execution_id,
-                         ffqn,
-                         pending_state,
-                         created_at,
-                         first_scheduled_at,
-                         component_digest,
-                         deployment_id,
-                     }| ExecutionWithStateSer {
-                        execution_id,
-                        ffqn,
-                        pending_state,
-                        created_at,
-                        first_scheduled_at,
-                        component_digest,
-                        deployment_id,
-                    },
-                )
+                .map(ExecutionWithStateSer::from)
                 .collect();
             Json(executions).into_response()
         }
@@ -725,7 +729,9 @@ async fn execution_status_get(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(match accept {
-        AcceptHeader::Json => Json(execution_with_state).into_response(),
+        AcceptHeader::Json => {
+            Json(ExecutionWithStateSer::from(execution_with_state)).into_response()
+        }
         AcceptHeader::Text => execution_with_state.to_string().into_response(),
     })
 }
