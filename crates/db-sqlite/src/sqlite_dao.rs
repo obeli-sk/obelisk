@@ -482,6 +482,7 @@ struct CombinedStateDTO {
     state: String,
     ffqn: FunctionFqn,
     component_digest: InputContentDigest,
+    deployment_id: DeploymentId,
     created_at: DateTime<Utc>,
     first_scheduled_at: DateTime<Utc>,
     pending_expires_finished: DateTime<Utc>,
@@ -546,6 +547,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                deployment_id,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
                 executor_id: None,
@@ -555,6 +557,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
+                deployment_id,
                 execution_id,
                 ffqn,
                 created_at,
@@ -572,6 +575,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                deployment_id,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
                 executor_id: Some(executor_id),
@@ -581,6 +585,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
+                deployment_id,
                 execution_id,
                 ffqn,
                 created_at,
@@ -600,6 +605,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                deployment_id,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: Some(_),
                 executor_id: Some(executor_id),
@@ -609,6 +615,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_LOCKED => ExecutionWithState {
                 component_digest,
+                deployment_id,
                 execution_id,
                 ffqn,
                 created_at,
@@ -628,6 +635,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                deployment_id,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: None,
                 executor_id: _,
@@ -637,6 +645,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
                 component_digest,
+                deployment_id,
                 execution_id,
                 ffqn,
                 created_at,
@@ -654,6 +663,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                deployment_id,
                 pending_expires_finished: finished_at,
                 last_lock_version: None,
                 executor_id: None,
@@ -663,6 +673,7 @@ impl CombinedState {
                 result_kind: Some(result_kind),
             } if state == STATE_FINISHED => ExecutionWithState {
                 component_digest,
+                deployment_id,
                 execution_id,
                 ffqn,
                 created_at,
@@ -1795,7 +1806,8 @@ impl SqlitePool {
             r"
                 SELECT
                     created_at, first_scheduled_at,
-                    state, ffqn, component_id_input_digest, corresponding_version, pending_expires_finished,
+                    state, ffqn, component_id_input_digest, deployment_id,
+                    corresponding_version, pending_expires_finished,
                     last_lock_version, executor_id, run_id,
                     join_set_id, join_set_closing,
                     result_kind
@@ -1809,17 +1821,15 @@ impl SqlitePool {
                 ":execution_id": execution_id.to_string(),
             },
             |row| {
-                let created_at: DateTime<Utc> = row.get("created_at")?;
-                let first_scheduled_at: DateTime<Utc> = row.get("first_scheduled_at")?;
-                let ffqn = row.get("ffqn")?;
                 CombinedState::new(
                     CombinedStateDTO {
                         execution_id: execution_id.clone(),
-                        created_at,
-                        first_scheduled_at,
+                        created_at: row.get("created_at")?,
+                        first_scheduled_at: row.get("first_scheduled_at")?,
                         component_digest: row.get("component_id_input_digest")?,
+                        deployment_id: row.get("deployment_id")?,
                         state: row.get("state")?,
-                        ffqn,
+                        ffqn: row.get("ffqn")?,
                         pending_expires_finished: row
                             .get::<_, DateTime<Utc>>("pending_expires_finished")?,
                         last_lock_version: row
@@ -1943,7 +1953,7 @@ impl SqlitePool {
         };
         let sql = format!(
             r"
-            SELECT created_at, first_scheduled_at, component_id_input_digest,
+            SELECT created_at, first_scheduled_at, component_id_input_digest, deployment_id,
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
@@ -1962,23 +1972,16 @@ impl SqlitePool {
                     .collect::<Vec<_>>()
                     .as_ref(),
                 |row| {
-                    let execution_id = row.get::<_, ExecutionId>("execution_id")?;
-                    let component_digest: InputContentDigest =
-                        row.get("component_id_input_digest")?;
-                    let created_at = row.get("created_at")?;
-                    let first_scheduled_at = row.get("first_scheduled_at")?;
-                    let ffqn: FunctionFqn = row.get("ffqn")?;
-
                     let combined_state = CombinedState::new(
                         CombinedStateDTO {
-                            execution_id,
-                            created_at,
-                            first_scheduled_at,
-                            component_digest,
+                            execution_id: row.get("execution_id")?,
+                            created_at: row.get("created_at")?,
+                            first_scheduled_at: row.get("first_scheduled_at")?,
+                            component_digest: row.get("component_id_input_digest")?,
+                            deployment_id: row.get("deployment_id")?,
                             state: row.get("state")?,
-                            ffqn,
-                            pending_expires_finished: row
-                                .get::<_, DateTime<Utc>>("pending_expires_finished")?,
+                            ffqn: row.get("ffqn")?,
+                            pending_expires_finished: row.get("pending_expires_finished")?,
                             executor_id: row.get::<_, Option<ExecutorId>>("executor_id")?,
 
                             last_lock_version: row
@@ -2777,6 +2780,7 @@ impl SqlitePool {
             next_version: combined_state.get_next_version_or_finished(), // In case of finished, this will be the already last version
             pending_state: combined_state.execution_with_state.pending_state,
             component_digest: combined_state.execution_with_state.component_digest,
+            deployment_id: combined_state.execution_with_state.deployment_id,
         })
     }
 

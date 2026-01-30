@@ -5,6 +5,7 @@
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
 use crate::journal::ExecutionJournal;
+use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::component_id::InputContentDigest;
@@ -15,8 +16,9 @@ use concepts::storage::{
     DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
     DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionLog,
     ExecutionRequest, ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent,
-    JoinSetResponse, JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedExecution,
-    LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version, VersionType,
+    JoinSetResponse, JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedBy,
+    LockedExecution, LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version,
+    VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
@@ -387,12 +389,8 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         execution_id: &ExecutionId,
     ) -> Result<ExecutionWithState, DbErrorRead> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .get(execution_id)?
-            .as_execution_with_state())
+        let log = self.0.lock().unwrap().get(execution_id)?;
+        Ok(execution_log_as_execution_with_state(&log))
     }
 
     async fn append_backtrace(&self, _append: BacktraceInfo) -> Result<(), DbErrorWrite> {
@@ -413,6 +411,25 @@ impl DbConnection for InMemoryDbConnection {
     async fn append_log_batch(&self, _batch: &[LogInfoAppendRow]) -> Result<(), DbErrorWrite> {
         // noop, backtrace functionality is for reporting only and its absence should not affect the system.
         Ok(())
+    }
+}
+
+#[must_use]
+fn execution_log_as_execution_with_state(execution_log: &ExecutionLog) -> ExecutionWithState {
+    let (created_at, first_scheduled_at, ffqn) = assert_matches!(execution_log.events.first(), Some(ExecutionEvent {
+            event: ExecutionRequest::Created { ffqn, scheduled_at: first_scheduled_at,.. },
+            created_at,
+            ..
+        }) => (created_at, first_scheduled_at, ffqn));
+
+    ExecutionWithState {
+        execution_id: execution_log.execution_id.clone(),
+        ffqn: ffqn.clone(),
+        pending_state: execution_log.pending_state.clone(),
+        created_at: *created_at,
+        first_scheduled_at: *first_scheduled_at,
+        component_digest: execution_log.component_digest.clone(),
+        deployment_id: execution_log.deployment_id.clone(),
     }
 }
 
@@ -919,7 +936,7 @@ impl DbHolder {
                     retry_exp_backoff: retry_config.retry_exp_backoff,
                     locked_by: journal
                         .find_last_lock()
-                        .map(|(ll, _)| ll)
+                        .map(LockedBy::from)
                         .expect("must have been locked in order to expire"),
                 };
                 ExpiredTimer::Lock(lock)

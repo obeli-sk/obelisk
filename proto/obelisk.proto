@@ -81,6 +81,7 @@ message ExecutionSummary {
     google.protobuf.Timestamp created_at = 4;
     google.protobuf.Timestamp first_scheduled_at = 5;
     ContentDigest component_digest = 6;
+    DeploymentId deployment_id = 7;
 }
 
 message ListExecutionsResponse {

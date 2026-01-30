@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use concepts::component_id::InputContentDigest;
+use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionRequest,
     HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
@@ -19,7 +20,8 @@ use tracing_error::SpanTrace;
 pub(crate) struct ExecutionJournal {
     pub(crate) execution_id: ExecutionId,
     pub(crate) pending_state: PendingState, // updated on every state change
-    pub(crate) component_digest: InputContentDigest, // updated on every state change
+    pub(crate) component_digest: InputContentDigest, // updated on every Locked event
+    pub(crate) deployment_id: DeploymentId, // updated on every Locked event
     pub(crate) execution_events: Vec<ExecutionEvent>,
     pub(crate) responses: Vec<ResponseWithCursor>, // response cursor is its index.
     pub(crate) response_subscriber: Option<oneshot::Sender<ResponseWithCursor>>,
@@ -34,6 +36,7 @@ impl ExecutionJournal {
         };
         let execution_id = req.execution_id.clone();
         let component_digest = req.component_id.input_digest.clone();
+        let deployment_id = req.deployment_id.clone();
 
         let created_at = req.created_at;
         let event = ExecutionEvent {
@@ -49,6 +52,7 @@ impl ExecutionJournal {
             responses: Vec::default(),
             response_subscriber: None,
             component_digest,
+            deployment_id,
         }
     }
 
@@ -76,8 +80,8 @@ impl ExecutionJournal {
 
     #[must_use]
     pub(super) fn component_id_last(&self) -> &ComponentId {
-        if let Some((_, last_component_id)) = self.find_last_lock() {
-            last_component_id
+        if let Some(last_lock) = self.find_last_lock() {
+            &last_lock.component_id
         } else {
             let ExecutionEvent {
                 event: ExecutionRequest::Created { component_id, .. },
@@ -254,25 +258,12 @@ impl ExecutionJournal {
         Ok(())
     }
 
-    pub(crate) fn find_last_lock(&self) -> Option<(LockedBy, &ComponentId)> {
+    pub(crate) fn find_last_lock(&self) -> Option<&Locked> {
         self.execution_events
             .iter()
             .rev()
             .find_map(|event| match &event.event {
-                ExecutionRequest::Locked(Locked {
-                    executor_id,
-                    lock_expires_at: _,
-                    run_id,
-                    component_id,
-                    deployment_id: _,
-                    retry_config: _,
-                }) => Some((
-                    LockedBy {
-                        executor_id: *executor_id,
-                        run_id: *run_id,
-                    },
-                    component_id,
-                )),
+                ExecutionRequest::Locked(locked) => Some(locked),
                 _ => None,
             })
     }
@@ -328,7 +319,7 @@ impl ExecutionJournal {
                 ExecutionRequest::Finished { result, .. } => {
                     let component_id_input_digest = self
                         .find_last_lock()
-                        .map(|l| l.1.input_digest.clone())
+                        .map(|locked| locked.component_id.input_digest.clone())
                         .unwrap_or_else(|| self.get_create_request().component_id.input_digest);
                     assert_eq!(self.execution_events.len() - 1, idx);
                     Some((
@@ -375,12 +366,12 @@ impl ExecutionJournal {
                 } => {
                     let component_id_input_digest = self
                         .find_last_lock()
-                        .map(|l| l.1.input_digest.clone())
+                        .map(|locked| locked.component_id.input_digest.clone())
                         .unwrap_or_else(|| self.get_create_request().component_id.input_digest);
                     Some((
                         PendingState::PendingAt {
                             scheduled_at: *expires_at,
-                            last_lock: self.find_last_lock().map(|(ll, _)| ll),
+                            last_lock: self.find_last_lock().map(LockedBy::from),
                         },
                         component_id_input_digest,
                     ))
@@ -423,7 +414,7 @@ impl ExecutionJournal {
                         .nth(join_next_count - 1);
                     let component_id_input_digest = self
                         .find_last_lock()
-                        .map(|l| l.1.input_digest.clone())
+                        .map(|locked| locked.component_id.input_digest.clone())
                         .unwrap_or_else(|| self.get_create_request().component_id.input_digest);
                     if let Some(nth_created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
@@ -431,7 +422,7 @@ impl ExecutionJournal {
                         Some((
                             PendingState::PendingAt {
                                 scheduled_at,
-                                last_lock: self.find_last_lock().map(|(ll, _)| ll),
+                                last_lock: self.find_last_lock().map(LockedBy::from),
                             },
                             component_id_input_digest,
                         ))
@@ -467,6 +458,10 @@ impl ExecutionJournal {
             .expect("journal must begin with Created event");
         self.pending_state = pending_state;
         self.component_digest = component_digest;
+        self.deployment_id = self
+            .find_last_lock()
+            .map(|locked| locked.deployment_id)
+            .unwrap_or_else(|| self.get_create_request().deployment_id);
     }
 
     pub fn event_history(&self) -> impl Iterator<Item = (HistoryEvent, Version)> + '_ {
@@ -509,6 +504,7 @@ impl ExecutionJournal {
             pending_state: self.pending_state.clone(),
             responses: self.responses.clone(),
             component_digest: self.component_digest.clone(),
+            deployment_id: self.deployment_id.clone(),
         }
     }
 

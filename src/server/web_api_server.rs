@@ -185,6 +185,7 @@ async fn executions_list(
         pub created_at: DateTime<Utc>,
         pub first_scheduled_at: DateTime<Utc>,
         pub component_digest: InputContentDigest,
+        pub deployment_id: DeploymentId,
     }
     let default_pagination = ExecutionListPagination::default();
     let pagination = {
@@ -288,6 +289,7 @@ async fn executions_list(
                          created_at,
                          first_scheduled_at,
                          component_digest,
+                         deployment_id,
                      }| ExecutionWithStateSer {
                         execution_id,
                         ffqn,
@@ -295,6 +297,7 @@ async fn executions_list(
                         created_at,
                         first_scheduled_at,
                         component_digest,
+                        deployment_id,
                     },
                 )
                 .collect();

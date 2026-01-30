@@ -355,6 +355,7 @@ impl From<ExecutionWithState> for grpc_gen::ExecutionSummary {
             created_at: Some(value.created_at.into()),
             first_scheduled_at: Some(value.first_scheduled_at.into()),
             component_digest: Some(value.component_digest.into()),
+            deployment_id: Some(value.deployment_id.into()),
         }
     }
 }

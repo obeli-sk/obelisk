@@ -304,6 +304,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
                 component_digest: Some(current_execution_with_state.component_digest.into()),
+                deployment_id: Some(current_execution_with_state.deployment_id.into()),
             })),
         };
         if current_execution_with_state.pending_state.is_finished() || !request.follow {
