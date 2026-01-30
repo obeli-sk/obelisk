@@ -3257,7 +3257,7 @@ impl DbExecutor for PostgresConnection {
             match lock_single_execution(
                 &tx,
                 created_at,
-                &component_id,
+                component_id,
                 deployment_id,
                 &execution_id,
                 run_id,

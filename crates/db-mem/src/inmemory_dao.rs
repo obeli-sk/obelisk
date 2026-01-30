@@ -429,7 +429,7 @@ fn execution_log_as_execution_with_state(execution_log: &ExecutionLog) -> Execut
         created_at: *created_at,
         first_scheduled_at: *first_scheduled_at,
         component_digest: execution_log.component_digest.clone(),
-        deployment_id: execution_log.deployment_id.clone(),
+        deployment_id: execution_log.deployment_id,
     }
 }
 

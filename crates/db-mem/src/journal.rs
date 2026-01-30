@@ -36,7 +36,7 @@ impl ExecutionJournal {
         };
         let execution_id = req.execution_id.clone();
         let component_digest = req.component_id.input_digest.clone();
-        let deployment_id = req.deployment_id.clone();
+        let deployment_id = req.deployment_id;
 
         let created_at = req.created_at;
         let event = ExecutionEvent {
@@ -504,7 +504,7 @@ impl ExecutionJournal {
             pending_state: self.pending_state.clone(),
             responses: self.responses.clone(),
             component_digest: self.component_digest.clone(),
-            deployment_id: self.deployment_id.clone(),
+            deployment_id: self.deployment_id,
         }
     }
 
