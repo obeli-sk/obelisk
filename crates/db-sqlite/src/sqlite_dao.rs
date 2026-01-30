@@ -215,14 +215,14 @@ CREATE TABLE IF NOT EXISTS t_state (
 // For `get_pending_by_ffqns`
 const IDX_T_STATE_LOCK_PENDING_BY_FFQN: &str = formatcp!(
     r"
-CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (pending_expires_finished, ffqn) WHERE state = '{}';
+CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending_by_ffqn ON t_state (pending_expires_finished, ffqn) WHERE state = '{}';
 ",
     STATE_PENDING_AT
 );
 // For `get_pending_by_component_input_digest`
 const IDX_T_STATE_LOCK_PENDING_BY_COMPONENT: &str = formatcp!(
     r"
-CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (pending_expires_finished, component_id_input_digest) WHERE state = '{}';
+CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending_by_component ON t_state (pending_expires_finished, component_id_input_digest) WHERE state = '{}';
 ",
     STATE_PENDING_AT
 );
