@@ -2115,7 +2115,7 @@ impl SqlitePool {
     fn lock_single_execution(
         tx: &Transaction,
         created_at: DateTime<Utc>,
-        component_id: ComponentId,
+        component_id: &ComponentId,
         deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
@@ -2350,7 +2350,7 @@ impl SqlitePool {
             return Self::lock_single_execution(
                 tx,
                 created_at,
-                component_id,
+                &component_id,
                 deployment_id,
                 execution_id,
                 run_id,
@@ -3426,7 +3426,7 @@ impl DbExecutor for SqlitePool {
                         match Self::lock_single_execution(
                             tx,
                             created_at,
-                            component_id.clone(),
+                            &component_id,
                             deployment_id,
                             execution_id,
                             run_id,
@@ -3493,7 +3493,7 @@ impl DbExecutor for SqlitePool {
                         match Self::lock_single_execution(
                             tx,
                             created_at,
-                            component_id.clone(),
+                            &component_id,
                             deployment_id,
                             execution_id,
                             run_id,
@@ -3537,7 +3537,7 @@ impl DbExecutor for SqlitePool {
                 Self::lock_single_execution(
                     tx,
                     created_at,
-                    component_id.clone(),
+                    &component_id,
                     deployment_id,
                     &execution_id,
                     run_id,

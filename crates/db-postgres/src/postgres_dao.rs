@@ -2026,7 +2026,7 @@ fn parse_response_with_cursor(
 async fn lock_single_execution(
     tx: &Transaction<'_>,
     created_at: DateTime<Utc>,
-    component_id: ComponentId,
+    component_id: &ComponentId,
     deployment_id: DeploymentId,
     execution_id: &ExecutionId,
     run_id: RunId,
@@ -2263,7 +2263,7 @@ async fn append(
         return lock_single_execution(
             tx,
             created_at,
-            component_id,
+            &component_id,
             deployment_id,
             execution_id,
             run_id,
@@ -3176,7 +3176,7 @@ impl DbExecutor for PostgresConnection {
             match lock_single_execution(
                 &tx,
                 created_at,
-                component_id.clone(),
+                &component_id,
                 deployment_id,
                 &execution_id,
                 run_id,
@@ -3236,7 +3236,7 @@ impl DbExecutor for PostgresConnection {
             match lock_single_execution(
                 &tx,
                 created_at,
-                component_id.clone(),
+                &component_id,
                 deployment_id,
                 &execution_id,
                 run_id,
@@ -3278,7 +3278,7 @@ impl DbExecutor for PostgresConnection {
         let res = lock_single_execution(
             &tx,
             created_at,
-            component_id,
+            &component_id,
             deployment_id,
             execution_id,
             run_id,
