@@ -217,6 +217,7 @@ message GetStatusRequest {
     bool send_finished_status = 3;
 }
 
+// Corresponds to concise Pending State
 message ExecutionStatus {
     message Locked {
         RunId run_id = 2;

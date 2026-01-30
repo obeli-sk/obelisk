@@ -290,22 +290,13 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
-        let execution_with_state = conn.get_pending_state(&execution_id).await.to_status()?;
-        let (create_request, current_execution_with_state, grpc_pending_status) = {
-            let create_request = conn.get_create_request(&execution_id).await.to_status()?;
-            let grpc_pending_status = grpc_gen::ExecutionStatus::from(&execution_with_state);
-            (create_request, execution_with_state, grpc_pending_status)
-        };
+        let current_execution_with_state =
+            conn.get_pending_state(&execution_id).await.to_status()?;
+        let create_request = conn.get_create_request(&execution_id).await.to_status()?;
         let summary = grpc_gen::GetStatusResponse {
-            message: Some(Message::Summary(ExecutionSummary {
-                created_at: Some(create_request.created_at.into()),
-                first_scheduled_at: Some(create_request.scheduled_at.into()),
-                execution_id: Some(grpc_gen::ExecutionId::from(&execution_id)),
-                function_name: Some(create_request.ffqn.clone().into()),
-                current_status: Some(grpc_pending_status),
-                component_digest: Some(current_execution_with_state.component_digest.into()),
-                deployment_id: Some(current_execution_with_state.deployment_id.into()),
-            })),
+            message: Some(Message::Summary(ExecutionSummary::from(
+                current_execution_with_state.clone(),
+            ))),
         };
         if current_execution_with_state.pending_state.is_finished() || !request.follow {
             // No waiting in this case
