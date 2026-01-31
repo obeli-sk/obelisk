@@ -206,7 +206,7 @@ bytes = "1.11"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
 chrono = { version = "0.4.43", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.55", features = ["derive"] }
+clap = { version = "4.5.56", features = ["derive"] }
 config = { version = "0.15.19", default-features = false, features = [
     "toml",
     "preserve_order",
@@ -248,7 +248,7 @@ insta = { version = "1.46.1", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
 libc = "0.2.180"
-oci-client = { version = "0.15.0", default-features = false, features = [
+oci-client = { version = "0.16.0", default-features = false, features = [
     "rustls-tls",
 ] }
 oci-wasm = { version = "0.3.0", default-features = false, features = [ # Dependent on matching oci-client
