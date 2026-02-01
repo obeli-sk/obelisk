@@ -612,6 +612,15 @@ async fn run_internal(
         .accept_compressed(CompressionEncoding::Gzip),
     )
     .add_service(
+        grpc_gen::deployment_repository_server::DeploymentRepositoryServer::from_arc(
+            grpc_server.clone(),
+        )
+        .send_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Zstd)
+        .send_compressed(CompressionEncoding::Gzip)
+        .accept_compressed(CompressionEncoding::Gzip),
+    )
+    .add_service(
         tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(grpc_gen::FILE_DESCRIPTOR_SET)
             .build_v1()?,
