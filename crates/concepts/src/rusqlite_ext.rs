@@ -1,5 +1,5 @@
 use crate::{
-    ContentDigest, ExecutionId, FunctionFqn, JoinSetId,
+    ComponentType, ContentDigest, ExecutionId, FunctionFqn, JoinSetId,
     component_id::{Digest, InputContentDigest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
@@ -205,6 +205,24 @@ impl ToSql for DeploymentId {
     }
 }
 impl FromSql for DeploymentId {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let str = value.as_str()?;
+        str.parse::<Self>().map_err(|err| {
+            error!(
+                "Cannot convert to {} value:`{str}` - {err:?}",
+                std::any::type_name::<Self>()
+            );
+            FromSqlError::InvalidType
+        })
+    }
+}
+
+impl ToSql for ComponentType {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+impl FromSql for ComponentType {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {

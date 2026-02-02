@@ -2,8 +2,8 @@ use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, JoinSetId, StrVariant,
-    SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ExecutionId, FunctionFqn, JoinSetId,
+    StrVariant, SupportedFunctionReturnValue,
     component_id::InputContentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     ffqn TEXT NOT NULL,
     created_at TEXT NOT NULL,
     component_id_input_digest BLOB NOT NULL,
+    component_type TEXT NOT NULL,
     first_scheduled_at TEXT NOT NULL,
     deployment_id TEXT NOT NULL,
 
@@ -482,6 +483,7 @@ struct CombinedStateDTO {
     state: String,
     ffqn: FunctionFqn,
     component_digest: InputContentDigest,
+    component_type: ComponentType,
     deployment_id: DeploymentId,
     created_at: DateTime<Utc>,
     first_scheduled_at: DateTime<Utc>,
@@ -547,6 +549,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
@@ -557,6 +560,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -575,6 +579,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
@@ -585,6 +590,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -605,6 +611,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: Some(_),
@@ -615,6 +622,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_LOCKED => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -635,6 +643,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: None,
@@ -645,6 +654,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -663,6 +673,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: finished_at,
                 last_lock_version: None,
@@ -673,6 +684,7 @@ impl CombinedState {
                 result_kind: Some(result_kind),
             } if state == STATE_FINISHED => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -1406,6 +1418,7 @@ impl SqlitePool {
                     state,
                     created_at,
                     component_id_input_digest,
+                    component_type,
                     deployment_id,
                     updated_at,
                     first_scheduled_at,
@@ -1420,6 +1433,7 @@ impl SqlitePool {
                     :state,
                     :created_at,
                     :component_id_input_digest,
+                    :component_type,
                     :deployment_id,
                     CURRENT_TIMESTAMP,
                     :first_scheduled_at,
@@ -1436,6 +1450,7 @@ impl SqlitePool {
                 ":state": STATE_PENDING_AT,
                 ":created_at": created_at,
                 ":component_id_input_digest": component_id.input_digest,
+                ":component_type": component_id.component_type,
                 ":deployment_id": deployment_id.to_string(),
                 ":first_scheduled_at": scheduled_at,
             })?;
@@ -1806,7 +1821,7 @@ impl SqlitePool {
             r"
                 SELECT
                     created_at, first_scheduled_at,
-                    state, ffqn, component_id_input_digest, deployment_id,
+                    state, ffqn, component_id_input_digest, component_type, deployment_id,
                     corresponding_version, pending_expires_finished,
                     last_lock_version, executor_id, run_id,
                     join_set_id, join_set_closing,
@@ -1827,6 +1842,7 @@ impl SqlitePool {
                         created_at: row.get("created_at")?,
                         first_scheduled_at: row.get("first_scheduled_at")?,
                         component_digest: row.get("component_id_input_digest")?,
+                        component_type: row.get("component_type")?,
                         deployment_id: row.get("deployment_id")?,
                         state: row.get("state")?,
                         ffqn: row.get("ffqn")?,
@@ -1980,7 +1996,7 @@ impl SqlitePool {
         };
         let sql = format!(
             r"
-            SELECT created_at, first_scheduled_at, component_id_input_digest, deployment_id,
+            SELECT created_at, first_scheduled_at, component_id_input_digest, component_type, deployment_id,
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
@@ -2005,6 +2021,7 @@ impl SqlitePool {
                             created_at: row.get("created_at")?,
                             first_scheduled_at: row.get("first_scheduled_at")?,
                             component_digest: row.get("component_id_input_digest")?,
+                            component_type: row.get("component_type")?,
                             deployment_id: row.get("deployment_id")?,
                             state: row.get("state")?,
                             ffqn: row.get("ffqn")?,
@@ -2807,6 +2824,7 @@ impl SqlitePool {
             next_version: combined_state.get_next_version_or_finished(), // In case of finished, this will be the already last version
             pending_state: combined_state.execution_with_state.pending_state,
             component_digest: combined_state.execution_with_state.component_digest,
+            component_type: combined_state.execution_with_state.component_type,
             deployment_id: combined_state.execution_with_state.deployment_id,
         })
     }

@@ -1,5 +1,6 @@
 use crate::ComponentId;
 use crate::ComponentRetryConfig;
+use crate::ComponentType;
 use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
@@ -46,6 +47,7 @@ pub struct ExecutionLog {
     pub next_version: Version, // Is not advanced once in Finished state
     pub pending_state: PendingState, // reflecting the current state
     pub component_digest: InputContentDigest, // reflecting the current state
+    pub component_type: ComponentType,
     pub deployment_id: DeploymentId, // reflecting the current state
 }
 
@@ -1450,6 +1452,7 @@ pub struct ExecutionWithState {
     pub created_at: DateTime<Utc>,
     pub first_scheduled_at: DateTime<Utc>,
     pub component_digest: InputContentDigest,
+    pub component_type: ComponentType,
     pub deployment_id: DeploymentId,
 }
 

@@ -2,8 +2,8 @@ use crate::postgres_dao::ddl::{ADMIN_DB_NAME, T_METADATA_EXPECTED_SCHEMA_VERSION
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ContentDigest, ExecutionId, FunctionFqn, JoinSetId,
-    StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionId, FunctionFqn,
+    JoinSetId, StrVariant, SupportedFunctionReturnValue,
     component_id::{Digest, InputContentDigest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     ffqn TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     component_id_input_digest BYTEA NOT NULL,
+    component_type TEXT NOT NULL,
     first_scheduled_at TIMESTAMPTZ NOT NULL,
     deployment_id TEXT NOT NULL,
 
@@ -622,6 +623,7 @@ struct CombinedStateDTO {
     state: String,
     ffqn: FunctionFqn,
     component_digest: InputContentDigest,
+    component_type: ComponentType,
     deployment_id: DeploymentId,
     created_at: DateTime<Utc>,
     first_scheduled_at: DateTime<Utc>,
@@ -653,6 +655,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
@@ -663,6 +666,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -681,6 +685,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: scheduled_at,
                 last_lock_version: None,
@@ -691,6 +696,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -711,6 +717,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: Some(_),
@@ -721,6 +728,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_LOCKED => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -741,6 +749,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: lock_expires_at,
                 last_lock_version: None,
@@ -751,6 +760,7 @@ impl CombinedState {
                 result_kind: None,
             } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -769,6 +779,7 @@ impl CombinedState {
                 state,
                 ffqn,
                 component_digest,
+                component_type,
                 deployment_id,
                 pending_expires_finished: finished_at,
                 last_lock_version: None,
@@ -779,6 +790,7 @@ impl CombinedState {
                 result_kind: Some(result_kind),
             } if state == STATE_FINISHED => ExecutionWithState {
                 component_digest,
+                component_type,
                 deployment_id,
                 execution_id,
                 ffqn,
@@ -952,12 +964,13 @@ async fn create_inner(
                 state,
                 created_at,
                 component_id_input_digest,
+                component_type,
                 deployment_id,
-                updated_at,
                 first_scheduled_at,
+                updated_at,
                 intermittent_event_count
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, $10, 0
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0
             )",
             &[
                 &execution_id_str,
@@ -968,6 +981,7 @@ async fn create_inner(
                 &STATE_PENDING_AT,
                 &created_at,
                 &component_id.input_digest.as_slice(),
+                &component_id.component_type.to_string(),
                 &deployment_id.to_string(),
                 &scheduled_at,
             ],
@@ -1349,7 +1363,7 @@ async fn get_combined_state(
             r"
             SELECT
                 created_at, first_scheduled_at,
-                state, ffqn, component_id_input_digest, deployment_id, corresponding_version, pending_expires_finished,
+                state, ffqn, component_id_input_digest, component_type, deployment_id, corresponding_version, pending_expires_finished,
                 last_lock_version, executor_id, run_id,
                 join_set_id, join_set_closing,
                 result_kind
@@ -1367,9 +1381,14 @@ async fn get_combined_state(
     let first_scheduled_at: DateTime<Utc> = get(&row, "first_scheduled_at")?;
 
     let digest_bytes: Vec<u8> = get(&row, "component_id_input_digest")?;
-    let digest = Digest::try_from(digest_bytes.as_slice())
-        .map_err(|err| consistency_db_err(err.to_string()))?;
-    let component_id_input_digest = InputContentDigest(ContentDigest(digest));
+    let digest = Digest::try_from(digest_bytes.as_slice()).map_err(|err| {
+        consistency_db_err_src("cannot parse `component_id_input_digest`", Arc::from(err))
+    })?;
+    let component_digest = InputContentDigest(ContentDigest(digest));
+
+    let component_type: String = get(&row, "component_type")?;
+    let component_type = ComponentType::from_str(&component_type)
+        .map_err(|err| consistency_db_err_src("cannot parse `component_type`", Arc::from(err)))?;
 
     let deployment_id: String = get(&row, "deployment_id")?;
     let deployment_id = DeploymentId::from_str(&deployment_id).map_err(DbErrorGeneric::from)?;
@@ -1423,7 +1442,8 @@ async fn get_combined_state(
         first_scheduled_at,
         state,
         ffqn,
-        component_digest: component_id_input_digest,
+        component_digest,
+        component_type,
         deployment_id,
         pending_expires_finished,
         last_lock_version,
@@ -1558,9 +1578,15 @@ async fn list_executions(
                 .map_err(|err| consistency_db_err(err.to_string()))?;
 
             let digest_bytes: Vec<u8> = get(&row, "component_id_input_digest")?;
-            let digest = Digest::try_from(digest_bytes.as_slice())
-                .map_err(|err| consistency_db_err(err.to_string()))?;
-            let component_id_input_digest = InputContentDigest(ContentDigest(digest));
+            let digest = Digest::try_from(digest_bytes.as_slice()).map_err(|err| {
+                consistency_db_err_src("cannot parse `component_id_input_digest`", Arc::from(err))
+            })?;
+            let component_digest = InputContentDigest(ContentDigest(digest));
+
+            let component_type: String = get(&row, "component_type")?;
+            let component_type = ComponentType::from_str(&component_type).map_err(|err| {
+                consistency_db_err_src("cannot parse `component_type`", Arc::from(err))
+            })?;
 
             let deployment_id: String = get(&row, "deployment_id")?;
             let deployment_id =
@@ -1606,7 +1632,8 @@ async fn list_executions(
                 execution_id,
                 created_at,
                 first_scheduled_at,
-                component_digest: component_id_input_digest,
+                component_digest,
+                component_type,
                 deployment_id,
                 state: get(&row, "state")?,
                 ffqn,
@@ -2736,6 +2763,7 @@ async fn get_execution_log(
         next_version: combined_state.get_next_version_or_finished(),
         pending_state: combined_state.execution_with_state.pending_state,
         component_digest: combined_state.execution_with_state.component_digest,
+        component_type: combined_state.execution_with_state.component_type,
         deployment_id: combined_state.execution_with_state.deployment_id,
     })
 }

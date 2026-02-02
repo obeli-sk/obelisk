@@ -16,7 +16,7 @@ use axum_accept::AcceptExtractor;
 use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
+    ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
     component_id::InputContentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
     storage::{
@@ -182,6 +182,7 @@ pub struct ExecutionWithStateSer {
     pub created_at: DateTime<Utc>,
     pub first_scheduled_at: DateTime<Utc>,
     pub component_digest: InputContentDigest,
+    pub component_type: ComponentType,
     pub deployment_id: DeploymentId,
 }
 impl From<ExecutionWithState> for ExecutionWithStateSer {
@@ -193,6 +194,7 @@ impl From<ExecutionWithState> for ExecutionWithStateSer {
             created_at,
             first_scheduled_at,
             component_digest,
+            component_type,
             deployment_id,
         } = value;
         ExecutionWithStateSer {
@@ -202,6 +204,7 @@ impl From<ExecutionWithState> for ExecutionWithStateSer {
             created_at,
             first_scheduled_at,
             component_digest,
+            component_type,
             deployment_id,
         }
     }
