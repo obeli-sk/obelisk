@@ -34,7 +34,7 @@ service FunctionRepository {
 
 service DeploymentRepository {
     rpc ListDeploymentStates(ListDeploymentStatesRequest) returns (ListDeploymentStatesResponse);
-
+    rpc GetCurrentDeploymentId(GetCurrentDeploymentIdRequest) returns (GetCurrentDeploymentIdResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -714,4 +714,10 @@ message DeploymentState {
 
 message ListDeploymentStatesResponse {
     repeated DeploymentState deployments = 1;
+}
+
+message GetCurrentDeploymentIdRequest {
+}
+message GetCurrentDeploymentIdResponse {
+    DeploymentId deployment_id = 1;
 }

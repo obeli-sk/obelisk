@@ -1296,4 +1296,16 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             grpc_gen::ListDeploymentStatesResponse { deployments },
         ))
     }
+
+    #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
+    async fn get_current_deployment_id(
+        &self,
+        _request: tonic::Request<grpc_gen::GetCurrentDeploymentIdRequest>,
+    ) -> TonicRespResult<grpc_gen::GetCurrentDeploymentIdResponse> {
+        Ok(tonic::Response::new(
+            grpc_gen::GetCurrentDeploymentIdResponse {
+                deployment_id: Some(self.deployment_id.into()),
+            },
+        ))
+    }
 }

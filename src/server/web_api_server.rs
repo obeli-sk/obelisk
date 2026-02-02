@@ -2,7 +2,7 @@ use crate::{
     command::server::{self, SubmitError, SubmitOutcome},
     server::web_api_server::{
         components::{component_wit, components_list},
-        deployment::list_deployments,
+        deployment::{get_current_deployment_id, list_deployments},
     },
 };
 use axum::{
@@ -111,6 +111,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::put(execution_upgrade),
         )
         .route("/deployments", routing::get(list_deployments))
+        .route("/deployment-id", routing::get(get_current_deployment_id))
 }
 
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
@@ -1473,6 +1474,16 @@ mod deployment {
                 }
                 output.into_response()
             }
+        })
+    }
+
+    pub(crate) async fn get_current_deployment_id(
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        Ok(match accept {
+            AcceptHeader::Json => Json(state.deployment_id).into_response(),
+            AcceptHeader::Text => state.deployment_id.to_string().into_response(),
         })
     }
 }
