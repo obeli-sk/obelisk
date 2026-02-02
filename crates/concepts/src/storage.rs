@@ -946,6 +946,13 @@ pub trait DbExternalApi: DbConnection {
         pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentState>, DbErrorRead>;
 }
+pub const LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH: u16 = 20;
+pub const LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION: Pagination<Option<DeploymentId>> =
+    Pagination::OlderThan {
+        length: LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
+        cursor: None,
+        including_cursor: false,
+    };
 
 pub struct DeploymentState {
     pub deployment_id: DeploymentId,
@@ -956,6 +963,19 @@ pub struct DeploymentState {
     pub scheduled: u32,
     pub blocked: u32,
     pub finished: u32,
+}
+impl DeploymentState {
+    #[must_use]
+    pub fn new(deployment_id: DeploymentId) -> Self {
+        DeploymentState {
+            deployment_id,
+            locked: 0,
+            pending: 0,
+            scheduled: 0,
+            blocked: 0,
+            finished: 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1457,7 +1477,7 @@ impl ExecutionListPagination {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pagination<T> {
     NewerThan {
         length: u16,

@@ -3,7 +3,6 @@ use crate::command::server::ComponentSourceMap;
 use crate::command::server::GET_STATUS_POLLING_SLEEP;
 use crate::command::server::MatchableSourceMap;
 use crate::command::server::SubmitError;
-use crate::server::DEFAULT_DEPLOYMENT_STATES_LENGTH;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
@@ -24,8 +23,11 @@ use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbPool;
+use concepts::storage::DeploymentState;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
+use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH;
+use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION;
 use concepts::storage::ListExecutionsFilter;
 use concepts::storage::LogFilter;
 use concepts::storage::LogInfoAppendRow;
@@ -1237,41 +1239,46 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .await
             .map_err(map_to_status)?;
 
-        let (length, cursor, including_cursor) = match request.pagination.as_ref() {
-            Some(list_deployment_states_request::Pagination::NewerThan(p)) => (
-                u16::try_from(p.length)
-                    .ok()
-                    .unwrap_or(DEFAULT_DEPLOYMENT_STATES_LENGTH),
-                p.cursor
-                    .as_ref()
-                    .map(|c| DeploymentId::try_from(c.clone()))
-                    .transpose()?,
-                p.including_cursor,
-            ),
-            Some(list_deployment_states_request::Pagination::OlderThan(p)) => (
-                u16::try_from(p.length)
-                    .ok()
-                    .unwrap_or(DEFAULT_DEPLOYMENT_STATES_LENGTH),
-                p.cursor
-                    .as_ref()
-                    .map(|c| DeploymentId::try_from(c.clone()))
-                    .transpose()?,
-                p.including_cursor,
-            ),
-            None => (DEFAULT_DEPLOYMENT_STATES_LENGTH, None, false),
+        let pagination = match request.pagination.as_ref() {
+            Some(list_deployment_states_request::Pagination::NewerThan(p)) => {
+                Pagination::OlderThan {
+                    length: u16::try_from(p.length)
+                        .ok()
+                        .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+                    cursor: p
+                        .cursor
+                        .as_ref()
+                        .map(|c| DeploymentId::try_from(c.clone()))
+                        .transpose()?,
+                    including_cursor: p.including_cursor,
+                }
+            }
+            Some(list_deployment_states_request::Pagination::OlderThan(p)) => {
+                Pagination::OlderThan {
+                    length: u16::try_from(p.length)
+                        .ok()
+                        .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+                    cursor: p
+                        .cursor
+                        .as_ref()
+                        .map(|c| DeploymentId::try_from(c.clone()))
+                        .transpose()?,
+                    including_cursor: p.including_cursor,
+                }
+            }
+            None => LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION,
         };
 
-        let states = conn
-            .list_deployment_states(
-                Utc::now(),
-                Pagination::OlderThan {
-                    length,
-                    cursor,
-                    including_cursor,
-                },
-            )
+        let mut states = conn
+            .list_deployment_states(Utc::now(), pagination)
             .await
             .to_status()?;
+
+        if pagination == LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION
+            && states.first().map(|dep| dep.deployment_id) != Some(self.deployment_id)
+        {
+            states.insert(0, DeploymentState::new(self.deployment_id));
+        }
 
         let deployments: Vec<_> = states
             .into_iter()

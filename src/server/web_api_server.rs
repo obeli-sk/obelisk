@@ -1371,10 +1371,7 @@ pub(crate) mod components {
 }
 
 mod deployment {
-    use crate::server::{
-        DEFAULT_DEPLOYMENT_STATES_LENGTH,
-        web_api_server::{AcceptHeader, ErrorWrapper, HttpResponse, WebApiState},
-    };
+    use crate::server::web_api_server::{AcceptHeader, ErrorWrapper, HttpResponse, WebApiState};
     use axum::{
         Json,
         extract::{Query, State},
@@ -1383,7 +1380,10 @@ mod deployment {
     use chrono::Utc;
     use concepts::{
         prefixed_ulid::DeploymentId,
-        storage::{DeploymentState, Pagination},
+        storage::{
+            DeploymentState, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
+            LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION, Pagination,
+        },
     };
     use serde::{Deserialize, Serialize};
     use std::{fmt::Write as _, sync::Arc};
@@ -1433,18 +1433,23 @@ mod deployment {
             .external_api_conn()
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
-
-        let states = conn
-            .list_deployment_states(
-                Utc::now(),
-                Pagination::OlderThan {
-                    length: params.length.unwrap_or(DEFAULT_DEPLOYMENT_STATES_LENGTH),
-                    cursor: params.cursor_from,
-                    including_cursor: params.including_cursor,
-                },
-            )
+        let pagination = Pagination::OlderThan {
+            length: params
+                .length
+                .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+            cursor: params.cursor_from,
+            including_cursor: params.including_cursor,
+        };
+        let mut states = conn
+            .list_deployment_states(Utc::now(), pagination)
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
+
+        if pagination == LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION
+            && states.first().map(|dep| dep.deployment_id) != Some(state.deployment_id)
+        {
+            states.insert(0, DeploymentState::new(state.deployment_id));
+        }
 
         let states: Vec<DeploymentStateSer> = states
             .into_iter()
