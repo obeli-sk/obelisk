@@ -1,3 +1,4 @@
+use crate::generated::obelisk::log::log;
 use generated::export;
 use generated::exports::testing::sleep_workflow::workflow::Guest;
 use generated::obelisk::types::execution::ResponseId;
@@ -19,6 +20,7 @@ export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn sleep_host_activity(duration: DurationEnum) -> Result<(), ()> {
+        log::info("changed");
         workflow_support::sleep(ScheduleAt::In(duration)).expect("not cancelled");
         Ok(())
     }

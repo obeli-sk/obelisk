@@ -12,11 +12,19 @@ world root {
   import testing:sleep/sleep;
   import testing:sleep-obelisk-ext/sleep;
   import testing:sleep-obelisk-schedule/sleep;
+  import obelisk:log/log@1.0.0;
 
   export testing:sleep-workflow/workflow;
   export testing:sleep-workflow-obelisk-ext/workflow;
   export testing:sleep-workflow-obelisk-schedule/workflow;
 }
+package obelisk:log@1.0.0 {
+  interface log {
+    info: func(message: string);
+  }
+}
+
+
 package obelisk:types@4.0.0 {
   @since(version = 3.0.0)
   interface time {

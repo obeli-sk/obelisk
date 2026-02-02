@@ -7,4 +7,5 @@ world any {
     import testing:sleep/sleep;
     import testing:sleep-obelisk-ext/sleep;
     import testing:sleep-obelisk-schedule/sleep;
+    import obelisk:log/log@1.0.0;
 }
