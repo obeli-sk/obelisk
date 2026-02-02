@@ -639,7 +639,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 find_in_source_map(matchable_source_map, &component_id, &request.file).await
             } else {
                 debug!("Component {component_id} not found");
-                Err(tonic::Status::not_found("component not found"))
+                Err(tonic::Status::not_found(format!(
+                    "component {component_id} not found in source map"
+                )))
             }
         }
     }
@@ -717,7 +719,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let (component_id, _fn_metadata) = self
             .component_registry_ro
             .find_by_exported_ffqn_submittable(&create_req.ffqn)
-            .must_exist("component")?;
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "component for function '{}' not found",
+                    create_req.ffqn
+                ))
+            })?;
 
         Span::current().record("component_id", tracing::field::display(component_id));
 
@@ -773,7 +780,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             let (component_id, replay_info) = self
                 .component_registry_ro
                 .get_workflow_replay_info(&new)
-                .must_exist("new component")?;
+                .ok_or_else(|| {
+                    tonic::Status::not_found(format!("new component '{new}' not found in registry"))
+                })?;
             let replay_res = WorkflowWorker::replay(
                 self.deployment_id,
                 component_id.clone(),
@@ -832,7 +841,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     grpc_gen::LogLevel::try_from(lvl)
                         .map_err(|err| {
                             debug!("Cannot convert level {err:?}");
-                            tonic::Status::invalid_argument("unknown (new?) level filter")
+                            tonic::Status::invalid_argument(format!("unknown level filter: {lvl}"))
                         })
                         .and_then(|lvl| {
                             LogLevel::try_from(lvl).map_err(|err| {
@@ -851,7 +860,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     grpc_gen::LogStreamType::try_from(st)
                         .map_err(|err| {
                             debug!("Cannot convert stream type {err:?}");
-                            tonic::Status::invalid_argument("unknown (new?) stream type filter")
+                            tonic::Status::invalid_argument(format!(
+                                "unknown stream type filter: {st}"
+                            ))
                         })
                         .and_then(|st| {
                             LogStreamType::try_from(st).map_err(|err| {
@@ -1139,7 +1150,11 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
         let wit = self
             .component_registry_ro
             .get_wit(&component_digest)
-            .entity_must_exist()?;
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "WIT not found for component digest '{component_digest}'"
+                ))
+            })?;
         Ok(tonic::Response::new(grpc_gen::GetWitResponse {
             content: wit.map(ToString::to_string),
         }))
