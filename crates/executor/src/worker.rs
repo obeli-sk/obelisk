@@ -103,7 +103,10 @@ pub enum FatalError {
     ParamsParsingError(ParamsParsingError),
     // Used by activity worker, workflow worker
     #[error("cannot instantiate: {reason}")]
-    CannotInstantiate { reason: String, detail: String },
+    CannotInstantiate {
+        reason: String,
+        detail: Option<String>,
+    },
     // Used by activity worker, workflow worker
     #[error(transparent)]
     ResultParsingError(ResultParsingError),
@@ -152,7 +155,7 @@ impl From<FatalError> for FinishedExecutionError {
             FatalError::CannotInstantiate { reason: _, detail } => FinishedExecutionError {
                 reason: Some(reason_generic),
                 kind: ExecutionFailureKind::Uncategorized,
-                detail: Some(detail),
+                detail,
             },
             FatalError::ResultParsingError(_) | FatalError::ConstraintViolation { reason: _ } => {
                 FinishedExecutionError {

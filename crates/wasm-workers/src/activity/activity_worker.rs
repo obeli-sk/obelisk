@@ -402,7 +402,7 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                 return Err(WorkerError::FatalError(
                     FatalError::CannotInstantiate {
                         reason: format!("{err}"),
-                        detail: format!("{err:?}"),
+                        detail: Some(format!("{err:?}")),
                     },
                     ctx.version.clone(),
                 ));
@@ -415,7 +415,7 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                 .expect("executor only calls `run` with ffqns that are exported");
             instance
                 .get_func(&mut *store, fn_export_index)
-                .expect("exported function must be found")
+                .expect("exported function found with wit-parser but not with wasmtime")
         };
 
         let component_func = func.ty(store);

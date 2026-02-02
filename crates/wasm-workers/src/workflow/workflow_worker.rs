@@ -482,7 +482,7 @@ impl WorkflowWorker {
                 return Err(WorkflowError::FatalError(
                     FatalError::CannotInstantiate {
                         reason: format!("{err}"),
-                        detail: format!("{err:?}"),
+                        detail: Some(format!("{err:?}")),
                     },
                     version,
                 ));
@@ -490,10 +490,18 @@ impl WorkflowWorker {
         };
 
         let func = {
-            let fn_export_index = self
-                .exported_ffqn_to_index
-                .get(&ctx.ffqn)
-                .expect("executor only calls `run` with ffqns that are exported");
+            let Some(fn_export_index) = self.exported_ffqn_to_index.get(&ctx.ffqn) else {
+                return Err(WorkflowError::FatalError(
+                    FatalError::CannotInstantiate {
+                        reason: format!(
+                            "function {} not found in exports of {}",
+                            ctx.ffqn, self.config.component_id
+                        ),
+                        detail: None,
+                    },
+                    store.into_data().db_connection.version,
+                ));
+            };
             instance
                 .get_func(&mut store, fn_export_index)
                 .expect("exported function must be found")
