@@ -481,7 +481,7 @@ impl WorkflowWorker {
                 }
                 return Err(WorkflowError::FatalError(
                     FatalError::CannotInstantiate {
-                        reason: format!("{err}"),
+                        reason: format!("cannot instantiate: {err}"),
                         detail: Some(format!("{err:?}")),
                     },
                     version,

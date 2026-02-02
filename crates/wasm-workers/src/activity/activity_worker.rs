@@ -401,7 +401,7 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                 }
                 return Err(WorkerError::FatalError(
                     FatalError::CannotInstantiate {
-                        reason: format!("{err}"),
+                        reason: format!("cannot instantiate: {err}"),
                         detail: Some(format!("{err:?}")),
                     },
                     ctx.version.clone(),
