@@ -1003,28 +1003,25 @@ async fn create_inner(
     Ok((next_version, pending_at))
 }
 
-#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at, %corresponding_version))]
+#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at))]
 async fn update_state_pending_after_response_appended(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    scheduled_at: DateTime<Utc>,     // Changing to state PendingAt
-    corresponding_version: &Version, // t_execution_log is not changed
+    scheduled_at: DateTime<Utc>, // Changing to state PendingAt
     component_input_digest: InputContentDigest,
 ) -> Result<AppendNotifier, DbErrorWrite> {
     debug!("Setting t_state to Pending(`{scheduled_at:?}`) after response appended");
 
     // Convert types for Postgres arguments
     let execution_id_str = execution_id.to_string();
-    let version = i64::from(corresponding_version.0);
 
     let updated = tx
         .execute(
             r"
             UPDATE t_state
             SET
-                corresponding_version = $1,
-                pending_expires_finished = $2,
-                state = $3,
+                pending_expires_finished = $1,
+                state = $2,
                 updated_at = CURRENT_TIMESTAMP,
 
                 max_retries = NULL,
@@ -1035,13 +1032,12 @@ async fn update_state_pending_after_response_appended(
                 join_set_closing = NULL,
 
                 result_kind = NULL
-            WHERE execution_id = $4
+            WHERE execution_id = $3
             ",
             &[
-                &version,          // $1
-                &scheduled_at,     // $2
-                &STATE_PENDING_AT, // $3
-                &execution_id_str, // $4
+                &scheduled_at,     // $1
+                &STATE_PENDING_AT, // $2
+                &execution_id_str, // $3
             ],
         )
         .await?;
@@ -2598,7 +2594,6 @@ async fn append_response(
             tx,
             execution_id,
             scheduled_at,
-            &combined_state.corresponding_version,
             combined_state.execution_with_state.component_digest,
         )
         .await?
@@ -2932,7 +2927,8 @@ async fn get_responses_after(
                  r.execution_id = $2 AND \
                  ( \
                  r.finished_version = child.version \
-                 OR r.child_execution_id IS NULL \
+                 OR \
+                 r.child_execution_id IS NULL \
                  ) \
                  ORDER BY id \
                  ",

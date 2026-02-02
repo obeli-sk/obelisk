@@ -160,9 +160,9 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 
 /// Stores executions in `PendingState`
 /// `state` to column mapping:
-/// `PendingAt`:            (nothing but required columns), contains `executor_id`, `run_id` only if locked previously. `last_lock_version` must be null.
+/// `PendingAt`:            (nothing but required columns + Preserves `executor_id`, `run_id` only if locked previously.
 /// `Locked`:               `max_retries`, `retry_exp_backoff_millis`, `last_lock_version`, `executor_id`, `run_id`.
-/// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`. Contains `executor_id`, `run_id` from `Locked` state.
+/// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`. Preserves `executor_id`, `run_id` from `Locked` state for lock extensions.
 /// `Finished` :            `result_kind`.
 ///
 /// Column details:
@@ -177,7 +177,10 @@ ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
 /// Only needed for selecting expired locks.
 ///
 /// ## `last_lock_version`
-/// Needed for selecting expired locks, see `ExpiredLock::locked_at_version`.
+/// Needed for selecting expired locks, see [`ExpiredLock::locked_at_version`], cleared unless state is `Locked`.
+///
+/// ## `executor_id`, `run_id`
+/// Set by `Locked` event. When transitioning to `PendingAt` or `BlockedByJoinSet`, those columns should be preserved so that the workflow can extend the lock.
 ///
 /// ## `component_id_input_digest`
 /// Inserted when Created, updated on every Locked event because of locking by ffqn.
@@ -1468,12 +1471,11 @@ impl SqlitePool {
         Ok((next_version, pending_at))
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at, %corresponding_version))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at))]
     fn update_state_pending_after_response_appended(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        scheduled_at: DateTime<Utc>,     // Changing to state PendingAt
-        corresponding_version: &Version, // t_execution_log is not changed
+        scheduled_at: DateTime<Utc>, // Changing to state PendingAt
         component_input_digest: InputContentDigest,
     ) -> Result<AppendNotifier, DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after response appended");
@@ -1482,11 +1484,9 @@ impl SqlitePool {
                 r"
                 UPDATE t_state
                 SET
-                    corresponding_version = :corresponding_version,
                     pending_expires_finished = :pending_expires_finished,
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
-
                     max_retries = NULL,
                     retry_exp_backoff_millis = NULL,
                     last_lock_version = NULL,
@@ -1507,7 +1507,6 @@ impl SqlitePool {
         let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id,
-                ":corresponding_version": corresponding_version.0,
                 ":pending_expires_finished": scheduled_at,
                 ":state": STATE_PENDING_AT,
             })
@@ -1541,8 +1540,6 @@ impl SqlitePool {
         component_input_digest: InputContentDigest,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
-        // If response idx is unknown, use 0. This distinguishes the two paths.
-        // JoinNext will always send an actual idx.
         let mut stmt = tx.prepare_cached(
             r"
                 UPDATE t_state
@@ -1562,7 +1559,7 @@ impl SqlitePool {
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id;
-            ",
+            ", // `executor_id` and `run_id` are preserved for lock extension.
         )?;
         let updated = stmt
             .execute(named_params! {
@@ -1671,6 +1668,7 @@ impl SqlitePool {
         Ok(intermittent_event_count)
     }
 
+    /// Appending [`HistoryEvent::JoinNext`].
     fn update_state_blocked(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -2666,7 +2664,6 @@ impl SqlitePool {
                 tx,
                 execution_id,
                 scheduled_at,
-                &combined_state.corresponding_version, // not changing the version
                 combined_state.execution_with_state.component_digest,
             )?
         } else {
