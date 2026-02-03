@@ -3337,7 +3337,7 @@ impl DbExecutor for PostgresConnection {
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
-    ) -> Result<LockPendingResponse, DbErrorGeneric> {
+    ) -> Result<LockPendingResponse, DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
@@ -3378,7 +3378,9 @@ impl DbExecutor for PostgresConnection {
             {
                 Ok(locked) => locked_execs.push(locked),
                 Err(err) => {
-                    warn!("Locking row {execution_id} failed - {err:?}");
+                    tx.rollback().await?; // lock_single_execution performs multiple writes
+                    debug!("Locking row {execution_id} failed - {err:?}");
+                    return Err(err);
                 }
             }
         }
@@ -3400,7 +3402,7 @@ impl DbExecutor for PostgresConnection {
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
-    ) -> Result<LockPendingResponse, DbErrorGeneric> {
+    ) -> Result<LockPendingResponse, DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
@@ -3438,7 +3440,9 @@ impl DbExecutor for PostgresConnection {
             {
                 Ok(locked) => locked_execs.push(locked),
                 Err(err) => {
-                    warn!("Locking row {execution_id} failed - {err:?}");
+                    tx.rollback().await?; // lock_single_execution performs multiple writes
+                    debug!("Locking row {execution_id} failed - {err:?}");
+                    return Err(err);
                 }
             }
         }

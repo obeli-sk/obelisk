@@ -719,7 +719,7 @@ pub trait DbExecutor: Send + Sync {
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
-    ) -> Result<LockPendingResponse, DbErrorGeneric>;
+    ) -> Result<LockPendingResponse, DbErrorWrite>;
 
     #[expect(clippy::too_many_arguments)]
     async fn lock_pending_by_component_digest(
@@ -733,7 +733,7 @@ pub trait DbExecutor: Send + Sync {
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
-    ) -> Result<LockPendingResponse, DbErrorGeneric>;
+    ) -> Result<LockPendingResponse, DbErrorWrite>;
 
     #[cfg(feature = "test")]
     #[expect(clippy::too_many_arguments)]

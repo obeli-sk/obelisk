@@ -54,7 +54,7 @@ impl DbExecutor for InMemoryDbConnection {
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
-    ) -> Result<LockPendingResponse, DbErrorGeneric> {
+    ) -> Result<LockPendingResponse, DbErrorWrite> {
         Ok(self.0.lock().unwrap().lock_pending_by_ffqns(
             batch_size,
             pending_at_or_sooner,
@@ -81,7 +81,7 @@ impl DbExecutor for InMemoryDbConnection {
         lock_expires_at: DateTime<Utc>,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
-    ) -> Result<LockPendingResponse, DbErrorGeneric> {
+    ) -> Result<LockPendingResponse, DbErrorWrite> {
         Ok(self.0.lock().unwrap().lock_pending_by_component_id(
             batch_size,
             pending_at_or_sooner,

@@ -273,7 +273,7 @@ impl ExecTask {
         executed_at: DateTime<Utc>,
         run_id: RunId,
         deployment_id: DeploymentId,
-    ) -> Result<ExecutionProgress, DbErrorGeneric> {
+    ) -> Result<ExecutionProgress, DbErrorWrite> {
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
             if permits.is_empty() {
