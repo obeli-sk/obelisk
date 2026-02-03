@@ -174,15 +174,12 @@
             nativeBuildInputs = with pkgs;
               [
                 (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
-                cargo-binstall
                 cargo-edit
                 cargo-expand
-                cargo-generate
                 cargo-insta
                 cargo-nextest
                 cargo-zigbuild # only here for dev-deps
                 jq
-                grpcurl
                 litecli
                 nixd
                 nixpkgs-fmt
