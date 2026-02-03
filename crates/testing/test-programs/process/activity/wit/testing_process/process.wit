@@ -11,4 +11,6 @@ interface process {
 
     subscribe-wait: func() -> result<_, string>;
 
+    get-env: func() -> result<list<tuple<string,string>>, string>;
+
 }

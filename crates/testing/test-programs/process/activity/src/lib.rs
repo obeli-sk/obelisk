@@ -237,4 +237,8 @@ impl Guest for Component {
     fn subscribe_wait() -> Result<(), String> {
         block_on(async move { self::subscribe_wait().await.map_err(|err| err.to_string()) })
     }
+
+    fn get_env() -> Result<Vec<(String, String)>, String> {
+        Ok(std::env::vars().collect())
+    }
 }
