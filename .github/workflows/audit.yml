@@ -1,6 +1,7 @@
 name: Security audit
 
 on:
+  pull_request:
   workflow_dispatch:
   push:
     paths:
