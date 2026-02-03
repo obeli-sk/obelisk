@@ -364,6 +364,7 @@ clippy.if_not_else = "allow"
 clippy.unnecessary_debug_formatting = "allow"
 clippy.too_many_lines = "allow"
 clippy.map_unwrap_or = "allow" # More readable than .map_or_else with reverse parameters.
+clippy.items_after_statements = "allow" # keep nested types near to their usage
 
 [workspace.lints.rust]
 unexpected_cfgs = "deny"

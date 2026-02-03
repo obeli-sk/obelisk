@@ -2163,7 +2163,6 @@ impl ExecutionMetadata {
     /// the stdout layer of the subscriber, use the `span` which is guaranteed
     /// to be on info level.
     #[must_use]
-    #[expect(clippy::items_after_statements)]
     fn create(span: &Span, link_marker: bool) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
         let mut metadata = Self(Some(hashbrown::HashMap::default()));

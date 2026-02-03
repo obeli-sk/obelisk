@@ -490,7 +490,6 @@ pub(crate) fn packages_except_main(
 }
 
 // Replace obelisk:types from the actual WASM file because it may not contain all types we are going to need in exported functions.
-#[expect(clippy::items_after_statements)]
 fn replace_obelisk_types(wit: &str) -> String {
     // Replace last character of the first line from ; to {
     let types_nesting = {

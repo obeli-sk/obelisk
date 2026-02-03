@@ -770,10 +770,14 @@ enum TxType {
 #[derive(Clone)]
 struct CommitError(RusqliteError);
 
+#[derive(Debug)]
+struct ShouldRollback;
+
 #[derive(derive_more::Debug)]
 struct LogicalTx {
     #[debug(skip)]
-    func: Box<dyn FnMut(&mut Transaction) -> Result<(), ()> + Send>,
+    #[expect(clippy::type_complexity)]
+    func: Box<dyn FnMut(&mut Transaction) -> Result<(), ShouldRollback> + Send>,
     sent_at: Instant,
     func_name: &'static str,
     #[debug(skip)]
@@ -1168,7 +1172,7 @@ impl SqlitePool {
         type CommitResult = Result<(), CommitError>;
         fn try_apply_all(
             mut ptx: Transaction<'_>,
-            ltx_list: &mut Vec<(LogicalTx, ApplyOrSkip)>,
+            ltx_list: &mut [(LogicalTx, ApplyOrSkip)],
             histograms: &mut Histograms,
             all_fns_start: Instant,
         ) -> Result<CommitResult, NeedsRestart> {
@@ -1176,8 +1180,8 @@ impl SqlitePool {
                 .iter_mut()
                 .filter(|(_, former_res)| *former_res == ApplyOrSkip::Apply)
             {
-                let ltx_res = SqlitePool::ltx_apply_to_phytx(ltx, &mut ptx, histograms);
-                if ltx_res.is_err() {
+                if let Ok(()) = SqlitePool::ltx_apply_to_phytx(ltx, &mut ptx, histograms) {
+                } else {
                     *former_res = ApplyOrSkip::Skip;
                     // ptx rollbacks on drop
                     return Err(NeedsRestart);
@@ -1194,9 +1198,9 @@ impl SqlitePool {
             Ok(commit_result)
         }
 
-        fn apply_all<'c>(
-            conn: &'c mut Connection,
-            ltx_list: &mut Vec<(LogicalTx, ApplyOrSkip)>,
+        fn apply_all(
+            conn: &mut Connection,
+            ltx_list: &mut [(LogicalTx, ApplyOrSkip)],
             histograms: &mut Histograms,
             all_fns_start: Instant,
             shutdown_requested: &AtomicBool,
@@ -1249,7 +1253,7 @@ impl SqlitePool {
         ltx: &mut LogicalTx,
         physical_tx: &mut Transaction,
         histograms: &mut Histograms,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ShouldRollback> {
         let sent_latency = ltx.sent_at.elapsed();
         let started_at = Instant::now();
         let res = (ltx.func)(physical_tx);
@@ -1329,7 +1333,11 @@ impl SqlitePool {
                 func: Box::new(move |tx| {
                     let _guard = current_span.enter();
                     let func_res = func(tx);
-                    let res = if func_res.is_ok() { Ok(()) } else { Err(()) };
+                    let res = if func_res.is_ok() {
+                        Ok(())
+                    } else {
+                        Err(ShouldRollback)
+                    };
                     // save result to be sent to the caller
                     *fn_res.lock().unwrap() = Some(func_res);
                     match tx_type {
@@ -2614,7 +2622,7 @@ impl SqlitePool {
                     PendingState::Finished { .. } => {
                         unreachable!("handled above");
                     }
-                    PendingState::Paused { .. } => {
+                    PendingState::Paused => {
                         return Err(DbErrorWriteNonRetriable::IllegalState {
                             reason: "cannot pause, execution is already paused".into(),
                             context: SpanTrace::capture(),
@@ -3586,12 +3594,12 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         paused_at: DateTime<Utc>,
     ) -> Result<Version, DbErrorWrite> {
-        let combined_state = Self::get_combined_state(tx, &execution_id)?;
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
         let appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Pausing with {appending_version}");
         let (next_version, _) = Self::append(
             tx,
-            &execution_id,
+            execution_id,
             AppendRequest {
                 created_at: paused_at,
                 event: ExecutionRequest::Paused,
@@ -3606,12 +3614,12 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         paused_at: DateTime<Utc>,
     ) -> Result<Version, DbErrorWrite> {
-        let combined_state = Self::get_combined_state(tx, &execution_id)?;
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
         let appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Unpausing with {appending_version}");
         let (next_version, _) = Self::append(
             tx,
-            &execution_id,
+            execution_id,
             AppendRequest {
                 created_at: paused_at,
                 event: ExecutionRequest::Unpaused,

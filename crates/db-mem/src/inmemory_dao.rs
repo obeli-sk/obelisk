@@ -572,7 +572,7 @@ mod index {
                 }
                 PendingState::BlockedByJoinSet { .. }
                 | PendingState::Finished { .. }
-                | PendingState::Paused { .. } => {}
+                | PendingState::Paused => {}
             }
             // Add all open async timers
             let mut delay_req_resp = journal

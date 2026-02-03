@@ -2512,7 +2512,7 @@ async fn append(
                 PendingState::Finished { .. } => {
                     unreachable!("handled above");
                 }
-                PendingState::Paused { .. } => {
+                PendingState::Paused => {
                     return Err(DbErrorWriteNonRetriable::IllegalState {
                         reason: "cannot pause, execution is already paused".into(),
                         context: SpanTrace::capture(),
@@ -3091,7 +3091,7 @@ async fn get_pending_of_single_ffqn(
     let rows = tx
         .query(
             &format!(
-                r#"
+                r"
                 SELECT execution_id, corresponding_version FROM t_state
                 WHERE
                 state = '{STATE_PENDING_AT}' AND
@@ -3100,7 +3100,7 @@ async fn get_pending_of_single_ffqn(
                 ORDER BY pending_expires_finished
                 {}
                 LIMIT $3
-                "#,
+                ",
                 if select_strategy == SelectStrategy::LockForUpdate {
                     "FOR UPDATE SKIP LOCKED"
                 } else {
@@ -3184,7 +3184,7 @@ async fn get_pending_by_component_input_digest(
     let rows = tx
         .query(
             &format!(
-                r#"
+                r"
                 SELECT execution_id, corresponding_version FROM t_state WHERE
                 state = '{STATE_PENDING_AT}' AND
                 pending_expires_finished <= $1 AND
@@ -3193,7 +3193,7 @@ async fn get_pending_by_component_input_digest(
                 ORDER BY pending_expires_finished
                 {}
                 LIMIT $3
-                "#,
+                ",
                 if select_strategy == SelectStrategy::LockForUpdate {
                     "FOR UPDATE SKIP LOCKED"
                 } else {
