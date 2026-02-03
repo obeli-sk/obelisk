@@ -1647,22 +1647,12 @@ pub enum PendingState {
     /// Caused by [`ExecutionRequest::Locked`].
     Locked(PendingStateLocked),
 
-    #[display("PendingAt(`{scheduled_at}`)")]
-    PendingAt {
-        scheduled_at: DateTime<Utc>,
-        /// `last_lock` is needed for lock extension.
-        last_lock: Option<LockedBy>,
-    },
+    #[display("PendingAt(`{_0}`)")]
+    PendingAt(PendingStatePendingAt),
 
     /// Caused by [`HistoryEvent::JoinNext`]
-    #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
-    BlockedByJoinSet {
-        join_set_id: JoinSetId,
-        /// See [`HistoryEvent::JoinNext::lock_expires_at`].
-        lock_expires_at: DateTime<Utc>,
-        /// Blocked by closing of the join set
-        closing: bool,
-    },
+    #[display("BlockedByJoinSet({_0})")]
+    BlockedByJoinSet(PendingStateBlockedByJoinSet),
 
     #[display("Paused")]
     Paused,
@@ -1679,6 +1669,24 @@ pub enum PendingState {
 pub struct PendingStateLocked {
     pub locked_by: LockedBy,
     pub lock_expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[display("`{scheduled_at}`, last_lock={last_lock:?}")]
+pub struct PendingStatePendingAt {
+    pub scheduled_at: DateTime<Utc>,
+    /// `last_lock` is needed for lock extension.
+    pub last_lock: Option<LockedBy>,
+}
+
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[display("{join_set_id}, `{lock_expires_at}`, closing={closing}")]
+pub struct PendingStateBlockedByJoinSet {
+    pub join_set_id: JoinSetId,
+    /// See [`HistoryEvent::JoinNext::lock_expires_at`].
+    pub lock_expires_at: DateTime<Utc>,
+    /// Blocked by closing of the join set
+    pub closing: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1756,10 +1764,10 @@ impl PendingState {
             ));
         }
         match self {
-            PendingState::PendingAt {
+            PendingState::PendingAt(PendingStatePendingAt {
                 scheduled_at,
                 last_lock,
-            } => {
+            }) => {
                 if *scheduled_at <= created_at {
                     // pending now, ok to lock
                     Ok(LockKind::CreatingNewLock)

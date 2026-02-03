@@ -460,7 +460,9 @@ mod index {
     use crate::journal::ExecutionJournal;
     use concepts::component_id::InputContentDigest;
     use concepts::prefixed_ulid::DelayId;
-    use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse, PendingStateLocked};
+    use concepts::storage::{
+        HistoryEvent, JoinSetRequest, JoinSetResponse, PendingStateLocked, PendingStatePendingAt,
+    };
     use tracing::trace;
 
     #[derive(Debug, Default)]
@@ -547,10 +549,10 @@ mod index {
             self.purge(execution_id);
             // Add it again if needed
             match journal.pending_state {
-                PendingState::PendingAt {
+                PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: _,
-                } => {
+                }) => {
                     self.pending_scheduled
                         .entry(scheduled_at)
                         .or_default()
@@ -570,7 +572,7 @@ mod index {
                         .or_default()
                         .push(lock_expires_at);
                 }
-                PendingState::BlockedByJoinSet { .. }
+                PendingState::BlockedByJoinSet(..)
                 | PendingState::Finished { .. }
                 | PendingState::Paused => {}
             }
@@ -886,7 +888,7 @@ impl DbHolder {
         }
         let next_version = journal.append(created_at, event, appending_version)?;
         self.index.update(journal);
-        if matches!(journal.pending_state, PendingState::PendingAt { .. })
+        if matches!(journal.pending_state, PendingState::PendingAt(..))
             && let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn())
         {
             let _ = subscription.try_send(());
@@ -997,7 +999,7 @@ impl DbHolder {
         }
         let version = journal.version();
         self.index.update(journal);
-        if matches!(journal.pending_state, PendingState::PendingAt { .. })
+        if matches!(journal.pending_state, PendingState::PendingAt(..))
             && let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn())
         {
             let _ = subscription.try_send(());
@@ -1053,7 +1055,7 @@ impl DbHolder {
         };
         journal.append_response(response_event.created_at, response_event.event)?;
         self.index.update(journal);
-        if matches!(journal.pending_state, PendingState::PendingAt { .. })
+        if matches!(journal.pending_state, PendingState::PendingAt(..))
             && let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn())
         {
             let _ = subscription.try_send(());

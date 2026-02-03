@@ -797,7 +797,7 @@ pub(crate) mod tests {
         use super::*;
         use crate::engines::PoolingOptions;
         use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
-        use concepts::storage::{Locked, LockedBy, PendingState};
+        use concepts::storage::{Locked, LockedBy, PendingState, PendingStatePendingAt};
         use concepts::time::Now;
         use concepts::{
             ComponentRetryConfig, ExecutionFailureKind, FinishedExecutionError,
@@ -1644,10 +1644,10 @@ pub(crate) mod tests {
                 .unwrap()
                 .pending_state;
             let (scheduled_at, found_run_id) = assert_matches!(pending_state,
-                PendingState::PendingAt {
+                PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: Some(LockedBy { executor_id: _, run_id }),
-                }
+                })
             => (scheduled_at, run_id));
             // retry_exp_backoff is 0
             assert_eq!(sim_clock.now(), scheduled_at);

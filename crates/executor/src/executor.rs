@@ -880,7 +880,9 @@ mod tests {
         CreateRequest, DbConnectionTest, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
     };
     use concepts::storage::{DbPoolCloseable, LockedBy};
-    use concepts::storage::{ExecutionEvent, ExecutionRequest, HistoryEvent, PendingState};
+    use concepts::storage::{
+        ExecutionEvent, ExecutionRequest, HistoryEvent, PendingState, PendingStatePendingAt,
+    };
     use concepts::time::{ConstClock, Now};
     use concepts::{
         FunctionMetadata, JoinSetKind, ParameterTypes, Params, RETURN_TYPE_DUMMY,
@@ -1549,10 +1551,10 @@ mod tests {
             .unwrap();
         assert_matches!(
             parent_log.pending_state,
-            PendingState::PendingAt {
+            PendingState::PendingAt(PendingStatePendingAt {
                 scheduled_at,
                 last_lock: Some(LockedBy { executor_id: found_executor_id, run_id: _}),
-            } if scheduled_at == sim_clock.now() && found_executor_id == parent_executor_id,
+            }) if scheduled_at == sim_clock.now() && found_executor_id == parent_executor_id,
             "parent should be back to pending"
         );
         let (found_join_set_id, found_child_execution_id, child_finished_version, found_result) = assert_matches!(
@@ -1729,13 +1731,13 @@ mod tests {
         );
         assert_matches!(
             execution_log.pending_state,
-            PendingState::PendingAt {
+            PendingState::PendingAt(PendingStatePendingAt {
                 scheduled_at: found_scheduled_by,
                 last_lock: Some(LockedBy {
                     executor_id: found_executor_id,
                     run_id: _,
                 }),
-            } if found_scheduled_by == expected_first_timeout_expiry && found_executor_id == exec_config.executor_id
+            }) if found_scheduled_by == expected_first_timeout_expiry && found_executor_id == exec_config.executor_id
         );
         sim_clock.move_time_forward(timeout_duration);
         let now_after_first_timeout = sim_clock.now();

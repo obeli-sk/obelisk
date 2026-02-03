@@ -1525,8 +1525,8 @@ pub(crate) mod tests {
     use concepts::storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest, DbPool,
         ExecutionEvent, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest,
-        Locked, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind,
+        Locked, PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStatePendingAt,
     };
     use concepts::storage::{DbPoolCloseable, ExecutionLog};
     use concepts::time::{ClockFn, Now};
@@ -2207,7 +2207,7 @@ pub(crate) mod tests {
                     .collect();
                 assert_eq!(run + 1, closing_join_nexts.len());
                 // Cancelled means we block on a join set but add a response => pending now
-                assert_matches!(&execution_log.pending_state, PendingState::PendingAt { .. });
+                assert_matches!(&execution_log.pending_state, PendingState::PendingAt(..));
 
                 info!("Advancing the worker");
                 let execution_log = db_connection.get(&execution_id).await.unwrap();
@@ -2471,11 +2471,14 @@ pub(crate) mod tests {
                 .pending_state;
             info!("Got {pending_state:?}");
             let join_set_id = match pending_state {
-                PendingState::BlockedByJoinSet { join_set_id, .. } => join_set_id,
-                PendingState::PendingAt {
+                PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
+                    join_set_id,
+                    ..
+                }) => join_set_id,
+                PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: _,
-                } if scheduled_at <= sim_clock.now() => {
+                }) if scheduled_at <= sim_clock.now() => {
                     // Can happen when join set cancels delay requests.
                     continue;
                 }

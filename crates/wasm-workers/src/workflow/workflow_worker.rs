@@ -942,8 +942,9 @@ pub(crate) mod tests {
         ComponentType,
         prefixed_ulid::{ExecutorId, RunId},
         storage::{
-            CreateRequest, DbPoolCloseable, PendingState, PendingStateFinished,
-            PendingStateFinishedResultKind, Version, wait_for_pending_state_fn,
+            CreateRequest, DbPoolCloseable, PendingState, PendingStateBlockedByJoinSet,
+            PendingStateFinished, PendingStateFinishedResultKind, PendingStatePendingAt, Version,
+            wait_for_pending_state_fn,
         },
     };
     use db_tests::Database;
@@ -1194,7 +1195,7 @@ pub(crate) mod tests {
             |exe_history| {
                 matches!(
                     exe_history.pending_state,
-                    PendingState::BlockedByJoinSet { .. }
+                    PendingState::BlockedByJoinSet(..)
                 )
                 .then_some(())
             },
@@ -1406,7 +1407,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .pending_state;
-            assert_matches!(pending_state, PendingState::BlockedByJoinSet {lock_expires_at, .. } => lock_expires_at)
+            assert_matches!(pending_state, PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {lock_expires_at, .. }) => lock_expires_at)
         };
         assert_eq!(sim_clock.now(), blocked_until);
         // expired_timers_watcher should see the AsyncDelay and send the response.
@@ -1541,7 +1542,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .pending_state;
-            assert_matches!(pending_state, PendingState::BlockedByJoinSet {lock_expires_at, .. } => lock_expires_at)
+            assert_matches!(pending_state, PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {lock_expires_at, .. }) => lock_expires_at)
         };
         match join_next_blocking_strategy {
             JoinNextBlockingStrategy::Interrupt => assert_eq!(sim_clock.now(), blocked_until),
@@ -1579,10 +1580,10 @@ pub(crate) mod tests {
 
             let (actual_pending_at, found_executor_id, found_run_id) = assert_matches!(
                 pending_state,
-                PendingState::PendingAt {
+                PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: Some(LockedBy { executor_id, run_id }),
-                }
+                })
                 => (scheduled_at, executor_id, run_id)
             );
             assert_eq!(executor_id, found_executor_id);
@@ -2253,10 +2254,10 @@ pub(crate) mod tests {
             .unwrap()
             .pending_state;
         let (scheduled_at, found_executor_id, found_run_id) = assert_matches!(pending_state,
-            PendingState::PendingAt {
+            PendingState::PendingAt(PendingStatePendingAt {
                 scheduled_at,
                 last_lock: Some(LockedBy { executor_id, run_id }),
-            }
+            })
             => (scheduled_at, executor_id, run_id));
         assert_eq!(sim_clock.now(), scheduled_at);
         assert_eq!(executor_id, found_executor_id);
@@ -2420,7 +2421,7 @@ pub(crate) mod tests {
                 .unwrap()
                 .pending_state;
 
-            assert_matches!(pending_state, PendingState::BlockedByJoinSet { .. });
+            assert_matches!(pending_state, PendingState::BlockedByJoinSet(..));
 
             sim_clock.move_time_forward(delay);
             {
@@ -2623,11 +2624,11 @@ pub(crate) mod tests {
             .unwrap()
             .pending_state;
         let join_set_id = assert_matches!(pending_state,
-            PendingState::BlockedByJoinSet {
+            PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
                 join_set_id,
                 lock_expires_at:_,
                 closing: false,
-            } => join_set_id);
+            }) => join_set_id);
         let stub_execution_id = execution_id.next_level(&join_set_id);
         write_stub_response(
             db_connection.as_ref(),
@@ -2787,11 +2788,11 @@ pub(crate) mod tests {
             .pending_state;
         assert_matches!(
             pending_state,
-            PendingState::BlockedByJoinSet {
+            PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
                 join_set_id: _,
                 lock_expires_at: _,
                 closing: false,
-            }
+            })
         );
 
         // 2. Tick the activity executor

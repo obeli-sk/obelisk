@@ -6,7 +6,8 @@ use concepts::storage::{
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest,
     ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, JoinSetRequest,
     JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, PendingState,
-    PendingStateLocked, Version, WasmBacktrace,
+    PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt, Version,
+    WasmBacktrace,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
@@ -964,10 +965,10 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
         let parent_log = db_connection.get(&parent_id).await.unwrap();
         assert_matches!(
             parent_log.pending_state,
-            PendingState::PendingAt {
+            PendingState::PendingAt(PendingStatePendingAt {
                 scheduled_at,
                 last_lock: None,
-            } if scheduled_at == sim_clock.now()
+            }) if scheduled_at == sim_clock.now()
         );
         // Create child 1
         let child_id = parent_id.next_level(&join_set_id);
@@ -1009,11 +1010,11 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
         let parent_exe = db_connection.get(&parent_id).await.unwrap();
         assert_matches!(
             parent_exe.pending_state,
-            PendingState::BlockedByJoinSet {
+            PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
                 join_set_id: found_join_set_id,
                 lock_expires_at,
                 closing: false,
-            }
+            })
             if found_join_set_id == join_set_id && lock_expires_at == sim_clock.now()
         );
 
@@ -1045,7 +1046,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
             .unwrap();
 
         let parent_exe = db_connection.get(&parent_id).await.unwrap();
-        assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
+        assert_matches!(parent_exe.pending_state, PendingState::PendingAt(..));
         version = parent_exe.next_version;
 
         child_id
@@ -1116,7 +1117,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
             .await
             .unwrap();
         let parent_exe = db_connection.get(&parent_id).await.unwrap();
-        assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
+        assert_matches!(parent_exe.pending_state, PendingState::PendingAt(..));
 
         child_id
     };
@@ -1150,7 +1151,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
             }
         }
     );
-    assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
+    assert_matches!(parent_exe.pending_state, PendingState::PendingAt(..));
 }
 
 enum LockingStrategyLifecycle {
@@ -2041,7 +2042,7 @@ async fn pause_and_unpause_should_work(database: Database) {
 
     // Verify state is pending at the original scheduled time
     let log = db_connection.get(&execution_id).await.unwrap();
-    if let PendingState::PendingAt { scheduled_at, .. } = log.pending_state {
+    if let PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) = log.pending_state {
         assert_eq!(scheduled_at, original_scheduled_at);
     } else {
         panic!("Expected PendingAt state, got {:?}", log.pending_state);

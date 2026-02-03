@@ -17,9 +17,10 @@ use concepts::{
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter,
         ListLogsResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry,
         LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
-        PendingState, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
-        ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
+        PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
+        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt, ResponseCursor,
+        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
+        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
     },
 };
 use const_format::formatcp;
@@ -585,10 +586,10 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::PendingAt {
+                pending_state: PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: None,
-                },
+                }),
             },
             // Pending, previously locked
             CombinedStateDTO {
@@ -616,13 +617,13 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::PendingAt {
+                pending_state: PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: Some(LockedBy {
                         executor_id,
                         run_id,
                     }),
-                },
+                }),
             },
             CombinedStateDTO {
                 execution_id,
@@ -682,11 +683,11 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::BlockedByJoinSet {
+                pending_state: PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing: join_set_closing,
                     lock_expires_at,
-                },
+                }),
             },
             CombinedStateDTO {
                 execution_id,
@@ -2814,11 +2815,11 @@ impl SqlitePool {
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         debug!("previous_pending_state: {combined_state:?}");
-        let mut notifier = if let PendingState::BlockedByJoinSet {
+        let mut notifier = if let PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
             join_set_id: found_join_set_id,
             lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
             closing: _,
-        } = combined_state.execution_with_state.pending_state
+        }) = combined_state.execution_with_state.pending_state
             && *join_set_id == found_join_set_id
         {
             // PendingAt should be set to current time if called from expired_timers_watcher,

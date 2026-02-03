@@ -3,8 +3,9 @@ use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionRequest,
     HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
-    Locked, LockedBy, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
-    ResponseCursor, ResponseWithCursor, VersionType,
+    Locked, LockedBy, PendingStateBlockedByJoinSet, PendingStateFinished,
+    PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt, ResponseCursor,
+    ResponseWithCursor, VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, Version};
 use concepts::{ComponentId, JoinSetId};
@@ -29,10 +30,10 @@ pub(crate) struct ExecutionJournal {
 impl ExecutionJournal {
     #[must_use]
     pub fn new(req: CreateRequest) -> Self {
-        let pending_state = PendingState::PendingAt {
+        let pending_state = PendingState::PendingAt(PendingStatePendingAt {
             scheduled_at: req.scheduled_at,
             last_lock: None,
-        };
+        });
         let execution_id = req.execution_id.clone();
         let component_id = req.component_id.clone();
         let deployment_id = req.deployment_id;
@@ -305,10 +306,12 @@ impl ExecutionJournal {
             .enumerate()
             .rev()
             .find_map(|(idx, event)| match &event.event {
-                ExecutionRequest::Created { scheduled_at, .. } => Some(PendingState::PendingAt {
-                    scheduled_at: *scheduled_at,
-                    last_lock: None,
-                }),
+                ExecutionRequest::Created { scheduled_at, .. } => {
+                    Some(PendingState::PendingAt(PendingStatePendingAt {
+                        scheduled_at: *scheduled_at,
+                        last_lock: None,
+                    }))
+                }
 
                 ExecutionRequest::Finished { result, .. } => {
                     assert_eq!(self.execution_events.len() - 1, idx);
@@ -347,10 +350,10 @@ impl ExecutionJournal {
                 | ExecutionRequest::Unlocked {
                     backoff_expires_at: expires_at,
                     ..
-                } => Some(PendingState::PendingAt {
+                } => Some(PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at: *expires_at,
                     last_lock: self.find_last_lock().map(LockedBy::from),
-                }),
+                })),
 
                 ExecutionRequest::HistoryEvent {
                     event:
@@ -390,17 +393,19 @@ impl ExecutionJournal {
                     if let Some(nth_created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
                         let scheduled_at = max(*lock_expires_at, *nth_created_at);
-                        Some(PendingState::PendingAt {
+                        Some(PendingState::PendingAt(PendingStatePendingAt {
                             scheduled_at,
                             last_lock: self.find_last_lock().map(LockedBy::from),
-                        })
+                        }))
                     } else {
                         // Still waiting for response
-                        Some(PendingState::BlockedByJoinSet {
-                            join_set_id: expected_join_set_id.clone(),
-                            lock_expires_at: *lock_expires_at,
-                            closing: *closing,
-                        })
+                        Some(PendingState::BlockedByJoinSet(
+                            PendingStateBlockedByJoinSet {
+                                join_set_id: expected_join_set_id.clone(),
+                                lock_expires_at: *lock_expires_at,
+                                closing: *closing,
+                            },
+                        ))
                     }
                 }
                 ExecutionRequest::Unpaused => {

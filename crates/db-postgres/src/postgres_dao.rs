@@ -17,9 +17,10 @@ use concepts::{
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter,
         ListLogsResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry,
         LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
-        PendingState, PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
-        ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
+        PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
+        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt, ResponseCursor,
+        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
+        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
     },
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
@@ -675,10 +676,10 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::PendingAt {
+                pending_state: PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: None,
-                },
+                }),
             },
             // Pending, previously locked
             CombinedStateDTO {
@@ -706,13 +707,13 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::PendingAt {
+                pending_state: PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: Some(LockedBy {
                         executor_id,
                         run_id,
                     }),
-                },
+                }),
             },
             CombinedStateDTO {
                 execution_id,
@@ -772,11 +773,11 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::BlockedByJoinSet {
+                pending_state: PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
                     join_set_id: join_set_id.clone(),
                     closing: join_set_closing,
                     lock_expires_at,
-                },
+                }),
             },
             CombinedStateDTO {
                 execution_id,
@@ -2715,11 +2716,11 @@ async fn append_response(
     let combined_state = get_combined_state(tx, execution_id).await?;
     debug!("previous_pending_state: {combined_state:?}");
 
-    let mut notifier = if let PendingState::BlockedByJoinSet {
+    let mut notifier = if let PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
         join_set_id: found_join_set_id,
         lock_expires_at,
         closing: _,
-    } = combined_state.execution_with_state.pending_state
+    }) = combined_state.execution_with_state.pending_state
         && *join_set_id == found_join_set_id
     {
         let scheduled_at = std::cmp::max(lock_expires_at, event.created_at);

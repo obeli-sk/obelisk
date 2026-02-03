@@ -8,8 +8,9 @@ use concepts::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState, HistoryEvent,
         HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy, LogEntry, LogEntryRow, LogLevel,
-        LogStreamType, Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, PendingStateLocked, VersionParseError,
+        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateLocked, PendingStatePendingAt, VersionParseError,
         http_client_trace::HttpClientTrace,
     },
 };
@@ -317,17 +318,17 @@ impl From<&ExecutionWithState> for grpc_gen::ExecutionStatus {
                     run_id: Some((*run_id).into()),
                     lock_expires_at: Some((*lock_expires_at).into()),
                 }),
-                PendingState::PendingAt {
+                PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: _,
-                } => Status::PendingAt(PendingAt {
+                }) => Status::PendingAt(PendingAt {
                     scheduled_at: Some((*scheduled_at).into()),
                 }),
-                PendingState::BlockedByJoinSet {
+                PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
                     join_set_id,
                     lock_expires_at,
                     closing,
-                } => Status::BlockedByJoinSet(BlockedByJoinSet {
+                }) => Status::BlockedByJoinSet(BlockedByJoinSet {
                     join_set_id: Some(join_set_id.into()),
                     lock_expires_at: Some((*lock_expires_at).into()),
                     closing: *closing,
