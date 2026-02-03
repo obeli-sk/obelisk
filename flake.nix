@@ -178,7 +178,6 @@
                 cargo-expand
                 cargo-insta
                 cargo-nextest
-                cargo-zigbuild # only here for dev-deps
                 jq
                 litecli
                 nixd
@@ -189,6 +188,12 @@
                 wasm-tools
                 wasmtime.out
               ];
+          };
+          devShells.cargo-zigbuild = pkgs.mkShell {
+            nativeBuildInputs = with pkgs;
+              [
+                cargo-zigbuild
+            ];
           };
           packages = rec {
             obeliskLibcNixDev = makeObelisk "dev" null ./rust-toolchain.toml;

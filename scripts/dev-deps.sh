@@ -33,7 +33,7 @@ protoc --version >> dev-deps.txt
 rustc --version >> dev-deps.txt
 wasm-tools --version >> dev-deps.txt
 wasmtime --version >> dev-deps.txt
-cargo-zigbuild --version >> dev-deps.txt
+nix develop .#cargo-zigbuild --command cargo-zigbuild --version >> dev-deps.txt
 
 # docker deps
 echo "litestream $(get_litestream_version)" >> dev-deps.txt
