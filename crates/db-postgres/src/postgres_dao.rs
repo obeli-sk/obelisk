@@ -18,10 +18,10 @@ use concepts::{
         ListLogsResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry,
         LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
         PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePaused,
-        PendingStatePendingAt, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
-        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
-        WasmBacktrace,
+        PendingStateFinishedResultKind, PendingStateLocked, PendingStateMergedPause,
+        PendingStatePaused, PendingStatePendingAt, ResponseCursor, ResponseWithCursor,
+        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
+        Version, VersionType, WasmBacktrace,
     },
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
@@ -2830,11 +2830,16 @@ async fn append_response(
     let combined_state = get_combined_state(tx, execution_id).await?;
     debug!("previous_pending_state: {combined_state:?}");
 
-    let mut notifier = if let PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
-        join_set_id: found_join_set_id,
-        lock_expires_at,
-        closing: _,
-    }) = combined_state.execution_with_state.pending_state
+    let mut notifier = if let PendingStateMergedPause::BlockedByJoinSet {
+        state:
+            PendingStateBlockedByJoinSet {
+                join_set_id: found_join_set_id,
+                lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
+                closing: _,
+            },
+        paused: _,
+    } =
+        PendingStateMergedPause::from(combined_state.execution_with_state.pending_state)
         && *join_set_id == found_join_set_id
     {
         let scheduled_at = std::cmp::max(lock_expires_at, event.created_at);

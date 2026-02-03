@@ -1661,6 +1661,61 @@ pub enum PendingState {
     Finished(PendingStateFinished),
 }
 
+pub enum PendingStateMergedPause {
+    Locked {
+        state: PendingStateLocked,
+        paused: bool,
+    },
+    PendingAt {
+        state: PendingStatePendingAt,
+        paused: bool,
+    },
+    BlockedByJoinSet {
+        state: PendingStateBlockedByJoinSet,
+        paused: bool,
+    },
+    Finished(PendingStateFinished),
+}
+impl From<PendingState> for PendingStateMergedPause {
+    fn from(state: PendingState) -> Self {
+        match state {
+            PendingState::Locked(s) => PendingStateMergedPause::Locked {
+                state: s,
+                paused: false,
+            },
+
+            PendingState::PendingAt(s) => PendingStateMergedPause::PendingAt {
+                state: s,
+                paused: false,
+            },
+
+            PendingState::BlockedByJoinSet(s) => PendingStateMergedPause::BlockedByJoinSet {
+                state: s,
+                paused: false,
+            },
+
+            PendingState::Paused(paused) => match paused {
+                PendingStatePaused::Locked(s) => PendingStateMergedPause::Locked {
+                    state: s,
+                    paused: true,
+                },
+                PendingStatePaused::PendingAt(s) => PendingStateMergedPause::PendingAt {
+                    state: s,
+                    paused: true,
+                },
+                PendingStatePaused::BlockedByJoinSet(s) => {
+                    PendingStateMergedPause::BlockedByJoinSet {
+                        state: s,
+                        paused: true,
+                    }
+                }
+            },
+
+            PendingState::Finished(s) => PendingStateMergedPause::Finished(s),
+        }
+    }
+}
+
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
 #[display("Locked(`{lock_expires_at}`, {}, {})", locked_by.executor_id, locked_by.run_id)]
 pub struct PendingStateLocked {

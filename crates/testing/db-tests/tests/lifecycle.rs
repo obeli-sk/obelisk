@@ -2266,6 +2266,310 @@ async fn cannot_lock_paused_execution(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Create execution
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Lock the execution
+    let lock_expiry = Duration::from_secs(30);
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + lock_expiry,
+        RunId::generate(),
+    )
+    .await;
+
+    // Create join set
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+
+    // Submit child execution request
+    let child_execution_id = execution_id.next_level(&join_set_id);
+    db_connection
+        .append(
+            execution_id.clone(),
+            version.clone(),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: join_set_id.clone(),
+                        request: JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id: child_execution_id.clone(),
+                            target_ffqn: SOME_FFQN,
+                            params: Params::empty(),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    version = version.increment();
+
+    // Append JoinNext - should make execution BlockedByJoinSet
+    db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinNext {
+                        join_set_id: join_set_id.clone(),
+                        run_expires_at: sim_clock.now() + lock_expiry,
+                        closing: false,
+                        requested_ffqn: Some(SOME_FFQN),
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet { .. })
+    );
+
+    // Pause the execution
+    api_conn
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(log.pending_state, PendingState::Paused(..));
+
+    // Append child execution response while paused
+    db_connection
+        .append_response(
+            sim_clock.now(),
+            execution_id.clone(),
+            JoinSetResponseEvent {
+                join_set_id: join_set_id.clone(),
+                event: JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id,
+                    finished_version: Version(1),
+                    result: SupportedFunctionReturnValue::Ok { ok: None },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    // Should still be paused
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(log.pending_state, PendingState::Paused(..));
+
+    // Unpause - should be pending since response arrived
+    api_conn
+        .unpause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::PendingAt(PendingStatePendingAt { .. })
+    );
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn pause_with_pending_delay_then_response_then_unpause_should_be_pending(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Create execution
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Lock the execution
+    let lock_expiry = Duration::from_secs(30);
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + lock_expiry,
+        RunId::generate(),
+    )
+    .await;
+
+    // Create join set
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+
+    // Submit delay request
+    let delay_id = DelayId::new(&execution_id, &join_set_id);
+    let delay_duration = Duration::from_secs(60);
+    db_connection
+        .append(
+            execution_id.clone(),
+            version.clone(),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: join_set_id.clone(),
+                        request: JoinSetRequest::DelayRequest {
+                            delay_id: delay_id.clone(),
+                            expires_at: sim_clock.now() + delay_duration,
+                            schedule_at: HistoryEventScheduleAt::In(delay_duration),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    version = version.increment();
+
+    // Append JoinNext - should make execution BlockedByJoinSet
+    db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinNext {
+                        join_set_id: join_set_id.clone(),
+                        run_expires_at: sim_clock.now() + lock_expiry,
+                        closing: false,
+                        requested_ffqn: None,
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet { .. })
+    );
+
+    // Pause the execution
+    api_conn
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(log.pending_state, PendingState::Paused(..));
+
+    // Append delay response while paused
+    db_connection
+        .append_response(
+            sim_clock.now(),
+            execution_id.clone(),
+            JoinSetResponseEvent {
+                join_set_id: join_set_id.clone(),
+                event: JoinSetResponse::DelayFinished {
+                    delay_id,
+                    result: Ok(()),
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    // Should still be paused
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(log.pending_state, PendingState::Paused(..));
+
+    // Unpause - should be pending since response arrived
+    api_conn
+        .unpause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::PendingAt(PendingStatePendingAt { .. })
+    );
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn test_backtrace(database: Database) {
     if database == Database::Memory {
         // external_api_conn not implemented for in-memory DB
