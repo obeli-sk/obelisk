@@ -3065,7 +3065,7 @@ impl SqlitePool {
     ) -> Result<ExecutionEvent, DbErrorRead> {
         tx.prepare(
             "SELECT created_at, json_value, version FROM t_execution_log WHERE \
-                        execution_id = :execution_id ORDER BY version DESC",
+                        execution_id = :execution_id ORDER BY version DESC LIMIT 1",
         )?
         .query_row(
             named_params! {
