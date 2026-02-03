@@ -26,7 +26,7 @@ use const_format::formatcp;
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
 use hashbrown::HashMap;
 use rusqlite::{
-    CachedStatement, Connection, OpenFlags, OptionalExtension, Params, ToSql, Transaction,
+    CachedStatement, Connection, OpenFlags, OptionalExtension, Params, Row, ToSql, Transaction,
     TransactionBehavior, named_params, types::ToSqlOutput,
 };
 use std::{
@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     component_type TEXT NOT NULL,
     first_scheduled_at TEXT NOT NULL,
     deployment_id TEXT NOT NULL,
+    is_paused INTEGER NOT NULL,
 
     pending_expires_finished TEXT NOT NULL,
     state TEXT NOT NULL,
@@ -491,6 +492,7 @@ struct CombinedStateDTO {
     created_at: DateTime<Utc>,
     first_scheduled_at: DateTime<Utc>,
     pending_expires_finished: DateTime<Utc>,
+    is_paused: bool,
     // Locked:
     last_lock_version: Option<Version>,
     executor_id: Option<ExecutorId>,
@@ -510,6 +512,22 @@ impl CombinedState {
     fn get_next_version_assert_not_finished(&self) -> Version {
         assert!(!self.execution_with_state.pending_state.is_finished());
         self.corresponding_version.increment()
+    }
+
+    #[track_caller]
+    fn get_next_version_fail_if_finished(&self) -> Result<Version, DbErrorWrite> {
+        if self.execution_with_state.pending_state.is_finished() {
+            debug!("Execution is already finished");
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState {
+                    reason: "already finished".into(),
+                    context: SpanTrace::capture(),
+                    source: None,
+                    loc: Location::caller(),
+                },
+            ));
+        }
+        Ok(self.corresponding_version.increment())
     }
 
     fn get_next_version_or_finished(&self) -> Version {
@@ -561,6 +579,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
+                is_paused: false,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -591,6 +610,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
+                is_paused: false,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -623,6 +643,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
+                is_paused: false,
             } if state == STATE_LOCKED => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -655,6 +676,7 @@ impl CombinedState {
                 join_set_id: Some(join_set_id),
                 join_set_closing: Some(join_set_closing),
                 result_kind: None,
+                is_paused: false,
             } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -685,6 +707,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: Some(result_kind),
+                is_paused: false,
             } if state == STATE_FINISHED => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -700,6 +723,34 @@ impl CombinedState {
                         result_kind,
                     },
                 },
+            },
+            // Paused
+            CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                state,
+                ffqn,
+                component_digest,
+                component_type,
+                deployment_id,
+                pending_expires_finished: scheduled_at,
+                last_lock_version: _,
+                executor_id: _,
+                run_id: _,
+                join_set_id: _,
+                join_set_closing: _,
+                result_kind: None,
+                is_paused: true,
+            } if state != STATE_FINISHED => ExecutionWithState {
+                component_digest,
+                component_type,
+                deployment_id,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Paused,
             },
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
@@ -1425,7 +1476,8 @@ impl SqlitePool {
                     deployment_id,
                     updated_at,
                     first_scheduled_at,
-                    intermittent_event_count
+                    intermittent_event_count,
+                    is_paused
                     )
                 VALUES (
                     :execution_id,
@@ -1440,7 +1492,8 @@ impl SqlitePool {
                     :deployment_id,
                     CURRENT_TIMESTAMP,
                     :first_scheduled_at,
-                    0
+                    0,
+                    false
                     )
                 ",
             )?
@@ -1588,6 +1641,7 @@ impl SqlitePool {
     }
 
     #[expect(clippy::too_many_arguments)]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
     fn update_state_locked_get_intermittent_event_count(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -1632,6 +1686,7 @@ impl SqlitePool {
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id
+                AND is_paused = false
             ",
         )?;
         let updated = stmt.execute(named_params! {
@@ -1669,6 +1724,7 @@ impl SqlitePool {
     }
 
     /// Appending [`HistoryEvent::JoinNext`].
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
     fn update_state_blocked(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -1717,6 +1773,7 @@ impl SqlitePool {
         Ok(appending_version.increment())
     }
 
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
     fn update_state_finished(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -1763,8 +1820,42 @@ impl SqlitePool {
         Ok(())
     }
 
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version, %is_paused))]
+    fn update_state_paused(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        appending_version: &Version,
+        is_paused: bool,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        debug!(
+            "Setting t_state to {}",
+            if is_paused { "paused" } else { "unpaused" }
+        );
+        let execution_id_str = execution_id.to_string();
+        let mut stmt = tx.prepare_cached(
+            r"
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    is_paused = :is_paused,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE execution_id = :execution_id
+            ",
+        )?;
+
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id_str,
+            ":appending_version": appending_version.0,
+            ":is_paused": is_paused,
+        })?;
+        if updated != 1 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(appending_version.increment())
+    }
+
     // Upon appending new event to t_execution_log, copy the previous t_state with changed appending_version and created_at.
-    #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %appending_version))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
     fn bump_state_next_version(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -1823,7 +1914,7 @@ impl SqlitePool {
                     corresponding_version, pending_expires_finished,
                     last_lock_version, executor_id, run_id,
                     join_set_id, join_set_closing,
-                    result_kind
+                    result_kind, is_paused
                     FROM t_state
                 WHERE
                     execution_id = :execution_id
@@ -1858,6 +1949,7 @@ impl SqlitePool {
                                 "result_kind",
                             )?
                             .map(|wrapper| wrapper.0),
+                        is_paused: row.get("is_paused")?,
                     },
                     Version::new(row.get("corresponding_version")?),
                 )
@@ -1998,7 +2090,7 @@ impl SqlitePool {
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
-            result_kind
+            result_kind, is_paused
             FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}
             ",
             desc = if statement_mod.limit_desc { "DESC" } else { "" },
@@ -2037,6 +2129,7 @@ impl SqlitePool {
                                     "result_kind",
                                 )?
                                 .map(|wrapper| wrapper.0),
+                            is_paused: row.get("is_paused")?,
                         },
                         Version::new(row.get("corresponding_version")?),
                     )?;
@@ -2487,6 +2580,42 @@ impl SqlitePool {
                 return Ok((next_version, notifier));
             }
 
+            ExecutionRequest::Paused => {
+                match &combined_state.execution_with_state.pending_state {
+                    PendingState::Finished { .. } => {
+                        unreachable!("handled above");
+                    }
+                    PendingState::Paused { .. } => {
+                        return Err(DbErrorWriteNonRetriable::IllegalState {
+                            reason: "cannot pause, execution is already paused".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        }
+                        .into());
+                    }
+                    _ => {}
+                }
+                let next_version =
+                    Self::update_state_paused(tx, execution_id, &appending_version, true)?;
+                return Ok((next_version, AppendNotifier::default()));
+            }
+
+            ExecutionRequest::Unpaused => {
+                if combined_state.execution_with_state.pending_state != PendingState::Paused {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason: "cannot unpause, execution is not paused".into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    }
+                    .into());
+                }
+                let next_version =
+                    Self::update_state_paused(tx, execution_id, &appending_version, false)?;
+                return Ok((next_version, AppendNotifier::default()));
+            }
+
             ExecutionRequest::Finished { result, .. } => {
                 Self::update_state_finished(
                     tx,
@@ -2893,37 +3022,39 @@ impl SqlitePool {
             .map_err(DbErrorRead::from)
     }
 
+    fn map_t_execution_log_row(row: &Row<'_>) -> Result<ExecutionEvent, rusqlite::Error> {
+        let created_at = row.get("created_at")?;
+        let event = row
+            .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
+            .map_err(|serde| {
+                error!("Cannot deserialize {row:?} - {serde:?}");
+                consistency_rusqlite("cannot deserialize event")
+            })?;
+        let version = Version(row.get("version")?);
+
+        Ok(ExecutionEvent {
+            created_at,
+            event: event.0,
+            backtrace_id: None,
+            version,
+        })
+    }
+
     fn get_execution_event(
         tx: &Transaction,
         execution_id: &ExecutionId,
         version: VersionType,
     ) -> Result<ExecutionEvent, DbErrorRead> {
-        let mut stmt = tx.prepare(
+        tx.prepare(
             "SELECT created_at, json_value, version FROM t_execution_log WHERE \
                         execution_id = :execution_id AND version = :version",
-        )?;
-        stmt.query_row(
+        )?
+        .query_row(
             named_params! {
                 ":execution_id": execution_id.to_string(),
                 ":version": version,
             },
-            |row| {
-                let created_at = row.get("created_at")?;
-                let event = row
-                    .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
-                    .map_err(|serde| {
-                        error!("Cannot deserialize {row:?} - {serde:?}");
-                        consistency_rusqlite("cannot deserialize event")
-                    })?;
-                let version = Version(row.get("version")?);
-
-                Ok(ExecutionEvent {
-                    created_at,
-                    event: event.0,
-                    backtrace_id: None,
-                    version,
-                })
-            },
+            SqlitePool::map_t_execution_log_row,
         )
         .map_err(DbErrorRead::from)
     }
@@ -2932,30 +3063,15 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
     ) -> Result<ExecutionEvent, DbErrorRead> {
-        let mut stmt = tx.prepare(
+        tx.prepare(
             "SELECT created_at, json_value, version FROM t_execution_log WHERE \
                         execution_id = :execution_id ORDER BY version DESC",
-        )?;
-        stmt.query_row(
+        )?
+        .query_row(
             named_params! {
                 ":execution_id": execution_id.to_string(),
             },
-            |row| {
-                let created_at = row.get("created_at")?;
-                let event = row
-                    .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
-                    .map_err(|serde| {
-                        error!("Cannot deserialize {row:?} - {serde:?}");
-                        consistency_rusqlite("cannot deserialize event")
-                    })?;
-                let version = Version(row.get("version")?);
-                Ok(ExecutionEvent {
-                    created_at,
-                    event: event.0,
-                    backtrace_id: None,
-                    version: version.clone(),
-                })
-            },
+            SqlitePool::map_t_execution_log_row,
         )
         .map_err(DbErrorRead::from)
     }
@@ -3066,6 +3182,7 @@ impl SqlitePool {
                     SELECT execution_id, corresponding_version FROM t_state WHERE
                     state = "{STATE_PENDING_AT}" AND
                     pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
+                    AND is_paused = false
                     ORDER BY pending_expires_finished LIMIT :batch_size
                     "#
             ))?;
@@ -3100,6 +3217,7 @@ impl SqlitePool {
                 state = "{STATE_PENDING_AT}" AND
                 pending_expires_finished <= :pending_expires_finished AND
                 component_id_input_digest = :component_id_input_digest
+                AND is_paused = false
                 ORDER BY pending_expires_finished LIMIT :batch_size
                 "#
         ))?;
@@ -3433,6 +3551,46 @@ impl SqlitePool {
             .collect::<Result<Vec<_>, rusqlite::Error>>()
             .map_err(DbErrorRead::from)
     }
+
+    fn pause_execution(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        paused_at: DateTime<Utc>,
+    ) -> Result<Version, DbErrorWrite> {
+        let combined_state = Self::get_combined_state(tx, &execution_id)?;
+        let appending_version = combined_state.get_next_version_fail_if_finished()?;
+        debug!("Pausing with {appending_version}");
+        let (next_version, _) = Self::append(
+            tx,
+            &execution_id,
+            AppendRequest {
+                created_at: paused_at,
+                event: ExecutionRequest::Paused,
+            },
+            appending_version,
+        )?;
+        Ok(next_version)
+    }
+
+    fn unpause_execution(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        paused_at: DateTime<Utc>,
+    ) -> Result<Version, DbErrorWrite> {
+        let combined_state = Self::get_combined_state(tx, &execution_id)?;
+        let appending_version = combined_state.get_next_version_fail_if_finished()?;
+        debug!("Unpausing with {appending_version}");
+        let (next_version, _) = Self::append(
+            tx,
+            &execution_id,
+            AppendRequest {
+                created_at: paused_at,
+                event: ExecutionRequest::Unpaused,
+            },
+            appending_version,
+        )?;
+        Ok(next_version)
+    }
 }
 
 #[async_trait]
@@ -3563,6 +3721,7 @@ impl DbExecutor for SqlitePool {
         }
     }
 
+    #[cfg(feature = "test")]
     #[instrument(level = Level::DEBUG, skip(self))]
     async fn lock_one(
         &self,
@@ -4007,6 +4166,34 @@ impl DbExternalApi for SqlitePool {
         self.transaction(
             move |tx| Self::list_deployment_states(tx, current_time, pagination),
             "list_deployment_states",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn pause_execution(
+        &self,
+        execution_id: &ExecutionId,
+        paused_at: DateTime<Utc>,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| SqlitePool::pause_execution(tx, &execution_id, paused_at),
+            "pause_execution",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn unpause_execution(
+        &self,
+        execution_id: &ExecutionId,
+        unpaused_at: DateTime<Utc>,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| SqlitePool::unpause_execution(tx, &execution_id, unpaused_at),
+            "unpause_execution",
         )
         .await
     }
@@ -4517,5 +4704,71 @@ pub mod tempfile {
                 Some(file),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::sqlite_dao::{SqlitePool, tempfile::sqlite_pool};
+    use assert_matches::assert_matches;
+    use chrono::DateTime;
+    use concepts::{
+        ComponentId, FunctionFqn, Params,
+        prefixed_ulid::{DEPLOYMENT_ID_DUMMY, EXECUTION_ID_DUMMY},
+        storage::{CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, DbPoolCloseable},
+    };
+    use rusqlite::named_params;
+
+    const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+
+    #[tokio::test]
+    async fn failing_ltx_should_be_rolled_back() -> Result<(), DbErrorWrite> {
+        let (pool, _guard) = sqlite_pool().await;
+        pool.transaction(
+            move |tx| {
+                let created_at = DateTime::from_timestamp_nanos(0);
+                let req = CreateRequest {
+                    created_at,
+                    execution_id: EXECUTION_ID_DUMMY,
+                    ffqn: SOME_FFQN,
+                    params: Params::empty(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    component_id: ComponentId::dummy_activity(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                };
+                SqlitePool::create_inner(tx, req)?;
+                SqlitePool::pause_execution(tx, &EXECUTION_ID_DUMMY, created_at)?;
+
+                let err = SqlitePool::pause_execution(tx, &EXECUTION_ID_DUMMY, created_at).unwrap_err();
+                let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+                assert_eq!("cannot pause, execution is already paused", reason.as_ref());
+
+                let events =
+                    tx.prepare(
+                        "SELECT created_at, json_value, version FROM t_execution_log WHERE execution_id = :execution_id",
+                    )?
+                    .query_map(
+                        named_params! {
+                            ":execution_id": EXECUTION_ID_DUMMY.to_string(),
+                        },
+                        SqlitePool::map_t_execution_log_row,
+                    )
+                    .map_err(DbErrorWrite::from)?
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                dbg!(&events);
+                assert_eq!(2, events.len());
+
+
+                Ok::<_, DbErrorWrite>(())
+            },
+            "get_pending_state",
+        )
+        .await?;
+        pool.close().await;
+        Ok(())
     }
 }

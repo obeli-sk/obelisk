@@ -297,6 +297,8 @@ impl ExecutionJournal {
     }
 
     fn update_pending_state(&mut self) {
+        let mut unpause_encountered = false;
+
         let pending_state = self
             .execution_events
             .iter()
@@ -401,6 +403,22 @@ impl ExecutionJournal {
                         })
                     }
                 }
+                ExecutionRequest::Unpaused => {
+                    assert!(!unpause_encountered);
+                    unpause_encountered = true;
+                    None // Treat the unpause as skipping the corresponding pause
+                }
+                ExecutionRequest::Paused => {
+                    if unpause_encountered {
+                        // This pause was effectively cancelled by a later unpause, keep looking for last event affecting the pending state
+                        unpause_encountered = false;
+                        None
+                    } else {
+                        // No unpauses were found with bigger version
+                        unpause_encountered = false; // For sanity check below.
+                        Some(PendingState::Paused)
+                    }
+                }
                 // No pending state change for following events:
                 ExecutionRequest::HistoryEvent {
                     event:
@@ -419,6 +437,8 @@ impl ExecutionJournal {
                 } => None,
             })
             .expect("journal must begin with Created event");
+
+        assert!(!unpause_encountered, "unpause must be preceeded with pause");
         self.pending_state = pending_state;
         self.component_id = self
             .find_last_lock()

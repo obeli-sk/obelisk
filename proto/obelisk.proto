@@ -25,6 +25,9 @@ service ExecutionRepository {
 
     rpc ReplayExecution(ReplayExecutionRequest) returns (ReplayExecutionResponse);
     rpc UpgradeExecutionComponent(UpgradeExecutionComponentRequest) returns (UpgradeExecutionComponentResponse);
+
+    rpc PauseExecution(PauseExecutionRequest) returns (PauseExecutionResponse);
+    rpc UnpauseExecution(UnpauseExecutionRequest) returns (UnpauseExecutionResponse);
 }
 
 service FunctionRepository {
@@ -243,12 +246,15 @@ message ExecutionStatus {
         google.protobuf.Timestamp finished_at = 4;
         ResultKind result_kind = 5;
     }
+    message Paused {
+    }
 
     oneof status {
         Locked locked = 1;
         PendingAt pending_at = 2;
         BlockedByJoinSet blocked_by_join_set = 3;
         Finished finished = 4;
+        Paused paused = 6;
     }
     ContentDigest component_digest = 5;
 }
@@ -357,6 +363,12 @@ message ExecutionEvent {
         repeated HttpClientTrace http_client_traces = 2;
     }
 
+    message Paused {
+    }
+
+    message Unpaused {
+    }
+
     message HistoryEvent {
 
         message Persist {
@@ -456,6 +468,8 @@ message ExecutionEvent {
         TemporarilyTimedOut temporarily_timed_out = 7;
         Finished finished = 8;
         HistoryEvent history_variant = 9;
+        Paused paused = 11;
+        Unpaused unpaused = 12;
     }
 
     optional uint32 backtrace_id = 10;
@@ -720,4 +734,18 @@ message GetCurrentDeploymentIdRequest {
 }
 message GetCurrentDeploymentIdResponse {
     DeploymentId deployment_id = 1;
+}
+
+
+message PauseExecutionRequest {
+    ExecutionId execution_id = 1;
+}
+message PauseExecutionResponse {
+}
+
+
+message UnpauseExecutionRequest {
+    ExecutionId execution_id = 1;
+}
+message UnpauseExecutionResponse {
 }

@@ -33,11 +33,12 @@ use tracing::debug;
 use tracing::instrument;
 use tracing_error::SpanTrace;
 
+// Shared between databases. TODO: Extract to db-common
 pub const STATE_PENDING_AT: &str = "pending_at";
 pub const STATE_BLOCKED_BY_JOIN_SET: &str = "blocked_by_join_set";
 pub const STATE_LOCKED: &str = "locked";
 pub const STATE_FINISHED: &str = "finished";
-pub static HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "join_next";
+pub const HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "join_next"; // Serialization tag of `HistoryEvent::JoinNext`
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ExecutionLog {
@@ -292,10 +293,10 @@ pub enum ExecutionRequest {
         scheduled_by: Option<ExecutionId>,
     },
     Locked(Locked),
-    /// Returns execution to [`PendingState::PendingNow`] state
-    /// without timing out. This can happen when the executor is running
-    /// out of resources like [`WorkerError::LimitReached`] or when
-    /// the executor is shutting down.
+    /// Returns execution to [`PendingState::PendingAt`] state at the specified time.
+    /// This can happen when:
+    /// - executor is running out of resources like [`WorkerError::LimitReached`]
+    /// - executor is shutting down
     #[display("Unlocked(`{backoff_expires_at}`)")]
     Unlocked {
         backoff_expires_at: DateTime<Utc>,
@@ -334,6 +335,10 @@ pub enum ExecutionRequest {
     HistoryEvent {
         event: HistoryEvent,
     },
+    #[display("Paused")]
+    Paused,
+    #[display("Unpaused")]
+    Unpaused,
 }
 
 impl ExecutionRequest {
@@ -345,6 +350,7 @@ impl ExecutionRequest {
         )
     }
 
+    /// String representation of `ExecutionRequest`, used in execution log table to fetch events of certain type, e.g. `created` + `history_event`.
     #[must_use]
     pub const fn variant(&self) -> &'static str {
         match self {
@@ -355,6 +361,8 @@ impl ExecutionRequest {
             ExecutionRequest::TemporarilyTimedOut { .. } => "temporarily_timed_out",
             ExecutionRequest::Finished { .. } => "finished",
             ExecutionRequest::HistoryEvent { .. } => "history_event",
+            ExecutionRequest::Paused => "paused",
+            ExecutionRequest::Unpaused => "unpaused",
         }
     }
 
@@ -727,7 +735,7 @@ pub trait DbExecutor: Send + Sync {
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorGeneric>;
 
-    /// Specialized locking for e.g. extending the lock by the original executor and run.
+    #[cfg(feature = "test")]
     #[expect(clippy::too_many_arguments)]
     async fn lock_one(
         &self,
@@ -947,6 +955,20 @@ pub trait DbExternalApi: DbConnection {
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentState>, DbErrorRead>;
+
+    /// Pause an execution. Only pending executions can be paused.
+    async fn pause_execution(
+        &self,
+        execution_id: &ExecutionId,
+        paused_at: DateTime<Utc>,
+    ) -> Result<AppendResponse, DbErrorWrite>;
+
+    /// Unpause an execution. Only paused executions can be unpaused.
+    async fn unpause_execution(
+        &self,
+        execution_id: &ExecutionId,
+        unpaused_at: DateTime<Utc>,
+    ) -> Result<AppendResponse, DbErrorWrite>;
 }
 pub const LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH: u16 = 20;
 pub const LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION: Pagination<Option<DeploymentId>> =
@@ -1622,14 +1644,18 @@ pub struct ExpiredDelay {
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum PendingState {
+    /// Caused by [`ExecutionRequest::Locked`].
     Locked(PendingStateLocked),
+
     #[display("PendingAt(`{scheduled_at}`)")]
     PendingAt {
         scheduled_at: DateTime<Utc>,
-        last_lock: Option<LockedBy>, // Needed for lock extension
-    }, // e.g. created with a schedule, temporary timeout/failure
-    #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
+        /// `last_lock` is needed for lock extension.
+        last_lock: Option<LockedBy>,
+    },
+
     /// Caused by [`HistoryEvent::JoinNext`]
+    #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
     BlockedByJoinSet {
         join_set_id: JoinSetId,
         /// See [`HistoryEvent::JoinNext::lock_expires_at`].
@@ -1637,6 +1663,10 @@ pub enum PendingState {
         /// Blocked by closing of the join set
         closing: bool,
     },
+
+    #[display("Paused")]
+    Paused,
+
     #[display("Finished({finished})")]
     Finished {
         #[serde(flatten)]
@@ -1778,6 +1808,12 @@ impl PendingState {
             }),
             PendingState::Finished { .. } => Err(DbErrorWriteNonRetriable::IllegalState {
                 reason: "already finished".into(),
+                context: SpanTrace::capture(),
+                source: None,
+                loc: Location::caller(),
+            }),
+            PendingState::Paused => Err(DbErrorWriteNonRetriable::IllegalState {
+                reason: "cannot lock, execution is paused".into(),
                 context: SpanTrace::capture(),
                 source: None,
                 loc: Location::caller(),

@@ -302,6 +302,7 @@ fn format_pending_status(pending_status: grpc_gen::ExecutionStatus) -> String {
             // the final result will be sent in the next message, since we set `send_finished_status` to true.
             "Finished".to_string()
         }
+        Status::Paused(grpc_gen::execution_status::Paused {}) => "Paused".to_string(),
         illegal @ Status::BlockedByJoinSet(_) => panic!("illegal state {illegal:?}"),
     }
 }

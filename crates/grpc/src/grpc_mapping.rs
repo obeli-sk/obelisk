@@ -298,7 +298,9 @@ impl TryFrom<grpc_gen::ComponentType> for ComponentType {
 
 impl From<&ExecutionWithState> for grpc_gen::ExecutionStatus {
     fn from(execution_with_state: &ExecutionWithState) -> grpc_gen::ExecutionStatus {
-        use grpc_gen::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
+        use grpc_gen::execution_status::{
+            BlockedByJoinSet, Finished, Locked, Paused, PendingAt, Status,
+        };
         grpc_gen::ExecutionStatus {
             component_digest: Some(grpc_gen::ContentDigest::from(
                 &execution_with_state.component_digest,
@@ -341,6 +343,7 @@ impl From<&ExecutionWithState> for grpc_gen::ExecutionStatus {
                     finished_at: Some((*finished_at).into()),
                     result_kind: grpc_gen::ResultKind::from(*result_kind).into(),
                 }),
+                PendingState::Paused => Status::Paused(Paused {}),
             }),
         }
     }
@@ -663,6 +666,10 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                     http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc_gen::HttpClientTrace::from).collect(),
 
                 }),
+                ExecutionRequest::Paused  => {
+                    grpc_gen::execution_event::Event::Paused(grpc_gen::execution_event::Paused{})
+                },
+                ExecutionRequest::Unpaused => grpc_gen::execution_event::Event::Unpaused(grpc_gen::execution_event::Unpaused{}),
                 ExecutionRequest::HistoryEvent { event } => grpc_gen::execution_event::Event::HistoryVariant(grpc_gen::execution_event::HistoryEvent {
                     event: Some(match event {
                         HistoryEvent::Persist { value, kind } => history_event::Event::Persist(history_event::Persist {

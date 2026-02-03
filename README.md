@@ -134,6 +134,11 @@ docker run -it --rm \
   -p 5432:5432 \
   postgres:18
 
+# export env vars if .envrc is not used
+export POSTGRES_HOST="localhost"
+export POSTGRES_USER="postgres"
+export POSTGRES_PASSWORD="postgres"
+export POSTGRES_DATABASE="obelisk"
 
 obelisk server run --config obelisk-testing-postgres-oci.toml
 ```

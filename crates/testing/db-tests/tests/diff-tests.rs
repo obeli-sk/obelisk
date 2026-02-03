@@ -59,9 +59,9 @@ async fn diff_proptest_inner(seed: u64) {
                 created_at: Now.now(),
             })
             .filter_map(|req| {
-                // filter out Create requests
+                // Remove Created, Unpaused
                 if let AppendRequest {
-                    event: ExecutionRequest::Created { .. },
+                    event: ExecutionRequest::Created { .. } | ExecutionRequest::Unpaused,
                     ..
                 } = req
                 {
@@ -72,6 +72,25 @@ async fn diff_proptest_inner(seed: u64) {
             })
             .collect::<Vec<_>>();
     }
+    // Insert Unpause after each Pause
+    append_requests = append_requests
+        .into_iter()
+        .flat_map(|req| {
+            if matches!(req.event, ExecutionRequest::Paused) {
+                let created_at = req.created_at;
+                vec![
+                    req,
+                    AppendRequest {
+                        event: ExecutionRequest::Unpaused,
+                        created_at,
+                    },
+                ]
+            } else {
+                vec![req]
+            }
+        })
+        .collect();
+
     println!("Creating: {create_req:?}");
     for (idx, step) in append_requests.iter().enumerate() {
         println!("{idx}: {step:?}");

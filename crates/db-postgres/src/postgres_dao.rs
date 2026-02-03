@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     component_type TEXT NOT NULL,
     first_scheduled_at TIMESTAMPTZ NOT NULL,
     deployment_id TEXT NOT NULL,
+    is_paused BOOLEAN NOT NULL,
 
     pending_expires_finished TIMESTAMPTZ NOT NULL,
     state TEXT NOT NULL,
@@ -628,6 +629,7 @@ struct CombinedStateDTO {
     created_at: DateTime<Utc>,
     first_scheduled_at: DateTime<Utc>,
     pending_expires_finished: DateTime<Utc>,
+    is_paused: bool,
     // Locked:
     last_lock_version: Option<Version>,
     executor_id: Option<ExecutorId>,
@@ -664,6 +666,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
+                is_paused: false,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -694,6 +697,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
+                is_paused: false,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -726,6 +730,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
+                is_paused: false,
             } if state == STATE_LOCKED => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -758,6 +763,7 @@ impl CombinedState {
                 join_set_id: Some(join_set_id),
                 join_set_closing: Some(join_set_closing),
                 result_kind: None,
+                is_paused: false,
             } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -788,6 +794,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: Some(result_kind),
+                is_paused: false,
             } if state == STATE_FINISHED => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -804,6 +811,34 @@ impl CombinedState {
                     },
                 },
             },
+            // Paused
+            CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                state,
+                ffqn,
+                component_digest,
+                component_type,
+                deployment_id,
+                pending_expires_finished: _,
+                last_lock_version: _,
+                executor_id: _,
+                run_id: _,
+                join_set_id: _,
+                join_set_closing: _,
+                result_kind: None,
+                is_paused: true,
+            } if state != STATE_FINISHED => ExecutionWithState {
+                component_digest,
+                component_type,
+                deployment_id,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Paused,
+            },
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
                 return Err(consistency_db_err("invalid `t_state`"));
@@ -818,6 +853,22 @@ impl CombinedState {
     fn get_next_version_assert_not_finished(&self) -> Version {
         assert!(!self.execution_with_state.pending_state.is_finished());
         self.corresponding_version.increment()
+    }
+
+    #[track_caller]
+    fn get_next_version_fail_if_finished(&self) -> Result<Version, DbErrorWrite> {
+        if self.execution_with_state.pending_state.is_finished() {
+            debug!("Execution is already finished");
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState {
+                    reason: "already finished".into(),
+                    context: SpanTrace::capture(),
+                    source: None,
+                    loc: Location::caller(),
+                },
+            ));
+        }
+        Ok(self.corresponding_version.increment())
     }
 
     fn get_next_version_or_finished(&self) -> Version {
@@ -968,9 +1019,10 @@ async fn create_inner(
                 deployment_id,
                 first_scheduled_at,
                 updated_at,
-                intermittent_event_count
+                intermittent_event_count,
+                is_paused
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0, false
             )",
             &[
                 &execution_id_str,
@@ -1119,6 +1171,7 @@ async fn update_state_pending_after_event_appended(
     ))
 }
 
+#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
 #[expect(clippy::too_many_arguments)]
 async fn update_state_locked_get_intermittent_event_count(
     tx: &Transaction<'_>,
@@ -1168,6 +1221,7 @@ async fn update_state_locked_get_intermittent_event_count(
 
                 result_kind = NULL
             WHERE execution_id = $10
+            AND is_paused = false
             ",
             &[
                 &i64::from(appending_version.0),
@@ -1203,6 +1257,7 @@ async fn update_state_locked_get_intermittent_event_count(
     Ok(count)
 }
 
+#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
 async fn update_state_blocked(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
@@ -1250,6 +1305,7 @@ async fn update_state_blocked(
     Ok(appending_version.increment())
 }
 
+#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
 async fn update_state_finished(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
@@ -1299,7 +1355,43 @@ async fn update_state_finished(
     Ok(())
 }
 
-#[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %appending_version))]
+#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version, %is_paused))]
+async fn update_state_paused(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    appending_version: &Version,
+    is_paused: bool,
+) -> Result<AppendResponse, DbErrorWrite> {
+    debug!(
+        "Setting t_state to {}",
+        if is_paused { "paused" } else { "unpaused" }
+    );
+
+    let updated = tx
+        .execute(
+            r"
+            UPDATE t_state
+            SET
+                corresponding_version = $1,
+                is_paused = $2,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE execution_id = $3
+            ",
+            &[
+                &i64::from(appending_version.0), // $1
+                &is_paused,                      // $2
+                &execution_id.to_string(),       // $3
+            ],
+        )
+        .await?;
+
+    if updated != 1 {
+        return Err(DbErrorWrite::NotFound);
+    }
+    Ok(appending_version.increment())
+}
+
+#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
 async fn bump_state_next_version(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
@@ -1362,7 +1454,7 @@ async fn get_combined_state(
                 state, ffqn, component_id_input_digest, component_type, deployment_id, corresponding_version, pending_expires_finished,
                 last_lock_version, executor_id, run_id,
                 join_set_id, join_set_closing,
-                result_kind
+                result_kind, is_paused
             FROM t_state
             WHERE execution_id = $1
             ",
@@ -1426,6 +1518,8 @@ async fn get_combined_state(
     let result_kind: Option<Json<PendingStateFinishedResultKind>> = get(&row, "result_kind")?;
     let result_kind = result_kind.map(|it| it.0);
 
+    let is_paused: bool = get(&row, "is_paused")?;
+
     let corresponding_version: i64 = get(&row, "corresponding_version")?;
     let corresponding_version = Version::new(
         VersionType::try_from(corresponding_version)
@@ -1448,6 +1542,7 @@ async fn get_combined_state(
         join_set_id,
         join_set_closing,
         result_kind,
+        is_paused,
     };
     CombinedState::new(dto, corresponding_version).map_err(DbErrorRead::from)
 }
@@ -1551,7 +1646,7 @@ async fn list_executions(
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
-            result_kind
+            result_kind, is_paused
             FROM t_state {where_str} ORDER BY {order_col} {desc_str} LIMIT {limit}
             "
     );
@@ -1594,6 +1689,8 @@ async fn list_executions(
             let result_kind: Option<Json<PendingStateFinishedResultKind>> =
                 get(&row, "result_kind")?;
             let result_kind = result_kind.map(|it| it.0);
+
+            let is_paused: bool = get(&row, "is_paused")?;
 
             let corresponding_version: i64 = get(&row, "corresponding_version")?;
             let corresponding_version = Version::try_from(corresponding_version)
@@ -1640,6 +1737,7 @@ async fn list_executions(
                 join_set_id,
                 join_set_closing: get(&row, "join_set_closing")?,
                 result_kind,
+                is_paused,
             };
 
             let combined_state = CombinedState::new(combined_state_dto, corresponding_version)?;
@@ -2409,6 +2507,42 @@ async fn append(
             return Ok((next_version, notifier));
         }
 
+        ExecutionRequest::Paused => {
+            match &combined_state.execution_with_state.pending_state {
+                PendingState::Finished { .. } => {
+                    unreachable!("handled above");
+                }
+                PendingState::Paused { .. } => {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason: "cannot pause, execution is already paused".into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    }
+                    .into());
+                }
+                _ => {}
+            }
+            let next_version =
+                update_state_paused(tx, execution_id, &appending_version, true).await?;
+            return Ok((next_version, AppendNotifier::default()));
+        }
+
+        ExecutionRequest::Unpaused => {
+            if combined_state.execution_with_state.pending_state != PendingState::Paused {
+                return Err(DbErrorWriteNonRetriable::IllegalState {
+                    reason: "cannot unpause, execution is not paused".into(),
+                    context: SpanTrace::capture(),
+                    source: None,
+                    loc: Location::caller(),
+                }
+                .into());
+            }
+            let next_version =
+                update_state_paused(tx, execution_id, &appending_version, false).await?;
+            return Ok((next_version, AppendNotifier::default()));
+        }
+
         ExecutionRequest::Finished { result, .. } => {
             update_state_finished(
                 tx,
@@ -2957,13 +3091,16 @@ async fn get_pending_of_single_ffqn(
     let rows = tx
         .query(
             &format!(
-                "SELECT execution_id, corresponding_version FROM t_state \
-                WHERE \
-                state = '{STATE_PENDING_AT}' AND \
-                pending_expires_finished <= $1 AND ffqn = $2 \
-                ORDER BY pending_expires_finished \
-                {} \
-                LIMIT $3",
+                r#"
+                SELECT execution_id, corresponding_version FROM t_state
+                WHERE
+                state = '{STATE_PENDING_AT}' AND
+                pending_expires_finished <= $1 AND ffqn = $2
+                AND is_paused = false
+                ORDER BY pending_expires_finished
+                {}
+                LIMIT $3
+                "#,
                 if select_strategy == SelectStrategy::LockForUpdate {
                     "FOR UPDATE SKIP LOCKED"
                 } else {
@@ -3047,13 +3184,16 @@ async fn get_pending_by_component_input_digest(
     let rows = tx
         .query(
             &format!(
-                "SELECT execution_id, corresponding_version FROM t_state WHERE \
-                state = '{STATE_PENDING_AT}' AND \
-                pending_expires_finished <= $1 AND \
-                component_id_input_digest = $2 \
-                ORDER BY pending_expires_finished \
-                {} \
-                LIMIT $3",
+                r#"
+                SELECT execution_id, corresponding_version FROM t_state WHERE
+                state = '{STATE_PENDING_AT}' AND
+                pending_expires_finished <= $1 AND
+                component_id_input_digest = $2
+                AND is_paused = false
+                ORDER BY pending_expires_finished
+                {}
+                LIMIT $3
+                "#,
                 if select_strategy == SelectStrategy::LockForUpdate {
                     "FOR UPDATE SKIP LOCKED"
                 } else {
@@ -3307,6 +3447,7 @@ impl DbExecutor for PostgresConnection {
         Ok(locked_execs)
     }
 
+    #[cfg(feature = "test")]
     #[instrument(level = Level::DEBUG, skip(self))]
     async fn lock_one(
         &self,
@@ -4262,6 +4403,60 @@ impl DbExternalApi for PostgresConnection {
         let deployments = list_deployment_states(&tx, current_time, pagination).await?;
         tx.commit().await?;
         Ok(deployments)
+    }
+
+    #[instrument(skip(self))]
+    async fn pause_execution(
+        &self,
+        execution_id: &ExecutionId,
+        paused_at: DateTime<Utc>,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        let combined_state = get_combined_state(&tx, execution_id).await?;
+        let appending_version = combined_state.get_next_version_fail_if_finished()?;
+        debug!("Pausing with {appending_version}");
+        let (next_version, _) = append(
+            &tx,
+            execution_id,
+            AppendRequest {
+                created_at: paused_at,
+                event: ExecutionRequest::Paused,
+            },
+            appending_version,
+        )
+        .await?;
+
+        tx.commit().await?;
+        Ok(next_version)
+    }
+
+    #[instrument(skip(self))]
+    async fn unpause_execution(
+        &self,
+        execution_id: &ExecutionId,
+        unpaused_at: DateTime<Utc>,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        let combined_state = get_combined_state(&tx, execution_id).await?;
+        let appending_version = combined_state.get_next_version_fail_if_finished()?;
+        debug!("Unpausing with {appending_version}");
+        let (next_version, _) = append(
+            &tx,
+            execution_id,
+            AppendRequest {
+                created_at: unpaused_at,
+                event: ExecutionRequest::Unpaused,
+            },
+            appending_version,
+        )
+        .await?;
+
+        tx.commit().await?;
+        Ok(next_version)
     }
 }
 

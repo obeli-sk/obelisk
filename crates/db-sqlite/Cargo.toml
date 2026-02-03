@@ -34,6 +34,7 @@ tracing-error.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+assert_matches.workspace = true
 
 [features]
 tempfile = ["dep:tempfile"]

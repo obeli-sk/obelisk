@@ -95,6 +95,7 @@ impl DbExecutor for InMemoryDbConnection {
         ))
     }
 
+    #[cfg(feature = "test")]
     #[instrument(skip_all, %execution_id)]
     async fn lock_one(
         &self,
@@ -569,7 +570,9 @@ mod index {
                         .or_default()
                         .push(lock_expires_at);
                 }
-                PendingState::BlockedByJoinSet { .. } | PendingState::Finished { .. } => {}
+                PendingState::BlockedByJoinSet { .. }
+                | PendingState::Finished { .. }
+                | PendingState::Paused { .. } => {}
             }
             // Add all open async timers
             let mut delay_req_resp = journal

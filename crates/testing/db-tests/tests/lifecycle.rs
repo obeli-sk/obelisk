@@ -5,15 +5,15 @@ use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest,
     ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, JoinSetRequest,
-    JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, PendingState, Version,
-    WasmBacktrace,
+    JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, PendingState,
+    PendingStateLocked, Version, WasmBacktrace,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
 use concepts::time::Now;
-use concepts::{ComponentId, Params, StrVariant};
+use concepts::{ComponentId, Params, StrVariant, SupportedFunctionReturnValue};
 use concepts::{ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VALUE_OK_EMPTY};
 use concepts::{ExecutionId, prefixed_ulid::ExecutorId};
 use db_postgres::postgres_dao::{DbInitialzationOutcome, PostgresPool, ProvisionPolicy};
@@ -1976,6 +1976,288 @@ async fn delay_cancellation_should_be_idempotent(database: Database) {
         .await
         .unwrap();
     assert_eq!(CancelOutcome::Cancelled, res);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn pause_and_unpause_should_work(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    let original_scheduled_at = sim_clock.now() + Duration::from_secs(60);
+    // Create with a future scheduled time
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: original_scheduled_at,
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Pause the execution
+    let next_version = api_conn
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(Version(2), next_version);
+
+    // Verify state is paused
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_eq!(PendingState::Paused, log.pending_state);
+
+    // Pausing again should return an error
+    let err = api_conn
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!("cannot pause, execution is already paused", reason.as_ref());
+
+    // Unpause the execution
+    let next_version = api_conn
+        .unpause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(Version(3), next_version);
+
+    // Verify state is pending at the original scheduled time
+    let log = db_connection.get(&execution_id).await.unwrap();
+    if let PendingState::PendingAt { scheduled_at, .. } = log.pending_state {
+        assert_eq!(scheduled_at, original_scheduled_at);
+    } else {
+        panic!("Expected PendingAt state, got {:?}", log.pending_state);
+    }
+
+    // Unpausing again should return an error
+    let err = api_conn
+        .unpause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap_err();
+
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!("cannot unpause, execution is not paused", reason.as_ref());
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn pause_finished_execution_should_fail(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Create
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Finish the execution
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Finished {
+                    result: SupportedFunctionReturnValue::Ok { ok: None },
+                    http_client_traces: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    // Pausing should return error
+    let err = api_conn
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!("already finished", reason.as_ref());
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Create with current scheduled time (ready to run)
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Lock the execution
+    let lock_expiry = Duration::from_secs(30);
+    let lock_expires_at = sim_clock.now() + lock_expiry;
+    lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        lock_expires_at,
+        RunId::generate(),
+    )
+    .await;
+
+    // Verify it's locked
+    let log = db_connection.get(&execution_id).await.unwrap();
+    let (found_locked_by, found_lock_expires_at) = assert_matches!(log.pending_state,
+        PendingState::Locked(PendingStateLocked{ locked_by, lock_expires_at }) => (locked_by, lock_expires_at));
+    assert_eq!(lock_expires_at, found_lock_expires_at);
+    // Pause the locked execution
+    api_conn
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    // Verify state is paused
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_eq!(PendingState::Paused, log.pending_state);
+
+    // Unpause and verify it returns to the same state as before pausing.
+    api_conn
+        .unpause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    // Since lock_expires_at is in the future, it should be preserved
+    let log = db_connection.get(&execution_id).await.unwrap();
+    let (found_locked_by_2, found_lock_expires_at_2) = assert_matches!(log.pending_state,
+        PendingState::Locked(PendingStateLocked{ locked_by, lock_expires_at }) => (locked_by, lock_expires_at));
+    assert_eq!(lock_expires_at, found_lock_expires_at_2);
+    assert_eq!(found_locked_by, found_locked_by_2);
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_lock_paused_execution(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Create with current scheduled time (ready to run)
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Pause the execution
+    api_conn
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    // Try to lock the paused execution - should fail
+    let err = db_connection
+        .lock_one(
+            sim_clock.now(),
+            ComponentId::dummy_activity(),
+            DEPLOYMENT_ID_DUMMY,
+            &execution_id,
+            RunId::generate(),
+            Version::new(2), // After pause event
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap_err();
+
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!("cannot lock, execution is paused", reason.as_ref());
+
+    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }

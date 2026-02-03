@@ -75,6 +75,14 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::put(execution_cancel),
         )
         .route(
+            "/executions/{execution-id}/pause",
+            routing::put(execution_pause),
+        )
+        .route(
+            "/executions/{execution-id}/unpause",
+            routing::put(execution_unpause),
+        )
+        .route(
             "/executions/{execution-id}/events",
             routing::get(execution_events),
         )
@@ -350,6 +358,52 @@ async fn execution_cancel(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())
+}
+
+#[instrument(skip_all, fields(execution_id))]
+async fn execution_pause(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let paused_at = Now.now();
+    conn.pause_execution(&execution_id, paused_at)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    Ok(HttpResponse {
+        status: StatusCode::OK,
+        message: "paused".to_string(),
+        accept,
+    }
+    .into_response())
+}
+
+#[instrument(skip_all, fields(execution_id))]
+async fn execution_unpause(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let unpaused_at = Now.now();
+    conn.unpause_execution(&execution_id, unpaused_at)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    Ok(HttpResponse {
+        status: StatusCode::OK,
+        message: "unpaused".to_string(),
+        accept,
+    }
+    .into_response())
 }
 
 #[derive(Debug, Deserialize)]

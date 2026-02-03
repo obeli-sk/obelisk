@@ -945,6 +945,51 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             prev_page_token: resp.prev_page.map(to_base64),
         }))
     }
+
+    #[instrument(skip_all, fields(execution_id, delay_id))]
+    async fn pause_execution(
+        &self,
+        request: tonic::Request<grpc_gen::PauseExecutionRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::PauseExecutionResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let executed_at = Now.now();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        self.db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?
+            .pause_execution(&execution_id, executed_at)
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(grpc_gen::PauseExecutionResponse {}))
+    }
+
+    #[instrument(skip_all, fields(execution_id, delay_id))]
+    async fn unpause_execution(
+        &self,
+        request: tonic::Request<grpc_gen::UnpauseExecutionRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::UnpauseExecutionResponse>, tonic::Status>
+    {
+        let request = request.into_inner();
+        let executed_at = Now.now();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        self.db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?
+            .unpause_execution(&execution_id, executed_at)
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(grpc_gen::UnpauseExecutionResponse {}))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
