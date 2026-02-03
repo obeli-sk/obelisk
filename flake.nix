@@ -191,9 +191,6 @@
                 release-plz
                 wasm-tools
                 wasmtime.out
-                # wild
-                clang
-                wild
               ];
           };
           packages = rec {
