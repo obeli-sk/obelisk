@@ -333,18 +333,15 @@ impl From<&ExecutionWithState> for grpc_gen::ExecutionStatus {
                     lock_expires_at: Some((*lock_expires_at).into()),
                     closing: *closing,
                 }),
-                PendingState::Finished {
-                    finished:
-                        PendingStateFinished {
-                            version: _,
-                            finished_at,
-                            result_kind,
-                        },
-                } => Status::Finished(Finished {
+                PendingState::Finished(PendingStateFinished {
+                    version: _,
+                    finished_at,
+                    result_kind,
+                }) => Status::Finished(Finished {
                     finished_at: Some((*finished_at).into()),
                     result_kind: grpc_gen::ResultKind::from(*result_kind).into(),
                 }),
-                PendingState::Paused => Status::Paused(Paused {}),
+                PendingState::Paused(..) => Status::Paused(Paused {}),
             }),
         }
     }

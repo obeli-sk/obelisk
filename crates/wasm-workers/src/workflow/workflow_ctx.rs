@@ -2093,14 +2093,14 @@ pub(crate) mod tests {
         let (_, log) = execute_steps(steps, db_pool.clone(), &mut SimClock::epoch(), || 0).await;
         let kind = assert_matches!(
             log.pending_state,
-            PendingState::Finished {
-                finished: PendingStateFinished {
+            PendingState::Finished(
+                PendingStateFinished {
                     result_kind: PendingStateFinishedResultKind::Err(
                         PendingStateFinishedError::ExecutionFailure(kind)
                     ),
                     ..
                 },
-            } => kind
+            ) => kind
         );
         assert_eq!(ExecutionFailureKind::Uncategorized, kind);
         let (reason, kind, _detail) = assert_matches!(log.as_finished_result().unwrap(),
@@ -2259,12 +2259,10 @@ pub(crate) mod tests {
         let execution_log = db_connection.get(&execution_id).await.unwrap();
         assert_matches!(
             execution_log.pending_state,
-            PendingState::Finished {
-                finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind::Ok,
-                    ..
-                },
-            }
+            PendingState::Finished(PendingStateFinished {
+                result_kind: PendingStateFinishedResultKind::Ok,
+                ..
+            },)
         );
 
         // Currently only finished executions can be checked. Otherwise a noop

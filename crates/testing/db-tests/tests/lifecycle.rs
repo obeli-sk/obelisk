@@ -2023,7 +2023,7 @@ async fn pause_and_unpause_should_work(database: Database) {
 
     // Verify state is paused
     let log = db_connection.get(&execution_id).await.unwrap();
-    assert_eq!(PendingState::Paused, log.pending_state);
+    assert_matches!(log.pending_state, PendingState::Paused(..));
 
     // Pausing again should return an error
     let err = api_conn
@@ -2181,7 +2181,7 @@ async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Da
 
     // Verify state is paused
     let log = db_connection.get(&execution_id).await.unwrap();
-    assert_eq!(PendingState::Paused, log.pending_state);
+    assert_matches!(log.pending_state, PendingState::Paused(..));
 
     // Unpause and verify it returns to the same state as before pausing.
     api_conn

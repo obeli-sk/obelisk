@@ -18,9 +18,10 @@ use concepts::{
         ListLogsResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry,
         LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
         PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt, ResponseCursor,
-        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
+        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePaused,
+        PendingStatePendingAt, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
+        WasmBacktrace,
     },
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
@@ -804,15 +805,13 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Finished {
-                    finished: PendingStateFinished {
-                        finished_at,
-                        version: corresponding_version.0,
-                        result_kind,
-                    },
-                },
+                pending_state: PendingState::Finished(PendingStateFinished {
+                    finished_at,
+                    version: corresponding_version.0,
+                    result_kind,
+                }),
             },
-            // Paused
+            // Paused - PendingAt (just created)
             CombinedStateDTO {
                 execution_id,
                 created_at,
@@ -822,15 +821,15 @@ impl CombinedState {
                 component_digest,
                 component_type,
                 deployment_id,
-                pending_expires_finished: _,
-                last_lock_version: _,
-                executor_id: _,
-                run_id: _,
-                join_set_id: _,
-                join_set_closing: _,
+                pending_expires_finished: scheduled_at,
+                last_lock_version: None,
+                executor_id: None,
+                run_id: None,
+                join_set_id: None,
+                join_set_closing: None,
                 result_kind: None,
                 is_paused: true,
-            } if state != STATE_FINISHED => ExecutionWithState {
+            } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
                 component_type,
                 deployment_id,
@@ -838,7 +837,118 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused,
+                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
+                    PendingStatePendingAt {
+                        scheduled_at,
+                        last_lock: None,
+                    },
+                )),
+            },
+            // Paused - PendingAt (previously locked)
+            CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                state,
+                ffqn,
+                component_digest,
+                component_type,
+                deployment_id,
+                pending_expires_finished: scheduled_at,
+                last_lock_version: None,
+                executor_id: Some(executor_id),
+                run_id: Some(run_id),
+                join_set_id: None,
+                join_set_closing: None,
+                result_kind: None,
+                is_paused: true,
+            } if state == STATE_PENDING_AT => ExecutionWithState {
+                component_digest,
+                component_type,
+                deployment_id,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
+                    PendingStatePendingAt {
+                        scheduled_at,
+                        last_lock: Some(LockedBy {
+                            executor_id,
+                            run_id,
+                        }),
+                    },
+                )),
+            },
+            // Paused - Locked
+            CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                state,
+                ffqn,
+                component_digest,
+                component_type,
+                deployment_id,
+                pending_expires_finished: lock_expires_at,
+                last_lock_version: Some(_),
+                executor_id: Some(executor_id),
+                run_id: Some(run_id),
+                join_set_id: None,
+                join_set_closing: None,
+                result_kind: None,
+                is_paused: true,
+            } if state == STATE_LOCKED => ExecutionWithState {
+                component_digest,
+                component_type,
+                deployment_id,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Paused(PendingStatePaused::Locked(
+                    PendingStateLocked {
+                        locked_by: LockedBy {
+                            executor_id,
+                            run_id,
+                        },
+                        lock_expires_at,
+                    },
+                )),
+            },
+            // Paused - BlockedByJoinSet
+            CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                state,
+                ffqn,
+                component_digest,
+                component_type,
+                deployment_id,
+                pending_expires_finished: lock_expires_at,
+                last_lock_version: None,
+                executor_id: _,
+                run_id: _,
+                join_set_id: Some(join_set_id),
+                join_set_closing: Some(join_set_closing),
+                result_kind: None,
+                is_paused: true,
+            } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
+                component_digest,
+                component_type,
+                deployment_id,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Paused(PendingStatePaused::BlockedByJoinSet(
+                    PendingStateBlockedByJoinSet {
+                        join_set_id: join_set_id.clone(),
+                        closing: join_set_closing,
+                        lock_expires_at,
+                    },
+                )),
             },
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
@@ -2513,7 +2623,7 @@ async fn append(
                 PendingState::Finished { .. } => {
                     unreachable!("handled above");
                 }
-                PendingState::Paused => {
+                PendingState::Paused(..) => {
                     return Err(DbErrorWriteNonRetriable::IllegalState {
                         reason: "cannot pause, execution is already paused".into(),
                         context: SpanTrace::capture(),
@@ -2530,7 +2640,11 @@ async fn append(
         }
 
         ExecutionRequest::Unpaused => {
-            if combined_state.execution_with_state.pending_state != PendingState::Paused {
+            if !combined_state
+                .execution_with_state
+                .pending_state
+                .is_paused()
+            {
                 return Err(DbErrorWriteNonRetriable::IllegalState {
                     reason: "cannot unpause, execution is not paused".into(),
                     context: SpanTrace::capture(),
@@ -3932,7 +4046,7 @@ impl DbConnection for PostgresConnection {
                 .execution_with_state
                 .pending_state;
 
-            if let PendingState::Finished { finished, .. } = pending_state {
+            if let PendingState::Finished(finished) = pending_state {
                 let event = get_execution_event(&tx, execution_id, finished.version).await?;
                 tx.commit().await?;
                 cleanup();

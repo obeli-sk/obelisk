@@ -1654,14 +1654,11 @@ pub enum PendingState {
     #[display("BlockedByJoinSet({_0})")]
     BlockedByJoinSet(PendingStateBlockedByJoinSet),
 
-    #[display("Paused")]
-    Paused,
+    #[display("Paused({_0})")]
+    Paused(PendingStatePaused),
 
-    #[display("Finished({finished})")]
-    Finished {
-        #[serde(flatten)]
-        finished: PendingStateFinished,
-    },
+    #[display("Finished({_0})")]
+    Finished(PendingStateFinished),
 }
 
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
@@ -1671,7 +1668,7 @@ pub struct PendingStateLocked {
     pub lock_expires_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
 #[display("`{scheduled_at}`, last_lock={last_lock:?}")]
 pub struct PendingStatePendingAt {
     pub scheduled_at: DateTime<Utc>,
@@ -1679,7 +1676,7 @@ pub struct PendingStatePendingAt {
     pub last_lock: Option<LockedBy>,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
 #[display("{join_set_id}, `{lock_expires_at}`, closing={closing}")]
 pub struct PendingStateBlockedByJoinSet {
     pub join_set_id: JoinSetId,
@@ -1687,6 +1684,17 @@ pub struct PendingStateBlockedByJoinSet {
     pub lock_expires_at: DateTime<Utc>,
     /// Blocked by closing of the join set
     pub closing: bool,
+}
+
+/// State of execution before it was paused.
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
+pub enum PendingStatePaused {
+    #[display("Locked({_0})")]
+    Locked(PendingStateLocked),
+    #[display("PendingAt({_0})")]
+    PendingAt(PendingStatePendingAt),
+    #[display("BlockedByJoinSet({_0})")]
+    BlockedByJoinSet(PendingStateBlockedByJoinSet),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1703,7 +1711,8 @@ impl From<&Locked> for LockedBy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(any(test, feature = "test"), derive(Deserialize))]
 pub struct PendingStateFinished {
     pub version: VersionType, // not Version since it must be Copy
     pub finished_at: DateTime<Utc>,
@@ -1820,7 +1829,7 @@ impl PendingState {
                 source: None,
                 loc: Location::caller(),
             }),
-            PendingState::Paused => Err(DbErrorWriteNonRetriable::IllegalState {
+            PendingState::Paused(..) => Err(DbErrorWriteNonRetriable::IllegalState {
                 reason: "cannot lock, execution is paused".into(),
                 context: SpanTrace::capture(),
                 source: None,
@@ -1832,6 +1841,11 @@ impl PendingState {
     #[must_use]
     pub fn is_finished(&self) -> bool {
         matches!(self, PendingState::Finished { .. })
+    }
+
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        matches!(self, PendingState::Paused(_))
     }
 }
 

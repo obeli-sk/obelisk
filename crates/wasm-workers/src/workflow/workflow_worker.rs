@@ -1433,13 +1433,10 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .pending_state,
-            PendingState::Finished {
-                finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind::Ok,
-                    ..
-                },
+            PendingState::Finished(PendingStateFinished {
+                result_kind: PendingStateFinishedResultKind::Ok,
                 ..
-            }
+            })
         );
         drop(db_connection);
         db_close.close().await;
@@ -1614,13 +1611,10 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .pending_state,
-            PendingState::Finished {
-                finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind::Ok,
-                    ..
-                },
+            PendingState::Finished(PendingStateFinished {
+                result_kind: PendingStateFinishedResultKind::Ok,
                 ..
-            }
+            })
         );
         drop(db_connection);
         db_close.close().await;
@@ -2151,14 +2145,10 @@ pub(crate) mod tests {
             .pending_state;
         assert_matches!(
             pending_state,
-            PendingState::Finished {
-                finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind::Err(
-                        PendingStateFinishedError::Error
-                    ),
-                    ..
-                },
-            }
+            PendingState::Finished(PendingStateFinished {
+                result_kind: PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error),
+                ..
+            })
         );
         drop(db_connection);
         db_close.close().await;
@@ -2852,12 +2842,10 @@ pub(crate) mod tests {
             .pending_state;
         assert_matches!(
             pending_state,
-            PendingState::Finished {
-                finished: PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind::Ok,
-                    ..
-                },
-            }
+            PendingState::Finished(PendingStateFinished {
+                result_kind: PendingStateFinishedResultKind::Ok,
+                ..
+            },)
         );
         drop(db_connection);
         db_close.close().await;

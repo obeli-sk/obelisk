@@ -77,10 +77,7 @@ impl<S: Sleep + 'static> PreopensCleaner<S> {
                 {
                     Ok(ExecutionWithState {
                         pending_state:
-                            PendingState::Finished {
-                                finished: PendingStateFinished { finished_at, .. },
-                                ..
-                            },
+                            PendingState::Finished(PendingStateFinished { finished_at, .. }),
                         ..
                     }) if finished_at < delete_older_than => {
                         // finished => delete after specified time

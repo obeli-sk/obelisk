@@ -302,7 +302,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         };
         if current_execution_with_state.pending_state.is_finished() || !request.follow {
             // No waiting in this case
-            let output: Self::GetStatusStream = if let PendingState::Finished { finished, .. } =
+            let output: Self::GetStatusStream = if let PendingState::Finished(finished) =
                 current_execution_with_state.pending_state
                 && request.send_finished_status
             {
@@ -1072,10 +1072,8 @@ async fn notify_status(
                     info!("Cannot send the message - {err:?}");
                     return Err(());
                 }
-                if let PendingState::Finished {
-                    finished: pending_state_finished,
-                    ..
-                } = execution_with_state.pending_state
+                if let PendingState::Finished(pending_state_finished) =
+                    execution_with_state.pending_state
                 {
                     if send_finished_status {
                         // Send the last message and close the RPC.

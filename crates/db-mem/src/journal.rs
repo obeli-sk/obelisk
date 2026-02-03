@@ -4,8 +4,8 @@ use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionRequest,
     HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
     Locked, LockedBy, PendingStateBlockedByJoinSet, PendingStateFinished,
-    PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt, ResponseCursor,
-    ResponseWithCursor, VersionType,
+    PendingStateFinishedResultKind, PendingStateLocked, PendingStatePaused, PendingStatePendingAt,
+    ResponseCursor, ResponseWithCursor, VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, Version};
 use concepts::{ComponentId, JoinSetId};
@@ -297,31 +297,37 @@ impl ExecutionJournal {
         }
     }
 
-    fn update_pending_state(&mut self) {
-        let mut unpause_encountered = false;
+    fn find_current_pending_state(&self) -> PendingState {
+        if let Some(last_event) = self.execution_events.last()
+            && let ExecutionRequest::Finished { result, .. } = &last_event.event
+        {
+            let idx = self.execution_events.len() - 1;
+            return PendingState::Finished(PendingStateFinished {
+                version: VersionType::try_from(idx).expect("version limit reached"),
+                finished_at: last_event.created_at,
+                result_kind: PendingStateFinishedResultKind::from(result),
+            });
+        }
 
-        let pending_state = self
+        let mut unpause_encountered = false;
+        let mut is_paused = false;
+
+        // Find the underlying state (ignoring Paused/Unpaused for now), store it in
+        // `PendingStatePaused` independent of whether the execution is actually paused.
+        let underlying_state: PendingStatePaused = self
             .execution_events
             .iter()
             .enumerate()
             .rev()
-            .find_map(|(idx, event)| match &event.event {
+            .find_map(|(_idx, event)| match &event.event {
+                ExecutionRequest::Finished { .. } => {
+                    unreachable!("finished state was already handled above")
+                }
                 ExecutionRequest::Created { scheduled_at, .. } => {
-                    Some(PendingState::PendingAt(PendingStatePendingAt {
+                    Some(PendingStatePaused::PendingAt(PendingStatePendingAt {
                         scheduled_at: *scheduled_at,
                         last_lock: None,
                     }))
-                }
-
-                ExecutionRequest::Finished { result, .. } => {
-                    assert_eq!(self.execution_events.len() - 1, idx);
-                    Some(PendingState::Finished {
-                        finished: PendingStateFinished {
-                            version: VersionType::try_from(idx).expect("version limit reached"),
-                            finished_at: event.created_at,
-                            result_kind: PendingStateFinishedResultKind::from(result),
-                        },
-                    })
                 }
 
                 ExecutionRequest::Locked(Locked {
@@ -331,7 +337,7 @@ impl ExecutionJournal {
                     component_id: _,
                     deployment_id: _,
                     retry_config: _,
-                }) => Some(PendingState::Locked(PendingStateLocked {
+                }) => Some(PendingStatePaused::Locked(PendingStateLocked {
                     locked_by: LockedBy {
                         executor_id: *executor_id,
                         run_id: *run_id,
@@ -350,7 +356,7 @@ impl ExecutionJournal {
                 | ExecutionRequest::Unlocked {
                     backoff_expires_at: expires_at,
                     ..
-                } => Some(PendingState::PendingAt(PendingStatePendingAt {
+                } => Some(PendingStatePaused::PendingAt(PendingStatePendingAt {
                     scheduled_at: *expires_at,
                     last_lock: self.find_last_lock().map(LockedBy::from),
                 })),
@@ -393,13 +399,13 @@ impl ExecutionJournal {
                     if let Some(nth_created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
                         let scheduled_at = max(*lock_expires_at, *nth_created_at);
-                        Some(PendingState::PendingAt(PendingStatePendingAt {
+                        Some(PendingStatePaused::PendingAt(PendingStatePendingAt {
                             scheduled_at,
                             last_lock: self.find_last_lock().map(LockedBy::from),
                         }))
                     } else {
                         // Still waiting for response
-                        Some(PendingState::BlockedByJoinSet(
+                        Some(PendingStatePaused::BlockedByJoinSet(
                             PendingStateBlockedByJoinSet {
                                 join_set_id: expected_join_set_id.clone(),
                                 lock_expires_at: *lock_expires_at,
@@ -419,9 +425,9 @@ impl ExecutionJournal {
                         unpause_encountered = false;
                         None
                     } else {
-                        // No unpauses were found with bigger version
-                        unpause_encountered = false; // For sanity check below.
-                        Some(PendingState::Paused)
+                        // No unpauses were found in the later events - execution is paused
+                        is_paused = true;
+                        None // Continue looking for underlying state
                     }
                 }
                 // No pending state change for following events:
@@ -444,7 +450,29 @@ impl ExecutionJournal {
             .expect("journal must begin with Created event");
 
         assert!(!unpause_encountered, "unpause must be preceeded with pause");
-        self.pending_state = pending_state;
+
+        // Check if execution is finished (overrides paused state)
+
+        {
+            if is_paused {
+                PendingState::Paused(underlying_state)
+            } else {
+                // Convert PendingStatePaused to PendingState
+                match underlying_state {
+                    PendingStatePaused::Locked(locked) => PendingState::Locked(locked),
+                    PendingStatePaused::PendingAt(pending_at) => {
+                        PendingState::PendingAt(pending_at)
+                    }
+                    PendingStatePaused::BlockedByJoinSet(blocked) => {
+                        PendingState::BlockedByJoinSet(blocked)
+                    }
+                }
+            }
+        }
+    }
+
+    fn update_pending_state(&mut self) {
+        self.pending_state = self.find_current_pending_state();
         self.component_id = self
             .find_last_lock()
             .map(|locked| locked.component_id.clone())
