@@ -202,7 +202,7 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
 base64 = "0.22.1"
-bytes = "1.11"
+bytes = "1.11.1"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
 chrono = { version = "0.4.43", features = ["arbitrary", "serde"] }
