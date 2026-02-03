@@ -125,7 +125,6 @@ use wasmtime::Engine;
 
 const EPOCH_MILLIS: u64 = 10;
 const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt");
-pub const GET_STATUS_POLLING_SLEEP: Duration = Duration::from_secs(1);
 
 pub(crate) type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 

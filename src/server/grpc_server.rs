@@ -1,6 +1,5 @@
 use crate::command::server;
 use crate::command::server::ComponentSourceMap;
-use crate::command::server::GET_STATUS_POLLING_SLEEP;
 use crate::command::server::MatchableSourceMap;
 use crate::command::server::SubmitError;
 use base64::Engine as _;
@@ -56,6 +55,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
@@ -1006,6 +1006,8 @@ impl From<Pagination<u32>> for ListLogsPagination {
     }
 }
 
+const GET_STATUS_POLLING_SLEEP: Duration = Duration::from_millis(200);
+
 pub(crate) async fn poll_status(
     db_pool: Arc<dyn DbPool>,
     mut termination_watcher: watch::Receiver<()>,
@@ -1059,7 +1061,8 @@ async fn notify_status(
     create_request: &CreateRequest,
     send_finished_status: bool,
 ) -> Result<PendingState, ()> {
-    match conn.get_pending_state(execution_id).await {
+    let pending_state = conn.get_pending_state(execution_id).await;
+    match pending_state {
         Ok(execution_with_state) => {
             if execution_with_state.pending_state != old_pending_state {
                 let grpc_pending_status = grpc_gen::ExecutionStatus::from(&execution_with_state);
