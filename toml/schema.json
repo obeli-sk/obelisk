@@ -165,6 +165,14 @@
     "ActivityStubExtComponentConfigToml": {
       "type": "object",
       "properties": {
+        "content_digest": {
+          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "location": {
           "type": "string"
         },
@@ -181,6 +189,14 @@
     "ActivityWasmComponentConfigToml": {
       "type": "object",
       "properties": {
+        "content_digest": {
+          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "directories": {
           "$ref": "#/$defs/ActivityDirectoriesConfigToml"
         },
@@ -1042,6 +1058,14 @@
         "backtrace": {
           "$ref": "#/$defs/ComponentBacktraceConfig"
         },
+        "content_digest": {
+          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "env_vars": {
           "type": "array",
           "items": {
@@ -1118,6 +1142,14 @@
         },
         "blocking_strategy": {
           "$ref": "#/$defs/BlockingStrategyConfigToml"
+        },
+        "content_digest": {
+          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml"

@@ -1,10 +1,14 @@
 use super::{config_holder::PathPrefixes, env_var::EnvVarConfig};
-use crate::config::{
-    config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX},
-    env_var::replace_env_vars,
-};
+use crate::github::{self, GH_SCHEMA_PREFIX, GitHubReleaseReference, GitHubReleaseTag};
 use crate::oci;
-use anyhow::Context;
+use crate::{
+    config::{
+        config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX},
+        env_var::replace_env_vars,
+    },
+    github::content_digest_to_wasm_file,
+};
+use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
@@ -24,7 +28,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tracing::{instrument, warn};
+use tracing::{info, instrument, trace, warn};
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
@@ -481,46 +485,91 @@ pub(crate) enum ComponentLocationToml {
         // #[serde_as(as = "serde_with::DisplayFromStr")]
         oci_client::Reference,
     ),
+    GitHub(GitHubReleaseReference),
 }
 impl ComponentLocationToml {
     /// Fetch wasm file, calculate its content digest.
     ///
-    /// Read wasm file either from local fs or pull from an OCI registry and cache it.
+    /// Read wasm file either from local fs, pull from an OCI registry, or pull from GitHub release and cache it.
     /// Calculate the `content_digest`. File is not converted from Core to Component format.
+    /// If `expected_content_digest` is specified:
+    /// - try to find it in cache instead of download. (We trust that the cache was not tampered with).
+    /// - if downloaded, digests must match.
     pub(crate) async fn fetch(
         &self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
         path_prefixes: &PathPrefixes,
+        expected_digest: Option<&ContentDigest>,
     ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
         use utils::sha256sum::calculate_sha256_file;
 
-        match &self {
+        // Happy path: if content_digest is known and file exists in cache, return immediately
+        if let Some(expected_digest) = expected_digest {
+            let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, expected_digest);
+            // No verification here
+            trace!("Using cached file for known content digest");
+            return Ok((expected_digest.clone(), wasm_path));
+        }
+
+        let (actual_digest, path) = match &self {
             ComponentLocationToml::Path(wasm_path) => {
                 let wasm_path = path_prefixes.replace_file_prefix_verify_exists(wasm_path)?;
-                // Future optimization: If the content digest is specified in TOML and wasm is already in the cache dir, do not recalculate it.
-                let content_digest = calculate_sha256_file(&wasm_path)
+                let actual_digest = calculate_sha256_file(&wasm_path)
                     .await
                     .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
-                Ok((content_digest, wasm_path))
+                (actual_digest, wasm_path)
             }
             ComponentLocationToml::Oci(image) => {
                 oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
                     .await
-                    .context("try cleaning the cache directory with `--clean-cache`")
+                    .context("try cleaning the cache directory with `--clean-cache`")?
             }
+            ComponentLocationToml::GitHub(github_ref) => {
+                let (actual_digest, wasm_path) =
+                    github::pull_to_cache_dir(github_ref, wasm_cache_dir)
+                        .await
+                        .context("try cleaning the cache directory with `--clean-cache`")?;
+                // Warn if no content_digest was specified (for reproducibility)
+                if expected_digest.is_none() && github_ref.tag != GitHubReleaseTag::Latest {
+                    warn!(
+                        "No content_digest specified for GitHub release component. Consider adding `content_digest` to your configuration for reproducible builds."
+                    );
+                }
+                // Suggest adding content_digest to config
+                if expected_digest.is_none() {
+                    info!(
+                        "Downloaded asset has content_digest: sha256:{}",
+                        actual_digest.with_infix(":")
+                    );
+                }
+
+                (actual_digest, wasm_path)
+            }
+        };
+        if let Some(expected_digest) = expected_digest {
+            ensure!(
+                *expected_digest == actual_digest,
+                "content digest mismatch: expected {expected_digest}, got {actual_digest}"
+            );
         }
+        Ok((actual_digest, path))
     }
 }
 pub(crate) const OCI_SCHEMA_PREFIX: &str = "oci://";
 impl FromStr for ComponentLocationToml {
-    type Err = oci_client::ParseError;
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some(location) = s.strip_prefix(OCI_SCHEMA_PREFIX) {
-            Ok(ComponentLocationToml::Oci(oci_client::Reference::from_str(
-                location,
-            )?))
+            Ok(ComponentLocationToml::Oci(
+                oci_client::Reference::from_str(location)
+                    .map_err(|e| anyhow::anyhow!("invalid OCI reference: {e}"))?,
+            ))
+        } else if let Some(location) = s.strip_prefix(GH_SCHEMA_PREFIX) {
+            Ok(ComponentLocationToml::GitHub(
+                GitHubReleaseReference::from_str(location)?,
+            ))
         } else {
             Ok(ComponentLocationToml::Path(s.to_string()))
         }
@@ -553,6 +602,12 @@ impl<'de> Deserialize<'de> for ConfigName {
 pub(crate) struct ComponentCommon {
     pub(crate) name: ConfigName,
     pub(crate) location: ComponentLocationToml,
+    /// Content digest of the WASM file.
+    /// Recommended for GitHub releases to enable caching and reproducible builds.
+    /// If the file is found in cache, the download is bypassed.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) content_digest: Option<ContentDigest>,
 }
 
 impl ComponentCommon {
@@ -562,14 +617,20 @@ impl ComponentCommon {
         metadata_dir: &Path,
         path_prefixes: &PathPrefixes,
     ) -> Result<(ComponentCommonVerified, PathBuf), anyhow::Error> {
-        let (content_digest, wasm_path) = self
+        let (fetched_digest, wasm_path) = self
             .location
-            .fetch(wasm_cache_dir, metadata_dir, path_prefixes)
+            .fetch(
+                wasm_cache_dir,
+                metadata_dir,
+                path_prefixes,
+                self.content_digest.as_ref(),
+            )
             .await?;
+
         let verified = ComponentCommonVerified {
             name: self.name,
             location: self.location,
-            content_digest,
+            content_digest: fetched_digest,
         };
         Ok((verified, wasm_path))
     }
@@ -1843,6 +1904,85 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
 "#;
             let result = toml::from_str::<TestConfig>(toml_str);
             assert!(result.is_err(), "Should fail on `extra_stuff`");
+        }
+    }
+
+    mod component_location {
+        use super::super::*;
+        use crate::github::GitHubReleaseTag;
+
+        #[test]
+        fn parse_local_path() {
+            let location: ComponentLocationToml = "./my-component.wasm".parse().unwrap();
+            assert!(
+                matches!(location, ComponentLocationToml::Path(p) if p == "./my-component.wasm")
+            );
+        }
+
+        #[test]
+        fn parse_oci_reference() {
+            let location: ComponentLocationToml =
+                "oci://ghcr.io/obeli-sk/obelisk:v0.34.1".parse().unwrap();
+            assert!(matches!(location, ComponentLocationToml::Oci(_)));
+        }
+
+        #[test]
+        fn parse_github_release_specific_tag() {
+            let location: ComponentLocationToml = "gh://obeli-sk/obelisk@v0.34.1/my-component.wasm"
+                .parse()
+                .unwrap();
+            match location {
+                ComponentLocationToml::GitHub(ref gh_ref) => {
+                    assert_eq!(gh_ref.owner, "obeli-sk");
+                    assert_eq!(gh_ref.repo, "obelisk");
+                    assert_eq!(
+                        gh_ref.tag,
+                        GitHubReleaseTag::Specific("v0.34.1".to_string())
+                    );
+                    assert_eq!(gh_ref.asset_name, "my-component.wasm");
+                }
+                _ => panic!("expected GitHub variant"),
+            }
+        }
+
+        #[test]
+        fn parse_github_release_latest() {
+            let location: ComponentLocationToml = "gh://obeli-sk/obelisk@latest/my-component.wasm"
+                .parse()
+                .unwrap();
+            match location {
+                ComponentLocationToml::GitHub(ref gh_ref) => {
+                    assert_eq!(gh_ref.tag, GitHubReleaseTag::Latest);
+                }
+                _ => panic!("expected GitHub variant"),
+            }
+        }
+
+        #[test]
+        fn parse_github_release_invalid() {
+            let result: Result<ComponentLocationToml, _> = "gh://invalid-format".parse();
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn deserialize_component_common_with_content_digest() {
+            let toml_str = r#"
+name = "my_component"
+location = "gh://owner/repo@v1.0.0/component.wasm"
+content_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+"#;
+            let common: ComponentCommon = toml::from_str(toml_str).unwrap();
+            assert!(common.content_digest.is_some());
+        }
+
+        #[test]
+        fn deserialize_component_common_without_content_digest() {
+            let toml_str = r#"
+name = "my_component"
+location = "gh://owner/repo@v1.0.0/component.wasm"
+"#;
+            let common: ComponentCommon = toml::from_str(toml_str).unwrap();
+            assert!(common.content_digest.is_none());
         }
     }
 }

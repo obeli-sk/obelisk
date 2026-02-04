@@ -1,4 +1,4 @@
-use crate::config::toml::OCI_SCHEMA_PREFIX;
+use crate::{config::toml::OCI_SCHEMA_PREFIX, github::content_digest_to_wasm_file};
 use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, component_id::Digest};
 use futures_util::TryFutureExt;
@@ -24,10 +24,6 @@ const OCI_CLIENT_RETRIES: u64 = 10;
 // Content of this file is a sha sum of the downloaded WASM file.
 fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathBuf {
     metadata_dir.join(format!("{}.txt", metadata_file.with_infix("_")))
-}
-
-fn content_digest_to_wasm_file(wasm_cache_dir: &Path, content_digest: &ContentDigest) -> PathBuf {
-    wasm_cache_dir.join(format!("{}.wasm", content_digest.with_infix("_"),))
 }
 
 async fn verify_wasm_file(wasm_path: &Path, content_digest: &ContentDigest) -> Result<(), ()> {

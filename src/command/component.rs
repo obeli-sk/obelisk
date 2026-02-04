@@ -117,6 +117,7 @@ pub(crate) async fn add(
         ComponentLocationToml::Oci(reference) => {
             format!("{OCI_SCHEMA_PREFIX}{}", reference.whole())
         }
+        ComponentLocationToml::GitHub(github_ref) => github_ref.to_string(),
     };
 
     let contents = {
@@ -184,7 +185,7 @@ pub(crate) async fn inspect(
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
 
     let (_content_digest, wasm_path) = location
-        .fetch(&wasm_cache_dir, &metadata_dir, path_prefixes)
+        .fetch(&wasm_cache_dir, &metadata_dir, path_prefixes, None)
         .await?;
 
     let wasm_path = {

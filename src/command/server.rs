@@ -825,6 +825,7 @@ impl ServerVerified {
                             .parse()
                             .expect("hard-coded webui reference must be parsed"),
                     ),
+                    content_digest: None,
                 },
                 http_server: http_server_name,
                 routes: vec![WebhookRoute::default()],
