@@ -505,9 +505,10 @@ impl ComponentLocationToml {
         use utils::sha256sum::calculate_sha256_file;
 
         // Happy path: if content_digest is known and file exists in cache, return immediately
-        if let Some(expected_digest) = expected_digest {
-            let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, expected_digest);
-            // No verification here
+        if let Some(expected_digest) = expected_digest
+            && let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, expected_digest)
+            && wasm_path.exists()
+        {
             trace!("Using cached file for known content digest");
             return Ok((expected_digest.clone(), wasm_path));
         }
