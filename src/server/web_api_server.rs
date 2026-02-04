@@ -1438,10 +1438,7 @@ mod deployment {
     use chrono::Utc;
     use concepts::{
         prefixed_ulid::DeploymentId,
-        storage::{
-            DeploymentState, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
-            LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION, Pagination,
-        },
+        storage::{DeploymentState, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH, Pagination},
     };
     use serde::{Deserialize, Serialize};
     use std::{fmt::Write as _, sync::Arc};
@@ -1503,9 +1500,7 @@ mod deployment {
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 
-        if pagination == LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION
-            && states.first().map(|dep| dep.deployment_id) != Some(state.deployment_id)
-        {
+        if crate::server::should_add_current_deployment(&pagination, state.deployment_id, &states) {
             states.insert(0, DeploymentState::new(state.deployment_id));
         }
 

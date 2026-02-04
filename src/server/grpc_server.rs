@@ -1327,9 +1327,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .await
             .to_status()?;
 
-        if pagination == LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION
-            && states.first().map(|dep| dep.deployment_id) != Some(self.deployment_id)
-        {
+        if crate::server::should_add_current_deployment(&pagination, self.deployment_id, &states) {
             states.insert(0, DeploymentState::new(self.deployment_id));
         }
 
