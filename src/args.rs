@@ -183,6 +183,9 @@ pub(crate) enum Component {
         /// Path to the TOML configuration, defaults to `obelisk.toml`.
         #[arg(long, short)]
         config: Option<PathBuf>,
+        /// Store the component in local cache and record its `content_digest` for reproducible builds.
+        #[arg(long)]
+        locked: bool,
     },
 }
 
