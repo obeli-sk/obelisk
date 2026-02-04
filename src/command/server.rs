@@ -158,6 +158,7 @@ impl Server {
                 config,
                 ignore_missing_env_vars,
                 suppress_type_checking_errors,
+                skip_db,
             } => {
                 verify(
                     project_dirs(),
@@ -169,6 +170,7 @@ impl Server {
                         ignore_missing_env_vars,
                         suppress_type_checking_errors,
                     },
+                    skip_db,
                 )
                 .await
             }
@@ -380,6 +382,7 @@ pub(crate) async fn verify(
     base_dirs: Option<BaseDirs>,
     config: Option<PathBuf>,
     verify_params: VerifyParams,
+    skip_db: bool,
 ) -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config, false)?;
     let mut config = config_holder.load_config().await?;
@@ -387,14 +390,25 @@ pub(crate) async fn verify(
     let deployment_id = config.get_deployment_id();
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
-    Box::pin(verify_with_db_schema(
-        config,
-        Arc::new(config_holder.path_prefixes),
-        deployment_id,
-        verify_params,
-        &mut termination_watcher,
-    ))
-    .await?;
+    if skip_db {
+        Box::pin(verify_config_compile_link(
+            config,
+            Arc::new(config_holder.path_prefixes),
+            deployment_id,
+            verify_params,
+            &mut termination_watcher,
+        ))
+        .await?;
+    } else {
+        Box::pin(verify_with_db_schema(
+            config,
+            Arc::new(config_holder.path_prefixes),
+            deployment_id,
+            verify_params,
+            &mut termination_watcher,
+        ))
+        .await?;
+    }
     Ok(())
 }
 
@@ -442,13 +456,13 @@ async fn verify_with_db_schema(
             info!("PostgreSQL database schema verified");
         }
     }
-    verify_config_compile_link(
+    Box::pin(verify_config_compile_link(
         config,
         path_prefixes,
         deployment_id,
         params,
         termination_watcher,
-    )
+    ))
     .await
 }
 

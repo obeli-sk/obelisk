@@ -118,6 +118,9 @@ pub(crate) enum Server {
         /// Ignore type checking errors
         #[arg(long, short)]
         suppress_type_checking_errors: bool,
+        /// Do not check database schema
+        #[arg(long)]
+        skip_db: bool,
     },
 }
 
