@@ -118,6 +118,43 @@ impl GrpcServer {
     }
 }
 
+/// Convert gRPC `ListDeploymentStatesRequest` pagination to internal Pagination type.
+fn convert_deployment_pagination(
+    request: &grpc_gen::ListDeploymentStatesRequest,
+) -> Result<Pagination<Option<DeploymentId>>, tonic::Status> {
+    use grpc_gen::list_deployment_states_request;
+
+    match request.pagination.as_ref() {
+        Some(list_deployment_states_request::Pagination::NewerThan(p)) => {
+            Ok(Pagination::NewerThan {
+                length: u16::try_from(p.length)
+                    .ok()
+                    .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+                cursor: p
+                    .cursor
+                    .as_ref()
+                    .map(|c| DeploymentId::try_from(c.clone()))
+                    .transpose()?,
+                including_cursor: p.including_cursor,
+            })
+        }
+        Some(list_deployment_states_request::Pagination::OlderThan(p)) => {
+            Ok(Pagination::OlderThan {
+                length: u16::try_from(p.length)
+                    .ok()
+                    .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+                cursor: p
+                    .cursor
+                    .as_ref()
+                    .map(|c| DeploymentId::try_from(c.clone()))
+                    .transpose()?,
+                including_cursor: p.including_cursor,
+            })
+        }
+        None => Ok(LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION),
+    }
+}
+
 #[tonic::async_trait]
 impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
     async fn generate_execution_id(
@@ -1276,8 +1313,6 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         &self,
         request: tonic::Request<grpc_gen::ListDeploymentStatesRequest>,
     ) -> TonicRespResult<grpc_gen::ListDeploymentStatesResponse> {
-        use grpc_gen::list_deployment_states_request;
-
         let request = request.into_inner();
         let conn = self
             .db_pool
@@ -1285,35 +1320,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .await
             .map_err(map_to_status)?;
 
-        let pagination = match request.pagination.as_ref() {
-            Some(list_deployment_states_request::Pagination::NewerThan(p)) => {
-                Pagination::OlderThan {
-                    length: u16::try_from(p.length)
-                        .ok()
-                        .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
-                    cursor: p
-                        .cursor
-                        .as_ref()
-                        .map(|c| DeploymentId::try_from(c.clone()))
-                        .transpose()?,
-                    including_cursor: p.including_cursor,
-                }
-            }
-            Some(list_deployment_states_request::Pagination::OlderThan(p)) => {
-                Pagination::OlderThan {
-                    length: u16::try_from(p.length)
-                        .ok()
-                        .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
-                    cursor: p
-                        .cursor
-                        .as_ref()
-                        .map(|c| DeploymentId::try_from(c.clone()))
-                        .transpose()?,
-                    including_cursor: p.including_cursor,
-                }
-            }
-            None => LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION,
-        };
+        let pagination = convert_deployment_pagination(&request)?;
 
         let mut states = conn
             .list_deployment_states(Utc::now(), pagination)
@@ -1353,5 +1360,125 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 deployment_id: Some(self.deployment_id.into()),
             },
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grpc_gen::list_deployment_states_request::{NewerThan, OlderThan};
+
+    #[test]
+    fn test_convert_deployment_pagination_newer_than() {
+        // Regression test: NewerThan gRPC request must map to Pagination::NewerThan
+        // Previously there was a copy-paste bug that mapped NewerThan to OlderThan
+        let deployment_id = DeploymentId::generate();
+        let request = grpc_gen::ListDeploymentStatesRequest {
+            pagination: Some(
+                grpc_gen::list_deployment_states_request::Pagination::NewerThan(NewerThan {
+                    length: 20,
+                    cursor: Some(deployment_id.into()),
+                    including_cursor: true,
+                }),
+            ),
+        };
+
+        let pagination = convert_deployment_pagination(&request).unwrap();
+
+        match pagination {
+            Pagination::NewerThan {
+                length,
+                cursor,
+                including_cursor,
+            } => {
+                assert_eq!(length, 20);
+                assert_eq!(cursor, Some(deployment_id));
+                assert!(including_cursor);
+            }
+            Pagination::OlderThan { .. } => {
+                panic!("NewerThan request was incorrectly converted to OlderThan pagination")
+            }
+        }
+    }
+
+    #[test]
+    fn test_convert_deployment_pagination_older_than() {
+        let deployment_id = DeploymentId::generate();
+        let request = grpc_gen::ListDeploymentStatesRequest {
+            pagination: Some(
+                grpc_gen::list_deployment_states_request::Pagination::OlderThan(OlderThan {
+                    length: 15,
+                    cursor: Some(deployment_id.into()),
+                    including_cursor: false,
+                }),
+            ),
+        };
+
+        let pagination = convert_deployment_pagination(&request).unwrap();
+
+        match pagination {
+            Pagination::OlderThan {
+                length,
+                cursor,
+                including_cursor,
+            } => {
+                assert_eq!(length, 15);
+                assert_eq!(cursor, Some(deployment_id));
+                assert!(!including_cursor);
+            }
+            Pagination::NewerThan { .. } => {
+                panic!("OlderThan request was incorrectly converted to NewerThan pagination")
+            }
+        }
+    }
+
+    #[test]
+    fn test_convert_deployment_pagination_none_defaults_to_older_than() {
+        let request = grpc_gen::ListDeploymentStatesRequest { pagination: None };
+
+        let pagination = convert_deployment_pagination(&request).unwrap();
+
+        assert_eq!(pagination, LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION);
+        match pagination {
+            Pagination::OlderThan {
+                cursor,
+                including_cursor,
+                ..
+            } => {
+                assert_eq!(cursor, None);
+                assert!(!including_cursor);
+            }
+            Pagination::NewerThan { .. } => panic!("Default pagination should be OlderThan"),
+        }
+    }
+
+    #[test]
+    fn test_convert_deployment_pagination_newer_than_no_cursor() {
+        let request = grpc_gen::ListDeploymentStatesRequest {
+            pagination: Some(
+                grpc_gen::list_deployment_states_request::Pagination::NewerThan(NewerThan {
+                    length: 10,
+                    cursor: None,
+                    including_cursor: false,
+                }),
+            ),
+        };
+
+        let pagination = convert_deployment_pagination(&request).unwrap();
+
+        match pagination {
+            Pagination::NewerThan {
+                length,
+                cursor,
+                including_cursor,
+            } => {
+                assert_eq!(length, 10);
+                assert_eq!(cursor, None);
+                assert!(!including_cursor);
+            }
+            Pagination::OlderThan { .. } => {
+                panic!("NewerThan request was incorrectly converted to OlderThan pagination")
+            }
+        }
     }
 }
