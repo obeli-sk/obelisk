@@ -2208,6 +2208,10 @@ async fn list_deployment_states(
         });
     }
 
+    if pagination.is_asc() {
+        // the list must be sorted in descending order for UI consistency
+        result.reverse();
+    }
     Ok(result)
 }
 

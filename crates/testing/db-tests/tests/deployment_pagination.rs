@@ -307,8 +307,8 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
         create_deployment_with_execution(db_connection.as_ref(), deployment_id, &sim_clock).await;
     }
 
-    // Sort deployment_ids ascending (NewerThan returns in ascending order)
-    deployment_ids.sort_by_key(std::string::ToString::to_string);
+    // Sort deployment_ids descending (NewerThan also returns in descending order for UI consistency)
+    deployment_ids.sort_by_key(|b| std::cmp::Reverse(b.to_string()));
 
     // First, get all deployments to find the oldest one
     let all = api_conn
@@ -325,6 +325,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
     let oldest = all.last().unwrap().deployment_id;
 
     // Page 1: Get first 3 deployments newer than oldest (including oldest)
+    // Results are sorted descending, so oldest (the cursor with including_cursor) is last
     let page1 = api_conn
         .list_deployment_states(
             sim_clock.now(),
@@ -337,14 +338,15 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
         .await
         .unwrap();
     assert_eq!(3, page1.len());
-    assert_eq!(oldest, page1.first().unwrap().deployment_id);
+    assert_eq!(oldest, page1.last().unwrap().deployment_id);
     debug!(
         "Page 1: {:?}",
         page1.iter().map(|d| &d.deployment_id).collect::<Vec<_>>()
     );
 
-    // Page 2: Get next 3 deployments newer than the last one from page 1
-    let cursor = Some(page1.last().unwrap().deployment_id);
+    // Page 2: Get next 3 deployments newer than the first one from page 1
+    // (first is the newest in the page, so we continue from there)
+    let cursor = Some(page1.first().unwrap().deployment_id);
     let page2 = api_conn
         .list_deployment_states(
             sim_clock.now(),
@@ -363,7 +365,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
     );
 
     // Page 3: Get next 3 deployments
-    let cursor = Some(page2.last().unwrap().deployment_id);
+    let cursor = Some(page2.first().unwrap().deployment_id);
     let page3 = api_conn
         .list_deployment_states(
             sim_clock.now(),
@@ -382,7 +384,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
     );
 
     // Page 4: Get remaining deployment(s)
-    let cursor = Some(page3.last().unwrap().deployment_id);
+    let cursor = Some(page3.first().unwrap().deployment_id);
     let page4 = api_conn
         .list_deployment_states(
             sim_clock.now(),
@@ -742,7 +744,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
     );
 
     // Click "Newer": NewerThan with cursor = oldest, including cursor
-    // Should return all deployments (oldest + all newer ones)
+    // Should return all deployments (oldest + all newer ones), sorted descending
     let newer_page = api_conn
         .list_deployment_states(
             sim_clock.now(),
@@ -765,11 +767,18 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
         newer_ids
     );
 
-    // Verify that the first item in newer_page is the oldest (cursor)
+    // Verify that the last item in newer_page is the oldest (cursor)
+    // Results are sorted descending, so cursor (oldest) is at the end
     assert_eq!(
         oldest,
+        newer_page.last().unwrap().deployment_id,
+        "NewerThan should return cursor last when including_cursor=true (descending order)"
+    );
+    // And the first item should be the newest
+    assert_eq!(
+        newest,
         newer_page.first().unwrap().deployment_id,
-        "NewerThan should return cursor first when including_cursor=true"
+        "NewerThan should return newest first (descending order)"
     );
 
     // Verify all original deployments are present

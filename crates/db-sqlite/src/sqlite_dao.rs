@@ -3687,7 +3687,8 @@ impl SqlitePool {
         )
         .expect("writing to string");
 
-        tx.prepare(&sql)?
+        let mut result: Vec<DeploymentState> = tx
+            .prepare(&sql)?
             .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
                 params
                     .iter()
@@ -3706,7 +3707,13 @@ impl SqlitePool {
                 },
             )?
             .collect::<Result<Vec<_>, rusqlite::Error>>()
-            .map_err(DbErrorRead::from)
+            .map_err(DbErrorRead::from)?;
+
+        if pagination.is_asc() {
+            // the list must be sorted in descending order for UI consistency
+            result.reverse();
+        }
+        Ok(result)
     }
 
     fn pause_execution(
