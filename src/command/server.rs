@@ -2,6 +2,7 @@ use crate::args::Server;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
+use crate::config::config_holder::ConfigSource;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
@@ -349,7 +350,7 @@ pub(crate) struct RunParams {
 pub(crate) async fn run(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    config: Option<PathBuf>,
+    config: Option<ConfigSource>,
     params: RunParams,
 ) -> anyhow::Result<()> {
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config, false)?;
@@ -380,7 +381,7 @@ pub(crate) struct VerifyParams {
 pub(crate) async fn verify(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    config: Option<PathBuf>,
+    config: Option<ConfigSource>,
     verify_params: VerifyParams,
     skip_db: bool,
 ) -> Result<(), anyhow::Error> {
@@ -1968,7 +1969,14 @@ mod tests {
         let obelisk_toml = get_workspace_dir().join(obelisk_toml);
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
-        let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(obelisk_toml), false)?;
+        let config_holder = ConfigHolder::new(
+            project_dirs,
+            base_dirs,
+            Some(crate::config::config_holder::ConfigSource::LocalFile(
+                obelisk_toml,
+            )),
+            false,
+        )?;
         let config = config_holder.load_config().await?;
 
         let wasm_cache_dir = config

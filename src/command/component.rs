@@ -2,6 +2,7 @@ use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
 use crate::args;
 use crate::config::config_holder::ConfigHolder;
+use crate::config::config_holder::ConfigSource;
 use crate::config::config_holder::OBELISK_HELP_TOML;
 use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ConfigName;
@@ -161,7 +162,7 @@ pub(crate) async fn add(
 }
 
 pub(crate) async fn inspect(
-    config: Option<PathBuf>,
+    config: Option<ConfigSource>,
     location: ComponentLocationToml,
     component_type: ComponentType,
     verbosity: FunctionMetadataVerbosity,

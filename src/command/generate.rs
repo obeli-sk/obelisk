@@ -4,6 +4,7 @@ use crate::command::generate::wit_highlighter::{OutputToFile, process_pkg_with_d
 use crate::command::server::{VerifyParams, verify_config_compile_link};
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
+use crate::config::config_holder::ConfigSource;
 use crate::init::{self};
 use crate::project_dirs;
 use anyhow::Context;
@@ -196,7 +197,7 @@ pub(crate) async fn generate_support_wits(
 pub(crate) async fn generate_wit_deps(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    config: Option<PathBuf>,
+    config: Option<ConfigSource>,
     output_directory: PathBuf,
     overwrite: bool,
 ) -> Result<(), anyhow::Error> {

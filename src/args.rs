@@ -1,3 +1,4 @@
+use crate::config::config_holder::ConfigSource;
 use crate::config::toml::ComponentLocationToml;
 use clap::Parser;
 use concepts::{ComponentType, ExecutionId, FunctionFqn, prefixed_ulid::ExecutionIdDerived};
@@ -63,9 +64,9 @@ pub(crate) enum Generate {
     },
     /// Generate WIT dependency folder based on activities and workflows found in provided TOML configuration.
     WitDeps {
-        /// Path to the TOML configuration
+        /// Path or URL to the TOML configuration
         #[arg(long, short)]
-        config: Option<PathBuf>,
+        config: Option<ConfigSource>,
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
         /// Overwrite existing files.
@@ -94,9 +95,9 @@ pub(crate) enum Server {
         /// Clean the codegen cache directory
         #[arg(long)]
         clean_codegen_cache: bool,
-        /// Path to the TOML configuration
+        /// Path or URL to the TOML configuration
         #[arg(long, short)]
-        config: Option<PathBuf>,
+        config: Option<ConfigSource>,
         /// Ignore type checking errors
         #[arg(long, short)]
         suppress_type_checking_errors: bool,
@@ -109,9 +110,9 @@ pub(crate) enum Server {
         /// Clean the codegen cache
         #[arg(long)]
         clean_codegen_cache: bool,
-        /// Path to the TOML configuration
+        /// Path or URL to the TOML configuration
         #[arg(long, short)]
-        config: Option<PathBuf>,
+        config: Option<ConfigSource>,
         /// Do not verify existence of environment variables
         #[arg(long, short)]
         ignore_missing_env_vars: bool,
@@ -144,9 +145,9 @@ pub(crate) enum Component {
         #[arg(short, long)]
         extensions: bool,
 
-        /// Path to the TOML configuration
+        /// Path or URL to the TOML configuration
         #[arg(long, short)]
-        config: Option<PathBuf>,
+        config: Option<ConfigSource>,
     },
     /// List components.
     List {

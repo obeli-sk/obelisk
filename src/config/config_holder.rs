@@ -5,8 +5,28 @@ use directories::{BaseDirs, ProjectDirs};
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
+use tracing::debug;
 use tracing::info;
 use tracing::warn;
+
+/// Represents either a local file path or a remote URL for the config.
+#[derive(Debug, Clone)]
+pub(crate) enum ConfigSource {
+    LocalFile(PathBuf),
+    Url(String),
+}
+
+impl std::str::FromStr for ConfigSource {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.starts_with("http://") || s.starts_with("https://") {
+            Ok(ConfigSource::Url(s.to_string()))
+        } else {
+            Ok(ConfigSource::LocalFile(PathBuf::from(s)))
+        }
+    }
+}
 
 pub(crate) const OBELISK_HELP_TOML: &str = include_str!("../../obelisk-help.toml");
 const OBELISK_GEN_TOML: &str = include_str!("../../obelisk-generate.toml");
@@ -135,7 +155,7 @@ impl PathPrefixes {
 }
 
 pub(crate) struct ConfigHolder {
-    obelisk_toml: Option<PathBuf>,
+    config_source: Option<ConfigSource>,
     pub(crate) path_prefixes: PathPrefixes,
 }
 
@@ -174,10 +194,10 @@ impl ConfigHolder {
     pub(crate) fn new(
         project_dirs: Option<ProjectDirs>,
         base_dirs: Option<BaseDirs>,
-        config: Option<PathBuf>,
+        config: Option<ConfigSource>,
         allow_missing: bool,
     ) -> Result<Self, anyhow::Error> {
-        let obelisk_toml = if let Some(config) = config {
+        let config_source = if let Some(config) = config {
             Some(config)
         } else {
             let local = PathBuf::from("obelisk.toml");
@@ -187,40 +207,56 @@ impl ConfigHolder {
             }
             if exists {
                 info!("Using configuration file {:?}", local);
-                Some(local)
+                Some(ConfigSource::LocalFile(local))
             } else {
                 None
             }
         };
 
+        let obelisk_toml_dir = match &config_source {
+            None | Some(ConfigSource::Url(_)) => {
+                // For URLs or no config, use current working directory
+                std::env::current_dir().context("failed to get CWD")?
+            }
+            Some(ConfigSource::LocalFile(path)) => path
+                .canonicalize()
+                .with_context(|| {
+                    format!("error while calling canonicalize on parent path of {path:?}")
+                })?
+                .parent()
+                .with_context(|| format!("error getting parent path of {path:?}"))?
+                .to_path_buf(),
+        };
+
         Ok(Self {
             path_prefixes: PathPrefixes {
-                obelisk_toml_dir: match &obelisk_toml {
-                    None => std::env::current_dir().context("failed to get CWD")?,
-                    Some(obelisk_toml) => {
-                        obelisk_toml.canonicalize().with_context(|| {
-                            format!("error while calling canonicalize on parent path of {obelisk_toml:?}")
-                        })?
-                        .parent()
-                        .with_context(|| format!("error getting parent path of {obelisk_toml:?}"))?
-                        .to_path_buf()
-                    }
-                },
+                obelisk_toml_dir,
                 project_dirs,
                 base_dirs,
             },
-            obelisk_toml,
+            config_source,
         })
     }
 
     pub(crate) async fn load_config(&self) -> Result<ConfigToml, anyhow::Error> {
         let mut builder = ConfigBuilder::<AsyncState>::default();
-        if let Some(obelisk_toml) = self.obelisk_toml.as_deref() {
-            builder = builder.add_source(
-                File::from(obelisk_toml)
-                    .required(true)
-                    .format(FileFormat::Toml),
-            );
+        match &self.config_source {
+            Some(ConfigSource::LocalFile(path)) => {
+                builder = builder.add_source(
+                    File::from(path.as_path())
+                        .required(true)
+                        .format(FileFormat::Toml),
+                );
+            }
+            Some(ConfigSource::Url(url)) => {
+                info!("Fetching configuration from URL: {url}");
+                let content = fetch_url_content(url)
+                    .await
+                    .with_context(|| format!("failed to fetch configuration from {url}"))?;
+                debug!("Downloaded {content}");
+                builder = builder.add_source(File::from_str(&content, FileFormat::Toml));
+            }
+            None => {}
         }
         let settings = builder
             .add_source(Environment::with_prefix("obelisk").separator("__"))
@@ -228,4 +264,36 @@ impl ConfigHolder {
             .await?;
         Ok(settings.try_deserialize()?)
     }
+}
+
+async fn fetch_url_content(url: &str) -> Result<String, anyhow::Error> {
+    let client = reqwest::Client::builder()
+        .build()
+        .context("failed to build HTTP client")?;
+
+    let response = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/toml, text/plain, */*")
+        .send()
+        .await
+        .with_context(|| format!("failed to send request to {url}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_body = response.text().await.unwrap_or_default();
+        bail!("HTTP {status}: {error_body}");
+    }
+
+    // Check for obviously wrong content types that indicate an error page
+    if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE)
+        && let Ok(ct) = content_type.to_str()
+        && ct.starts_with("text/html")
+    {
+        bail!("server returned HTML instead of TOML (Content-Type: {ct})");
+    }
+
+    response
+        .text()
+        .await
+        .with_context(|| format!("failed to read response body from {url}"))
 }
