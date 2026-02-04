@@ -3,6 +3,10 @@ api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API serv
 webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
 # Note: listening on all interfaces using [::]:port is not advised, as there is no auth yet.
 
+## Semver version requirement for the Obelisk binary.
+## If set, the server will fail to start if the binary version doesn't match.
+# obelisk-version = 0.1
+
 ## SQLite configuration (enabled by default)
 # database.sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
 ## Customize PRAGMA statements.

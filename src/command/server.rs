@@ -1,4 +1,5 @@
 use crate::args::Server;
+use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
@@ -412,6 +413,20 @@ pub(crate) async fn verify_internal(
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
     info!("Verifying configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
+
+    // Check obelisk-version compatibility if specified
+    if let Some(version_req_str) = &config.obelisk_version {
+        let version_req = semver::VersionReq::parse(version_req_str)
+            .with_context(|| format!("Invalid obelisk-version requirement: {version_req_str}"))?;
+        let current_version = semver::Version::parse(PKG_VERSION)
+            .with_context(|| format!("Invalid current version: {PKG_VERSION}",))?;
+        if !version_req.matches(&current_version) {
+            bail!(
+                "Obelisk version mismatch: config requires {version_req_str}, but running version is {PKG_VERSION}",
+            );
+        }
+        info!("Obelisk version {PKG_VERSION} matches requirement {version_req_str}",);
+    }
 
     let wasm_cache_dir = config
         .wasm_global_config

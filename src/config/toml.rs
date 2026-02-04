@@ -50,6 +50,8 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigToml {
+    #[serde(default, rename = "obelisk-version")]
+    pub(crate) obelisk_version: Option<String>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     deployment_id: Option<DeploymentId>,

@@ -49,6 +49,13 @@
     "log": {
       "$ref": "#/$defs/LoggingConfig"
     },
+    "obelisk-version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
     "otlp": {
       "anyOf": [
         {
