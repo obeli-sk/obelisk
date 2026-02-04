@@ -64,7 +64,7 @@ pub(crate) enum Generate {
     },
     /// Generate WIT dependency folder based on activities and workflows found in provided TOML configuration.
     WitDeps {
-        /// Path or URL to the TOML configuration
+        /// Path or URL to the TOML configuration, defaults to `obelisk.toml`.
         #[arg(long, short)]
         config: Option<ConfigSource>,
         /// Directory where folders and WIT files will be written to.
@@ -74,7 +74,7 @@ pub(crate) enum Generate {
         overwrite: bool,
     },
     Config {
-        /// Filename to write the TOML to, defaults to <stdout>.
+        /// Filename to write the TOML to, defaults to `obelisk.toml`.
         config: Option<PathBuf>,
         /// Overwrite existing file.
         #[arg(long, short)]
@@ -95,7 +95,7 @@ pub(crate) enum Server {
         /// Clean the codegen cache directory
         #[arg(long)]
         clean_codegen_cache: bool,
-        /// Path or URL to the TOML configuration
+        /// Path or URL to the TOML configuration, defaults to `obelisk.toml`.
         #[arg(long, short)]
         config: Option<ConfigSource>,
         /// Ignore type checking errors
@@ -110,7 +110,7 @@ pub(crate) enum Server {
         /// Clean the codegen cache
         #[arg(long)]
         clean_codegen_cache: bool,
-        /// Path or URL to the TOML configuration
+        /// Path or URL to the TOML configuration, defaults to `obelisk.toml`.
         #[arg(long, short)]
         config: Option<ConfigSource>,
         /// Do not verify existence of environment variables
@@ -145,7 +145,7 @@ pub(crate) enum Component {
         #[arg(short, long)]
         extensions: bool,
 
-        /// Path or URL to the TOML configuration
+        /// Path or URL to the TOML configuration, defaults to `obelisk.toml`.
         #[arg(long, short)]
         config: Option<ConfigSource>,
     },
@@ -180,7 +180,7 @@ pub(crate) enum Component {
         location: ComponentLocationToml,
         #[arg(long, short)]
         name: String,
-        /// Path to the TOML configuration
+        /// Path to the TOML configuration, defaults to `obelisk.toml`.
         #[arg(long, short)]
         config: Option<PathBuf>,
     },
