@@ -384,11 +384,13 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, config, false)?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
+    let deployment_id = config.get_deployment_id();
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
-    Box::pin(verify_internal(
+    Box::pin(verify_with_db_schema(
         config,
         Arc::new(config_holder.path_prefixes),
+        deployment_id,
         verify_params,
         &mut termination_watcher,
     ))
@@ -404,13 +406,62 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
     }
 }
 
-#[instrument(skip_all, name = "verify")]
-pub(crate) async fn verify_internal(
+/// Verifies configuration including database schema version.
+/// Called by `verify` command.
+async fn verify_with_db_schema(
     config: ConfigToml,
     path_prefixes: Arc<PathPrefixes>,
+    deployment_id: DeploymentId,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
+    // Verify database schema version
+    match &config.database {
+        DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
+            let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes).await?;
+            let sqlite_config = sqlite_config_toml.as_sqlite_config();
+            let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
+            if sqlite_file.exists() {
+                let db_pool = SqlitePool::new(&sqlite_file, sqlite_config)
+                    .await
+                    .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
+                db_pool.close().await;
+                info!("SQLite database schema verified");
+            } else {
+                info!("SQLite database does not exist yet, skipping schema verification");
+            }
+        }
+        DatabaseConfigToml::Postgres(postgres_config_toml) => {
+            let db_pool = db_postgres::postgres_dao::PostgresPool::new(
+                postgres_config_toml.as_config()?,
+                postgres_config_toml.as_provision_policy(),
+            )
+            .await
+            .context("cannot initialize postgres connection pool")?;
+            db_pool.close().await;
+            info!("PostgreSQL database schema verified");
+        }
+    }
+    verify_config_compile_link(
+        config,
+        path_prefixes,
+        deployment_id,
+        params,
+        termination_watcher,
+    )
+    .await
+}
+
+/// Verifies configuration without database schema check.
+#[instrument(skip_all, name = "verify")]
+pub(crate) async fn verify_config_compile_link(
+    config: ConfigToml,
+    path_prefixes: Arc<PathPrefixes>,
+    deployment_id: DeploymentId, // only to distinguish when writing to the same log file as running server
+    params: VerifyParams,
+    termination_watcher: &mut watch::Receiver<()>,
+) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
+    Span::current().record("deployment_id", tracing::field::display(&deployment_id));
     info!("Verifying configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
 
@@ -506,9 +557,10 @@ async fn run_internal(
     let cancel_watcher = config.cancel_watcher;
     let path_prefixes = Arc::new(config_holder.path_prefixes);
     let database = config.database.clone();
-    let (compiled_and_linked, component_source_map) = Box::pin(verify_internal(
+    let (compiled_and_linked, component_source_map) = Box::pin(verify_config_compile_link(
         config,
         path_prefixes.clone(),
+        deployment_id,
         VerifyParams {
             clean_cache: params.clean_cache,
             clean_codegen_cache: params.clean_codegen_cache,

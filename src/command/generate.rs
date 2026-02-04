@@ -1,13 +1,13 @@
 use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::generate::wit_highlighter::{OutputToFile, process_pkg_with_deps};
-use crate::command::server::{VerifyParams, verify_internal};
+use crate::command::server::{VerifyParams, verify_config_compile_link};
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::init::{self};
 use crate::project_dirs;
 use anyhow::Context;
-use concepts::{ComponentType, ExecutionId};
+use concepts::{ComponentType, ExecutionId, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::HashSet;
 use std::sync::Arc;
@@ -205,9 +205,10 @@ pub(crate) async fn generate_wit_deps(
     let _guard = init::init(&mut config)?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
-    let (compiled_and_linked, _component_source_map) = Box::pin(verify_internal(
+    let (compiled_and_linked, _component_source_map) = Box::pin(verify_config_compile_link(
         config,
         Arc::new(config_holder.path_prefixes),
+        DeploymentId::generate(),
         VerifyParams {
             ignore_missing_env_vars: true,
             clean_cache: false,
