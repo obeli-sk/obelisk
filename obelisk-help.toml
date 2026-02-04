@@ -61,13 +61,15 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 
 
 ### WASM Component Configuration
-## Each WASM component is configured separately in a `[[activity_wasm]]`, `[[workflow]]` or `[[webhook_endpoint]]` table.
+## Each WASM component is configured separately in a `[[activity_wasm]]`,`[[activity_stub]]`, `[[activity_external]]`, `[[workflow]]` or `[[webhook_endpoint]]` table.
 ## Common settings for all components
 # name = "name" # Each component must be named.
 ## Location can be a file path or an OCI registry reference.
 # location = "path/to/wasm"
 # location = "oci://docker.io/repo/image:tag"
-# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash.
+# location = "gh://user/repo@release/my-component.wasm"
+# location = "gh://user/repo@latest/my-component.wasm"
+# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 
 ## Database storage setting for logs emitted by the component
 # logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
@@ -105,6 +107,14 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Activities that need process API must enable it explicitly. See `obelisk:activity/process@1.0.0` WIT interface.
 ## When running on linux, the `native` process API provider attempts to kill the spawned processes using process groups.
 # directories.process_provider = "none" # Default is "none". Possible value: "none"|"native"
+
+### External Activity components configuration - only WIT schema is loaded
+# [[activity_external]]
+## Common settings for all components - see above.
+
+### Stub Activity components configuration - same as external activity, but the "stub response" RPC is allowed.
+# [[activity_stub]]
+## Common settings for all components - see above.
 
 ### Workflow components configuration
 # [[workflow]]
