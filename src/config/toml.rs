@@ -466,7 +466,7 @@ impl Default for CancelWatcherTomlConfig {
 // Components
 
 #[derive(Debug, Clone, Hash)]
-pub(crate) struct ConfigStoreCommon {
+pub(crate) struct ComponentCommonVerified {
     pub(crate) name: ConfigName,
     pub(crate) location: ComponentLocationToml,
     pub(crate) content_digest: ContentDigest,
@@ -561,12 +561,12 @@ impl ComponentCommon {
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
         path_prefixes: &PathPrefixes,
-    ) -> Result<(ConfigStoreCommon, PathBuf), anyhow::Error> {
+    ) -> Result<(ComponentCommonVerified, PathBuf), anyhow::Error> {
         let (content_digest, wasm_path) = self
             .location
             .fetch(wasm_cache_dir, metadata_dir, path_prefixes)
             .await?;
-        let verified = ConfigStoreCommon {
+        let verified = ComponentCommonVerified {
             name: self.name,
             location: self.location,
             content_digest,
