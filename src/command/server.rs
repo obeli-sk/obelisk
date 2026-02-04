@@ -429,8 +429,17 @@ async fn verify_with_db_schema(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
+    let database = config.database.clone();
+    let ok = Box::pin(verify_config_compile_link(
+        config,
+        path_prefixes.clone(),
+        deployment_id,
+        params,
+        termination_watcher,
+    ))
+    .await?;
     // Verify database schema version
-    match &config.database {
+    match &database {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
             let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes).await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
@@ -456,14 +465,7 @@ async fn verify_with_db_schema(
             info!("PostgreSQL database schema verified");
         }
     }
-    Box::pin(verify_config_compile_link(
-        config,
-        path_prefixes,
-        deployment_id,
-        params,
-        termination_watcher,
-    ))
-    .await
+    Ok(ok)
 }
 
 /// Verifies configuration without database schema check.
