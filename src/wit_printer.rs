@@ -19,7 +19,10 @@ pub fn package_name_to_pkg_fqn(value: &PackageName) -> PkgFqn {
 }
 
 /// Print a single function and its types in WIT format.
-pub fn print_interface_with_single_fn(wit: &str, ffqn: &FunctionFqn) -> Result<String, anyhow::Error> {
+pub fn print_interface_with_single_fn(
+    wit: &str,
+    ffqn: &FunctionFqn,
+) -> Result<String, anyhow::Error> {
     let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
     let mut resolve = Resolve::new();
     let _main_id = resolve.push_group(group)?;
@@ -42,9 +45,11 @@ fn print_interface_with_imported_types(
     additional_ifc_fqn: &mut HashSet<IfcFqnName>,
     is_root_package: bool,
 ) -> Result<(), anyhow::Error> {
-    if let Some((_pkg_id, package)) = resolve.packages.iter().find(|(_, package)| {
-        package_name_to_pkg_fqn(&package.name) == ifc_fqn.pkg_fqn_name()
-    }) {
+    if let Some((_pkg_id, package)) = resolve
+        .packages
+        .iter()
+        .find(|(_, package)| package_name_to_pkg_fqn(&package.name) == ifc_fqn.pkg_fqn_name())
+    {
         if !is_root_package {
             printer.output.newline();
         }
@@ -77,7 +82,10 @@ fn print_interface_with_imported_types(
             printer.print_types(
                 resolve,
                 TypeOwner::Interface(ifc_id),
-                interface.types.iter().map(|(name, id)| (name.as_str(), *id)),
+                interface
+                    .types
+                    .iter()
+                    .map(|(name, id)| (name.as_str(), *id)),
                 &std::collections::HashMap::default(), // ignore resource funcs
             )?;
         }
@@ -109,7 +117,12 @@ fn print_interface_with_imported_types(
                             &imported_pkg.name.namespace,
                             &imported_pkg.name.name,
                             ifc_name,
-                            imported_pkg.name.version.as_ref().map(|v| v.to_string()).as_deref(),
+                            imported_pkg
+                                .name
+                                .version
+                                .as_ref()
+                                .map(std::string::ToString::to_string)
+                                .as_deref(),
                         );
                         if additional_ifc_fqn.insert(new_ifc_fqn.clone()) {
                             print_interface_with_imported_types(
@@ -189,14 +202,16 @@ impl Output for OutputToString {
     }
 
     fn ty(&mut self, src: &str, kind: TypeKind) {
-        if let Some(ref filter_fn) = self.filter_fn_name {
-            if matches!(
+        if let Some(ref filter_fn) = self.filter_fn_name
+            && matches!(
                 kind,
-                TypeKind::FunctionFreestanding | TypeKind::FunctionMethod | TypeKind::FunctionStatic
-            ) && src != filter_fn
-            {
-                self.ignore_until_end_of_line = 2;
-            }
+                TypeKind::FunctionFreestanding
+                    | TypeKind::FunctionMethod
+                    | TypeKind::FunctionStatic
+            )
+            && src != filter_fn
+        {
+            self.ignore_until_end_of_line = 2;
         }
         self.indent_if_needed();
         self.push_str(src);
@@ -232,11 +247,7 @@ fn process_pkg_inner(
 ) -> Result<(), anyhow::Error> {
     if let Some(package) = resolve.packages.iter().find_map(|(_, package)| {
         let pkg_fqn = package_name_to_pkg_fqn(&package.name);
-        if pkg_fqn == *pkg {
-            Some(package)
-        } else {
-            None
-        }
+        if pkg_fqn == *pkg { Some(package) } else { None }
     }) {
         {
             let is_new = already_processed_packages.insert(pkg.clone());
@@ -334,7 +345,11 @@ impl OutputToFile {
         }
     }
 
-    pub async fn write(self, output_directory: &Path, overwrite: bool) -> Result<(), anyhow::Error> {
+    pub async fn write(
+        self,
+        output_directory: &Path,
+        overwrite: bool,
+    ) -> Result<(), anyhow::Error> {
         for (pkg_fqn, contents) in self.all_pkgs {
             let pkg_file_name = pkg_fqn.as_file_name();
             let directory = output_directory.join(&pkg_file_name);

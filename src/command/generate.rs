@@ -1,12 +1,12 @@
 use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
-use crate::wit_printer::{OutputToFile, process_pkg_with_deps};
 use crate::command::server::{VerifyParams, verify_config_compile_link};
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::ConfigSource;
 use crate::init::{self};
 use crate::project_dirs;
+use crate::wit_printer::{OutputToFile, process_pkg_with_deps};
 use anyhow::Context;
 use concepts::{ComponentType, ExecutionId, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
