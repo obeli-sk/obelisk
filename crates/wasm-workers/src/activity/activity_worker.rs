@@ -579,29 +579,46 @@ fn is_permanent_variant(result_err: Option<&WastValWithType>) -> bool {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::engines::PoolingOptions;
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
     use concepts::component_id::InputContentDigest;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
+    use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
     use concepts::storage::{DbPool, TimeoutOutcome};
+    use concepts::storage::{ExecutionRequest, Version};
+    use concepts::storage::{Locked, LockedBy, PendingState, PendingStatePendingAt};
+    use concepts::time::Now;
     use concepts::time::TokioSleep;
     use concepts::{ComponentRetryConfig, ComponentType, StrVariant};
+    use concepts::{ExecutionFailureKind, FinishedExecutionError, SUPPORTED_RETURN_VALUE_OK_EMPTY};
     use concepts::{
         ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue, prefixed_ulid::ExecutorId,
         storage::CreateRequest, storage::DbPoolCloseable,
     };
     use db_tests::Database;
-    use executor::executor::{ExecConfig, ExecTask, LockingStrategy};
+    use executor::executor::LockingStrategy;
+    use executor::executor::{ExecConfig, ExecTask};
+    use insta::assert_json_snapshot;
     use rstest::rstest;
     use serde_json::json;
     use std::future;
     use std::time::Duration;
+    use test_utils::env_or_default;
     use test_utils::sim_clock::SimClock;
+    use tracing::{debug, info, info_span};
     use utils::sha256sum::calculate_sha256_file;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
     };
+
+    pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_sleep_activity_builder::exports::testing::sleep::sleep::SLEEP_LOOP,
+    ); // sleep-loop: func(millis: u64, iterations: u32);
+    pub const HTTP_GET_SUCCESSFUL_ACTIVITY: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_http_get_activity_builder::exports::testing::http::http_get::GET_SUCCESSFUL,
+    );
 
     pub const FIBO_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO,
@@ -808,111 +825,81 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    pub mod wasmtime_nosim {
-        use std::future;
+    #[tokio::test]
+    async fn limit_reached() {
+        const FIBO_INPUT: u8 = 10;
+        const LOCK_EXPIRY_MILLIS: u64 = 1100;
+        const TASKS: u32 = 10;
+        const MAX_INSTANCES: u32 = 1;
 
-        use super::*;
-        use crate::engines::PoolingOptions;
-        use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
-        use concepts::storage::{
-            Locked, LockedBy, PendingState, PendingStatePendingAt, TimeoutOutcome,
+        test_utils::set_up();
+        let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
+        let lock_expiry =
+            Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
+        let tasks = env_or_default("TASKS", TASKS);
+        let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
+
+        let pool_opts = PoolingOptions {
+            pooling_total_component_instances: Some(max_instances),
+            pooling_total_stacks: Some(max_instances),
+            pooling_total_core_instances: Some(max_instances),
+            pooling_total_memories: Some(max_instances),
+            pooling_total_tables: Some(max_instances),
+            ..Default::default()
         };
-        use concepts::time::Now;
-        use concepts::{
-            ComponentRetryConfig, ExecutionFailureKind, FinishedExecutionError,
-            SUPPORTED_RETURN_VALUE_OK_EMPTY,
-        };
-        use concepts::{
-            prefixed_ulid::RunId,
-            storage::{ExecutionRequest, Version},
-        };
-        use executor::executor::LockingStrategy;
-        use insta::assert_json_snapshot;
-        use test_utils::{env_or_default, sim_clock::SimClock};
-        use tracing::{debug, info, info_span};
 
-        pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
-            test_programs_sleep_activity_builder::exports::testing::sleep::sleep::SLEEP_LOOP,
-        ); // sleep-loop: func(millis: u64, iterations: u32);
-        pub const HTTP_GET_SUCCESSFUL_ACTIVITY :FunctionFqn = FunctionFqn::new_static_tuple(
-            test_programs_http_get_activity_builder::exports::testing::http::http_get::GET_SUCCESSFUL,
-        );
+        let engine =
+            Engines::get_activity_engine_test(EngineConfig::pooling_nocache_testing(pool_opts))
+                .unwrap();
 
-        #[tokio::test]
-        async fn limit_reached() {
-            const FIBO_INPUT: u8 = 10;
-            const LOCK_EXPIRY_MILLIS: u64 = 1100;
-            const TASKS: u32 = 10;
-            const MAX_INSTANCES: u32 = 1;
-
-            test_utils::set_up();
-            let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
-            let lock_expiry =
-                Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
-            let tasks = env_or_default("TASKS", TASKS);
-            let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
-
-            let pool_opts = PoolingOptions {
-                pooling_total_component_instances: Some(max_instances),
-                pooling_total_stacks: Some(max_instances),
-                pooling_total_core_instances: Some(max_instances),
-                pooling_total_memories: Some(max_instances),
-                pooling_total_tables: Some(max_instances),
-                ..Default::default()
-            };
-
-            let engine =
-                Engines::get_activity_engine_test(EngineConfig::pooling_nocache_testing(pool_opts))
-                    .unwrap();
-
-            let (fibo_worker, _) = new_activity_worker(
-                test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                engine,
-                Now.clone_box(),
-                TokioSleep,
-            )
-            .await;
-            // create executions
-            let join_handles = (0..tasks)
-                .map(|_| {
-                    let fibo_worker = fibo_worker.clone();
-                    let execution_id = ExecutionId::generate();
-                    let ctx = WorkerContext {
-                        execution_id: execution_id.clone(),
-                        metadata: concepts::ExecutionMetadata::empty(),
-                        ffqn: FIBO_ACTIVITY_FFQN,
-                        params: Params::from_json_values_test(vec![json!(fibo_input)]),
-                        event_history: Vec::new(),
-                        responses: Vec::new(),
-                        version: Version::new(0),
-                        can_be_retried: false,
-                        worker_span: info_span!("worker-test"),
-                        locked_event: Locked {
-                            component_id: ComponentId::dummy_activity(),
-                            executor_id: ExecutorId::generate(),
-                            deployment_id: DEPLOYMENT_ID_DUMMY,
-                            run_id: RunId::generate(),
-                            lock_expires_at: Now.now() + lock_expiry,
-                            retry_config: ComponentRetryConfig::ZERO,
-                        },
-                    };
-                    tokio::spawn(async move { fibo_worker.run(ctx).await })
-                })
-                .collect::<Vec<_>>();
-            let mut limit_reached = 0;
-            for jh in join_handles {
-                if matches!(
-                    jh.await.unwrap(),
-                    WorkerResult::Err(WorkerError::LimitReached { .. })
-                ) {
-                    limit_reached += 1;
-                }
+        let (fibo_worker, _) = new_activity_worker(
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+            engine,
+            Now.clone_box(),
+            TokioSleep,
+        )
+        .await;
+        // create executions
+        let join_handles = (0..tasks)
+            .map(|_| {
+                let fibo_worker = fibo_worker.clone();
+                let execution_id = ExecutionId::generate();
+                let ctx = WorkerContext {
+                    execution_id: execution_id.clone(),
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    ffqn: FIBO_ACTIVITY_FFQN,
+                    params: Params::from_json_values_test(vec![json!(fibo_input)]),
+                    event_history: Vec::new(),
+                    responses: Vec::new(),
+                    version: Version::new(0),
+                    can_be_retried: false,
+                    worker_span: info_span!("worker-test"),
+                    locked_event: Locked {
+                        component_id: ComponentId::dummy_activity(),
+                        executor_id: ExecutorId::generate(),
+                        deployment_id: DEPLOYMENT_ID_DUMMY,
+                        run_id: RunId::generate(),
+                        lock_expires_at: Now.now() + lock_expiry,
+                        retry_config: ComponentRetryConfig::ZERO,
+                    },
+                };
+                tokio::spawn(async move { fibo_worker.run(ctx).await })
+            })
+            .collect::<Vec<_>>();
+        let mut limit_reached = 0;
+        for jh in join_handles {
+            if matches!(
+                jh.await.unwrap(),
+                WorkerResult::Err(WorkerError::LimitReached { .. })
+            ) {
+                limit_reached += 1;
             }
-            assert!(limit_reached > 0, "Limit was not reached");
         }
+        assert!(limit_reached > 0, "Limit was not reached");
+    }
 
-        #[rstest::rstest]
-        #[case(
+    #[rstest::rstest]
+    #[case(
             10,
             100,
             SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{
@@ -920,8 +907,8 @@ pub(crate) mod tests {
                 reason: None, detail: None
             })
         )] // 1s -> timeout
-        #[case(10, 10, SUPPORTED_RETURN_VALUE_OK_EMPTY)] // 0.1s -> Ok
-        #[case(
+    #[case(10, 10, SUPPORTED_RETURN_VALUE_OK_EMPTY)] // 0.1s -> Ok
+    #[case(
             1500,
             1,
             SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{
@@ -929,73 +916,549 @@ pub(crate) mod tests {
                 reason: None, detail: None
             })
         )] // 1s -> timeout
-        #[tokio::test]
-        async fn sleep_should_produce_temporary_timeout(
-            #[case] sleep_millis: u32,
-            #[case] sleep_iterations: u32,
-            #[case] expected: concepts::SupportedFunctionReturnValue,
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            const LOCK_EXPIRY: Duration = Duration::from_millis(500);
-            test_utils::set_up();
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let engine =
-                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-            let (worker, _) = new_activity_worker(
-                test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                engine,
-                sim_clock.clone_box(),
-                TokioSleep,
-            )
+    #[tokio::test]
+    async fn sleep_should_produce_temporary_timeout(
+        #[case] sleep_millis: u32,
+        #[case] sleep_iterations: u32,
+        #[case] expected: concepts::SupportedFunctionReturnValue,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        const LOCK_EXPIRY: Duration = Duration::from_millis(500);
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, _) = new_activity_worker(
+            test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+        )
+        .await;
+
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: LOCK_EXPIRY,
+            tick_sleep: Duration::ZERO,
+            component_id: ComponentId::dummy_activity(),
+            task_limiter: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
+            locking_strategy,
+        };
+        let ffqns = Arc::from([SLEEP_LOOP_ACTIVITY_FFQN]);
+        let exec_task = ExecTask::new_test(
+            exec_config,
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            ffqns,
+        );
+
+        // Create an execution.
+        let execution_id = ExecutionId::generate();
+        info!("Testing {execution_id}");
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
+                params: Params::from_json_values_test(vec![
+                    json!(
+                        {"milliseconds": sleep_millis}),
+                    json!(sleep_iterations),
+                ]),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        // Run the execution via tick.
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .wait_for_tasks()
+                .await
+                .len()
+        );
+
+        // Check the result.
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let result = assert_matches!(
+            exec_log.last_event().event.clone(),
+            ExecutionRequest::Finished { result, .. } => result
+        );
+        assert_eq!(expected, result);
+
+        drop(exec_task);
+        db_close.close().await;
+    }
+
+    #[rstest::rstest]
+    #[case(1, 2_000)] // 1ms * 2000 iterations
+    #[case(2_000, 1)] // 2s * 1 iteration
+    #[tokio::test]
+    async fn long_running_execution_should_timeout(
+        #[case] sleep_millis: u64,
+        #[case] sleep_iterations: u32,
+    ) {
+        const TIMEOUT: Duration = Duration::from_millis(200);
+        test_utils::set_up();
+
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let sim_clock = SimClock::epoch();
+        let (worker, _) = new_activity_worker(
+            test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+        )
+        .await;
+
+        let executed_at = sim_clock.now();
+        let version = Version::new(10);
+        let ctx = WorkerContext {
+            execution_id: ExecutionId::generate(),
+            metadata: concepts::ExecutionMetadata::empty(),
+            ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
+            params: Params::from_json_values_test(vec![
+                json!(
+                    {"milliseconds": sleep_millis}),
+                json!(sleep_iterations),
+            ]),
+            event_history: Vec::new(),
+            responses: Vec::new(),
+            version: version.clone(),
+            can_be_retried: false,
+            worker_span: info_span!("worker-test"),
+            locked_event: Locked {
+                component_id: ComponentId::dummy_activity(),
+                executor_id: ExecutorId::generate(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                run_id: RunId::generate(),
+                lock_expires_at: executed_at + TIMEOUT,
+                retry_config: ComponentRetryConfig::ZERO,
+            },
+        };
+        let WorkerResult::Err(err) = worker.run(ctx).await else {
+            panic!()
+        };
+        let actual_version = assert_matches!(
+            err,
+            WorkerError::TemporaryTimeout {
+                http_client_traces:_,
+                version
+            }
+            => version
+        );
+        assert_eq!(version, actual_version);
+    }
+
+    #[tokio::test]
+    async fn execution_deadline_before_now_should_timeout() {
+        test_utils::set_up();
+
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let sim_clock = SimClock::epoch();
+        let (worker, _) = new_activity_worker(
+            test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+        )
+        .await;
+        // simulate a scheduling problem where deadline < now
+        let execution_deadline = sim_clock.now();
+        sim_clock.move_time_forward(Duration::from_millis(100));
+        let version = Version::new(10);
+        let ctx = WorkerContext {
+            execution_id: ExecutionId::generate(),
+            metadata: concepts::ExecutionMetadata::empty(),
+            ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
+            params: Params::from_json_values_test(vec![
+                json!(
+                    {"milliseconds": 1}),
+                json!(1),
+            ]),
+            event_history: Vec::new(),
+            responses: Vec::new(),
+            version: version.clone(),
+            can_be_retried: false,
+            worker_span: info_span!("worker-test"),
+            locked_event: Locked {
+                component_id: ComponentId::dummy_activity(),
+                executor_id: ExecutorId::generate(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                run_id: RunId::generate(),
+                lock_expires_at: execution_deadline,
+                retry_config: ComponentRetryConfig::ZERO,
+            },
+        };
+        let WorkerResult::Err(err) = worker.run(ctx).await else {
+            panic!()
+        };
+        let actual_version = assert_matches!(
+            err,
+            WorkerError::TemporaryTimeout {
+                http_client_traces: None,
+                version: actual_version,
+            }
+            => actual_version
+        );
+        assert_eq!(version, actual_version);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn http_get_simple(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        use std::ops::Deref;
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        const BODY: &str = "ok";
+        test_utils::set_up();
+        info!("All set up");
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, _) = new_activity_worker(
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+        )
+        .await;
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            tick_sleep: Duration::ZERO,
+            component_id: ComponentId::dummy_activity(),
+            task_limiter: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
+            locking_strategy,
+        };
+        let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
+        let exec_task = ExecTask::new_test(
+            exec_config,
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            ffqns,
+        );
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_address = listener
+            .local_addr()
+            .expect("Failed to get server address.");
+        let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
+        let params = Params::from_json_values_test(vec![json!(uri.clone())]);
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        info!("Creating execution");
+        let stopwatch = std::time::Instant::now();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_activity(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        let server = MockServer::builder().listener(listener).start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+            .expect(1)
+            .mount(&server)
             .await;
 
-            let exec_config = ExecConfig {
-                batch_size: 1,
-                lock_expiry: LOCK_EXPIRY,
-                tick_sleep: Duration::ZERO,
-                component_id: ComponentId::dummy_activity(),
-                task_limiter: None,
-                executor_id: ExecutorId::generate(),
-                retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy,
-            };
-            let ffqns = Arc::from([SLEEP_LOOP_ACTIVITY_FFQN]);
-            let exec_task = ExecTask::new_test(
-                exec_config,
-                worker,
-                sim_clock.clone_box(),
-                db_pool.clone(),
-                ffqns,
-            );
-
-            // Create an execution.
-            let execution_id = ExecutionId::generate();
-            info!("Testing {execution_id}");
-            let created_at = sim_clock.now();
-            let db_connection = db_pool.connection().await.unwrap();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                    params: Params::from_json_values_test(vec![
-                        json!(
-                        {"milliseconds": sleep_millis}),
-                        json!(sleep_iterations),
-                    ]),
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap();
+                .wait_for_tasks()
+                .await
+                .len()
+        );
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let stopwatch = stopwatch.elapsed();
+        info!("Finished in {stopwatch:?}");
+        let (res, http_client_traces) = assert_matches!(
+                exec_log.last_event().event.clone(),
+                ExecutionRequest::Finished { result, http_client_traces: Some(http_client_traces) }
+                => (result, http_client_traces));
+        let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
+        let val = assert_matches!(wast_val_with_type.value, WastVal::String(val) => val);
+        assert_eq!(BODY, val.deref());
+        // check types
+        assert_matches!(wast_val_with_type.r#type, TypeWrapper::String);
+        assert_eq!(1, http_client_traces.len());
+        let http_client_trace = http_client_traces.into_iter().next().unwrap();
+        let (method, uri_actual) = assert_matches!(
+            http_client_trace,
+            HttpClientTrace {
+                req: RequestTrace {
+                    method,
+                    sent_at: _,
+                    uri
+                },
+                resp: Some(ResponseTrace {
+                    status: Ok(200),
+                    finished_at: _
+                })
+            }
+            => (method, uri)
+        );
+        assert_eq!("GET", method);
+        assert_eq!(uri, *uri_actual);
+        drop(db_connection);
+        drop(exec_task);
+        db_close.close().await;
+    }
 
-            // Run the execution via tick.
+    #[rstest]
+    #[tokio::test]
+    async fn http_get_activity_trap_should_be_turned_into_finished_execution_error_permanent_failure(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        const STATUS: u16 = 418; // I'm a teapot causes trap
+        test_utils::set_up();
+        info!("All set up");
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, _) = new_activity_worker(
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+        )
+        .await;
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            tick_sleep: Duration::ZERO,
+            component_id: ComponentId::dummy_activity(),
+            task_limiter: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
+            locking_strategy,
+        };
+        let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
+        let exec_task = ExecTask::new_test(
+            exec_config,
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            ffqns,
+        );
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_address = listener
+            .local_addr()
+            .expect("Failed to get server address.");
+        let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
+        let params = Params::from_json_values_test(vec![json!(uri.clone())]);
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        info!("Creating execution");
+        let stopwatch = std::time::Instant::now();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_activity(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        let server = MockServer::builder().listener(listener).start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(STATUS).set_body_string(""))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .wait_for_tasks()
+                .await
+                .len()
+        );
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let stopwatch = stopwatch.elapsed();
+        info!("Finished in {stopwatch:?}");
+        let (res, http_client_traces) = assert_matches!(
+                exec_log.last_event().event.clone(),
+                ExecutionRequest::Finished { result, http_client_traces: Some(http_client_traces) }
+                => (result, http_client_traces));
+        let res = assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(err) => err);
+        let reason = assert_matches!(
+            res,
+            FinishedExecutionError {
+                kind: ExecutionFailureKind::Uncategorized,
+                reason: Some(reason), // activity trap
+                detail: _
+            } => reason
+        );
+        assert!(reason.starts_with("activity trap"), "{reason}");
+
+        assert_eq!(1, http_client_traces.len());
+        let http_client_trace = http_client_traces.into_iter().next().unwrap();
+        let (method, uri_actual) = assert_matches!(
+            http_client_trace,
+            HttpClientTrace {
+                req: RequestTrace {
+                    method,
+                    sent_at: _,
+                    uri
+                },
+                resp: Some(ResponseTrace {
+                    status: Ok(STATUS),
+                    finished_at: _
+                })
+            }
+            => (method, uri)
+        );
+        assert_eq!("GET", method);
+        assert_eq!(uri, *uri_actual);
+        drop(db_connection);
+        drop(exec_task);
+        db_close.close().await;
+    }
+
+    #[rstest::rstest(
+            succeed_eventually => [false, true],
+        )]
+    #[tokio::test]
+    async fn http_get_retry_on_fallible_err(
+        succeed_eventually: bool,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        use std::ops::Deref;
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        const BODY: &str = "ok";
+        const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, _) = new_activity_worker(
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+        )
+        .await;
+        let retry_config = ComponentRetryConfig {
+            max_retries: Some(1),
+            retry_exp_backoff: RETRY_EXP_BACKOFF,
+        };
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            tick_sleep: Duration::ZERO,
+            component_id: ComponentId::dummy_activity(),
+            task_limiter: None,
+            executor_id: ExecutorId::generate(),
+            retry_config,
+            locking_strategy,
+        };
+        let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
+        let exec_task = ExecTask::new_test(
+            exec_config,
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            ffqns,
+        );
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_address = listener
+            .local_addr()
+            .expect("Failed to get server address.");
+        let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
+        let params = Params::from_json_values_test(vec![json!(uri.clone())]);
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_activity(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        let server = MockServer::builder().listener(listener).start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(500).set_body_string(BODY))
+            .expect(1)
+            .mount(&server)
+            .await;
+        debug!("started mock server on {}", server.address());
+
+        {
+            // Expect error result to be interpreted as an temporary failure
             assert_eq!(
                 1,
                 exec_task
@@ -1005,678 +1468,195 @@ pub(crate) mod tests {
                     .await
                     .len()
             );
-
-            // Check the result.
             let exec_log = db_connection.get(&execution_id).await.unwrap();
-            let result = assert_matches!(
-                exec_log.last_event().event.clone(),
-                ExecutionRequest::Finished { result, .. } => result
-            );
-            assert_eq!(expected, result);
 
-            drop(exec_task);
-            db_close.close().await;
-        }
-
-        #[rstest::rstest]
-        #[case(1, 2_000)] // 1ms * 2000 iterations
-        #[case(2_000, 1)] // 2s * 1 iteration
-        #[tokio::test]
-        async fn long_running_execution_should_timeout(
-            #[case] sleep_millis: u64,
-            #[case] sleep_iterations: u32,
-        ) {
-            const TIMEOUT: Duration = Duration::from_millis(200);
-            test_utils::set_up();
-
-            let engine =
-                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-
-            let sim_clock = SimClock::epoch();
-            let (worker, _) = new_activity_worker(
-                test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                engine,
-                sim_clock.clone_box(),
-                TokioSleep,
-            )
-            .await;
-
-            let executed_at = sim_clock.now();
-            let version = Version::new(10);
-            let ctx = WorkerContext {
-                execution_id: ExecutionId::generate(),
-                metadata: concepts::ExecutionMetadata::empty(),
-                ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                params: Params::from_json_values_test(vec![
-                    json!(
-                    {"milliseconds": sleep_millis}),
-                    json!(sleep_iterations),
-                ]),
-                event_history: Vec::new(),
-                responses: Vec::new(),
-                version: version.clone(),
-                can_be_retried: false,
-                worker_span: info_span!("worker-test"),
-                locked_event: Locked {
-                    component_id: ComponentId::dummy_activity(),
-                    executor_id: ExecutorId::generate(),
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    run_id: RunId::generate(),
-                    lock_expires_at: executed_at + TIMEOUT,
-                    retry_config: ComponentRetryConfig::ZERO,
-                },
-            };
-            let WorkerResult::Err(err) = worker.run(ctx).await else {
-                panic!()
-            };
-            let actual_version = assert_matches!(
-                err,
-                WorkerError::TemporaryTimeout {
-                    http_client_traces:_,
-                    version
+            let (reason, detail, found_expires_at, http_client_traces) = assert_matches!(
+                &exec_log.last_event().event,
+                ExecutionRequest::TemporarilyFailed {
+                    backoff_expires_at,
+                    reason,
+                    detail: Some(detail),
+                    http_client_traces: Some(http_client_traces)
                 }
-                => version
+                => (reason, detail, *backoff_expires_at, http_client_traces)
             );
-            assert_eq!(version, actual_version);
-        }
+            assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
+            assert_eq!("activity returned error", reason.deref());
+            assert!(
+                detail.contains("wrong status code: 500"),
+                "Unexpected {detail}"
+            );
 
-        #[tokio::test]
-        async fn execution_deadline_before_now_should_timeout() {
-            test_utils::set_up();
-
-            let engine =
-                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-            let sim_clock = SimClock::epoch();
-            let (worker, _) = new_activity_worker(
-                test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                engine,
-                sim_clock.clone_box(),
-                TokioSleep,
-            )
-            .await;
-            // simulate a scheduling problem where deadline < now
-            let execution_deadline = sim_clock.now();
-            sim_clock.move_time_forward(Duration::from_millis(100));
-            let version = Version::new(10);
-            let ctx = WorkerContext {
-                execution_id: ExecutionId::generate(),
-                metadata: concepts::ExecutionMetadata::empty(),
-                ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                params: Params::from_json_values_test(vec![
-                    json!(
-                    {"milliseconds": 1}),
-                    json!(1),
-                ]),
-                event_history: Vec::new(),
-                responses: Vec::new(),
-                version: version.clone(),
-                can_be_retried: false,
-                worker_span: info_span!("worker-test"),
-                locked_event: Locked {
-                    component_id: ComponentId::dummy_activity(),
-                    executor_id: ExecutorId::generate(),
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    run_id: RunId::generate(),
-                    lock_expires_at: execution_deadline,
-                    retry_config: ComponentRetryConfig::ZERO,
-                },
-            };
-            let WorkerResult::Err(err) = worker.run(ctx).await else {
-                panic!()
-            };
-            let actual_version = assert_matches!(
-                err,
-                WorkerError::TemporaryTimeout {
-                    http_client_traces: None,
-                    version: actual_version,
+            assert_eq!(1, http_client_traces.len());
+            let http_client_trace = http_client_traces.iter().next().unwrap();
+            let (method, uri_actual) = assert_matches!(
+                http_client_trace,
+                HttpClientTrace {
+                    req: RequestTrace {
+                        method,
+                        sent_at: _,
+                        uri
+                    },
+                    resp: Some(ResponseTrace {
+                        status: Ok(500),
+                        finished_at: _
+                    })
                 }
-                => actual_version
+                => (method, uri)
             );
-            assert_eq!(version, actual_version);
+            assert_eq!("GET", method);
+            assert_eq!(uri, *uri_actual);
+            server.verify().await;
         }
-
-        #[rstest]
-        #[tokio::test]
-        async fn http_get_simple(
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            use std::ops::Deref;
-            use wiremock::{
-                Mock, MockServer, ResponseTemplate,
-                matchers::{method, path},
-            };
-            const BODY: &str = "ok";
-            test_utils::set_up();
-            info!("All set up");
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let engine =
-                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-            let (worker, _) = new_activity_worker(
-                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                engine,
-                sim_clock.clone_box(),
-                TokioSleep,
-            )
-            .await;
-            let exec_config = ExecConfig {
-                batch_size: 1,
-                lock_expiry: Duration::from_secs(1),
-                tick_sleep: Duration::ZERO,
-                component_id: ComponentId::dummy_activity(),
-                task_limiter: None,
-                executor_id: ExecutorId::generate(),
-                retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy,
-            };
-            let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task = ExecTask::new_test(
-                exec_config,
-                worker,
-                sim_clock.clone_box(),
-                db_pool.clone(),
-                ffqns,
-            );
-
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let server_address = listener
-                .local_addr()
-                .expect("Failed to get server address.");
-            let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
-            let params = Params::from_json_values_test(vec![json!(uri.clone())]);
-            let execution_id = ExecutionId::generate();
-            let created_at = sim_clock.now();
-            let db_connection = db_pool.connection_test().await.unwrap();
-            info!("Creating execution");
-            let stopwatch = std::time::Instant::now();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
-                    params,
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
-
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
+        // Noop until the timeout expires
+        assert_eq!(
+            0,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
                 .await
-                .unwrap();
-
-            let server = MockServer::builder().listener(listener).start().await;
+                .wait_for_tasks()
+                .await
+                .len()
+        );
+        sim_clock.move_time_forward(RETRY_EXP_BACKOFF);
+        server.reset().await;
+        if succeed_eventually {
+            // Reconfigure the server
             Mock::given(method("GET"))
                 .and(path("/"))
                 .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
                 .expect(1)
                 .mount(&server)
                 .await;
+            debug!("Reconfigured the server");
+        } // otherwise return 404
 
-            assert_eq!(
-                1,
-                exec_task
-                    .tick_test(sim_clock.now(), RunId::generate())
-                    .await
-                    .wait_for_tasks()
-                    .await
-                    .len()
-            );
-            let exec_log = db_connection.get(&execution_id).await.unwrap();
-            let stopwatch = stopwatch.elapsed();
-            info!("Finished in {stopwatch:?}");
-            let (res, http_client_traces) = assert_matches!(
-                exec_log.last_event().event.clone(),
-                ExecutionRequest::Finished { result, http_client_traces: Some(http_client_traces) }
-                => (result, http_client_traces));
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .wait_for_tasks()
+                .await
+                .len()
+        );
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionRequest::Finished { result, .. } => result);
+        let wast_val_with_type = if succeed_eventually {
             let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
-            let val = assert_matches!(wast_val_with_type.value, WastVal::String(val) => val);
+            let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
-            // check types
-            assert_matches!(wast_val_with_type.r#type, TypeWrapper::String);
-            assert_eq!(1, http_client_traces.len());
-            let http_client_trace = http_client_traces.into_iter().next().unwrap();
-            let (method, uri_actual) = assert_matches!(
-                http_client_trace,
-                HttpClientTrace {
-                    req: RequestTrace {
-                        method,
-                        sent_at: _,
-                        uri
-                    },
-                    resp: Some(ResponseTrace {
-                        status: Ok(200),
-                        finished_at: _
-                    })
-                }
-                => (method, uri)
-            );
-            assert_eq!("GET", method);
-            assert_eq!(uri, *uri_actual);
-            drop(db_connection);
-            drop(exec_task);
-            db_close.close().await;
-        }
+            wast_val_with_type
+        } else {
+            let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(wast_val_with_type)} => wast_val_with_type);
+            let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
+            assert_eq!("wrong status code: 404", val.deref());
+            wast_val_with_type
+        };
+        // check types
+        assert_matches!(wast_val_with_type.r#type, TypeWrapper::String); // in both cases
+        drop(db_connection);
+        drop(exec_task);
+        db_close.close().await;
+    }
 
-        #[rstest]
-        #[tokio::test]
-        async fn http_get_activity_trap_should_be_turned_into_finished_execution_error_permanent_failure(
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            use wiremock::{
-                Mock, MockServer, ResponseTemplate,
-                matchers::{method, path},
-            };
-            const STATUS: u16 = 418; // I'm a teapot causes trap
-            test_utils::set_up();
-            info!("All set up");
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let engine =
-                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-            let (worker, _) = new_activity_worker(
-                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                engine,
-                sim_clock.clone_box(),
-                TokioSleep,
-            )
-            .await;
-            let exec_config = ExecConfig {
-                batch_size: 1,
-                lock_expiry: Duration::from_secs(1),
-                tick_sleep: Duration::ZERO,
-                component_id: ComponentId::dummy_activity(),
-                task_limiter: None,
-                executor_id: ExecutorId::generate(),
-                retry_config: ComponentRetryConfig::ZERO,
-                locking_strategy,
-            };
-            let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task = ExecTask::new_test(
-                exec_config,
-                worker,
-                sim_clock.clone_box(),
-                db_pool.clone(),
-                ffqns,
-            );
+    #[rstest]
+    #[tokio::test]
+    async fn preopened_dir_sanity(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection().await.unwrap();
+        let parent_preopen_tempdir = tempfile::tempdir().unwrap();
+        let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
+        let retry_config = ComponentRetryConfig {
+            max_retries: Some(1), // should fail in first try
+            retry_exp_backoff: Duration::ZERO,
+        };
+        let exec = new_activity_with_config(
+            db_pool.clone(),
+            test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
+            sim_clock.clone_box(),
+            TokioSleep,
+            move |component_id| ActivityConfig {
+                component_id,
+                forward_stdout: None,
+                forward_stderr: None,
+                env_vars: Arc::default(),
+                retry_on_err: true, // needed
+                directories_config: Some(ActivityDirectoriesConfig {
+                    parent_preopen_dir,
+                    reuse_on_retry: true, // relies on continuing in the same folder
+                    process_provider: None,
+                }),
+                fuel: None,
+            },
+            retry_config,
+            locking_strategy,
+        )
+        .await;
+        // Create an execution.
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: FunctionFqn::new_static_tuple(
+                    test_programs_dir_activity_builder::exports::testing::dir::dir::IO,
+                ),
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: exec.config.component_id.clone(),
 
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let server_address = listener
-                .local_addr()
-                .expect("Failed to get server address.");
-            let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
-            let params = Params::from_json_values_test(vec![json!(uri.clone())]);
-            let execution_id = ExecutionId::generate();
-            let created_at = sim_clock.now();
-            let db_connection = db_pool.connection_test().await.unwrap();
-            info!("Creating execution");
-            let stopwatch = std::time::Instant::now();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
-                    params,
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
-
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
-                .await
-                .unwrap();
-
-            let server = MockServer::builder().listener(listener).start().await;
-            Mock::given(method("GET"))
-                .and(path("/"))
-                .respond_with(ResponseTemplate::new(STATUS).set_body_string(""))
-                .expect(1)
-                .mount(&server)
-                .await;
-
-            assert_eq!(
-                1,
-                exec_task
-                    .tick_test(sim_clock.now(), RunId::generate())
-                    .await
-                    .wait_for_tasks()
-                    .await
-                    .len()
-            );
-            let exec_log = db_connection.get(&execution_id).await.unwrap();
-            let stopwatch = stopwatch.elapsed();
-            info!("Finished in {stopwatch:?}");
-            let (res, http_client_traces) = assert_matches!(
-                exec_log.last_event().event.clone(),
-                ExecutionRequest::Finished { result, http_client_traces: Some(http_client_traces) }
-                => (result, http_client_traces));
-            let res =
-                assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(err) => err);
-            let reason = assert_matches!(
-                res,
-                FinishedExecutionError {
-                    kind: ExecutionFailureKind::Uncategorized,
-                    reason: Some(reason), // activity trap
-                    detail: _
-                } => reason
-            );
-            assert!(reason.starts_with("activity trap"), "{reason}");
-
-            assert_eq!(1, http_client_traces.len());
-            let http_client_trace = http_client_traces.into_iter().next().unwrap();
-            let (method, uri_actual) = assert_matches!(
-                http_client_trace,
-                HttpClientTrace {
-                    req: RequestTrace {
-                        method,
-                        sent_at: _,
-                        uri
-                    },
-                    resp: Some(ResponseTrace {
-                        status: Ok(STATUS),
-                        finished_at: _
-                    })
-                }
-                => (method, uri)
-            );
-            assert_eq!("GET", method);
-            assert_eq!(uri, *uri_actual);
-            drop(db_connection);
-            drop(exec_task);
-            db_close.close().await;
-        }
-
-        #[rstest::rstest(
-            succeed_eventually => [false, true],
-        )]
-        #[tokio::test]
-        async fn http_get_retry_on_fallible_err(
-            succeed_eventually: bool,
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            use std::ops::Deref;
-            use wiremock::{
-                Mock, MockServer, ResponseTemplate,
-                matchers::{method, path},
-            };
-            const BODY: &str = "ok";
-            const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
-            test_utils::set_up();
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let engine =
-                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-            let (worker, _) = new_activity_worker(
-                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                engine,
-                sim_clock.clone_box(),
-                TokioSleep,
-            )
-            .await;
-            let retry_config = ComponentRetryConfig {
-                max_retries: Some(1),
-                retry_exp_backoff: RETRY_EXP_BACKOFF,
-            };
-            let exec_config = ExecConfig {
-                batch_size: 1,
-                lock_expiry: Duration::from_secs(1),
-                tick_sleep: Duration::ZERO,
-                component_id: ComponentId::dummy_activity(),
-                task_limiter: None,
-                executor_id: ExecutorId::generate(),
-                retry_config,
-                locking_strategy,
-            };
-            let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task = ExecTask::new_test(
-                exec_config,
-                worker,
-                sim_clock.clone_box(),
-                db_pool.clone(),
-                ffqns,
-            );
-
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let server_address = listener
-                .local_addr()
-                .expect("Failed to get server address.");
-            let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
-            let params = Params::from_json_values_test(vec![json!(uri.clone())]);
-            let execution_id = ExecutionId::generate();
-            let created_at = sim_clock.now();
-            let db_connection = db_pool.connection_test().await.unwrap();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
-                    params,
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: ComponentId::dummy_activity(),
-
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
-                .await
-                .unwrap();
-
-            let server = MockServer::builder().listener(listener).start().await;
-            Mock::given(method("GET"))
-                .and(path("/"))
-                .respond_with(ResponseTemplate::new(500).set_body_string(BODY))
-                .expect(1)
-                .mount(&server)
-                .await;
-            debug!("started mock server on {}", server.address());
-
-            {
-                // Expect error result to be interpreted as an temporary failure
-                assert_eq!(
-                    1,
-                    exec_task
-                        .tick_test(sim_clock.now(), RunId::generate())
-                        .await
-                        .wait_for_tasks()
-                        .await
-                        .len()
-                );
-                let exec_log = db_connection.get(&execution_id).await.unwrap();
-
-                let (reason, detail, found_expires_at, http_client_traces) = assert_matches!(
-                    &exec_log.last_event().event,
-                    ExecutionRequest::TemporarilyFailed {
-                        backoff_expires_at,
-                        reason,
-                        detail: Some(detail),
-                        http_client_traces: Some(http_client_traces)
-                    }
-                    => (reason, detail, *backoff_expires_at, http_client_traces)
-                );
-                assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
-                assert_eq!("activity returned error", reason.deref());
-                assert!(
-                    detail.contains("wrong status code: 500"),
-                    "Unexpected {detail}"
-                );
-
-                assert_eq!(1, http_client_traces.len());
-                let http_client_trace = http_client_traces.iter().next().unwrap();
-                let (method, uri_actual) = assert_matches!(
-                    http_client_trace,
-                    HttpClientTrace {
-                        req: RequestTrace {
-                            method,
-                            sent_at: _,
-                            uri
-                        },
-                        resp: Some(ResponseTrace {
-                            status: Ok(500),
-                            finished_at: _
-                        })
-                    }
-                    => (method, uri)
-                );
-                assert_eq!("GET", method);
-                assert_eq!(uri, *uri_actual);
-                server.verify().await;
-            }
-            // Noop until the timeout expires
-            assert_eq!(
-                0,
-                exec_task
-                    .tick_test(sim_clock.now(), RunId::generate())
-                    .await
-                    .wait_for_tasks()
-                    .await
-                    .len()
-            );
-            sim_clock.move_time_forward(RETRY_EXP_BACKOFF);
-            server.reset().await;
-            if succeed_eventually {
-                // Reconfigure the server
-                Mock::given(method("GET"))
-                    .and(path("/"))
-                    .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
-                    .expect(1)
-                    .mount(&server)
-                    .await;
-                debug!("Reconfigured the server");
-            } // otherwise return 404
-
-            assert_eq!(
-                1,
-                exec_task
-                    .tick_test(sim_clock.now(), RunId::generate())
-                    .await
-                    .wait_for_tasks()
-                    .await
-                    .len()
-            );
-            let exec_log = db_connection.get(&execution_id).await.unwrap();
-            let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionRequest::Finished { result, .. } => result);
-            let wast_val_with_type = if succeed_eventually {
-                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
-                let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
-                assert_eq!(BODY, val.deref());
-                wast_val_with_type
-            } else {
-                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(wast_val_with_type)} => wast_val_with_type);
-                let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
-                assert_eq!("wrong status code: 404", val.deref());
-                wast_val_with_type
-            };
-            // check types
-            assert_matches!(wast_val_with_type.r#type, TypeWrapper::String); // in both cases
-            drop(db_connection);
-            drop(exec_task);
-            db_close.close().await;
-        }
-
-        #[rstest]
-        #[tokio::test]
-        async fn preopened_dir_sanity(
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            test_utils::set_up();
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection().await.unwrap();
-            let parent_preopen_tempdir = tempfile::tempdir().unwrap();
-            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
-            let retry_config = ComponentRetryConfig {
-                max_retries: Some(1), // should fail in first try
-                retry_exp_backoff: Duration::ZERO,
-            };
-            let exec = new_activity_with_config(
-                db_pool.clone(),
-                test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
-                sim_clock.clone_box(),
-                TokioSleep,
-                move |component_id| ActivityConfig {
-                    component_id,
-                    forward_stdout: None,
-                    forward_stderr: None,
-                    env_vars: Arc::default(),
-                    retry_on_err: true, // needed
-                    directories_config: Some(ActivityDirectoriesConfig {
-                        parent_preopen_dir,
-                        reuse_on_retry: true, // relies on continuing in the same folder
-                        process_provider: None,
-                    }),
-                    fuel: None,
-                },
-                retry_config,
-                locking_strategy,
-            )
-            .await;
-            // Create an execution.
-            let execution_id = ExecutionId::generate();
-            let created_at = sim_clock.now();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn: FunctionFqn::new_static_tuple(
-                        test_programs_dir_activity_builder::exports::testing::dir::dir::IO,
-                    ),
-                    params: Params::empty(),
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: exec.config.component_id.clone(),
-
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
-                .await
-                .unwrap();
-            let run_id = RunId::generate();
-            let executed = exec.tick_test_await(sim_clock.now(), run_id).await;
-            assert_eq!(vec![execution_id.clone()], executed);
-            // First execution should have failed
-            let pending_state = db_connection
-                .get_pending_state(&execution_id)
-                .await
-                .unwrap()
-                .pending_state;
-            let (scheduled_at, found_run_id) = assert_matches!(pending_state,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+        let run_id = RunId::generate();
+        let executed = exec.tick_test_await(sim_clock.now(), run_id).await;
+        assert_eq!(vec![execution_id.clone()], executed);
+        // First execution should have failed
+        let pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap()
+            .pending_state;
+        let (scheduled_at, found_run_id) = assert_matches!(pending_state,
                 PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at,
                     last_lock: Some(LockedBy { executor_id: _, run_id }),
                 })
             => (scheduled_at, run_id));
-            // retry_exp_backoff is 0
-            assert_eq!(sim_clock.now(), scheduled_at);
-            assert_eq!(run_id, found_run_id);
+        // retry_exp_backoff is 0
+        assert_eq!(sim_clock.now(), scheduled_at);
+        assert_eq!(run_id, found_run_id);
 
-            let executed = exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await;
-            assert_eq!(vec![execution_id.clone()], executed);
+        let executed = exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(vec![execution_id.clone()], executed);
 
-            // Check the result.
-            let res = db_connection
-                .wait_for_finished_result(
-                    &execution_id,
-                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
-                )
-                .await
-                .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
+        // Check the result.
+        let res = db_connection
+            .wait_for_finished_result(
+                &execution_id,
+                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+            )
+            .await
+            .unwrap();
+        assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
 
-            db_close.close().await;
-        }
+        db_close.close().await;
+    }
 
-        #[rstest::rstest(
+    #[rstest::rstest(
             ffqn => [FunctionFqn::new_static_tuple(
                     test_programs_process_activity_builder::exports::testing::process::process::TOUCH,
                 ), FunctionFqn::new_static_tuple(
@@ -1686,170 +1666,169 @@ pub(crate) mod tests {
                     test_programs_process_activity_builder::exports::testing::process::process::STDIO,
                 )],
         )]
-        #[tokio::test]
-        async fn process_sanity(
-            ffqn: FunctionFqn,
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            test_utils::set_up();
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection().await.unwrap();
-            let parent_preopen_tempdir = tempfile::tempdir().unwrap();
-            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
-            let exec = new_activity_with_config(
-                db_pool.clone(),
-                test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
-                sim_clock.clone_box(),
-                TokioSleep,
-                move |component_id| ActivityConfig {
-                    component_id,
-                    forward_stdout: Some(StdOutputConfig::Stderr),
-                    forward_stderr: Some(StdOutputConfig::Stderr),
-                    env_vars: Arc::default(),
-                    retry_on_err: true,
-                    directories_config: Some(ActivityDirectoriesConfig {
-                        parent_preopen_dir,
-                        reuse_on_retry: false,
-                        process_provider: Some(ProcessProvider::Native),
-                    }),
-                    fuel: None,
-                },
-                ComponentRetryConfig::ZERO,
-                locking_strategy,
-            )
-            .await;
-            // Create an execution.
-            let execution_id = ExecutionId::generate();
-            let created_at = sim_clock.now();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn,
-                    params: Params::empty(),
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: exec.config.component_id.clone(),
+    #[tokio::test]
+    async fn process_sanity(
+        ffqn: FunctionFqn,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection().await.unwrap();
+        let parent_preopen_tempdir = tempfile::tempdir().unwrap();
+        let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
+        let exec = new_activity_with_config(
+            db_pool.clone(),
+            test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
+            sim_clock.clone_box(),
+            TokioSleep,
+            move |component_id| ActivityConfig {
+                component_id,
+                forward_stdout: Some(StdOutputConfig::Stderr),
+                forward_stderr: Some(StdOutputConfig::Stderr),
+                env_vars: Arc::default(),
+                retry_on_err: true,
+                directories_config: Some(ActivityDirectoriesConfig {
+                    parent_preopen_dir,
+                    reuse_on_retry: false,
+                    process_provider: Some(ProcessProvider::Native),
+                }),
+                fuel: None,
+            },
+            ComponentRetryConfig::ZERO,
+            locking_strategy,
+        )
+        .await;
+        // Create an execution.
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: exec.config.component_id.clone(),
 
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
-                .await
-                .unwrap();
-            let executed = exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await;
-            assert_eq!(vec![execution_id.clone()], executed);
-            // Check the result.
-            let res = db_connection
-                .wait_for_finished_result(
-                    &execution_id,
-                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
-                )
-                .await
-                .unwrap();
-            assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
-            db_close.close().await;
-        }
-
-        #[tokio::test]
-        async fn process_api_not_enabled_should_produce_meaningful_error() {
-            test_utils::set_up();
-            let sim_clock = SimClock::default();
-
-            let engine =
-                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-
-            let (wasm_component, component_id) = compile_activity_with_engine(
-                test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
-                &engine,
-                ComponentType::ActivityWasm,
-            )
-            .await;
-
-            let err = ActivityWorkerCompiled::new_with_config(
-                wasm_component,
-                ActivityConfig {
-                    component_id,
-                    forward_stdout: Some(StdOutputConfig::Stderr),
-                    forward_stderr: Some(StdOutputConfig::Stderr),
-                    env_vars: Arc::default(),
-                    retry_on_err: true,
-                    directories_config: None,
-                    fuel: None,
-                },
-                engine,
-                sim_clock.clone_box(),
-                TokioSleep,
-            )
-            .unwrap_err();
-            let reason = assert_matches!(err, WasmFileError::LinkingError { reason, .. } => reason);
-            assert_eq!(
-                r#"activity comopnent imports Process API, but it is not enabled. Use e.g. `directories  = { enabled = true, process_provider = "native"}`"#,
-                reason.to_string()
-            );
-        }
-
-        #[cfg(unix)]
-        async fn is_process_running(pid: u32) -> bool {
-            let output = tokio::process::Command::new("ps")
-                .arg("a")
-                .output()
-                .await
-                .unwrap();
-            let stdout = String::from_utf8(output.stdout).unwrap();
-            stdout.lines().any(|line| {
-                line.split_whitespace()
-                    .next()
-                    .is_some_and(|field| field == pid.to_string())
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
             })
-        }
-
-        #[cfg(unix)]
-        #[rstest]
-        #[tokio::test]
-        async fn process_group_cleanup(
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            test_utils::set_up();
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection().await.unwrap();
-            let parent_preopen_tempdir = tempfile::tempdir().unwrap();
-            let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
-            let exec = new_activity_with_config(
-                db_pool.clone(),
-                test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
-                sim_clock.clone_box(),
-                TokioSleep,
-                move |component_id| ActivityConfig {
-                    component_id,
-                    forward_stdout: None,
-                    forward_stderr: None,
-                    env_vars: Arc::from([EnvVar {
-                        key: "PATH".to_string(),
-                        val: std::env::var("PATH").unwrap(),
-                    }]),
-                    retry_on_err: true,
-                    directories_config: Some(ActivityDirectoriesConfig {
-                        parent_preopen_dir,
-                        reuse_on_retry: false,
-                        process_provider: Some(ProcessProvider::Native),
-                    }),
-                    fuel: None,
-                },
-                ComponentRetryConfig::ZERO,
-                locking_strategy,
-            )
+            .await
+            .unwrap();
+        let executed = exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
             .await;
-            // Create an execution.
-            let execution_id = ExecutionId::generate();
-            let created_at = sim_clock.now();
-            db_connection
+        assert_eq!(vec![execution_id.clone()], executed);
+        // Check the result.
+        let res = db_connection
+            .wait_for_finished_result(
+                &execution_id,
+                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+            )
+            .await
+            .unwrap();
+        assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn process_api_not_enabled_should_produce_meaningful_error() {
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (wasm_component, component_id) = compile_activity_with_engine(
+            test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
+            &engine,
+            ComponentType::ActivityWasm,
+        )
+        .await;
+
+        let err = ActivityWorkerCompiled::new_with_config(
+            wasm_component,
+            ActivityConfig {
+                component_id,
+                forward_stdout: Some(StdOutputConfig::Stderr),
+                forward_stderr: Some(StdOutputConfig::Stderr),
+                env_vars: Arc::default(),
+                retry_on_err: true,
+                directories_config: None,
+                fuel: None,
+            },
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+        )
+        .unwrap_err();
+        let reason = assert_matches!(err, WasmFileError::LinkingError { reason, .. } => reason);
+        assert_eq!(
+            r#"activity comopnent imports Process API, but it is not enabled. Use e.g. `directories  = { enabled = true, process_provider = "native"}`"#,
+            reason.to_string()
+        );
+    }
+
+    #[cfg(unix)]
+    async fn is_process_running(pid: u32) -> bool {
+        let output = tokio::process::Command::new("ps")
+            .arg("a")
+            .output()
+            .await
+            .unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        stdout.lines().any(|line| {
+            line.split_whitespace()
+                .next()
+                .is_some_and(|field| field == pid.to_string())
+        })
+    }
+
+    #[cfg(unix)]
+    #[rstest]
+    #[tokio::test]
+    async fn process_group_cleanup(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection().await.unwrap();
+        let parent_preopen_tempdir = tempfile::tempdir().unwrap();
+        let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
+        let exec = new_activity_with_config(
+            db_pool.clone(),
+            test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
+            sim_clock.clone_box(),
+            TokioSleep,
+            move |component_id| ActivityConfig {
+                component_id,
+                forward_stdout: None,
+                forward_stderr: None,
+                env_vars: Arc::from([EnvVar {
+                    key: "PATH".to_string(),
+                    val: std::env::var("PATH").unwrap(),
+                }]),
+                retry_on_err: true,
+                directories_config: Some(ActivityDirectoriesConfig {
+                    parent_preopen_dir,
+                    reuse_on_retry: false,
+                    process_provider: Some(ProcessProvider::Native),
+                }),
+                fuel: None,
+            },
+            ComponentRetryConfig::ZERO,
+            locking_strategy,
+        )
+        .await;
+        // Create an execution.
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        db_connection
                 .create(CreateRequest {
                     created_at,
                     execution_id: execution_id.clone(),
@@ -1867,256 +1846,252 @@ pub(crate) mod tests {
                 })
                 .await
                 .unwrap();
-            let executed = exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await;
-            assert_eq!(vec![execution_id.clone()], executed);
-            // Check the result.
-            let res = db_connection
-                .wait_for_finished_result(
-                    &execution_id,
-                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
-                )
-                .await
-                .unwrap();
-            let sleep_pid = assert_matches!(res,
+        let executed = exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(vec![execution_id.clone()], executed);
+        // Check the result.
+        let res = db_connection
+            .wait_for_finished_result(
+                &execution_id,
+                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+            )
+            .await
+            .unwrap();
+        let sleep_pid = assert_matches!(res,
                 SupportedFunctionReturnValue::Ok{ok: Some(WastValWithType {value,
                     r#type: _})} => value);
-            let sleep_pid = assert_matches!(sleep_pid, WastVal::U32(val) => val);
-            debug!("Sleep pid: {sleep_pid}");
+        let sleep_pid = assert_matches!(sleep_pid, WastVal::U32(val) => val);
+        debug!("Sleep pid: {sleep_pid}");
 
-            // Test that the process was killed
-            let mut attempt = 0;
-            while is_process_running(sleep_pid).await {
-                assert!(attempt < 5, "failed after 5 attemtps");
-                attempt += 1;
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-
-            db_close.close().await;
+        // Test that the process was killed
+        let mut attempt = 0;
+        while is_process_running(sleep_pid).await {
+            assert!(attempt < 5, "failed after 5 attemtps");
+            attempt += 1;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
-        #[rstest::rstest(
+        db_close.close().await;
+    }
+
+    #[rstest::rstest(
             param => [
                 r#"{"image": "foo", "a": false, "b":false}"#,
                 r#"{"b": false, "a":false, "image": "foo"}"#,
                 ])]
-        #[tokio::test]
-        async fn record_field_ordering(
-            param: &str,
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            test_utils::set_up();
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection().await.unwrap();
-            let exec = new_activity_with_config(
-                db_pool.clone(),
-                test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
-                sim_clock.clone_box(),
-                TokioSleep,
-                move |component_id| ActivityConfig {
-                    component_id,
-                    forward_stdout: Some(StdOutputConfig::Stderr),
-                    forward_stderr: Some(StdOutputConfig::Stderr),
-                    env_vars: Arc::default(),
-                    retry_on_err: false,
-                    directories_config: None,
-                    fuel: None,
-                },
-                ComponentRetryConfig::ZERO,
-                locking_strategy,
-            )
+    #[tokio::test]
+    async fn record_field_ordering(
+        param: &str,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection().await.unwrap();
+        let exec = new_activity_with_config(
+            db_pool.clone(),
+            test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+            sim_clock.clone_box(),
+            TokioSleep,
+            move |component_id| ActivityConfig {
+                component_id,
+                forward_stdout: Some(StdOutputConfig::Stderr),
+                forward_stderr: Some(StdOutputConfig::Stderr),
+                env_vars: Arc::default(),
+                retry_on_err: false,
+                directories_config: None,
+                fuel: None,
+            },
+            ComponentRetryConfig::ZERO,
+            locking_strategy,
+        )
+        .await;
+        // Create an execution.
+        let ffqn = FunctionFqn::new_static_tuple(
+            test_programs_serde_activity_builder::exports::testing::serde::serde::REC,
+        );
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn,
+                params: Params::from_json_values_test(vec![serde_json::from_str(param).unwrap()]),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: exec.config.component_id.clone(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+        let executed = exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
             .await;
-            // Create an execution.
-            let ffqn = FunctionFqn::new_static_tuple(
-                test_programs_serde_activity_builder::exports::testing::serde::serde::REC,
-            );
-            let execution_id = ExecutionId::generate();
-            let created_at = sim_clock.now();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn,
-                    params: Params::from_json_values_test(vec![
-                        serde_json::from_str(param).unwrap(),
-                    ]),
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: exec.config.component_id.clone(),
-
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
-                .await
-                .unwrap();
-            let executed = exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await;
-            assert_eq!(vec![execution_id.clone()], executed);
-            // Check the result.
-            let res = db_connection
-                .wait_for_finished_result(
-                    &execution_id,
-                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
-                )
-                .await
-                .unwrap();
-            let record =
-                assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: record} => record);
-            assert_json_snapshot!(record);
-            db_close.close().await;
-        }
-
-        #[rstest]
-        #[tokio::test]
-        async fn variant_with_optional_none(
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            test_utils::set_up();
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection().await.unwrap();
-            let exec = new_activity_with_config(
-                db_pool.clone(),
-                test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
-                sim_clock.clone_box(),
-                TokioSleep,
-                move |component_id| ActivityConfig {
-                    component_id,
-                    forward_stdout: Some(StdOutputConfig::Stderr),
-                    forward_stderr: Some(StdOutputConfig::Stderr),
-                    env_vars: Arc::default(),
-                    retry_on_err: false,
-                    directories_config: None,
-                    fuel: None,
-                },
-                ComponentRetryConfig::ZERO,
-                locking_strategy,
+        assert_eq!(vec![execution_id.clone()], executed);
+        // Check the result.
+        let res = db_connection
+            .wait_for_finished_result(
+                &execution_id,
+                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
             )
+            .await
+            .unwrap();
+        let record = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: record} => record);
+        assert_json_snapshot!(record);
+        db_close.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn variant_with_optional_none(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection().await.unwrap();
+        let exec = new_activity_with_config(
+            db_pool.clone(),
+            test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+            sim_clock.clone_box(),
+            TokioSleep,
+            move |component_id| ActivityConfig {
+                component_id,
+                forward_stdout: Some(StdOutputConfig::Stderr),
+                forward_stderr: Some(StdOutputConfig::Stderr),
+                env_vars: Arc::default(),
+                retry_on_err: false,
+                directories_config: None,
+                fuel: None,
+            },
+            ComponentRetryConfig::ZERO,
+            locking_strategy,
+        )
+        .await;
+        // Create an execution.
+        let ffqn = FunctionFqn::new_static_tuple(
+            test_programs_serde_activity_builder::exports::testing::serde::serde::VAR,
+        );
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn,
+                params: Params::from_json_values_test(vec![json!({"var1":null})]),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: exec.config.component_id.clone(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+        let executed = exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
             .await;
-            // Create an execution.
-            let ffqn = FunctionFqn::new_static_tuple(
-                test_programs_serde_activity_builder::exports::testing::serde::serde::VAR,
-            );
-            let execution_id = ExecutionId::generate();
-            let created_at = sim_clock.now();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn,
-                    params: Params::from_json_values_test(vec![json!({"var1":null})]),
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: exec.config.component_id.clone(),
-
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
-                .await
-                .unwrap();
-            let executed = exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await;
-            assert_eq!(vec![execution_id.clone()], executed);
-            // Check the result.
-            let res = db_connection
-                .wait_for_finished_result(
-                    &execution_id,
-                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
-                )
-                .await
-                .unwrap();
-            let variant =
-                assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: variant} => variant);
-            assert_json_snapshot!(variant);
-            db_close.close().await;
-        }
-
-        #[rstest]
-        #[tokio::test]
-        async fn permanent_error_variant_should_not_retry(
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
-            test_utils::set_up();
-            let sim_clock = SimClock::default();
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let db_connection = db_pool.connection().await.unwrap();
-            // retry_on_err is true and max_retries > 0, so it would retry if error wasn't permanent
-            let retry_config = ComponentRetryConfig {
-                max_retries: Some(1),
-                retry_exp_backoff: Duration::from_millis(10),
-            };
-            let exec = new_activity_with_config(
-                db_pool.clone(),
-                test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
-                sim_clock.clone_box(),
-                TokioSleep,
-                move |component_id| ActivityConfig {
-                    component_id,
-                    forward_stdout: Some(StdOutputConfig::Stderr),
-                    forward_stderr: Some(StdOutputConfig::Stderr),
-                    env_vars: Arc::default(),
-                    retry_on_err: true, // Would retry on error, but permanent variant prevents it
-                    directories_config: None,
-                    fuel: None,
-                },
-                retry_config,
-                locking_strategy,
+        assert_eq!(vec![execution_id.clone()], executed);
+        // Check the result.
+        let res = db_connection
+            .wait_for_finished_result(
+                &execution_id,
+                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
             )
-            .await;
-            // Create an execution.
-            let ffqn = FunctionFqn::new_static_tuple(
-                test_programs_serde_activity_builder::exports::testing::serde::serde::PERMANENT_ERR,
-            );
-            let execution_id = ExecutionId::generate();
-            let created_at = sim_clock.now();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn,
-                    params: Params::empty(),
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: exec.config.component_id.clone(),
+            .await
+            .unwrap();
+        let variant =
+            assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: variant} => variant);
+        assert_json_snapshot!(variant);
+        db_close.close().await;
+    }
 
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
-                .await
-                .unwrap();
-            let executed = exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await;
-            assert_eq!(vec![execution_id.clone()], executed);
-            // Check the result - should be Finished with Err, not TemporarilyFailed
-            let res = db_connection
-                .wait_for_finished_result(
-                    &execution_id,
-                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
-                )
-                .await
-                .unwrap();
-            // The permanent-failure variant should prevent retry and finish with Err
-            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err } => err);
-            let (key, _) = assert_matches!(
-                err,
-                Some(WastValWithType {
-                    value: WastVal::Variant(key, payload),
-                    ..
-                }) => (key, payload)
-            );
-            assert_eq!("permanent_failure", key.as_snake_str());
-            db_close.close().await;
-        }
+    #[rstest]
+    #[tokio::test]
+    async fn permanent_error_variant_should_not_retry(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection().await.unwrap();
+        // retry_on_err is true and max_retries > 0, so it would retry if error wasn't permanent
+        let retry_config = ComponentRetryConfig {
+            max_retries: Some(1),
+            retry_exp_backoff: Duration::from_millis(10),
+        };
+        let exec = new_activity_with_config(
+            db_pool.clone(),
+            test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+            sim_clock.clone_box(),
+            TokioSleep,
+            move |component_id| ActivityConfig {
+                component_id,
+                forward_stdout: Some(StdOutputConfig::Stderr),
+                forward_stderr: Some(StdOutputConfig::Stderr),
+                env_vars: Arc::default(),
+                retry_on_err: true, // Would retry on error, but permanent variant prevents it
+                directories_config: None,
+                fuel: None,
+            },
+            retry_config,
+            locking_strategy,
+        )
+        .await;
+        // Create an execution.
+        let ffqn = FunctionFqn::new_static_tuple(
+            test_programs_serde_activity_builder::exports::testing::serde::serde::PERMANENT_ERR,
+        );
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: exec.config.component_id.clone(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+        let executed = exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(vec![execution_id.clone()], executed);
+        // Check the result - should be Finished with Err, not TemporarilyFailed
+        let res = db_connection
+            .wait_for_finished_result(
+                &execution_id,
+                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+            )
+            .await
+            .unwrap();
+        // The permanent-failure variant should prevent retry and finish with Err
+        let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err } => err);
+        let (key, _) = assert_matches!(
+            err,
+            Some(WastValWithType {
+                value: WastVal::Variant(key, payload),
+                ..
+            }) => (key, payload)
+        );
+        assert_eq!("permanent_failure", key.as_snake_str());
+        db_close.close().await;
     }
 }
