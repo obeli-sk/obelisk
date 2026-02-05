@@ -546,6 +546,8 @@ message ListExecutionEventsAndResponsesResponse {
     repeated ExecutionEvent events = 1;
     repeated ResponseWithCursor responses = 2;
     ExecutionStatus current_status = 3;
+    uint32 max_version = 4;
+    uint32 max_cursor = 5;
 }
 
 message GetWitRequest {

@@ -593,6 +593,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 events,
                 responses,
                 current_status: Some(current_status),
+                max_version: res.max_version.0,
+                max_cursor: res.max_cursor.0,
             },
         ))
     }

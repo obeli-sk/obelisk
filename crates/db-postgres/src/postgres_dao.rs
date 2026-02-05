@@ -4522,6 +4522,8 @@ impl DbExternalApi for PostgresConnection {
         .await?;
 
         let responses = list_responses(&tx, execution_id, Some(resp_pagination)).await?;
+        let max_version = get_max_version(&tx, execution_id).await?;
+        let max_cursor = get_max_response_cursor(&tx, execution_id).await?;
 
         tx.commit().await?;
 
@@ -4529,6 +4531,8 @@ impl DbExternalApi for PostgresConnection {
             execution_with_state: combined_state.execution_with_state,
             events,
             responses,
+            max_version,
+            max_cursor,
         })
     }
 

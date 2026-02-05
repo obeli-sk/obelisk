@@ -4319,10 +4319,15 @@ impl DbExternalApi for SqlitePool {
                     req_include_backtrace_id,
                 )?;
                 let responses = Self::list_responses(tx, &execution_id, Some(resp_pagination))?;
+                let max_version =
+                    Self::get_max_version(tx, &execution_id)?.ok_or(DbErrorRead::NotFound)?;
+                let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
                 Ok(ExecutionWithStateRequestsResponses {
                     execution_with_state: combined_state.execution_with_state,
                     events,
                     responses,
+                    max_version,
+                    max_cursor,
                 })
             },
             TxType::Other, // read only

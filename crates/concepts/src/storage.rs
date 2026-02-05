@@ -1092,6 +1092,8 @@ pub struct ExecutionWithStateRequestsResponses {
     pub execution_with_state: ExecutionWithState,
     pub events: Vec<ExecutionEvent>,
     pub responses: Vec<ResponseWithCursor>,
+    pub max_version: Version,
+    pub max_cursor: ResponseCursor,
 }
 
 #[async_trait]
