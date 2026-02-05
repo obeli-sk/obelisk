@@ -359,6 +359,15 @@ impl DbConnection for InMemoryDbConnection {
         timeout_fut: Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>,
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
         let execution_log = {
+            let mut guard = self.0.lock().unwrap();
+            guard.get(execution_id)?
+        };
+        if execution_log.pending_state.is_finished() {
+            return Ok(execution_log
+                .as_finished_result()
+                .expect("pending state was checked"));
+        }
+        let execution_log = {
             let fut = async move {
                 loop {
                     let execution_log = {

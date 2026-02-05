@@ -1184,6 +1184,8 @@ pub trait DbConnection: DbExecutor {
         timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
     ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout>;
 
+    /// First, attempt to fetch the finished value. If the execution is not finished yet, poll
+    /// periodically or subscribe to db changes, racing with `timeout_fut`.
     /// Notification mechainism with no strict guarantees for getting the finished result.
     /// Implementations with no pubsub support should use polling.
     /// Callers are expected to call this function in a loop with a reasonable timeout
@@ -1192,7 +1194,6 @@ pub trait DbConnection: DbExecutor {
         &self,
         execution_id: &ExecutionId,
         timeout_fut: Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>,
-        // TODO: camcel fut
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout>;
 
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite>;

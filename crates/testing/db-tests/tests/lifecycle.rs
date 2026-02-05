@@ -6,8 +6,8 @@ use concepts::storage::{
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest,
     ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, JoinSetRequest,
     JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, PendingState,
-    PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt, Version,
-    WasmBacktrace,
+    PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt, TimeoutOutcome,
+    Version, WasmBacktrace,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
@@ -2703,6 +2703,64 @@ async fn test_backtrace(database: Database) {
     assert_eq!(backtrace_info_2, found);
 
     drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn wait_for_finished_result_should_fetch_before_racing_with_timeout(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let sim_clock = SimClock::default();
+
+    let execution_id = ExecutionId::generate();
+
+    // Create
+    let component_id = ComponentId::dummy_activity();
+    let version = db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Finish
+    db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                event: ExecutionRequest::Finished {
+                    result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    http_client_traces: None,
+                },
+                created_at: sim_clock.now(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let res = db_connection
+        .wait_for_finished_result(
+            &execution_id,
+            Some(Box::pin(std::future::ready(TimeoutOutcome::Cancel))),
+        )
+        .await
+        .unwrap();
+    assert_eq!(SUPPORTED_RETURN_VALUE_OK_EMPTY, res);
+
     drop(db_connection);
     db_close.close().await;
 }
