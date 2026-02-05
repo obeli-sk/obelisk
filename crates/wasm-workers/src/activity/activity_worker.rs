@@ -583,7 +583,7 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use concepts::component_id::InputContentDigest;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
-    use concepts::storage::DbPool;
+    use concepts::storage::{DbPool, TimeoutOutcome};
     use concepts::time::TokioSleep;
     use concepts::{ComponentRetryConfig, ComponentType, StrVariant};
     use concepts::{
@@ -594,6 +594,7 @@ pub(crate) mod tests {
     use executor::executor::{ExecConfig, ExecTask, LockingStrategy};
     use rstest::rstest;
     use serde_json::json;
+    use std::future;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use utils::sha256sum::calculate_sha256_file;
@@ -793,7 +794,10 @@ pub(crate) mod tests {
         assert_eq!(vec![execution_id.clone()], executed);
         // Check the result.
         let res = db_connection
-            .wait_for_finished_result(&execution_id, None)
+            .wait_for_finished_result(
+                &execution_id,
+                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+            )
             .await
             .unwrap();
         let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok} => ok);
@@ -805,10 +809,14 @@ pub(crate) mod tests {
     }
 
     pub mod wasmtime_nosim {
+        use std::future;
+
         use super::*;
         use crate::engines::PoolingOptions;
         use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
-        use concepts::storage::{Locked, LockedBy, PendingState, PendingStatePendingAt};
+        use concepts::storage::{
+            Locked, LockedBy, PendingState, PendingStatePendingAt, TimeoutOutcome,
+        };
         use concepts::time::Now;
         use concepts::{
             ComponentRetryConfig, ExecutionFailureKind, FinishedExecutionError,
@@ -905,7 +913,7 @@ pub(crate) mod tests {
             assert!(limit_reached > 0, "Limit was not reached");
         }
 
-        // TODO: Make deterministic
+        // FIXME: Make deterministic
         #[rstest::rstest]
         #[case(
             10,
@@ -1008,7 +1016,7 @@ pub(crate) mod tests {
                 expected,
                 assert_matches!(
                     db_connection
-                        .wait_for_finished_result(&execution_id, None)
+                        .wait_for_finished_result(&execution_id, None) // FIXME: Switch to Some(Box::pin(future::ready(TimeoutOutcome::Cancel))), when deterministic
                         .await
                         .unwrap(),
                     actual => actual
@@ -1671,7 +1679,10 @@ pub(crate) mod tests {
 
             // Check the result.
             let res = db_connection
-                .wait_for_finished_result(&execution_id, None)
+                .wait_for_finished_result(
+                    &execution_id,
+                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+                )
                 .await
                 .unwrap();
             assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
@@ -1748,7 +1759,10 @@ pub(crate) mod tests {
             assert_eq!(vec![execution_id.clone()], executed);
             // Check the result.
             let res = db_connection
-                .wait_for_finished_result(&execution_id, None)
+                .wait_for_finished_result(
+                    &execution_id,
+                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+                )
                 .await
                 .unwrap();
             assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
@@ -1873,7 +1887,10 @@ pub(crate) mod tests {
             assert_eq!(vec![execution_id.clone()], executed);
             // Check the result.
             let res = db_connection
-                .wait_for_finished_result(&execution_id, None)
+                .wait_for_finished_result(
+                    &execution_id,
+                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+                )
                 .await
                 .unwrap();
             let sleep_pid = assert_matches!(res,
@@ -1956,7 +1973,10 @@ pub(crate) mod tests {
             assert_eq!(vec![execution_id.clone()], executed);
             // Check the result.
             let res = db_connection
-                .wait_for_finished_result(&execution_id, None)
+                .wait_for_finished_result(
+                    &execution_id,
+                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+                )
                 .await
                 .unwrap();
             let record =
@@ -2021,7 +2041,10 @@ pub(crate) mod tests {
             assert_eq!(vec![execution_id.clone()], executed);
             // Check the result.
             let res = db_connection
-                .wait_for_finished_result(&execution_id, None)
+                .wait_for_finished_result(
+                    &execution_id,
+                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+                )
                 .await
                 .unwrap();
             let variant =
@@ -2091,7 +2114,10 @@ pub(crate) mod tests {
             assert_eq!(vec![execution_id.clone()], executed);
             // Check the result - should be Finished with Err, not TemporarilyFailed
             let res = db_connection
-                .wait_for_finished_result(&execution_id, None)
+                .wait_for_finished_result(
+                    &execution_id,
+                    Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+                )
                 .await
                 .unwrap();
             // The permanent-failure variant should prevent retry and finish with Err
