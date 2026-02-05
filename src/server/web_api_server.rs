@@ -3,7 +3,7 @@ use crate::{
     server::web_api_server::{
         components::{component_wit, components_list},
         deployment::{get_current_deployment_id, list_deployments},
-        functions::functions_list,
+        functions::{function_wit, functions_list},
     },
 };
 use axum::{
@@ -68,6 +68,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/components", routing::get(components_list))
         .route("/components/{digest}/wit", routing::get(component_wit))
         .route("/functions", routing::get(functions_list))
+        .route("/functions/wit", routing::get(function_wit))
         .route("/delays/{delay-id}/cancel", routing::put(delay_cancel))
         .route("/execution-id", routing::get(execution_id_generate))
         .route("/executions", routing::get(executions_list))
@@ -1515,6 +1516,265 @@ mod functions {
         ffqn: FunctionFqn,
         #[serde(skip_serializing_if = "Option::is_none")]
         extension: Option<FunctionExtension>,
+    }
+
+    use super::HttpResponse;
+
+    #[derive(Deserialize, Debug)]
+    pub(crate) struct FunctionWitParams {
+        ffqn: FunctionFqn,
+    }
+
+    pub(crate) async fn function_wit(
+        Query(params): Query<FunctionWitParams>,
+        state: State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        let ffqn = params.ffqn;
+        // Find the component that exports this function
+        let Some((component_id, _fn_metadata)) =
+            state.component_registry_ro.find_by_exported_ffqn(&ffqn)
+        else {
+            return Err(HttpResponse::not_found(
+                AcceptHeader::Text,
+                Some("function"),
+            ));
+        };
+
+        // Get the WIT for this component
+        let wit = state
+            .component_registry_ro
+            .get_wit(&component_id.input_digest)
+            .expect("if function is found, component must be found");
+        let Some(wit) = wit else {
+            return Err(HttpResponse::not_found(AcceptHeader::Text, Some("wit")));
+        };
+
+        // Print just the interface with the single function
+        match print_interface_with_single_fn(wit, &ffqn) {
+            Ok(output) => Ok(output.into_response()),
+            Err(e) => Err(HttpResponse {
+                status: http::StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("failed to print WIT: {e}"),
+                accept: AcceptHeader::Text,
+            }),
+        }
+    }
+
+    fn print_interface_with_single_fn(
+        wit: &str,
+        ffqn: &FunctionFqn,
+    ) -> Result<String, anyhow::Error> {
+        use anyhow::{Context, bail};
+        use hashbrown::HashSet;
+        use std::path::PathBuf;
+        use wit_component::{Output, WitPrinter};
+        use wit_parser::{Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
+
+        let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
+        let mut resolve = Resolve::new();
+        let _main_id = resolve.push_group(group)?;
+        let mut printer = WitPrinter::new(OutputToString::new(ffqn.function_name.to_string()));
+
+        print_interface_with_imported_types(
+            &mut printer,
+            &resolve,
+            &ffqn.ifc_fqn,
+            &mut HashSet::new(),
+            true,
+        )?;
+        return Ok(printer.output.output);
+
+        fn print_interface_with_imported_types(
+            printer: &mut WitPrinter<OutputToString>,
+            resolve: &Resolve,
+            ifc_fqn: &concepts::IfcFqnName,
+            additional_ifc_fqn: &mut HashSet<concepts::IfcFqnName>,
+            is_root_package: bool,
+        ) -> Result<(), anyhow::Error> {
+            if let Some((_pkg_id, package)) = resolve.packages.iter().find(|(_, package)| {
+                let pkg_fqn = concepts::PkgFqn {
+                    namespace: package.name.namespace.clone(),
+                    package_name: package.name.name.clone(),
+                    version: package
+                        .name
+                        .version
+                        .as_ref()
+                        .map(std::string::ToString::to_string),
+                };
+                pkg_fqn == ifc_fqn.pkg_fqn_name()
+            }) {
+                if !is_root_package {
+                    printer.output.newline();
+                }
+
+                printer.print_package_outer(package).with_context(|| {
+                    format!(
+                        "error in `print_interface_with_imported_types` when printing {ifc_fqn}"
+                    )
+                })?;
+                if is_root_package {
+                    printer.output.semicolon();
+                    printer.output.newline();
+                } else {
+                    printer.output.indent_start();
+                }
+                let (ifc_name, ifc_id) = package
+                    .interfaces
+                    .iter()
+                    .find(|(name, _id)| ifc_fqn.ifc_name() == *name)
+                    .with_context(|| format!("interface not found - {ifc_fqn}"))?;
+
+                let ifc_id = *ifc_id;
+                printer
+                    .print_interface_outer(resolve, ifc_id, ifc_name)
+                    .with_context(|| format!("cannot print {ifc_name}"))?;
+                printer.output.indent_start();
+                let interface = &resolve.interfaces[ifc_id];
+                if is_root_package {
+                    printer.print_interface(resolve, ifc_id)?;
+                } else {
+                    // just print the types
+                    printer.print_types(
+                        resolve,
+                        TypeOwner::Interface(ifc_id),
+                        interface
+                            .types
+                            .iter()
+                            .map(|(name, id)| (name.as_str(), *id)),
+                        &std::collections::HashMap::default(), // ignore resource funcs
+                    )?;
+                }
+
+                printer.output.indent_end();
+
+                if !is_root_package {
+                    printer.output.indent_end();
+                }
+
+                // Look up imported types and print their interfaces recursively
+                let requested_pkg_owner = TypeOwner::Interface(ifc_id);
+                for (_name, ty_id) in &interface.types {
+                    let ty = &resolve.types[*ty_id];
+                    if let TypeDefKind::Type(Type::Id(other)) = ty.kind {
+                        let other = &resolve.types[other];
+
+                        if requested_pkg_owner != other.owner {
+                            let ifc_id = match other.owner {
+                                TypeOwner::Interface(id) => id,
+                                other => bail!("unsupported type import from {other:?}"),
+                            };
+                            let iface = &resolve.interfaces[ifc_id];
+                            if let Some(imported_pkg_id) = iface.package
+                                && let Some(ifc_name) = &iface.name
+                            {
+                                let imported_pkg = &resolve.packages[imported_pkg_id];
+                                let new_ifc_fqn = concepts::IfcFqnName::from_parts(
+                                    &imported_pkg.name.namespace,
+                                    &imported_pkg.name.name,
+                                    ifc_name,
+                                    imported_pkg
+                                        .name
+                                        .version
+                                        .as_ref()
+                                        .map(std::string::ToString::to_string)
+                                        .as_deref(),
+                                );
+                                if additional_ifc_fqn.insert(new_ifc_fqn.clone()) {
+                                    print_interface_with_imported_types(
+                                        printer,
+                                        resolve,
+                                        &new_ifc_fqn,
+                                        additional_ifc_fqn,
+                                        false,
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        struct OutputToString {
+            indent: usize,
+            output: String,
+            needs_indent: bool,
+            filter_fn_name: String,
+            ignore_until_end_of_line: usize,
+        }
+
+        impl OutputToString {
+            fn new(filter_fn_name: String) -> Self {
+                Self {
+                    indent: 0,
+                    output: String::new(),
+                    needs_indent: false,
+                    filter_fn_name,
+                    ignore_until_end_of_line: 0,
+                }
+            }
+        }
+
+        impl Output for OutputToString {
+            fn push_str(&mut self, src: &str) {
+                if self.ignore_until_end_of_line == 0 {
+                    self.output.push_str(src);
+                }
+            }
+
+            fn indent_if_needed(&mut self) -> bool {
+                if self.ignore_until_end_of_line == 0 && self.needs_indent {
+                    for _ in 0..self.indent {
+                        self.output.push_str("  ");
+                    }
+                    self.needs_indent = false;
+                    true
+                } else {
+                    false
+                }
+            }
+
+            fn indent_start(&mut self) {
+                self.push_str(" {");
+                self.indent += 1;
+                self.newline();
+            }
+
+            fn indent_end(&mut self) {
+                self.ignore_until_end_of_line = 0;
+                self.indent = self.indent.saturating_sub(1);
+                self.indent_if_needed();
+                self.push_str("}");
+                self.newline();
+            }
+
+            fn newline(&mut self) {
+                self.push_str("\n");
+                self.needs_indent = true;
+                self.ignore_until_end_of_line = self.ignore_until_end_of_line.saturating_sub(1);
+            }
+
+            fn ty(&mut self, src: &str, kind: wit_component::TypeKind) {
+                use wit_component::TypeKind;
+                if matches!(
+                    kind,
+                    TypeKind::FunctionFreestanding
+                        | TypeKind::FunctionMethod
+                        | TypeKind::FunctionStatic
+                ) && src != self.filter_fn_name
+                {
+                    self.ignore_until_end_of_line = 2;
+                }
+                self.indent_if_needed();
+                self.push_str(src);
+            }
+
+            fn semicolon(&mut self) {
+                self.push_str(";");
+                self.newline();
+            }
+        }
     }
 }
 

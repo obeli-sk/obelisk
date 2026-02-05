@@ -273,6 +273,17 @@ impl ComponentConfigRegistryRO {
     }
 
     #[must_use]
+    pub fn find_by_exported_ffqn(
+        &self,
+        ffqn: &FunctionFqn,
+    ) -> Option<(&ComponentId, &FunctionMetadata)> {
+        self.inner
+            .exported_ffqns_ext
+            .get(ffqn)
+            .map(|t| (&t.0, &t.1))
+    }
+
+    #[must_use]
     pub fn find_by_exported_ffqn_stub(
         &self,
         ffqn: &FunctionFqn,
