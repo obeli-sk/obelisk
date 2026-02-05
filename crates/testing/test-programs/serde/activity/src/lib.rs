@@ -1,6 +1,8 @@
 use crate::generated::exports::testing::serde::serde::Stargazers;
 use generated::export;
-use generated::exports::testing::serde::serde::{Guest, MyError, MyRecord, MyVariant};
+use generated::exports::testing::serde::serde::{
+    Guest, MyError, MyErrorWithPermanent, MyRecord, MyVariant,
+};
 
 mod generated {
     #![allow(clippy::all)]
@@ -28,5 +30,9 @@ impl Guest for Component {
             cursor: "cursor".to_string(),
             logins: "logins".to_string(),
         })
+    }
+
+    fn permanent_err() -> Result<(), MyErrorWithPermanent> {
+        Err(MyErrorWithPermanent::PermanentFailure)
     }
 }

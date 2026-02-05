@@ -19,9 +19,16 @@ interface serde {
 
     variant my-error {
         foo,
-        execution-failed
+        execution-failed,
     }
     trap: func() -> result<_, my-error>;
+
+    variant my-error-with-permanent {
+        temporary,
+        permanent-failure,
+        execution-failed,
+    }
+    permanent-err: func() -> result<_, my-error-with-permanent>;
 
     record stargazers {
         logins: string,

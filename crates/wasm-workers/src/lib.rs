@@ -133,7 +133,7 @@ pub(crate) mod tests {
             test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
             ])]
         #[tokio::test]
-        async fn fibo(wasm_path: &str) {
+        async fn activity(wasm_path: &str) {
             compile_activity(wasm_path).await;
         }
 

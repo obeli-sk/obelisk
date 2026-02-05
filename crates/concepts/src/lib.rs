@@ -1962,6 +1962,10 @@ impl ReturnType {
     /// * `result<T, string>`
     /// * `result<T, E>` where T can be `_` and E is a `variant` containing `execution-failed`
     ///   variant with no associated value.
+    ///
+    /// Additionally, error variants may optionally include a case containing the word `permanent`
+    /// (e.g., `permanent-failure`, `permanent-error`) to signal that the error should not be retried.
+    /// See `is_permanent_variant` in `activity_worker`.
     #[must_use]
     pub fn detect(type_wrapper: TypeWrapper, wit_type: StrVariant) -> ReturnType {
         if let TypeWrapper::Result { ok, err: None } = type_wrapper {

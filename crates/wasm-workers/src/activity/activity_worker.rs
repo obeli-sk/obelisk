@@ -24,6 +24,7 @@ use std::{fmt::Debug, sync::Arc};
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
 use utils::wasm_tools::ExIm;
+use val_json::wast_val::WastValWithType;
 use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
 use wasmtime::{Engine, component::Val};
 use wasmtime::{Store, UpdateDeadline};
@@ -498,7 +499,7 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                 if self.config.retry_on_err {
                     // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
                     if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
-                        if ctx.can_be_retried {
+                        if ctx.can_be_retried && !is_permanent_variant(result_err.as_ref()) {
                             let detail = serde_json::to_string(result_err).expect(
                                 "SupportedFunctionReturnValue should be serializable to JSON",
                             );
@@ -562,6 +563,16 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                 },
             ),
         }
+    }
+}
+
+fn is_permanent_variant(result_err: Option<&WastValWithType>) -> bool {
+    match result_err {
+        Some(WastValWithType {
+            value: val_json::wast_val::WastVal::Variant(key, _),
+            ..
+        }) => key.as_snake_str().contains("permanent"),
+        _ => false,
     }
 }
 
@@ -2016,6 +2027,83 @@ pub(crate) mod tests {
             let variant =
                 assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: variant} => variant);
             assert_json_snapshot!(variant);
+            db_close.close().await;
+        }
+
+        #[rstest]
+        #[tokio::test]
+        async fn permanent_error_variant_should_not_retry(
+            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+            locking_strategy: LockingStrategy,
+        ) {
+            test_utils::set_up();
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+            let db_connection = db_pool.connection().await.unwrap();
+            // retry_on_err is true and max_retries > 0, so it would retry if error wasn't permanent
+            let retry_config = ComponentRetryConfig {
+                max_retries: Some(1),
+                retry_exp_backoff: Duration::from_millis(10),
+            };
+            let exec = new_activity_with_config(
+                db_pool.clone(),
+                test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+                sim_clock.clone_box(),
+                TokioSleep,
+                move |component_id| ActivityConfig {
+                    component_id,
+                    forward_stdout: Some(StdOutputConfig::Stderr),
+                    forward_stderr: Some(StdOutputConfig::Stderr),
+                    env_vars: Arc::default(),
+                    retry_on_err: true, // Would retry on error, but permanent variant prevents it
+                    directories_config: None,
+                    fuel: None,
+                },
+                retry_config,
+                locking_strategy,
+            )
+            .await;
+            // Create an execution.
+            let ffqn = FunctionFqn::new_static_tuple(
+                test_programs_serde_activity_builder::exports::testing::serde::serde::PERMANENT_ERR,
+            );
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn,
+                    params: Params::empty(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    component_id: exec.config.component_id.clone(),
+
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+            let executed = exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(vec![execution_id.clone()], executed);
+            // Check the result - should be Finished with Err, not TemporarilyFailed
+            let res = db_connection
+                .wait_for_finished_result(&execution_id, None)
+                .await
+                .unwrap();
+            // The permanent-failure variant should prevent retry and finish with Err
+            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err } => err);
+            let (key, _) = assert_matches!(
+                err,
+                Some(WastValWithType {
+                    value: WastVal::Variant(key, payload),
+                    ..
+                }) => (key, payload)
+            );
+            assert_eq!("permanent_failure", key.as_snake_str());
             db_close.close().await;
         }
     }
