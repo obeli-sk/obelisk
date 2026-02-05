@@ -3,6 +3,7 @@ use crate::{
     server::web_api_server::{
         components::{component_wit, components_list},
         deployment::{get_current_deployment_id, list_deployments},
+        functions::functions_list,
     },
 };
 use axum::{
@@ -66,6 +67,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
     Router::new()
         .route("/components", routing::get(components_list))
         .route("/components/{digest}/wit", routing::get(component_wit))
+        .route("/functions", routing::get(functions_list))
         .route("/delays/{delay-id}/cancel", routing::put(delay_cancel))
         .route("/execution-id", routing::get(execution_id_generate))
         .route("/executions", routing::get(executions_list))
@@ -1463,6 +1465,56 @@ pub(crate) mod components {
                 wit_type: value.wit_type.to_string(),
             }
         }
+    }
+}
+
+mod functions {
+    use super::{
+        AcceptHeader, Arc, Deserialize, IntoResponse, Json, Query, Response, State, WebApiState,
+    };
+    use concepts::{FunctionExtension, FunctionFqn, FunctionRegistry};
+    use std::fmt::Write as _;
+
+    #[derive(Deserialize, Debug)]
+    pub(crate) struct FunctionsListParams {
+        #[serde(default)]
+        extensions: bool,
+    }
+
+    pub(crate) async fn functions_list(
+        state: State<Arc<WebApiState>>,
+        Query(params): Query<FunctionsListParams>,
+        accept: AcceptHeader,
+    ) -> Response {
+        let all_exports = state.component_registry_ro.all_exports();
+
+        let functions: Vec<FunctionOutput> = all_exports
+            .iter()
+            .filter(|pkg_ifc| params.extensions || !pkg_ifc.extension)
+            .flat_map(|pkg_ifc| pkg_ifc.fns.values())
+            .map(|fn_metadata| FunctionOutput {
+                ffqn: fn_metadata.ffqn.clone(),
+                extension: fn_metadata.extension,
+            })
+            .collect();
+
+        match accept {
+            AcceptHeader::Json => Json(functions).into_response(),
+            AcceptHeader::Text => {
+                let mut output = String::new();
+                for func in functions {
+                    writeln!(output, "{}", func.ffqn).expect("writing to string");
+                }
+                output.into_response()
+            }
+        }
+    }
+
+    #[derive(serde::Serialize)]
+    struct FunctionOutput {
+        ffqn: FunctionFqn,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        extension: Option<FunctionExtension>,
     }
 }
 
