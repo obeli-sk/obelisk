@@ -6,6 +6,7 @@ mod github;
 mod init;
 mod oci;
 mod server;
+mod wit_printer;
 
 use args::{Args, Subcommand};
 use clap::Parser;
