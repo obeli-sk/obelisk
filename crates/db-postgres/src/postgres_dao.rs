@@ -1911,7 +1911,8 @@ async fn list_responses(
 
     // 3. Ordering
     sql.push_str(" ORDER BY r.id");
-    if pagination.as_ref().is_some_and(Pagination::is_desc) {
+    let is_desc = pagination.as_ref().is_some_and(Pagination::is_desc);
+    if is_desc {
         sql.push_str(" DESC");
     }
 
@@ -1920,6 +1921,11 @@ async fn list_responses(
         // Postgres limit expects i64
         let p_limit = add_param(Box::new(i64::from(limit)));
         write!(sql, " LIMIT {p_limit}").unwrap();
+    }
+
+    // Re-order to ascending for consistent oldest-to-newest results
+    if is_desc {
+        sql = format!("SELECT * FROM ({sql}) AS sub ORDER BY id ASC");
     }
 
     let params_refs: Vec<&(dyn ToSql + Sync)> = params
@@ -3097,6 +3103,115 @@ async fn list_execution_events(
                 &i64::from(version_max_excluding),
             ],
         )
+        .await
+        .map_err(DbErrorRead::from)?;
+
+    let mut events = Vec::with_capacity(rows.len());
+    for row in rows {
+        let created_at: DateTime<Utc> = get(&row, "created_at")?;
+        let backtrace_id = get::<Option<i64>, _>(&row, "backtrace_id")?
+            .map(Version::try_from)
+            .transpose()
+            .map_err(|_| consistency_db_err("version must be non-negative"))?;
+
+        let version = get::<i64, _>(&row, "version")?;
+        let version = Version::new(
+            VersionType::try_from(version)
+                .map_err(|_| consistency_db_err("version must be non-negative"))?,
+        );
+        let event_req: Json<ExecutionRequest> = get(&row, "json_value")?;
+        let event_req = event_req.0;
+
+        events.push(ExecutionEvent {
+            created_at,
+            event: event_req,
+            backtrace_id,
+            version,
+        });
+    }
+    Ok(events)
+}
+
+async fn list_execution_events_paginated(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    pagination: Pagination<VersionType>,
+    include_backtrace_id: bool,
+) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
+    let mut params: Vec<Box<dyn ToSql + Send + Sync>> = Vec::new();
+    let mut add_param = |p: Box<dyn ToSql + Send + Sync>| {
+        params.push(p);
+        format!("${}", params.len())
+    };
+
+    let p_execution_id = add_param(Box::new(execution_id.to_string()));
+
+    let (cursor, length, rel, is_desc) = match &pagination {
+        Pagination::NewerThan {
+            cursor,
+            length,
+            including_cursor,
+        } => (
+            *cursor,
+            *length,
+            if *including_cursor { ">=" } else { ">" },
+            false,
+        ),
+        Pagination::OlderThan {
+            cursor,
+            length,
+            including_cursor,
+        } => (
+            *cursor,
+            *length,
+            if *including_cursor { "<=" } else { "<" },
+            true,
+        ),
+    };
+    let p_cursor = add_param(Box::new(i64::from(cursor)));
+    let p_limit = add_param(Box::new(i64::from(length)));
+
+    let base_select = if include_backtrace_id {
+        format!(
+            "SELECT
+                log.created_at,
+                log.json_value,
+                log.version,
+                bt.version_min_including AS backtrace_id
+            FROM
+                t_execution_log AS log
+            LEFT OUTER JOIN
+                t_execution_backtrace AS bt ON log.execution_id = bt.execution_id
+                                AND log.version >= bt.version_min_including
+                                AND log.version < bt.version_max_excluding
+            WHERE
+                log.execution_id = {p_execution_id}
+                AND log.version {rel} {p_cursor}"
+        )
+    } else {
+        format!(
+            "SELECT
+                created_at, json_value, NULL::BIGINT as backtrace_id, version
+            FROM t_execution_log WHERE
+                execution_id = {p_execution_id} AND version {rel} {p_cursor}"
+        )
+    };
+
+    let order = if is_desc { "DESC" } else { "ASC" };
+    let mut sql = format!("{base_select} ORDER BY version {order} LIMIT {p_limit}");
+
+    // Re-order to ascending for consistent oldest-to-newest results
+    if is_desc {
+        sql = format!("SELECT * FROM ({sql}) AS sub ORDER BY version ASC");
+    }
+
+    let params_refs: Vec<&(dyn ToSql + Sync)> = params
+        .iter()
+        .map(|p| p.as_ref() as &(dyn ToSql + Sync))
+        .collect();
+
+    let rows = tx
+        .query(&sql, &params_refs)
         .await
         .map_err(DbErrorRead::from)?;
 
@@ -4455,21 +4570,15 @@ impl DbExternalApi for PostgresConnection {
     async fn list_execution_events(
         &self,
         execution_id: &ExecutionId,
-        since: &Version,
-        max_length: VersionType,
+        pagination: Pagination<VersionType>,
         include_backtrace_id: bool,
     ) -> Result<ListExecutionEventsResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        let events = list_execution_events(
-            &tx,
-            execution_id,
-            since.0,
-            since.0 + max_length,
-            include_backtrace_id,
-        )
-        .await?;
+        let events =
+            list_execution_events_paginated(&tx, execution_id, pagination, include_backtrace_id)
+                .await?;
         let max_version = get_max_version(&tx, execution_id).await?;
 
         tx.commit().await?;

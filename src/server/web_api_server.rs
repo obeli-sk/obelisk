@@ -408,9 +408,12 @@ async fn execution_unpause(
 
 #[derive(Debug, Deserialize)]
 struct ExecutionEventsParams {
+    version: Option<VersionType>,
+    length: Option<u16>,
     #[serde(default)]
-    version_from: VersionType,
-    length: Option<u8>,
+    including_cursor: bool,
+    #[serde(default)]
+    direction: PaginationDirection,
     #[serde(default)]
     include_backtrace_id: bool,
 }
@@ -427,19 +430,27 @@ async fn execution_events(
     Query(params): Query<ExecutionEventsParams>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    const DEFAULT_LENGTH: u8 = 20;
+    const DEFAULT_LENGTH: u16 = 20;
     let conn = state
         .db_pool
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
+    let length = params.length.unwrap_or(DEFAULT_LENGTH);
+    let pagination = match params.direction {
+        PaginationDirection::Older => Pagination::OlderThan {
+            length,
+            cursor: params.version.unwrap_or(VersionType::MAX),
+            including_cursor: params.including_cursor,
+        },
+        PaginationDirection::Newer => Pagination::NewerThan {
+            length,
+            cursor: params.version.unwrap_or(0),
+            including_cursor: params.including_cursor,
+        },
+    };
     let result = conn
-        .list_execution_events(
-            &execution_id,
-            &Version(params.version_from),
-            params.length.unwrap_or(DEFAULT_LENGTH).into(),
-            params.include_backtrace_id,
-        )
+        .list_execution_events(&execution_id, pagination, params.include_backtrace_id)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(match accept {
@@ -737,11 +748,12 @@ mod logs {
 
 #[derive(Debug, Deserialize)]
 struct ExecutionResponsesParams {
-    #[serde(default)]
-    cursor_from: u32,
+    cursor: Option<u32>,
     length: Option<u16>,
     #[serde(default)]
     including_cursor: bool,
+    #[serde(default)]
+    direction: PaginationDirection,
 }
 
 #[derive(Serialize)]
@@ -762,15 +774,21 @@ async fn execution_responses(
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
+    let length = params.length.unwrap_or(DEFAULT_LENGTH);
+    let pagination = match params.direction {
+        PaginationDirection::Older => Pagination::OlderThan {
+            length,
+            cursor: params.cursor.unwrap_or(u32::MAX),
+            including_cursor: params.including_cursor,
+        },
+        PaginationDirection::Newer => Pagination::NewerThan {
+            length,
+            cursor: params.cursor.unwrap_or(0),
+            including_cursor: params.including_cursor,
+        },
+    };
     let result = conn
-        .list_responses(
-            &execution_id,
-            Pagination::NewerThan {
-                length: params.length.unwrap_or(DEFAULT_LENGTH),
-                cursor: params.cursor_from,
-                including_cursor: params.including_cursor,
-            },
-        )
+        .list_responses(&execution_id, pagination)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
 

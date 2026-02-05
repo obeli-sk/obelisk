@@ -474,10 +474,13 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let result = conn
             .list_execution_events(
                 &execution_id,
-                &Version::new(request.version_from),
-                VersionType::try_from(request.length).map_err(|_| {
-                    tonic::Status::invalid_argument("`length` must be u16".to_string())
-                })?,
+                Pagination::NewerThan {
+                    length: u16::try_from(request.length).map_err(|_| {
+                        tonic::Status::invalid_argument("`length` must be u16".to_string())
+                    })?,
+                    cursor: request.version_from,
+                    including_cursor: true,
+                },
                 request.include_backtrace_id,
             )
             .await

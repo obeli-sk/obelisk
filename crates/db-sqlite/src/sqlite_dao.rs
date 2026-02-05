@@ -2329,11 +2329,16 @@ impl SqlitePool {
             None => None,
         };
         sql.push_str(" ORDER BY id");
-        if pagination.as_ref().is_some_and(Pagination::is_desc) {
+        let is_desc = pagination.as_ref().is_some_and(Pagination::is_desc);
+        if is_desc {
             sql.push_str(" DESC");
         }
         if let Some(limit) = limit {
             write!(sql, " LIMIT {limit}").unwrap();
+        }
+        // Re-order to ascending for consistent oldest-to-newest results
+        if is_desc {
+            sql = format!("SELECT * FROM ({sql}) ORDER BY id ASC");
         }
         params.push((":execution_id", Box::new(execution_id.to_string())));
         tx.prepare(&sql)?
@@ -3179,6 +3184,106 @@ impl SqlitePool {
                     ":version_min": version_min,
                     ":version_max_excluding": version_max_excluding
                 },
+                |row| {
+                    let created_at = row.get("created_at")?;
+                    let backtrace_id = row
+                        .get::<_, Option<VersionType>>("backtrace_id")?
+                        .map(Version::new);
+                    let version = Version(row.get("version")?);
+
+                    let event = row
+                        .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
+                        .map(|event| ExecutionEvent {
+                            created_at,
+                            event: event.0,
+                            backtrace_id,
+                            version,
+                        })
+                        .map_err(|serde| {
+                            error!("Cannot deserialize {row:?} - {serde:?}");
+                            consistency_rusqlite("cannot deserialize")
+                        })?;
+                    Ok(event)
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(DbErrorRead::from)
+    }
+
+    fn list_execution_events_paginated(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        pagination: Pagination<VersionType>,
+        include_backtrace_id: bool,
+    ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
+        let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
+        params.push((":execution_id", Box::new(execution_id.to_string())));
+
+        let (cursor, length, rel, is_desc) = match &pagination {
+            Pagination::NewerThan {
+                cursor,
+                length,
+                including_cursor,
+            } => (
+                *cursor,
+                *length,
+                if *including_cursor { ">=" } else { ">" },
+                false,
+            ),
+            Pagination::OlderThan {
+                cursor,
+                length,
+                including_cursor,
+            } => (
+                *cursor,
+                *length,
+                if *including_cursor { "<=" } else { "<" },
+                true,
+            ),
+        };
+        params.push((":cursor", Box::new(cursor)));
+
+        let base_select = if include_backtrace_id {
+            format!(
+                "SELECT
+                    log.created_at,
+                    log.json_value,
+                    log.version as version,
+                    bt.version_min_including AS backtrace_id
+                FROM
+                    t_execution_log AS log
+                LEFT OUTER JOIN
+                    t_execution_backtrace AS bt ON log.execution_id = bt.execution_id
+                                    AND log.version >= bt.version_min_including
+                                    AND log.version < bt.version_max_excluding
+                WHERE
+                    log.execution_id = :execution_id
+                    AND log.version {rel} :cursor"
+            )
+        } else {
+            format!(
+                "SELECT
+                    created_at, json_value, NULL as backtrace_id, version
+                FROM t_execution_log WHERE
+                    execution_id = :execution_id AND version {rel} :cursor"
+            )
+        };
+
+        let order = if is_desc { "DESC" } else { "ASC" };
+        let mut sql = format!("{base_select} ORDER BY version {order} LIMIT {length}");
+
+        // Re-order to ascending for consistent oldest-to-newest results
+        if is_desc {
+            sql = format!("SELECT * FROM ({sql}) ORDER BY version ASC");
+        }
+
+        tx.prepare(&sql)?
+            .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
+                params
+                    .iter()
+                    .map(|(key, value)| (*key, value.as_ref()))
+                    .collect::<Vec<_>>()
+                    .as_ref(),
                 |row| {
                     let created_at = row.get("created_at")?;
                     let backtrace_id = row
@@ -4247,19 +4352,16 @@ impl DbExternalApi for SqlitePool {
     async fn list_execution_events(
         &self,
         execution_id: &ExecutionId,
-        since: &Version,
-        max_length: VersionType,
+        pagination: Pagination<VersionType>,
         include_backtrace_id: bool,
     ) -> Result<ListExecutionEventsResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
-        let since = since.0;
         self.transaction(
             move |tx| {
-                let events = Self::list_execution_events(
+                let events = Self::list_execution_events_paginated(
                     tx,
                     &execution_id,
-                    since,
-                    since + max_length,
+                    pagination,
                     include_backtrace_id,
                 )?;
                 let max_version =

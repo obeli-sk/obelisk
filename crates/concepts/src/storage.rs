@@ -932,16 +932,22 @@ pub trait DbExternalApi: DbConnection {
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric>;
 
+    /// Returns execution events for the given execution.
+    ///
+    /// Results are always ordered from oldest to newest (ascending by version),
+    /// regardless of pagination direction.
     async fn list_execution_events(
         &self,
         execution_id: &ExecutionId,
-        since: &Version,
-        max_length: VersionType,
+        pagination: Pagination<VersionType>,
         include_backtrace_id: bool,
     ) -> Result<ListExecutionEventsResponse, DbErrorRead>;
 
     /// Returns responses of an execution ordered as they arrived,
     /// enabling matching each `JoinNext` to its corresponding response.
+    ///
+    /// Results are always ordered from oldest to newest (ascending by cursor),
+    /// regardless of pagination direction.
     async fn list_responses(
         &self,
         execution_id: &ExecutionId,

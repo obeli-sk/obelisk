@@ -11,6 +11,7 @@ use concepts::storage::DbConnectionTest;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::ExecutionLog;
 use concepts::storage::ExecutionRequest;
+use concepts::storage::Pagination;
 use concepts::storage::Version;
 use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::time::ClockFn as _;
@@ -293,7 +294,15 @@ async fn list_execution_events_should_not_break_json_order(database: Database) {
     let (execution_id, finished_version, finished) =
         persist_finished_event(db_connection.as_ref()).await;
     let result = db_connection
-        .list_execution_events(&execution_id, /* since */ &finished_version, 1, false)
+        .list_execution_events(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 1,
+                cursor: finished_version.0,
+                including_cursor: true,
+            },
+            false,
+        )
         .await
         .unwrap();
     assert_eq!(Version(2), finished_version);

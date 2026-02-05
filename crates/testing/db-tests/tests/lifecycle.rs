@@ -7,7 +7,7 @@ use concepts::storage::{
     ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, JoinSetRequest,
     JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, Pagination,
     PendingState, PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt,
-    ResponseCursor, TimeoutOutcome, Version, WasmBacktrace,
+    ResponseCursor, TimeoutOutcome, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
@@ -2882,6 +2882,380 @@ async fn test_list_responses(database: Database) {
     );
     assert_eq!(ResponseCursor(1), list_result.responses[0].cursor);
     assert_eq!(ResponseCursor(1), list_result.max_cursor);
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn test_list_responses_pagination_direction(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+
+    // Create execution
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Lock and create join set
+    let lock_expiry = Duration::from_millis(100);
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + lock_expiry,
+        RunId::generate(),
+    )
+    .await;
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+
+    // Add 5 delay responses
+    for i in 0u64..5 {
+        let delay_id = DelayId::new_with_index(&execution_id, &join_set_id, i + 1);
+        let delay_expires_at = sim_clock.now() + Duration::from_secs(10 + i);
+        version = db_connection
+            .append(
+                execution_id.clone(),
+                version.clone(),
+                AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::JoinSetRequest {
+                            join_set_id: join_set_id.clone(),
+                            request: JoinSetRequest::DelayRequest {
+                                delay_id: delay_id.clone(),
+                                expires_at: delay_expires_at,
+                                schedule_at: HistoryEventScheduleAt::Now,
+                            },
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        db_connection
+            .append_response(
+                sim_clock.now(),
+                execution_id.clone(),
+                JoinSetResponseEvent {
+                    join_set_id: join_set_id.clone(),
+                    event: JoinSetResponse::DelayFinished {
+                        delay_id,
+                        result: Ok(()),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    // Test NewerThan pagination (default, from oldest)
+    let list_result = api_conn
+        .list_responses(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 2,
+                cursor: 0,
+                including_cursor: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(2, list_result.responses.len());
+    assert_eq!(ResponseCursor(1), list_result.responses[0].cursor);
+    assert_eq!(ResponseCursor(2), list_result.responses[1].cursor);
+    assert_eq!(ResponseCursor(5), list_result.max_cursor);
+
+    // Test NewerThan with cursor in the middle
+    let list_result = api_conn
+        .list_responses(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 2,
+                cursor: 2,
+                including_cursor: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(2, list_result.responses.len());
+    assert_eq!(ResponseCursor(3), list_result.responses[0].cursor);
+    assert_eq!(ResponseCursor(4), list_result.responses[1].cursor);
+
+    // Test OlderThan pagination (backwards, from newest)
+    let list_result = api_conn
+        .list_responses(
+            &execution_id,
+            Pagination::OlderThan {
+                length: 2,
+                cursor: u32::MAX,
+                including_cursor: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(2, list_result.responses.len());
+    // Results are always in ascending order (oldest to newest)
+    assert_eq!(ResponseCursor(4), list_result.responses[0].cursor);
+    assert_eq!(ResponseCursor(5), list_result.responses[1].cursor);
+
+    // Test OlderThan with cursor in the middle
+    let list_result = api_conn
+        .list_responses(
+            &execution_id,
+            Pagination::OlderThan {
+                length: 2,
+                cursor: 4,
+                including_cursor: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(2, list_result.responses.len());
+    // Results are always in ascending order (oldest to newest)
+    assert_eq!(ResponseCursor(2), list_result.responses[0].cursor);
+    assert_eq!(ResponseCursor(3), list_result.responses[1].cursor);
+
+    // Test OlderThan with including_cursor=true
+    let list_result = api_conn
+        .list_responses(
+            &execution_id,
+            Pagination::OlderThan {
+                length: 2,
+                cursor: 4,
+                including_cursor: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(2, list_result.responses.len());
+    assert_eq!(ResponseCursor(3), list_result.responses[0].cursor);
+    assert_eq!(ResponseCursor(4), list_result.responses[1].cursor);
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn test_list_execution_events_pagination_direction(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+
+    // Create execution - this creates version 0
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Lock and create join set - this adds more events
+    let lock_expiry = Duration::from_millis(100);
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + lock_expiry,
+        RunId::generate(),
+    )
+    .await;
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+
+    // Add 5 more events (delay requests)
+    for i in 0u64..5 {
+        let delay_id = DelayId::new_with_index(&execution_id, &join_set_id, i + 1);
+        let delay_expires_at = sim_clock.now() + Duration::from_secs(10 + i);
+        version = db_connection
+            .append(
+                execution_id.clone(),
+                version.clone(),
+                AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::JoinSetRequest {
+                            join_set_id: join_set_id.clone(),
+                            request: JoinSetRequest::DelayRequest {
+                                delay_id,
+                                expires_at: delay_expires_at,
+                                schedule_at: HistoryEventScheduleAt::Now,
+                            },
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    // Get the max version for reference
+    let all_events = api_conn
+        .list_execution_events(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 100,
+                cursor: 0,
+                including_cursor: true,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    let max_version = all_events.max_version;
+    let total_events = all_events.events.len();
+    info!("Total events: {total_events}, max_version: {max_version:?}");
+
+    // Test NewerThan pagination (default, from oldest)
+    let list_result = api_conn
+        .list_execution_events(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 3,
+                cursor: 0,
+                including_cursor: true,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(3, list_result.events.len());
+    assert_eq!(Version(0), list_result.events[0].version);
+    assert_eq!(Version(1), list_result.events[1].version);
+    assert_eq!(Version(2), list_result.events[2].version);
+
+    // Test NewerThan with cursor in the middle (not including cursor)
+    let list_result = api_conn
+        .list_execution_events(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 2,
+                cursor: 2,
+                including_cursor: false,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(2, list_result.events.len());
+    assert_eq!(Version(3), list_result.events[0].version);
+    assert_eq!(Version(4), list_result.events[1].version);
+
+    // Test OlderThan pagination (backwards, from newest)
+    let list_result = api_conn
+        .list_execution_events(
+            &execution_id,
+            Pagination::OlderThan {
+                length: 3,
+                cursor: VersionType::MAX,
+                including_cursor: true,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(3, list_result.events.len());
+    // Results are always in ascending order (oldest to newest)
+    let last_version = max_version.0;
+    assert_eq!(Version(last_version - 2), list_result.events[0].version);
+    assert_eq!(Version(last_version - 1), list_result.events[1].version);
+    assert_eq!(Version(last_version), list_result.events[2].version);
+
+    // Test OlderThan with cursor in the middle
+    let list_result = api_conn
+        .list_execution_events(
+            &execution_id,
+            Pagination::OlderThan {
+                length: 2,
+                cursor: 4,
+                including_cursor: false,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(2, list_result.events.len());
+    // Results are always in ascending order (oldest to newest)
+    assert_eq!(Version(2), list_result.events[0].version);
+    assert_eq!(Version(3), list_result.events[1].version);
+
+    // Test OlderThan with including_cursor=true
+    let list_result = api_conn
+        .list_execution_events(
+            &execution_id,
+            Pagination::OlderThan {
+                length: 2,
+                cursor: 4,
+                including_cursor: true,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(2, list_result.events.len());
+    assert_eq!(Version(3), list_result.events[0].version);
+    assert_eq!(Version(4), list_result.events[1].version);
 
     drop(api_conn);
     drop(db_connection);
