@@ -913,7 +913,6 @@ pub(crate) mod tests {
             assert!(limit_reached > 0, "Limit was not reached");
         }
 
-        // FIXME: Make deterministic
         #[rstest::rstest]
         #[case(
             10,
@@ -933,7 +932,7 @@ pub(crate) mod tests {
             })
         )] // 1s -> timeout
         #[tokio::test]
-        async fn flaky_sleep_should_produce_temporary_timeout(
+        async fn sleep_should_produce_temporary_timeout(
             #[case] sleep_millis: u32,
             #[case] sleep_iterations: u32,
             #[case] expected: concepts::SupportedFunctionReturnValue,
@@ -941,28 +940,15 @@ pub(crate) mod tests {
             locking_strategy: LockingStrategy,
         ) {
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
-            const TICK_SLEEP: Duration = Duration::from_millis(10);
             test_utils::set_up();
+            let sim_clock = SimClock::default();
             let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-            let timers_watcher_task = executor::expired_timers_watcher::spawn_new(
-                db_pool.clone(),
-                executor::expired_timers_watcher::TimersWatcherConfig {
-                    tick_sleep: TICK_SLEEP,
-                    clock_fn: Now.clone_box(),
-                    leeway: Duration::ZERO,
-                },
-            );
             let engine =
                 Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-            let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
-                vec![engine.weak()],
-                Duration::from_millis(EPOCH_MILLIS),
-            );
-
             let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 engine,
-                Now.clone_box(),
+                sim_clock.clone_box(),
                 TokioSleep,
             )
             .await;
@@ -970,26 +956,26 @@ pub(crate) mod tests {
             let exec_config = ExecConfig {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
-                tick_sleep: TICK_SLEEP,
+                tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy,
             };
-            let exec_task = ExecTask::spawn_new(
-                DEPLOYMENT_ID_DUMMY,
-                worker,
+            let ffqns = Arc::from([SLEEP_LOOP_ACTIVITY_FFQN]);
+            let exec_task = ExecTask::new_test(
                 exec_config,
-                Now.clone_box(),
+                worker,
+                sim_clock.clone_box(),
                 db_pool.clone(),
-                TokioSleep,
+                ffqns,
             );
 
             // Create an execution.
             let execution_id = ExecutionId::generate();
             info!("Testing {execution_id}");
-            let created_at = Now.now();
+            let created_at = sim_clock.now();
             let db_connection = db_pool.connection().await.unwrap();
             db_connection
                 .create(CreateRequest {
@@ -1005,26 +991,32 @@ pub(crate) mod tests {
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     component_id: ComponentId::dummy_activity(),
-
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                 })
                 .await
                 .unwrap();
-            // Check the result.
+
+            // Run the execution via tick.
             assert_eq!(
-                expected,
-                assert_matches!(
-                    db_connection
-                        .wait_for_finished_result(&execution_id, None) // FIXME: Switch to Some(Box::pin(future::ready(TimeoutOutcome::Cancel))), when deterministic
-                        .await
-                        .unwrap(),
-                    actual => actual
-                )
+                1,
+                exec_task
+                    .tick_test(sim_clock.now(), RunId::generate())
+                    .await
+                    .wait_for_tasks()
+                    .await
+                    .len()
             );
 
-            drop(timers_watcher_task);
-            exec_task.close().await;
+            // Check the result.
+            let exec_log = db_connection.get(&execution_id).await.unwrap();
+            let result = assert_matches!(
+                exec_log.last_event().event.clone(),
+                ExecutionRequest::Finished { result, .. } => result
+            );
+            assert_eq!(expected, result);
+
+            drop(exec_task);
             db_close.close().await;
         }
 
