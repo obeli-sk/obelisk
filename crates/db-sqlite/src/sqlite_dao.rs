@@ -2232,19 +2232,31 @@ impl SqlitePool {
         } else {
             format!("WHERE {}", statement_mod.where_vec.join(" AND "))
         };
-        let sql = format!(
-            r"
-            SELECT created_at, first_scheduled_at, component_id_input_digest, component_type, deployment_id,
+
+        // Inner query: fetch rows with cursor-based ordering
+        // Outer query: always return results in descending order
+        let (inner_order, outer_order) = if statement_mod.limit_desc {
+            ("DESC", "")
+        } else {
+            ("", "DESC")
+        };
+
+        let inner_sql = format!(
+            r"SELECT created_at, first_scheduled_at, component_id_input_digest, component_type, deployment_id,
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
             result_kind, is_paused
-            FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}
-            ",
-            desc = if statement_mod.limit_desc { "DESC" } else { "" },
+            FROM t_state {where_str} ORDER BY created_at {inner_order} LIMIT {limit}",
             limit = statement_mod.limit,
         );
-        let mut vec: Vec<_> = read_tx
+
+        let sql = if outer_order.is_empty() {
+            inner_sql
+        } else {
+            format!("SELECT * FROM ({inner_sql}) AS sub ORDER BY created_at {outer_order}")
+        };
+        let vec: Vec<_> = read_tx
             .prepare(&sql)?
             .query_map::<_, &[(&'static str, ToSqlOutput)], _>(
                 statement_mod
@@ -2295,10 +2307,6 @@ impl SqlitePool {
             })
             .collect();
 
-        if !statement_mod.limit_desc {
-            // the list must be sorted in descending order
-            vec.reverse();
-        }
         Ok(vec)
     }
 
@@ -3743,16 +3751,29 @@ impl SqlitePool {
             .expect("writing to string");
         }
 
+        // Inner query: fetch rows with cursor-based ordering
+        // Outer query: always return results in descending order
+        let (inner_order, outer_order) = if pagination.is_desc() {
+            ("DESC", "")
+        } else {
+            ("ASC", "DESC")
+        };
+
         write!(
             sql,
-            " GROUP BY deployment_id ORDER BY deployment_id {asc_or_desc} LIMIT {limit}",
-            asc_or_desc = pagination.asc_or_desc(),
+            " GROUP BY deployment_id ORDER BY deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
 
-        let mut result: Vec<DeploymentState> = tx
-            .prepare(&sql)?
+        let final_sql = if outer_order.is_empty() {
+            sql
+        } else {
+            format!("SELECT * FROM ({sql}) AS sub ORDER BY deployment_id {outer_order}")
+        };
+
+        let result: Vec<DeploymentState> = tx
+            .prepare(&final_sql)?
             .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
                 params
                     .iter()
@@ -3773,10 +3794,6 @@ impl SqlitePool {
             .collect::<Result<Vec<_>, rusqlite::Error>>()
             .map_err(DbErrorRead::from)?;
 
-        if pagination.is_asc() {
-            // the list must be sorted in descending order for UI consistency
-            result.reverse();
-        }
         Ok(result)
     }
 

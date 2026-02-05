@@ -1749,18 +1749,28 @@ async fn list_executions(
         ExecutionListPagination::ExecutionId(_) => "execution_id",
     };
 
-    let desc_str = if limit_desc { "DESC" } else { "" };
+    // Inner query: fetch rows with cursor-based ordering
+    // Outer query: always return results in descending order
+    let (inner_order, outer_order) = if limit_desc {
+        ("DESC", "")
+    } else {
+        ("", "DESC")
+    };
 
-    let sql = format!(
-        r"
-            SELECT created_at, first_scheduled_at, component_id_input_digest, deployment_id,
+    let inner_sql = format!(
+        r"SELECT created_at, first_scheduled_at, component_id_input_digest, deployment_id,
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
             result_kind, is_paused
-            FROM t_state {where_str} ORDER BY {order_col} {desc_str} LIMIT {limit}
-            "
+            FROM t_state {where_str} ORDER BY {order_col} {inner_order} LIMIT {limit}"
     );
+
+    let sql = if outer_order.is_empty() {
+        inner_sql
+    } else {
+        format!("SELECT * FROM ({inner_sql}) AS sub ORDER BY {order_col} {outer_order}")
+    };
 
     let params_refs: Vec<&(dyn ToSql + Sync)> = qb
         .params
@@ -1864,10 +1874,6 @@ async fn list_executions(
         }
     }
 
-    if !limit_desc {
-        // the list must be sorted in descending order
-        vec.reverse();
-    }
     Ok(vec)
 }
 
@@ -2181,11 +2187,26 @@ async fn list_deployment_states(
     }
 
     // Grouping + ordering
-    sql.push_str(" GROUP BY deployment_id ORDER BY deployment_id ");
-    sql.push_str(pagination.asc_or_desc());
+    // Inner query: fetch rows with cursor-based ordering
+    // Outer query: always return results in descending order
+    let (inner_order, outer_order) = if pagination.is_desc() {
+        ("DESC", "")
+    } else {
+        ("ASC", "DESC")
+    };
 
-    // Limit
-    write!(sql, " LIMIT {}", pagination.length()).expect("writing to string");
+    write!(
+        sql,
+        " GROUP BY deployment_id ORDER BY deployment_id {inner_order} LIMIT {}",
+        pagination.length()
+    )
+    .expect("writing to string");
+
+    let final_sql = if outer_order.is_empty() {
+        sql
+    } else {
+        format!("SELECT * FROM ({sql}) AS sub ORDER BY deployment_id {outer_order}")
+    };
 
     let params_refs: Vec<&(dyn ToSql + Sync)> = params
         .iter()
@@ -2193,7 +2214,7 @@ async fn list_deployment_states(
         .collect();
 
     let rows = tx
-        .query(&sql, &params_refs)
+        .query(&final_sql, &params_refs)
         .await
         .map_err(DbErrorRead::from)?;
 
@@ -2214,10 +2235,6 @@ async fn list_deployment_states(
         });
     }
 
-    if pagination.is_asc() {
-        // the list must be sorted in descending order for UI consistency
-        result.reverse();
-    }
     Ok(result)
 }
 
