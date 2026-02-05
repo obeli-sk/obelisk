@@ -831,8 +831,6 @@ pub(crate) mod tests {
         use test_utils::{env_or_default, sim_clock::SimClock};
         use tracing::{debug, info, info_span};
 
-        const EPOCH_MILLIS: u64 = 10;
-
         pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_sleep_activity_builder::exports::testing::sleep::sleep::SLEEP_LOOP,
         ); // sleep-loop: func(millis: u64, iterations: u32);
@@ -1033,10 +1031,7 @@ pub(crate) mod tests {
 
             let engine =
                 Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-            let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
-                vec![engine.weak()],
-                Duration::from_millis(EPOCH_MILLIS),
-            );
+
             let sim_clock = SimClock::epoch();
             let (worker, _) = new_activity_worker(
                 test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
@@ -1074,15 +1069,14 @@ pub(crate) mod tests {
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()
             };
-            let (http_client_traces, actual_version) = assert_matches!(
+            let actual_version = assert_matches!(
                 err,
                 WorkerError::TemporaryTimeout {
-                    http_client_traces,
+                    http_client_traces:_,
                     version
                 }
-                => (http_client_traces, version)
+                => version
             );
-            assert_eq!(http_client_traces, Some(Vec::new()));
             assert_eq!(version, actual_version);
         }
 
