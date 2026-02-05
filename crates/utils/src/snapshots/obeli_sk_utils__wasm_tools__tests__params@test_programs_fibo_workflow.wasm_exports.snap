@@ -55,6 +55,27 @@ expression: exports
     "extension": null,
     "submittable": true
   },
+  "testing:fibo-workflow/workflow.fiboa-submit-json": {
+    "ffqn": "testing:fibo-workflow/workflow.fiboa-submit-json",
+    "parameter_types": [
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    "return_type": {
+      "extendable": {
+        "type_wrapper_tl": {
+          "ok": "u64",
+          "err": null
+        },
+        "wit_type": "result<u64>"
+      }
+    },
+    "extension": null,
+    "submittable": true
+  },
   "testing:fibo-workflow/workflow.fibow": {
     "ffqn": "testing:fibo-workflow/workflow.fibow",
     "parameter_types": [

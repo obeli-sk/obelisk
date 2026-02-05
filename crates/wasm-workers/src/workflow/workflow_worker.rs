@@ -975,6 +975,9 @@ pub(crate) mod tests {
     pub const FIBOA_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA,
     ); // fiboa: func(n: u8, iterations: u32) -> u64;
+    pub const FIBOA_SUBMIT_JSON_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA_SUBMIT_JSON,
+    ); // fiboa-submit-json: func(n: u8) -> u64;
     const SLEEP1_HOST_ACTIVITY_FFQN: FunctionFqn =
         FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_HOST_ACTIVITY); // sleep-host-activity: func(millis: u64);
 
@@ -1220,6 +1223,140 @@ pub(crate) mod tests {
 
         let executed_workflows = if let Some(executed_workflows) = executed_workflows {
             // Await strategy still runs
+            executed_workflows.wait_for_tasks().await
+        } else {
+            workflow_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await
+        };
+        assert_eq!(1, executed_workflows.len());
+
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val);
+
+        let fibo = assert_matches!(res,
+            WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
+        assert_eq!(FIBO_10_OUTPUT, fibo);
+    }
+
+    /// Test for submit_json and get_result_json workflow functions.
+    /// The workflow uses submit_json to call the fibo activity with JSON params,
+    /// then retrieves the result using get_result_json.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn fiboa_submit_json_workflow(
+        db: Database,
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0})]
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = db.set_up().await;
+        fiboa_submit_json_workflow_inner(
+            db_pool.clone(),
+            sim_clock,
+            join_next_blocking_strategy,
+            locking_strategy,
+        )
+        .await;
+        db_close.close().await;
+    }
+
+    async fn fiboa_submit_json_workflow_inner(
+        db_pool: Arc<dyn DbPool>,
+        sim_clock: SimClock,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        locking_strategy: LockingStrategy,
+    ) {
+        test_utils::set_up();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                .await,
+        ]);
+        let cancel_registry = CancelRegistry::new();
+        let workflow_exec = new_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            join_next_blocking_strategy,
+            &fn_registry,
+            cancel_registry,
+            locking_strategy,
+        )
+        .await;
+        // Create an execution with fiboa_submit_json workflow function
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        // The fiboa_submit_json function takes a single u8 parameter
+        let params = Params::from_json_values_test(vec![json!(FIBO_10_INPUT)]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: FIBOA_SUBMIT_JSON_WORKFLOW_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+        info!("Should end as BlockedByJoinSet (waiting for activity)");
+
+        let executed_workflows = workflow_exec
+            .tick_test(sim_clock.now(), RunId::generate())
+            .await;
+
+        let executed_workflows =
+            if join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
+                assert_eq!(1, executed_workflows.wait_for_tasks().await.len());
+                None
+            } else {
+                Some(executed_workflows)
+            };
+
+        // Wait for the workflow to be blocked by join set
+        wait_for_pending_state_fn(
+            db_connection.as_ref(),
+            &execution_id,
+            |exe_history| {
+                matches!(
+                    exe_history.pending_state,
+                    PendingState::BlockedByJoinSet(..)
+                )
+                .then_some(())
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        info!("Running activity to complete the child execution");
+
+        let activity_exec = new_activity_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            TokioSleep,
+            locking_strategy,
+        )
+        .await;
+        let executed_activities = activity_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_activities.len());
+
+        let executed_workflows = if let Some(executed_workflows) = executed_workflows {
             executed_workflows.wait_for_tasks().await
         } else {
             workflow_exec

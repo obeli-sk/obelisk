@@ -4,4 +4,7 @@ interface workflow {
     fibow: func(n: u8, iterations: u32) -> result<u64>;
     fiboa: func(n: u8, iterations: u32) -> result<u64>;
     fiboa-concurrent: func(n: u8, iterations: u32) -> result<u64>;
+    /// Test submit-json and get-result-json functions.
+    /// Calls the fibo activity using submit-json with JSON params and retrieves result with get-result-json.
+    fiboa-submit-json: func(n: u8) -> result<u64>;
 }

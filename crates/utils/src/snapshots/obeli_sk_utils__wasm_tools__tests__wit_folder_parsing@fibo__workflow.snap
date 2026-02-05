@@ -27,6 +27,12 @@ interface workflow {
   fiboa-concurrent-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
 
   fiboa-concurrent-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
+
+  fiboa-submit-json-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
+
+  fiboa-submit-json-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+
+  fiboa-submit-json-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 }
 
 
@@ -43,4 +49,6 @@ interface workflow {
   fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
 
   fiboa-concurrent-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
+
+  fiboa-submit-json-schedule: func(schedule-at: schedule-at, n: u8) -> execution-id;
 }

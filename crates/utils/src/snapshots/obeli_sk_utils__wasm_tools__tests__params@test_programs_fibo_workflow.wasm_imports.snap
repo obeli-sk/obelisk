@@ -3,6 +3,47 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
+  "obelisk:workflow/workflow-support@4.1.0.get-result-json": {
+    "ffqn": "obelisk:workflow/workflow-support@4.1.0.get-result-json",
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": {
+                  "option": "string"
+                },
+                "err": {
+                  "option": "string"
+                }
+              }
+            },
+            "err": {
+              "variant": {
+                "execution-id-parsing-error": "string",
+                "not-found-in-processed-responses": null
+              }
+            }
+          }
+        },
+        "wit_type": "result<result<option<string>, option<string>>, get-result-json-error>"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
   "obelisk:workflow/workflow-support@4.1.0.join-set-create": {
     "ffqn": "obelisk:workflow/workflow-support@4.1.0.join-set-create",
     "parameter_types": [],
@@ -10,6 +51,75 @@ expression: imports
       "non_extendable": {
         "type_wrapper": "own",
         "wit_type": "join-set"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
+  "obelisk:workflow/workflow-support@4.1.0.submit-json": {
+    "ffqn": "obelisk:workflow/workflow-support@4.1.0.submit-json",
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
+      },
+      {
+        "type_wrapper": {
+          "record": {
+            "function-name": "string",
+            "interface-name": "string"
+          }
+        },
+        "name": "function",
+        "wit_type": "function"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "params",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": {
+          "option": {
+            "record": {
+              "timeout": {
+                "option": {
+                  "variant": {
+                    "days": "u32",
+                    "hours": "u32",
+                    "milliseconds": "u64",
+                    "minutes": "u32",
+                    "seconds": "u64"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "name": "config",
+        "wit_type": "option<submit-config>"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "record": {
+                "id": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "ffqn-parsing-error": "string",
+                "function-not-found": null,
+                "params-parsing-error": "string"
+              }
+            }
+          }
+        },
+        "wit_type": "result<execution-id, submit-json-error>"
       }
     },
     "extension": null,

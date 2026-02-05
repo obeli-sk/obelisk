@@ -349,6 +349,174 @@ expression: exports
     "extension": "submit",
     "submittable": false
   },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit-json-await-next": {
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit-json-await-next",
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "u64",
+                    "err": null
+                  }
+                }
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null,
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+      }
+    },
+    "extension": "await_next",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit-json-get": {
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit-json-get",
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": "u64",
+                "err": null
+              }
+            },
+            "err": {
+              "variant": {
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  }
+                },
+                "not-found-in-processed-responses": null
+              }
+            }
+          }
+        },
+        "wit_type": "result<result<u64>, get-extension-error>"
+      }
+    },
+    "extension": "get",
+    "submittable": false
+  },
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit-json-submit": {
+    "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit-json-submit",
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
+      },
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
+    },
+    "extension": "submit",
+    "submittable": false
+  },
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": {
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next",
     "parameter_types": [
@@ -624,6 +792,52 @@ expression: exports
     "extension": "schedule",
     "submittable": true
   },
+  "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-submit-json-schedule": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-submit-json-schedule",
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "variant": {
+            "at": {
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
+              }
+            },
+            "in": {
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
+              }
+            },
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
+    },
+    "extension": "schedule",
+    "submittable": true
+  },
   "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule": {
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule",
     "parameter_types": [
@@ -713,6 +927,27 @@ expression: exports
         "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "extendable": {
+        "type_wrapper_tl": {
+          "ok": "u64",
+          "err": null
+        },
+        "wit_type": "result<u64>"
+      }
+    },
+    "extension": null,
+    "submittable": true
+  },
+  "testing:fibo-workflow/workflow.fiboa-submit-json": {
+    "ffqn": "testing:fibo-workflow/workflow.fiboa-submit-json",
+    "parameter_types": [
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
       }
     ],
     "return_type": {
