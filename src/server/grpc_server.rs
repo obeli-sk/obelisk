@@ -471,7 +471,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
-        let events = conn
+        let result = conn
             .list_execution_events(
                 &execution_id,
                 &Version::new(request.version_from),
@@ -483,12 +483,16 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .await
             .to_status()?;
 
-        let events = events
+        let events = result
+            .events
             .into_iter()
             .map(from_execution_event_to_grpc)
             .collect();
         Ok(tonic::Response::new(
-            grpc_gen::ListExecutionEventsResponse { events },
+            grpc_gen::ListExecutionEventsResponse {
+                events,
+                max_version: result.max_version.into(),
+            },
         ))
     }
 
@@ -508,7 +512,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
-        let responses = conn
+        let result = conn
             .list_responses(
                 &execution_id,
                 concepts::storage::Pagination::NewerThan {
@@ -518,13 +522,17 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 },
             )
             .await
-            .to_status()?
+            .to_status()?;
+
+        let responses = result
+            .responses
             .into_iter()
             .map(grpc_gen::ResponseWithCursor::from)
             .collect();
 
         Ok(tonic::Response::new(grpc_gen::ListResponsesResponse {
             responses,
+            max_cursor: result.max_cursor.into(),
         }))
     }
 

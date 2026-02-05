@@ -495,6 +495,7 @@ message ListExecutionEventsRequest {
 }
 message ListExecutionEventsResponse {
     repeated ExecutionEvent events = 2;
+    uint32 max_version = 3;
 }
 
 message JoinSetResponseEvent {
@@ -529,6 +530,7 @@ message ListResponsesRequest {
 }
 message ListResponsesResponse {
     repeated ResponseWithCursor responses = 1;
+    uint32 max_cursor = 2;
 }
 
 message ListExecutionEventsAndResponsesRequest {

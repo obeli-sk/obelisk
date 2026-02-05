@@ -14,14 +14,14 @@ use concepts::{
         DbPool, DbPoolCloseable, DeploymentState, ExecutionEvent, ExecutionListPagination,
         ExecutionRequest, ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay,
         ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter,
-        ListLogsResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry,
-        LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
-        PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, PendingStateMergedPause,
-        PendingStatePaused, PendingStatePendingAt, ResponseCursor, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Version, VersionType, WasmBacktrace,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter,
+        LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinished, PendingStateFinishedResultKind,
+        PendingStateLocked, PendingStateMergedPause, PendingStatePaused, PendingStatePendingAt,
+        ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
     },
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
@@ -3021,6 +3021,40 @@ async fn get_execution_log(
     })
 }
 
+async fn get_max_version(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<Version, DbErrorRead> {
+    let row = tx
+        .query_one(
+            "SELECT MAX(version) as version FROM t_execution_log WHERE execution_id = $1",
+            &[&execution_id.to_string()],
+        )
+        .await?;
+    let max_version: i64 = get(&row, "version")?;
+    let max_version = Version::try_from(max_version)
+        .map_err(|_| consistency_db_err("version must be non-negative"))?;
+    Ok(max_version)
+}
+
+async fn get_max_response_cursor(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<ResponseCursor, DbErrorRead> {
+    let row = tx
+        .query_one(
+            "SELECT MAX(id) as id FROM t_join_set_response WHERE execution_id = $1",
+            &[&execution_id.to_string()],
+        )
+        .await?;
+    let max_cursor = ResponseCursor(
+        u32::try_from(get::<i64, _>(&row, "id")?)
+            .map_err(|_| consistency_db_err("id must not be negative"))?,
+    );
+
+    Ok(max_cursor)
+}
+
 async fn list_execution_events(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
@@ -4424,11 +4458,11 @@ impl DbExternalApi for PostgresConnection {
         since: &Version,
         max_length: VersionType,
         include_backtrace_id: bool,
-    ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
+    ) -> Result<ListExecutionEventsResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        let execution_events = list_execution_events(
+        let events = list_execution_events(
             &tx,
             execution_id,
             since.0,
@@ -4436,9 +4470,13 @@ impl DbExternalApi for PostgresConnection {
             include_backtrace_id,
         )
         .await?;
+        let max_version = get_max_version(&tx, execution_id).await?;
 
         tx.commit().await?;
-        Ok(execution_events)
+        Ok(ListExecutionEventsResponse {
+            events,
+            max_version,
+        })
     }
 
     #[instrument(skip(self))]
@@ -4446,14 +4484,18 @@ impl DbExternalApi for PostgresConnection {
         &self,
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
+    ) -> Result<ListResponsesResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
         let responses = list_responses(&tx, execution_id, Some(pagination)).await?;
+        let max_cursor = get_max_response_cursor(&tx, execution_id).await?;
 
         tx.commit().await?;
-        Ok(responses)
+        Ok(ListResponsesResponse {
+            responses,
+            max_cursor,
+        })
     }
 
     #[instrument(skip(self))]

@@ -14,14 +14,14 @@ use concepts::{
         DbPool, DbPoolCloseable, DeploymentState, ExecutionEvent, ExecutionListPagination,
         ExecutionRequest, ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay,
         ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionsFilter,
-        ListLogsResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry,
-        LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
-        PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, PendingStateMergedPause,
-        PendingStatePaused, PendingStatePendingAt, ResponseCursor, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Version, VersionType,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter,
+        LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinished, PendingStateFinishedResultKind,
+        PendingStateLocked, PendingStateMergedPause, PendingStatePaused, PendingStatePendingAt,
+        ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
     },
 };
 use const_format::formatcp;
@@ -3112,6 +3112,32 @@ impl SqlitePool {
         })
     }
 
+    fn get_max_version(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+    ) -> Result<Option<Version>, DbErrorRead> {
+        tx.prepare("SELECT MAX(version) FROM t_execution_log WHERE execution_id = :execution_id")?
+            .query_row(
+                named_params! { ":execution_id": execution_id.to_string() },
+                |row| row.get::<_, Option<VersionType>>(0),
+            )
+            .map(|v| v.map(Version::new))
+            .map_err(DbErrorRead::from)
+    }
+
+    fn get_max_response_cursor(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+    ) -> Result<ResponseCursor, DbErrorRead> {
+        tx.prepare("SELECT MAX(id) FROM t_join_set_response WHERE execution_id = :execution_id")?
+            .query_row(
+                named_params! { ":execution_id": execution_id.to_string() },
+                |row| row.get(0),
+            )
+            .map(ResponseCursor)
+            .map_err(DbErrorRead::from)
+    }
+
     fn list_execution_events(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -4224,18 +4250,24 @@ impl DbExternalApi for SqlitePool {
         since: &Version,
         max_length: VersionType,
         include_backtrace_id: bool,
-    ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
+    ) -> Result<ListExecutionEventsResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
         let since = since.0;
         self.transaction(
             move |tx| {
-                Self::list_execution_events(
+                let events = Self::list_execution_events(
                     tx,
                     &execution_id,
                     since,
                     since + max_length,
                     include_backtrace_id,
-                )
+                )?;
+                let max_version =
+                    Self::get_max_version(tx, &execution_id)?.ok_or(DbErrorRead::NotFound)?;
+                Ok(ListExecutionEventsResponse {
+                    events,
+                    max_version,
+                })
             },
             TxType::Other, // read only
             "get",
@@ -4248,10 +4280,17 @@ impl DbExternalApi for SqlitePool {
         &self,
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
+    ) -> Result<ListResponsesResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
         self.transaction(
-            move |tx| Self::list_responses(tx, &execution_id, Some(pagination)),
+            move |tx| {
+                let responses = Self::list_responses(tx, &execution_id, Some(pagination))?;
+                let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
+                Ok(ListResponsesResponse {
+                    responses,
+                    max_cursor,
+                })
+            },
             TxType::Other, // read only
             "list_responses",
         )

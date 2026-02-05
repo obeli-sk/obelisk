@@ -21,9 +21,9 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
     storage::{
         self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
-        DbErrorWriteNonRetriable, DbPool, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ListExecutionsFilter, LogInfoAppendRow, Pagination, PendingState,
-        TimeoutOutcome, Version, VersionType,
+        DbErrorWriteNonRetriable, DbPool, ExecutionEvent, ExecutionListPagination,
+        ExecutionRequest, ExecutionWithState, ListExecutionsFilter, LogInfoAppendRow, Pagination,
+        PendingState, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -414,6 +414,12 @@ struct ExecutionEventsParams {
     #[serde(default)]
     include_backtrace_id: bool,
 }
+
+#[derive(Serialize)]
+struct ExecutionEventsResponse {
+    events: Vec<ExecutionEvent>,
+    max_version: Version,
+}
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_events(
     Path(execution_id): Path<ExecutionId>,
@@ -427,7 +433,7 @@ async fn execution_events(
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    let events = conn
+    let result = conn
         .list_execution_events(
             &execution_id,
             &Version(params.version_from),
@@ -437,10 +443,14 @@ async fn execution_events(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(match accept {
-        AcceptHeader::Json => Json(events).into_response(),
+        AcceptHeader::Json => Json(ExecutionEventsResponse {
+            events: result.events,
+            max_version: result.max_version,
+        })
+        .into_response(),
         AcceptHeader::Text => {
             let mut output = String::new();
-            for event in events {
+            for event in result.events {
                 writeln!(
                     &mut output,
                     "{version} `{created_at}` {event}",
@@ -733,6 +743,12 @@ struct ExecutionResponsesParams {
     #[serde(default)]
     including_cursor: bool,
 }
+
+#[derive(Serialize)]
+struct ExecutionResponsesResponse {
+    responses: Vec<ResponseWithCursor>,
+    max_cursor: ResponseCursor,
+}
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_responses(
     Path(execution_id): Path<ExecutionId>,
@@ -746,7 +762,7 @@ async fn execution_responses(
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    let responses = conn
+    let result = conn
         .list_responses(
             &execution_id,
             Pagination::NewerThan {
@@ -759,10 +775,14 @@ async fn execution_responses(
         .map_err(|e| ErrorWrapper(e, accept))?;
 
     Ok(match accept {
-        AcceptHeader::Json => Json(responses).into_response(),
+        AcceptHeader::Json => Json(ExecutionResponsesResponse {
+            responses: result.responses,
+            max_cursor: result.max_cursor,
+        })
+        .into_response(),
         AcceptHeader::Text => {
             let mut output = String::new();
-            for response in responses {
+            for response in result.responses {
                 writeln!(
                     &mut output,
                     "{cursor} `{created_at}` {join_set_id} {resp}",

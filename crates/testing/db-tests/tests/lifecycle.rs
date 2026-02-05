@@ -5,9 +5,9 @@ use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest,
     ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, JoinSetRequest,
-    JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, PendingState,
-    PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt, TimeoutOutcome,
-    Version, WasmBacktrace,
+    JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, Pagination,
+    PendingState, PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt,
+    ResponseCursor, TimeoutOutcome, Version, WasmBacktrace,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
@@ -2761,6 +2761,129 @@ async fn wait_for_finished_result_should_fetch_before_racing_with_timeout(databa
         .unwrap();
     assert_eq!(SUPPORTED_RETURN_VALUE_OK_EMPTY, res);
 
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn test_list_responses(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+
+    // Create execution
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    // Lock and create join set
+    let lock_expiry = Duration::from_millis(100);
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + lock_expiry,
+        RunId::generate(),
+    )
+    .await;
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+
+    // Add a delay request and response
+    let delay_id = DelayId::new(&execution_id, &join_set_id);
+    let delay_expires_at = sim_clock.now() + Duration::from_secs(10);
+    db_connection
+        .append(
+            execution_id.clone(),
+            version.clone(),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: join_set_id.clone(),
+                        request: JoinSetRequest::DelayRequest {
+                            delay_id: delay_id.clone(),
+                            expires_at: delay_expires_at,
+                            schedule_at: HistoryEventScheduleAt::Now,
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    db_connection
+        .append_response(
+            sim_clock.now(),
+            execution_id.clone(),
+            JoinSetResponseEvent {
+                join_set_id: join_set_id.clone(),
+                event: JoinSetResponse::DelayFinished {
+                    delay_id: delay_id.clone(),
+                    result: Ok(()),
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    // List responses - should have one response now
+    let list_result = api_conn
+        .list_responses(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 10,
+                cursor: 0,
+                including_cursor: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(1, list_result.responses.len());
+    assert_eq!(
+        JoinSetResponseEvent {
+            join_set_id: join_set_id.clone(),
+            event: JoinSetResponse::DelayFinished {
+                delay_id,
+                result: Ok(()),
+            },
+        },
+        list_result.responses[0].event.event
+    );
+    assert_eq!(ResponseCursor(1), list_result.responses[0].cursor);
+    assert_eq!(ResponseCursor(1), list_result.max_cursor);
+
+    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }

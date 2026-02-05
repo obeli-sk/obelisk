@@ -212,13 +212,34 @@ pub struct ExecutionEvent {
     pub version: Version,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize /* webapi */)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    derive_more::Into,
+    Serialize, /* webapi */
+)]
 pub struct ResponseCursor(pub u32);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */)]
 pub struct ResponseWithCursor {
     pub event: JoinSetResponseEventOuter,
     pub cursor: ResponseCursor,
+}
+
+#[derive(Debug)]
+pub struct ListExecutionEventsResponse {
+    pub events: Vec<ExecutionEvent>,
+    pub max_version: Version,
+}
+
+#[derive(Debug)]
+pub struct ListResponsesResponse {
+    pub responses: Vec<ResponseWithCursor>,
+    pub max_cursor: ResponseCursor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */)]
@@ -917,7 +938,7 @@ pub trait DbExternalApi: DbConnection {
         since: &Version,
         max_length: VersionType,
         include_backtrace_id: bool,
-    ) -> Result<Vec<ExecutionEvent>, DbErrorRead>;
+    ) -> Result<ListExecutionEventsResponse, DbErrorRead>;
 
     /// Returns responses of an execution ordered as they arrived,
     /// enabling matching each `JoinNext` to its corresponding response.
@@ -925,7 +946,7 @@ pub trait DbExternalApi: DbConnection {
         &self,
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorRead>;
+    ) -> Result<ListResponsesResponse, DbErrorRead>;
 
     async fn list_execution_events_responses(
         &self,

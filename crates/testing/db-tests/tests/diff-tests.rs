@@ -180,7 +180,11 @@ const WVWT_RECORD_UNSORTED: &str = r#"
 
 async fn persist_finished_event(
     db_connection: &dyn DbConnection,
-) -> (ExecutionId, Version, ExecutionRequest) {
+) -> (
+    ExecutionId,
+    Version,          /* finished version */
+    ExecutionRequest, /* ExecutionRequest::Finished */
+) {
     const LOCK_EXPIRY: Duration = Duration::from_millis(500);
     let component_id = ComponentId::dummy_activity();
     let sim_clock = SimClock::default();
@@ -231,7 +235,7 @@ async fn persist_finished_event(
     };
 
     let wast_val_with_type: WastValWithType = serde_json::from_str(WVWT_RECORD_UNSORTED).unwrap();
-    let inner = ExecutionRequest::Finished {
+    let finished = ExecutionRequest::Finished {
         result: SupportedFunctionReturnValue::Ok {
             ok: Some(wast_val_with_type),
         },
@@ -240,7 +244,7 @@ async fn persist_finished_event(
     // Finished
     let version = {
         let req = AppendRequest {
-            event: inner.clone(),
+            event: finished.clone(),
             created_at: sim_clock.now(),
         };
         db_connection
@@ -248,7 +252,7 @@ async fn persist_finished_event(
             .await
             .unwrap()
     };
-    (execution_id, version, inner)
+    (execution_id, version, finished)
 }
 
 // Test that the database does not use `serde_json::Value` during deserialization as it
@@ -261,14 +265,14 @@ async fn get_execution_event_should_not_break_json_order(database: Database) {
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
 
-    let (execution_id, version, expected_inner) =
+    let (execution_id, finished_version, finished) =
         persist_finished_event(db_connection.as_ref()).await;
     let found_inner = db_connection
-        .get_execution_event(&execution_id, &version)
+        .get_execution_event(&execution_id, &finished_version)
         .await
         .unwrap()
         .event;
-    assert_eq!(expected_inner, found_inner);
+    assert_eq!(finished, found_inner);
     drop(db_connection);
     db_close.close().await;
 }
@@ -286,15 +290,17 @@ async fn list_execution_events_should_not_break_json_order(database: Database) {
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.external_api_conn().await.unwrap();
 
-    let (execution_id, version, expected_inner) =
+    let (execution_id, finished_version, finished) =
         persist_finished_event(db_connection.as_ref()).await;
-    let found_inner = db_connection
-        .list_execution_events(&execution_id, &version, 1, false)
+    let result = db_connection
+        .list_execution_events(&execution_id, /* since */ &finished_version, 1, false)
         .await
         .unwrap();
-    assert_eq!(1, found_inner.len());
-    let found_inner = &found_inner[0].event;
-    assert_eq!(expected_inner, *found_inner);
+    assert_eq!(Version(2), finished_version);
+    assert_eq!(1, result.events.len());
+    assert_eq!(Version(2), result.max_version); // created = 0, locked = 1, finished = 2
+    let found_inner = &result.events[0].event;
+    assert_eq!(finished, *found_inner);
     drop(db_connection);
     db_close.close().await;
 }
