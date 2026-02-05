@@ -794,7 +794,7 @@ pub mod simple_worker {
     use std::sync::Arc;
     use tracing::trace;
 
-    pub(crate) const FFQN_SOME: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+    pub(crate) const FFQN_SOME: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
     pub type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;
 
@@ -897,7 +897,7 @@ mod tests {
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
 
-    pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
+    pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn-child");
 
     async fn tick_fn<W: Worker + Debug>(
         config: ExecConfig,

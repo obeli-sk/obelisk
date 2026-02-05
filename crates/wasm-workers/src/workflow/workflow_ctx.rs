@@ -4,8 +4,8 @@ use super::event_history::{
     ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
     OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
 };
-use super::host_exports::v4_0_0::ScheduleAt_4_0_0;
-use super::host_exports::v4_0_0::obelisk::types as types_4_0_0;
+use super::host_exports::v4_1_0::ScheduleAt_4_1_0;
+use super::host_exports::v4_1_0::obelisk::types as types_4_1_0;
 use super::host_exports::{
     SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
     history_event_schedule_at_from_wast_val,
@@ -15,7 +15,7 @@ use crate::WasmFileError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::workflow::event_history::JoinSetCreate;
-use crate::workflow::host_exports::v4_0_0::DelayId_4_0_0;
+use crate::workflow::host_exports::v4_1_0::{self, DelayId_4_1_0, ExecutionId_4_1_0};
 use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutionIdDerived};
@@ -942,7 +942,7 @@ impl WorkflowCtx {
         )
         .map_err(|err| WasmFileError::linking_error("cannot link obelisk::log", err))?;
         // link obelisk:types/execution
-        types_4_0_0::execution::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| {
+        types_4_1_0::execution::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| {
             state
         })
         .map_err(|err| WasmFileError::linking_error("cannot link obelisk:types/execution", err))?;
@@ -958,7 +958,7 @@ impl WorkflowCtx {
     }
 
     fn add_to_linker_join_set(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@4.0.0";
+        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@4.1.0";
         let mut inst_join_set_ifc = linker
             .instance(IFC_FQN_JOIN_SET)
             .map_err(|err| WasmFileError::linking_error(IFC_FQN_JOIN_SET, err))?;
@@ -999,16 +999,17 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (resource, schedule_at): (
                     Resource<JoinSetId>,
-                    ScheduleAt_4_0_0,
+                    ScheduleAt_4_1_0,
                 )| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
                         let join_set_id = host.resource_to_join_set_id(&resource)?.clone();
-                        let delay_id: DelayId_4_0_0 = host
+                        let delay_id: DelayId_4_1_0 = host
                             .submit_delay(join_set_id, schedule_at, wasm_backtrace)
-                            .await?;
+                            .await
+                            .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
                         Ok((delay_id,))
                     })
                 },
@@ -1028,7 +1029,10 @@ impl WorkflowCtx {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
                         let join_set_id = host.resource_to_join_set_id(&resource)?.clone();
-                        let res = host.join_next(join_set_id, wasm_backtrace).await?;
+                        let res = host
+                            .join_next(join_set_id, wasm_backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
                         Ok((res,))
                     })
                 },
@@ -1099,7 +1103,7 @@ impl WorkflowCtx {
             .func_wrap_async(
                 "sleep",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (schedule_at,): (ScheduleAt_4_0_0,)| {
+                      (schedule_at,): (ScheduleAt_4_1_0,)| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
                         let (host, wasm_backtrace) =
@@ -1161,6 +1165,73 @@ impl WorkflowCtx {
                 WasmFileError::linking_error("linking function new-join-set-generated", err)
             })?;
 
+        // submit-json: func(join-set: borrow<join-set>, function: function, params: string, config: option<submit-config>) -> result<execution-id, submit-json-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "submit-json",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, function, params, _config): (
+                    Resource<JoinSetId>,
+                    types_4_1_0::execution::Function,
+                    String,                                       // params JSON
+                    Option<types_4_1_0::execution::SubmitConfig>, // TODO: Implement SubmitConfig
+                )| {
+                    Box::new(async move {
+                        use v4_1_0::obelisk::workflow::workflow_support::SubmitJsonError;
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let ffqn = match FunctionFqn::try_from_tuple(
+                            &function.interface_name,
+                            &function.function_name,
+                        ) {
+                            Ok(ffqn) => ffqn,
+                            Err(err) => {
+                                let wit_result =
+                                    Err(SubmitJsonError::FfqnParsingError(err.to_string()));
+                                return Ok((wit_result,));
+                            }
+                        };
+                        let wit_result = host
+                            .submit_json(join_set_id, ffqn, params, wasm_backtrace)
+                            .await?;
+                        Ok((wit_result,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function submit-json", err))?;
+
+        // get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>
+        inst_workflow_support
+            .func_wrap(
+                "get-result-json",
+                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (execution_id,): (ExecutionId_4_1_0,)| {
+                    use v4_1_0::obelisk::workflow::workflow_support::GetResultJsonError;
+                    // execution-id record
+                    use concepts::ExecutionId;
+                    let host = caller.data();
+                    let execution_id = ExecutionId::try_from(execution_id);
+                    // Parse the execution ID string
+                    let execution_id = match execution_id {
+                        Ok(ExecutionId::Derived(derived)) => derived,
+                        Ok(ExecutionId::TopLevel(_)) => {
+                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
+                                "must not be a top-level execution id".to_string(),
+                            )),));
+                        }
+                        Err(err) => {
+                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
+                                err.to_string(),
+                            )),));
+                        }
+                    };
+                    let wit_result = host.get_result_json(&execution_id);
+                    Ok((wit_result,))
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function get-result-json", err))?;
+
         Ok(())
     }
 
@@ -1217,17 +1288,21 @@ enum JoinSetCreateError {
     Conflict,
 }
 
-mod workflow_support {
-    use super::{WorkflowCtx, WorkflowFunctionError, types_4_0_0};
+pub(crate) mod workflow_support {
+    use super::{SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, types_4_1_0};
     use crate::workflow::event_history::{JoinNext, Persist, SubmitDelay};
-    use crate::workflow::host_exports;
-    use crate::workflow::host_exports::v4_0_0::obelisk::types::execution::Host as ExecutionIfcHost;
-    use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set::JoinNextError;
+    use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::Host as ExecutionIfcHost;
+    use crate::workflow::host_exports::v4_1_0::obelisk::types::join_set::JoinNextError;
+    use crate::workflow::host_exports::{self, v4_1_0};
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4, JoinSetCreateError};
+    use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::HistoryEventScheduleAt;
-    use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind};
+    use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind, Params};
     use concepts::{FunctionFqn, storage};
+    use std::sync::Arc;
     use tracing::trace;
+    #[allow(unused_imports)]
+    use val_json::wast_val::WastVal;
     use wasmtime::component::Resource;
 
     impl ExecutionIfcHost for WorkflowCtx {}
@@ -1342,7 +1417,7 @@ mod workflow_support {
             join_set_id: JoinSetId,
             schedule_at: HistoryEventScheduleAt,
             wasm_backtrace: Option<storage::WasmBacktrace>,
-        ) -> Result<types_4_0_0::execution::DelayId, WorkflowFunctionError> {
+        ) -> Result<types_4_1_0::execution::DelayId, WorkflowFunctionError> {
             let delay_id = self
                 .event_history
                 .next_delay_id(&join_set_id, &self.db_connection.execution_id);
@@ -1372,19 +1447,21 @@ mod workflow_support {
                 self.clock_fn.now(),
             )
             .await?;
-            Ok(types_4_0_0::execution::DelayId::from(&delay_id))
+            Ok(types_4_1_0::execution::DelayId::from(&delay_id))
         }
 
         pub(crate) async fn sleep(
             &mut self,
             schedule_at: HistoryEventScheduleAt,
             wasm_backtrace: Option<storage::WasmBacktrace>,
-        ) -> wasmtime::Result<Result<host_exports::v4_0_0::obelisk::types::time::Datetime, ()>>
+        ) -> wasmtime::Result<Result<host_exports::v4_1_0::obelisk::types::time::Datetime, ()>>
         {
             Ok(
-                match self.persist_sleep(schedule_at, wasm_backtrace).await? {
+                match self.persist_sleep(schedule_at, wasm_backtrace).await
+                .map_err(wasmtime::Error::new)? // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
+                 {
                     Ok(expires_at) => Ok(
-                        host_exports::v4_0_0::obelisk::types::time::Datetime::try_from(expires_at)?,
+                        host_exports::v4_1_0::obelisk::types::time::Datetime::try_from(expires_at)?,
                     ),
                     Err(()) => Err(()),
                 },
@@ -1398,7 +1475,7 @@ mod workflow_support {
         ) -> wasmtime::Result<
             Result<
                 Resource<JoinSetId>,
-                host_exports::v4_0_0::obelisk::workflow::workflow_support::JoinSetCreateError,
+                host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinSetCreateError,
             >,
         > {
             match self
@@ -1411,10 +1488,10 @@ mod workflow_support {
             {
                 Ok(resource) => Ok(Ok(resource)),
                 Err(JoinSetCreateError::InvalidNameError(err)) => {
-                    Ok(Err(host_exports::v4_0_0::obelisk::workflow::workflow_support::JoinSetCreateError::InvalidName(err.to_string())))
+                    Ok(Err(host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinSetCreateError::InvalidName(err.to_string())))
                 }
                 Err(JoinSetCreateError::Conflict) => {
-                    Ok(Err(host_exports::v4_0_0::obelisk::workflow::workflow_support::JoinSetCreateError::Conflict))
+                    Ok(Err(host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinSetCreateError::Conflict))
                 }
                 Err(JoinSetCreateError::ApplyError(apply_err)) => {
                     // db errors etc
@@ -1453,7 +1530,7 @@ mod workflow_support {
             join_set_id: JoinSetId,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<
-            Result<(types_4_0_0::execution::ResponseId, Result<(), ()>), JoinNextError>,
+            Result<(types_4_1_0::execution::ResponseId, Result<(), ()>), JoinNextError>,
             WorkflowFunctionError,
         > {
             JoinNext {
@@ -1467,6 +1544,103 @@ mod workflow_support {
                 self.clock_fn.now(),
             )
             .await
+        }
+
+        /// Submit a child execution request with JSON-serialized parameters.
+        pub(crate) async fn submit_json(
+            &mut self,
+            join_set_id: JoinSetId,
+            target_ffqn: FunctionFqn,
+            params_json: String,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> wasmtime::Result<
+            Result<
+                types_4_1_0::execution::ExecutionId,
+                v4_1_0::obelisk::workflow::workflow_support::SubmitJsonError,
+            >,
+        > {
+            use v4_1_0::obelisk::workflow::workflow_support::SubmitJsonError;
+
+            // Look up the function in the registry
+            let Some((fn_metadata, fn_component_id)) = self
+                .event_history
+                .fn_registry
+                .get_by_exported_function(&target_ffqn)
+            else {
+                return Ok(Err(SubmitJsonError::FunctionNotFound));
+            };
+            let params = match serde_json::from_str(&params_json) {
+                Ok(serde_json::Value::Array(params)) => params,
+                Ok(_other) => {
+                    return Ok(Err(SubmitJsonError::ParamsParsingError(
+                        "params must be a json array".to_string(),
+                    )));
+                }
+                Err(err) => {
+                    return Ok(Err(SubmitJsonError::ParamsParsingError(format!(
+                        "cannot parse params as JSON array: {err}"
+                    ))));
+                }
+            };
+
+            assert_eq!(
+                None, fn_metadata.extension,
+                "get_by_exported_function must not return extended functions"
+            );
+
+            let params = match Params::from_json_values(
+                Arc::from(params),
+                fn_metadata
+                    .parameter_types
+                    .iter()
+                    .map(|param_type| &param_type.type_wrapper),
+            ) {
+                Ok(params) => params,
+                Err(err) => {
+                    return Ok(Err(SubmitJsonError::ParamsParsingError(format!(
+                        "params type checking failed: {err}"
+                    ))));
+                }
+            };
+
+            // Get the child execution ID
+            let child_execution_id = self.next_child_id(&join_set_id);
+
+            // Submit the child execution
+            let called_at = self.clock_fn.now();
+            let submit = SubmitChildExecution {
+                target_ffqn,
+                fn_component_id,
+                join_set_id,
+                child_execution_id: child_execution_id.clone(),
+                params,
+                wasm_backtrace,
+            };
+
+            submit
+                .apply(&mut self.event_history, &mut self.db_connection, called_at)
+                .await
+                .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
+
+            Ok(Ok(types_4_1_0::execution::ExecutionId {
+                id: child_execution_id.to_string(),
+            }))
+        }
+
+        /// Obtain child execution result as JSON after it has been awaited.
+        pub(crate) fn get_result_json(
+            &self,
+            child_execution_id: &ExecutionIdDerived,
+        ) -> Result<
+            Result<Option<String>, Option<String>>,
+            v4_1_0::obelisk::workflow::workflow_support::GetResultJsonError,
+        > {
+            // Get the result from processed responses (without function type checking)
+            let result = self
+                .event_history
+                .get_processed_response_json(child_execution_id)?;
+
+            Ok(result)
         }
     }
 }

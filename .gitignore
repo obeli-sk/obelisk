@@ -1,5 +1,5 @@
 /target/
-/target-sandbox
+target-sandbox
 /.direnv/
 /.envrc
 test-codegen-cache

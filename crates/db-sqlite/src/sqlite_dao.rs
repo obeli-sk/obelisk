@@ -5016,7 +5016,7 @@ mod tests {
     };
     use rusqlite::named_params;
 
-    const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+    const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
 
     #[tokio::test]
     async fn failing_ltx_should_be_rolled_back() -> Result<(), DbErrorWrite> {

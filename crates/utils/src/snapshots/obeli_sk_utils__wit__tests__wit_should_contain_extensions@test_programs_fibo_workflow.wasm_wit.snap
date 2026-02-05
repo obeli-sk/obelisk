@@ -5,10 +5,10 @@ expression: wit
 package root:component;
 
 world root {
-  import obelisk:types/execution@4.0.0;
-  import obelisk:types/time@4.0.0;
-  import obelisk:types/join-set@4.0.0;
-  import obelisk:workflow/workflow-support@4.0.0;
+  import obelisk:types/time@4.1.0;
+  import obelisk:types/execution@4.1.0;
+  import obelisk:types/join-set@4.1.0;
+  import obelisk:workflow/workflow-support@4.1.0;
   import testing:fibo/fibo;
   import testing:fibo-obelisk-ext/fibo;
 
@@ -16,7 +16,7 @@ world root {
   export testing:fibo-workflow-obelisk-ext/workflow;
   export testing:fibo-workflow-obelisk-schedule/workflow;
 }
-package obelisk:types@4.0.0 {
+package obelisk:types@4.1.0 {
   @since(version = 3.0.0)
   interface time {
     @since(version = 3.0.0)
@@ -45,6 +45,8 @@ package obelisk:types@4.0.0 {
   }
   @since(version = 4.0.0)
   interface execution {
+    use time.{duration};
+
     @since(version = 3.0.0)
     record execution-id {
       id: string,
@@ -59,6 +61,7 @@ package obelisk:types@4.0.0 {
     record function {
       /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
       interface-name: string,
+      /// must not contain dot (`.`)
       function-name: string,
     }
 
@@ -94,8 +97,7 @@ package obelisk:types@4.0.0 {
       /// This can happen when join set contains responses of multiple functions.
       function-mismatch(function-mismatch),
       /// Processed responses do not contain the specified execution ID.
-      /// This can happen if the execution was not marked as processed (awaited), or
-      /// the execution ID does not belong to the specified join set.
+      /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
       not-found-in-processed-responses,
     }
 
@@ -111,6 +113,13 @@ package obelisk:types@4.0.0 {
       /// Conflict can happen when a second writer attempts to stub a value, while the
       /// value is not equal to the already stubbed value.
       conflict,
+    }
+
+    @since(version = 4.1.0)
+    record submit-config {
+      /// Override max duration of a execution run (single attempt).
+      /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
+      timeout: option<duration>,
     }
   }
   @since(version = 4.0.0)
@@ -149,9 +158,9 @@ package obelisk:types@4.0.0 {
 }
 
 
-package obelisk:workflow@4.0.0 {
+package obelisk:workflow@4.1.0 {
   interface workflow-support {
-    use obelisk:types/join-set@4.0.0.{join-set};
+    use obelisk:types/join-set@4.1.0.{join-set};
 
     join-set-create: func() -> join-set;
   }
@@ -167,8 +176,8 @@ package testing:fibo {
 
 package testing:fibo-obelisk-ext {
   interface fibo {
-    use obelisk:types/join-set@4.0.0.{join-set};
-    use obelisk:types/execution@4.0.0.{execution-id, await-next-extension-error};
+    use obelisk:types/join-set@4.1.0.{join-set};
+    use obelisk:types/execution@4.1.0.{execution-id, await-next-extension-error};
 
     fibo-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
 
@@ -190,9 +199,9 @@ package testing:fibo-workflow {
 
 package testing:fibo-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@4.0.0.{execution-id};
-    use obelisk:types/join-set@4.0.0.{join-set};
-    use obelisk:types/execution@4.0.0.{await-next-extension-error, get-extension-error};
+    use obelisk:types/execution@4.1.0.{execution-id};
+    use obelisk:types/join-set@4.1.0.{join-set};
+    use obelisk:types/execution@4.1.0.{await-next-extension-error, get-extension-error};
 
     fibow-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
@@ -217,8 +226,8 @@ package testing:fibo-workflow-obelisk-ext {
 
 package testing:fibo-workflow-obelisk-schedule {
   interface workflow {
-    use obelisk:types/execution@4.0.0.{execution-id};
-    use obelisk:types/time@4.0.0.{schedule-at};
+    use obelisk:types/execution@4.1.0.{execution-id};
+    use obelisk:types/time@4.1.0.{schedule-at};
 
     fibow-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
 

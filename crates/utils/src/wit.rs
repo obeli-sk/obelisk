@@ -13,7 +13,7 @@ use wit_parser::{
 };
 
 const OBELISK_TYPES_VERSION_MAJOR: u64 = 4;
-const OBELISK_TYPES_VERSION_MINOR: u64 = 0;
+const OBELISK_TYPES_VERSION_MINOR: u64 = 1;
 const OBELISK_TYPES_VERSION_PATCH: u64 = 0;
 const OBELISK_TYPES_VERSION: &str = formatcp!(
     "{OBELISK_TYPES_VERSION_MAJOR}.{OBELISK_TYPES_VERSION_MINOR}.{OBELISK_TYPES_VERSION_PATCH}"
@@ -38,19 +38,19 @@ pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
 ];
 const WIT_OBELISK_TYPES_PACKAGE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@4.0.0/types.wit"
+    "/wit/obelisk_types@latest/types.wit"
 ));
 pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
-    "obelisk_types@4.0.0",
+    "obelisk_types@latest",
     "types.wit",
     WIT_OBELISK_TYPES_PACKAGE_CONTENT,
 ];
 pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
-    "obelisk_workflow@4.0.0",
+    "obelisk_workflow@latest",
     "workflow-support.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_workflow@4.0.0/workflow-support.wit"
+        "/wit/obelisk_workflow@latest/workflow-support.wit"
     )),
 ];
 

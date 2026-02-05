@@ -15,7 +15,7 @@ world root {
   export testing:stub-activity-obelisk-ext/activity;
   export testing:stub-activity-obelisk-stub/activity;
 }
-package obelisk:types@4.0.0 {
+package obelisk:types@4.1.0 {
   @since(version = 3.0.0)
   interface time {
     @since(version = 3.0.0)
@@ -44,6 +44,8 @@ package obelisk:types@4.0.0 {
   }
   @since(version = 4.0.0)
   interface execution {
+    use time.{duration};
+
     @since(version = 3.0.0)
     record execution-id {
       id: string,
@@ -58,6 +60,7 @@ package obelisk:types@4.0.0 {
     record function {
       /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
       interface-name: string,
+      /// must not contain dot (`.`)
       function-name: string,
     }
 
@@ -93,8 +96,7 @@ package obelisk:types@4.0.0 {
       /// This can happen when join set contains responses of multiple functions.
       function-mismatch(function-mismatch),
       /// Processed responses do not contain the specified execution ID.
-      /// This can happen if the execution was not marked as processed (awaited), or
-      /// the execution ID does not belong to the specified join set.
+      /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
       not-found-in-processed-responses,
     }
 
@@ -110,6 +112,13 @@ package obelisk:types@4.0.0 {
       /// Conflict can happen when a second writer attempts to stub a value, while the
       /// value is not equal to the already stubbed value.
       conflict,
+    }
+
+    @since(version = 4.1.0)
+    record submit-config {
+      /// Override max duration of a execution run (single attempt).
+      /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
+      timeout: option<duration>,
     }
   }
   @since(version = 4.0.0)
@@ -195,9 +204,9 @@ package testing:stub-activity {
 
 package testing:stub-activity-obelisk-ext {
   interface activity {
-    use obelisk:types/execution@4.0.0.{execution-id};
-    use obelisk:types/join-set@4.0.0.{join-set};
-    use obelisk:types/execution@4.0.0.{await-next-extension-error, get-extension-error};
+    use obelisk:types/execution@4.1.0.{execution-id};
+    use obelisk:types/join-set@4.1.0.{join-set};
+    use obelisk:types/execution@4.1.0.{await-next-extension-error, get-extension-error};
 
     foo-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
@@ -216,7 +225,7 @@ package testing:stub-activity-obelisk-ext {
 
 package testing:stub-activity-obelisk-stub {
   interface activity {
-    use obelisk:types/execution@4.0.0.{execution-id, stub-error};
+    use obelisk:types/execution@4.1.0.{execution-id, stub-error};
 
     foo-stub: func(execution-id: execution-id, execution-result: result<string>) -> result<_, stub-error>;
 

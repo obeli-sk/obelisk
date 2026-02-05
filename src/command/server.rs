@@ -280,31 +280,25 @@ pub(crate) async fn submit(
             schedule_at.as_date_time(created_at).map_err(|err| {
                 SubmitError::ParamsInvalid(format!("schedule-at conversion error - {err}"))
             })?,
-            Params::from_json_values(Arc::from(params)),
+            params,
             fn_metadata,
         )
     } else {
         assert!(fn_metadata.extension.is_none());
-        (
-            created_at,
-            Params::from_json_values(Arc::from(params)),
-            fn_metadata,
-        )
+        (created_at, params, fn_metadata)
     };
 
     let ffqn = &fn_metadata.ffqn;
     span.record("ffqn", tracing::field::display(ffqn));
-    // Type check `params`
-    if let Err(err) = params.typecheck(
+
+    let params = Params::from_json_values(
+        Arc::from(params),
         fn_metadata
             .parameter_types
             .iter()
             .map(|ParameterType { type_wrapper, .. }| type_wrapper),
-    ) {
-        return Err(SubmitError::ParamsInvalid(format!(
-            "argument `params` invalid - {err}"
-        )));
-    }
+    )
+    .map_err(|err| SubmitError::ParamsInvalid(format!("argument `params` invalid - {err}")))?;
 
     // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
     let metadata = concepts::ExecutionMetadata::from_parent_span(&span);

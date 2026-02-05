@@ -5,15 +5,16 @@ use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
 use super::host_exports::execution_id_derived_into_wast_val;
 use super::host_exports::execution_id_into_wast_val;
-use super::host_exports::v4_0_0::obelisk::types::execution::GetExtensionError;
+use super::host_exports::v4_1_0::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::workflow::event_history::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
 use crate::workflow::event_history::response_id::ResponseId;
 use crate::workflow::host_exports::ffqn_into_wast_val;
-use crate::workflow::host_exports::v4_0_0::obelisk::types::execution as types_execution;
-use crate::workflow::host_exports::v4_0_0::obelisk::types::join_set as types_join_set;
+use crate::workflow::host_exports::v4_1_0;
+use crate::workflow::host_exports::v4_1_0::obelisk::types::execution as types_execution;
+use crate::workflow::host_exports::v4_1_0::obelisk::types::join_set as types_join_set;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ComponentId;
@@ -110,7 +111,7 @@ pub(crate) struct EventHistory {
     deadline_tracker: Box<dyn DeadlineTracker>,
     lock_extension: Duration,
     locked_event: Locked,
-    fn_registry: Arc<dyn FunctionRegistry>,
+    pub(crate) fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
 
     subscription_interruption: Option<Duration>,
@@ -1624,6 +1625,72 @@ impl EventHistory {
         }
     }
 
+    /// Get processed response as JSON result without function type checking.
+    /// Returns `Ok(Some(json))` for Ok values, `Err(Some(json))` for Err values,
+    /// or `Ok(None)`/`Err(None)` for unit types.
+    pub(crate) fn get_processed_response_json(
+        &self,
+        child_execution_id: &ExecutionIdDerived,
+    ) -> Result<
+        Result<Option<String>, Option<String>>,
+        v4_1_0::obelisk::workflow::workflow_support::GetResultJsonError,
+    > {
+        use v4_1_0::obelisk::workflow::workflow_support::GetResultJsonError;
+
+        // Check if it was awaited (exists in processed responses index)
+        let response_idx = self
+            .index_child_exe_to_processed_response_idx
+            .get(child_execution_id)
+            .ok_or(GetResultJsonError::NotFoundInProcessedResponses)?;
+
+        match &self
+            .responses
+            .get(*response_idx)
+            .as_ref()
+            .expect("`index_child_exe_to_processed_response_idx` must point to a response")
+            .0
+            .event
+            .event
+            .event
+        {
+            JoinSetResponse::ChildExecutionFinished {
+                result,
+                child_execution_id,
+                finished_version: _,
+            } => {
+                let response_ffqn = self
+                    .index_child_exe_to_ffqn
+                    .get(child_execution_id)
+                    .expect("got response so the request must have been processed");
+                let ret_type = self.fn_registry.get_ret_type(response_ffqn)
+                    .expect("response_ffqn can only be exported and no-ext, thus must be returned by get_ret_type");
+
+                // Convert the result to WastVal and then serialize to JSON
+                let wast_val = result.clone().into_wast_val(|| ret_type);
+                match wast_val {
+                    val_json::wast_val::WastVal::Result(Ok(inner)) => {
+                        let json = inner.map(|v| {
+                            serde_json::to_string(&*v).expect("WastVal must be JSON serializable")
+                        });
+                        Ok(Ok(json))
+                    }
+                    val_json::wast_val::WastVal::Result(Err(inner)) => {
+                        let json = inner.map(|v| {
+                            serde_json::to_string(&*v).expect("WastVal must be JSON serializable")
+                        });
+                        Ok(Err(json))
+                    }
+                    _ => unreachable!(
+                        "SupportedFunctionReturnValue always produces a Result WastVal"
+                    ),
+                }
+            }
+            JoinSetResponse::DelayFinished { .. } => unreachable!(
+                "`index_child_exe_to_processed_response_idx` must point to a ChildExecutionFinished"
+            ),
+        }
+    }
+
     pub(crate) fn next_join_set_name_generated(&self) -> String {
         self.next_join_set_name_index(JoinSetKind::Generated)
     }
@@ -2585,8 +2652,8 @@ mod response_id {
     };
     use std::hash::Hash;
 
-    use crate::workflow::host_exports::v4_0_0::{
-        DelayId_4_0_0, ExecutionId_4_0_0, ResponseId_4_0_0,
+    use crate::workflow::host_exports::v4_1_0::{
+        DelayId_4_1_0, ExecutionId_4_1_0, ResponseId_4_1_0,
     };
 
     pub(crate) const INVALID_CHILD_TYPE_FOR_DELAYS: ComponentType = ComponentType::WebhookEndpoint;
@@ -2597,15 +2664,15 @@ mod response_id {
         DelayId(DelayId),
     }
 
-    impl From<ResponseId> for ResponseId_4_0_0 {
+    impl From<ResponseId> for ResponseId_4_1_0 {
         fn from(value: crate::workflow::event_history::ResponseId) -> Self {
             use crate::workflow::event_history::ResponseId;
             match value {
                 ResponseId::ChildExecutionId(child_execution_id) => {
-                    ResponseId_4_0_0::ExecutionId(ExecutionId_4_0_0::from(&child_execution_id))
+                    ResponseId_4_1_0::ExecutionId(ExecutionId_4_1_0::from(&child_execution_id))
                 }
                 ResponseId::DelayId(delay_id) => {
-                    ResponseId_4_0_0::DelayId(DelayId_4_0_0::from(&delay_id))
+                    ResponseId_4_1_0::DelayId(DelayId_4_1_0::from(&delay_id))
                 }
             }
         }

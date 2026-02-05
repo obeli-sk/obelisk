@@ -1,10 +1,10 @@
-package obelisk:workflow@4.0.0;
+package obelisk:workflow@4.1.0;
 
 @since(version = 4.0.0)
 interface workflow-support {
-    use obelisk:types/time@4.0.0.{schedule-at, datetime};
-    use obelisk:types/execution@4.0.0.{delay-id, execution-id, response-id};
-    use obelisk:types/join-set@4.0.0.{join-set};
+    use obelisk:types/time@4.1.0.{schedule-at, datetime};
+    use obelisk:types/execution@4.1.0.{delay-id, execution-id, response-id, function, submit-config};
+    use obelisk:types/join-set@4.1.0.{join-set};
 
     /// Error variants that may occur on named join set creation.
     /// The name may only contain alphanumeric characters and the following extra characters:
@@ -14,6 +14,22 @@ interface workflow-support {
     variant join-set-create-error {
         conflict,
         invalid-name(string),
+    }
+
+    @since(version = 4.1.0)
+    variant get-result-json-error {
+        execution-id-parsing-error(string),
+        /// Processed responses do not contain the specified execution ID.
+        /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
+        not-found-in-processed-responses,
+    }
+
+    @since(version = 4.1.0)
+    variant submit-json-error {
+        /// See `Function` definition
+        ffqn-parsing-error(string),
+        function-not-found,
+        params-parsing-error(string),
     }
 
     /// Returns a random u64 in the range [min, max).
@@ -50,4 +66,12 @@ interface workflow-support {
     /// Extension function `-get` can be later used to lookup the execution result.
     @since(version = 4.0.0)
     join-set-close: func(self: join-set);
+
+    /// Submit a child execution request with its parameters serialized as JSON array to a join set.
+    @since(version = 4.1.0)
+    submit-json: func(join-set: borrow<join-set>, function: function, params: string, config: option<submit-config>) -> result<execution-id, submit-json-error>;
+
+    /// Obtain child execution result after it has been awaited using `-await-next` extension or `join-set.join-next`.
+    @since(version = 4.1.0)
+    get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
 }

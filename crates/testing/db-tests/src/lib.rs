@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tracing::debug;
 
-pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Database {

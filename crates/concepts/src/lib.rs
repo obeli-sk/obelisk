@@ -439,6 +439,60 @@ impl IfcFqnName {
         self.namespace() == NAMESPACE_WASI
     }
 }
+impl FromStr for IfcFqnName {
+    type Err = IfcFqnParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let input = s.to_string();
+
+        let (namespace, rest) = s
+            .split_once(':')
+            .ok_or_else(|| IfcFqnParseError::MissingNamespace(input.clone()))?;
+        if namespace.is_empty() {
+            return Err(IfcFqnParseError::EmptyNamespace(input));
+        }
+        let (package_and_ifc, version) = match rest.split_once('@') {
+            Some((left, ver)) => (left, Some(ver)),
+            None => (rest, None),
+        };
+        let (package_name, ifc_name) = package_and_ifc
+            .split_once('/')
+            .ok_or_else(|| IfcFqnParseError::MissingPackageOrIfc(input.clone()))?;
+        if package_name.is_empty() {
+            return Err(IfcFqnParseError::EmptyPackageName(input));
+        }
+        if ifc_name.is_empty() {
+            return Err(IfcFqnParseError::EmptyIfcName(input));
+        }
+        if let Some(v) = version
+            && v.is_empty()
+        {
+            return Err(IfcFqnParseError::EmptyVersion(input));
+        }
+        Ok(Self::new_arc(Arc::from(s)))
+    }
+}
+
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum IfcFqnParseError {
+    #[error("missing namespace separator ':' in `{0}`")]
+    MissingNamespace(String),
+
+    #[error("namespace is empty in `{0}`")]
+    EmptyNamespace(String),
+
+    #[error("missing package/ifc separator '/' in `{0}`")]
+    MissingPackageOrIfc(String),
+
+    #[error("package name is empty in `{0}`")]
+    EmptyPackageName(String),
+
+    #[error("ifc name is empty in `{0}`")]
+    EmptyIfcName(String),
+
+    #[error("version is empty in `{0}`")]
+    EmptyVersion(String),
+}
 
 #[derive(Hash, Clone, PartialEq, Eq)]
 pub struct FnMarker;
@@ -479,8 +533,13 @@ impl FunctionFqn {
         ifc_fqn: &str,
         function_name: &str,
     ) -> Result<Self, FunctionFqnParseError> {
+        // Attept to parse IfcFqn
+        IfcFqnName::from_str(ifc_fqn)?;
+
         if function_name.contains('.') {
-            Err(FunctionFqnParseError::DelimiterFoundInFunctionName)
+            Err(FunctionFqnParseError::DelimiterFoundInFunctionName(
+                function_name.to_string(),
+            ))
         } else {
             Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
         }
@@ -489,20 +548,24 @@ impl FunctionFqn {
 
 #[derive(Debug, thiserror::Error)]
 pub enum FunctionFqnParseError {
-    #[error("delimiter `.` not found")]
-    DelimiterNotFound,
-    #[error("delimiter `.` found in function name")]
-    DelimiterFoundInFunctionName,
+    #[error(transparent)]
+    IfcFqnParseError(#[from] IfcFqnParseError),
+    #[error("delimiter `.` between interface FQN and function name not found in `{0}`")]
+    DelimiterNotFound(String),
+    #[error("delimiter `.` found in function name `{0}`")]
+    DelimiterFoundInFunctionName(String),
 }
 
 impl FromStr for FunctionFqn {
     type Err = FunctionFqnParseError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some((ifc_fqn, function_name)) = s.rsplit_once('.') {
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if let Some((ifc_fqn, function_name)) = value.rsplit_once('.') {
+            // Attept to parse IfcFqn
+            IfcFqnName::from_str(ifc_fqn)?;
             Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
         } else {
-            Err(FunctionFqnParseError::DelimiterNotFound)
+            Err(FunctionFqnParseError::DelimiterNotFound(value.to_string()))
         }
     }
 }
@@ -1003,6 +1066,7 @@ impl Params {
 
     #[cfg(any(test, feature = "test"))]
     #[must_use]
+    // Unsafe, no type check
     pub fn from_json_values_test(vec: Vec<Value>) -> Self {
         if vec.is_empty() {
             Self::empty()
@@ -1011,33 +1075,25 @@ impl Params {
         }
     }
 
-    #[must_use]
-    pub fn from_json_values(values: Arc<[Value]>) -> Self {
-        if values.is_empty() {
-            Self::empty()
-        } else {
-            Self(ParamsInternal::JsonValues(values))
-        }
-    }
-
-    pub fn typecheck<'a>(
-        &self,
+    pub fn from_json_values<'a>(
+        values: Arc<[Value]>,
         param_types: impl ExactSizeIterator<Item = &'a TypeWrapper>,
-    ) -> Result<(), ParamsParsingError> {
-        if param_types.len() != self.len() {
+    ) -> Result<Self, ParamsParsingError> {
+        if param_types.len() != values.len() {
             return Err(ParamsParsingError::ParameterCardinalityMismatch {
                 expected: param_types.len(),
-                specified: self.len(),
+                specified: values.len(),
             });
         }
-        match &self.0 {
-            ParamsInternal::Vals { .. } /* already typechecked */ | ParamsInternal::Empty => {}
-            ParamsInternal::JsonValues(params) => {
-                params::deserialize_values(params, param_types)
+        if values.is_empty() {
+            Ok(Self::empty())
+        } else {
+            // Type check
+            params::deserialize_values(&values, param_types)
                 .map_err(ParamsParsingError::ParamsDeserializationError)?;
-            }
+
+            Ok(Self(ParamsInternal::JsonValues(values)))
         }
-        Ok(())
     }
 
     pub fn as_vals<'a>(
@@ -2113,8 +2169,8 @@ impl ComponentRetryConfig {
     };
 }
 
-/// Implementation must not return `-obelisk-*` extended function, nor functions from `obelisk` namespace.
 pub trait FunctionRegistry: Send + Sync {
+    /// Implementation must *not* return extended functions, nor functions from `obelisk` namespace.
     fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
@@ -2423,6 +2479,62 @@ mod tests {
             let ser = serde_json::to_string(&join_set_id).unwrap();
             let deser = serde_json::from_str(&ser).unwrap();
             assert_eq!(join_set_id, deser);
+        }
+    }
+
+    mod ifc_fqn {
+        use crate::{IfcFqnName, IfcFqnParseError};
+        use std::str::FromStr;
+
+        #[test]
+        fn parses_valid_without_version() {
+            let fqn = IfcFqnName::from_str("ns:pkg/ifc").unwrap();
+            assert_eq!(fqn.namespace(), "ns");
+            assert_eq!(fqn.package_name(), "pkg");
+            assert_eq!(fqn.ifc_name(), "ifc");
+            assert_eq!(fqn.version(), None);
+        }
+
+        #[test]
+        fn parses_valid_with_version() {
+            let fqn = IfcFqnName::from_str("ns:pkg/ifc@1.2.3").unwrap();
+            assert_eq!(fqn.version(), Some("1.2.3"));
+        }
+
+        #[test]
+        fn fails_missing_colon() {
+            let err = IfcFqnName::from_str("pkg/ifc").unwrap_err();
+            assert!(matches!(err, IfcFqnParseError::MissingNamespace(_)));
+        }
+
+        #[test]
+        fn fails_empty_namespace() {
+            let err = IfcFqnName::from_str(":pkg/ifc").unwrap_err();
+            assert!(matches!(err, IfcFqnParseError::EmptyNamespace(_)));
+        }
+
+        #[test]
+        fn fails_missing_slash() {
+            let err = IfcFqnName::from_str("ns:pkgifc").unwrap_err();
+            assert!(matches!(err, IfcFqnParseError::MissingPackageOrIfc(_)));
+        }
+
+        #[test]
+        fn fails_empty_package() {
+            let err = IfcFqnName::from_str("ns:/ifc").unwrap_err();
+            assert!(matches!(err, IfcFqnParseError::EmptyPackageName(_)));
+        }
+
+        #[test]
+        fn fails_empty_ifc() {
+            let err = IfcFqnName::from_str("ns:pkg/").unwrap_err();
+            assert!(matches!(err, IfcFqnParseError::EmptyIfcName(_)));
+        }
+
+        #[test]
+        fn fails_empty_version() {
+            let err = IfcFqnName::from_str("ns:pkg/ifc@").unwrap_err();
+            assert!(matches!(err, IfcFqnParseError::EmptyVersion(_)));
         }
     }
 }
