@@ -1957,10 +1957,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case("obelisk-testing-sqlite-local.toml")]
-    #[case("obelisk-testing-sqlite-oci.toml")]
     #[tokio::test(flavor = "multi_thread")] // for more performant WASM component compilation
-    async fn server_verify(#[case] obelisk_toml: &'static str) -> Result<(), anyhow::Error> {
+    async fn server_verify(
+        #[values(
+            "obelisk-testing-sqlite-local.toml",
+            "obelisk-testing-sqlite-oci.toml",
+            "obelisk-testing-sqlite-oci-compat-4.0.0.toml"
+        )]
+        obelisk_toml: &'static str,
+    ) -> Result<(), anyhow::Error> {
         let obelisk_toml = get_workspace_dir().join(obelisk_toml);
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();

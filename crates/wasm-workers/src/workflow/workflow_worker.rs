@@ -1242,9 +1242,9 @@ pub(crate) mod tests {
         assert_eq!(FIBO_10_OUTPUT, fibo);
     }
 
-    /// Test for submit_json and get_result_json workflow functions.
-    /// The workflow uses submit_json to call the fibo activity with JSON params,
-    /// then retrieves the result using get_result_json.
+    /// Test for `submit_json` and `get_result_json` workflow functions.
+    /// The workflow uses `submit_json` to call the fibo activity with JSON params,
+    /// then retrieves the result using `get_result_json`.
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]

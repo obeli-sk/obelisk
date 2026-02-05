@@ -1,0 +1,49 @@
+api.listening_addr = "127.0.0.1:5005"
+webui.listening_addr = "127.0.0.1:8080"
+
+[log.file]
+enabled = true
+target = true
+directory = "."
+prefix = "obelisk.log"
+
+[[http_server]]
+name = "external_webhook"
+listening_addr = "127.0.0.1:9090"
+
+[[activity_wasm]]
+name = "test_programs_fibo_activity"
+location = "oci://docker.io/getobelisk/test_programs_fibo_activity:2026-01-29@sha256:94218ea6036de67e47261eb3f95e9c984bc44f304354ffb7299f61315265507d"
+max_retries = 0
+
+[[workflow]]
+name = "test_programs_fibo_workflow"
+location = "oci://docker.io/getobelisk/test_programs_fibo_workflow:2026-01-29@sha256:58f824875d855876bcf9f43c41428240064647b9e91df5b7dbe907e420e68fac"
+exec.lock_expiry.seconds = 2
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
+
+[[webhook_endpoint]]
+name = "test_programs_fibo_webhook"
+location = "oci://docker.io/getobelisk/test_programs_fibo_webhook:2026-01-29@sha256:8c073880ee38d1aeb47fb1b9377a51f85bd19a40f940638e2557f59810186f21"
+http_server = "external_webhook"
+routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
+
+[[activity_wasm]]
+name = "test_programs_http_get_activity"
+location = "oci://docker.io/getobelisk/test_programs_http_get_activity:2026-01-29@sha256:672ee91159a8820fb9d957b8c77ac2ef9e2e38448863aba973a7f778629273ea"
+
+[[workflow]]
+name = "test_programs_http_get_workflow"
+location = "oci://docker.io/getobelisk/test_programs_http_get_workflow:2026-01-29@sha256:ba65d5feadbc9c7e8bcc10b1cad10bac2b68b9a0ade95b15580e484fd3481884"
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
+
+[[activity_wasm]]
+name = "test_programs_sleep_activity"
+location = "oci://docker.io/getobelisk/test_programs_sleep_activity:2026-01-29@sha256:0d1f058679e586d7e8293c65e1167146afda51ede7305dedfa6e383bdfa1b111"
+exec.lock_expiry.seconds = 10
+
+[[workflow]]
+name = "test_programs_sleep_workflow"
+location = "oci://docker.io/getobelisk/test_programs_sleep_workflow:2026-01-29@sha256:84335a18e7b041180a0af2a0f9caa1508077e35ca58dd32eb80407fb27abd891"
+backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }

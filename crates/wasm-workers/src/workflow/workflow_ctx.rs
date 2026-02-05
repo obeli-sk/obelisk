@@ -782,7 +782,7 @@ impl WasiView for WorkflowCtx {
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT_4: &str = "obelisk:workflow/workflow-support@4.0.0";
+const IFC_FQN_WORKFLOW_SUPPORT_4_1: &str = "obelisk:workflow/workflow-support@4.1.0";
 
 impl WorkflowCtx {
     #[expect(clippy::too_many_arguments)]
@@ -856,7 +856,7 @@ impl WorkflowCtx {
             .as_date_time(self.clock_fn.now())
             .map_err(|err| {
                 const FFQN: FunctionFqn =
-                    FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4, "sleep");
+                    FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4_1, "sleep");
                 WorkflowFunctionError::ImportedFunctionCallError {
                     ffqn: FFQN,
                     reason: "schedule-at conversion error".into(),
@@ -931,7 +931,7 @@ impl WorkflowCtx {
         (host, backtrace)
     }
 
-    // Adding host functions using `func_wrap_async` so that we can capture the backtrace.
+    // Adding host functions using `func_wrap*` so that we can capture the backtrace.
     pub(crate) fn add_to_linker(
         linker: &mut Linker<Self>,
         stub_wasi: bool,
@@ -941,16 +941,18 @@ impl WorkflowCtx {
             |state: &mut Self| state,
         )
         .map_err(|err| WasmFileError::linking_error("cannot link obelisk::log", err))?;
-        // link obelisk:types/execution
-        types_4_1_0::execution::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| {
-            state
-        })
-        .map_err(|err| WasmFileError::linking_error("cannot link obelisk:types/execution", err))?;
+        // link obelisk:types/execution@4.1.0 (has no host functions, just type definitions)
+        types_4_1_0::execution::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| state)
+            .map_err(|err| {
+            WasmFileError::linking_error("cannot link obelisk:types/execution@4.1.0", err)
+        })?;
 
         // link obelisk:workflow/workflow-support interface
-        Self::add_to_linker_workflow_support(linker)?;
+        Self::add_to_linker_workflow_support(linker, IFC_FQN_WORKFLOW_SUPPORT_4_1)?;
+
         // link obelisk:types/join-set interface
         Self::add_to_linker_join_set(linker)?;
+
         if stub_wasi {
             super::wasi::add_to_linker_async(linker)?;
         }
@@ -1042,10 +1044,14 @@ impl WorkflowCtx {
         Ok(())
     }
 
-    fn add_to_linker_workflow_support(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
+    /// Register workflow-support functions for 4.1.0
+    fn add_to_linker_workflow_support(
+        linker: &mut Linker<Self>,
+        ifc_fqn: &'static str,
+    ) -> Result<(), WasmFileError> {
         let mut inst_workflow_support = linker
-            .instance(IFC_FQN_WORKFLOW_SUPPORT_4)
-            .map_err(|err| WasmFileError::linking_error("cannot link workflow support", err))?;
+            .instance(ifc_fqn)
+            .map_err(|err| WasmFileError::linking_error(ifc_fqn, err))?;
 
         inst_workflow_support
             .func_wrap_async(
@@ -1294,7 +1300,7 @@ pub(crate) mod workflow_support {
     use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v4_1_0::obelisk::types::join_set::JoinNextError;
     use crate::workflow::host_exports::{self, v4_1_0};
-    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4, JoinSetCreateError};
+    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4_1, JoinSetCreateError};
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind, Params};
@@ -1426,7 +1432,7 @@ pub(crate) mod workflow_support {
                     .as_date_time(self.clock_fn.now())
                     .map_err(|err| {
                         const FFQN: FunctionFqn =
-                            FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4, "submit-delay");
+                            FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4_1, "submit-delay");
 
                         WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: FFQN,
