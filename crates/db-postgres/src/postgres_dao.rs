@@ -3064,77 +3064,6 @@ async fn get_max_response_cursor(
 async fn list_execution_events(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    version_min: VersionType,
-    version_max_excluding: VersionType,
-    include_backtrace_id: bool,
-) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
-    let sql = if include_backtrace_id {
-        "SELECT
-                log.created_at,
-                log.json_value,
-                log.version,
-                bt.version_min_including AS backtrace_id
-            FROM
-                t_execution_log AS log
-            LEFT OUTER JOIN
-                t_execution_backtrace AS bt ON log.execution_id = bt.execution_id
-                                AND log.version >= bt.version_min_including
-                                AND log.version < bt.version_max_excluding
-            WHERE
-                log.execution_id = $1
-                AND log.version >= $2
-                AND log.version < $3
-            ORDER BY
-                log.version"
-    } else {
-        "SELECT
-                created_at, json_value, NULL::BIGINT as backtrace_id, version
-            FROM t_execution_log WHERE
-                execution_id = $1 AND version >= $2 AND version < $3
-            ORDER BY version"
-    };
-
-    let rows = tx
-        .query(
-            sql,
-            &[
-                &execution_id.to_string(),
-                &i64::from(version_min),
-                &i64::from(version_max_excluding),
-            ],
-        )
-        .await
-        .map_err(DbErrorRead::from)?;
-
-    let mut events = Vec::with_capacity(rows.len());
-    for row in rows {
-        let created_at: DateTime<Utc> = get(&row, "created_at")?;
-        let backtrace_id = get::<Option<i64>, _>(&row, "backtrace_id")?
-            .map(Version::try_from)
-            .transpose()
-            .map_err(|_| consistency_db_err("version must be non-negative"))?;
-
-        let version = get::<i64, _>(&row, "version")?;
-        let version = Version::new(
-            VersionType::try_from(version)
-                .map_err(|_| consistency_db_err("version must be non-negative"))?,
-        );
-        let event_req: Json<ExecutionRequest> = get(&row, "json_value")?;
-        let event_req = event_req.0;
-
-        events.push(ExecutionEvent {
-            created_at,
-            event: event_req,
-            backtrace_id,
-            version,
-        });
-    }
-    Ok(events)
-}
-
-async fn list_execution_events_paginated(
-    tx: &Transaction<'_>,
-    execution_id: &ExecutionId,
     pagination: Pagination<VersionType>,
     include_backtrace_id: bool,
 ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
@@ -4577,8 +4506,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
 
         let events =
-            list_execution_events_paginated(&tx, execution_id, pagination, include_backtrace_id)
-                .await?;
+            list_execution_events(&tx, execution_id, pagination, include_backtrace_id).await?;
         let max_version = get_max_version(&tx, execution_id).await?;
 
         tx.commit().await?;
@@ -4624,8 +4552,13 @@ impl DbExternalApi for PostgresConnection {
         let events = list_execution_events(
             &tx,
             execution_id,
-            req_since.0,
-            req_since.0 + req_max_length,
+            Pagination::NewerThan {
+                length: req_max_length
+                    .try_into()
+                    .expect("req_max_length fits in u16"),
+                cursor: req_since.0,
+                including_cursor: true,
+            },
             req_include_backtrace_id,
         )
         .await?;

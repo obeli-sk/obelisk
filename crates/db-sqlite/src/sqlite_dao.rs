@@ -3146,73 +3146,6 @@ impl SqlitePool {
     fn list_execution_events(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        version_min: VersionType,
-        version_max_excluding: VersionType,
-        include_backtrace_id: bool,
-    ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
-        let select = if include_backtrace_id {
-            "SELECT
-                log.created_at,
-                log.json_value,
-                log.version as version,
-                -- Select version_min_including from backtrace if a match is found, otherwise NULL
-                bt.version_min_including AS backtrace_id
-            FROM
-                t_execution_log AS log
-            LEFT OUTER JOIN -- Use LEFT JOIN to keep all logs even if no backtrace matches
-                t_execution_backtrace AS bt ON log.execution_id = bt.execution_id
-                                -- Check if the log's version falls within the backtrace's range
-                                AND log.version >= bt.version_min_including
-                                AND log.version < bt.version_max_excluding
-            WHERE
-                log.execution_id = :execution_id
-                AND log.version >= :version_min
-                AND log.version < :version_max_excluding
-            ORDER BY
-                log.version;"
-        } else {
-            "SELECT
-                created_at, json_value, NULL as backtrace_id, version
-            FROM t_execution_log WHERE
-                execution_id = :execution_id AND version >= :version_min AND version < :version_max_excluding
-            ORDER BY version"
-        };
-        tx.prepare(select)?
-            .query_map(
-                named_params! {
-                    ":execution_id": execution_id.to_string(),
-                    ":version_min": version_min,
-                    ":version_max_excluding": version_max_excluding
-                },
-                |row| {
-                    let created_at = row.get("created_at")?;
-                    let backtrace_id = row
-                        .get::<_, Option<VersionType>>("backtrace_id")?
-                        .map(Version::new);
-                    let version = Version(row.get("version")?);
-
-                    let event = row
-                        .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
-                        .map(|event| ExecutionEvent {
-                            created_at,
-                            event: event.0,
-                            backtrace_id,
-                            version,
-                        })
-                        .map_err(|serde| {
-                            error!("Cannot deserialize {row:?} - {serde:?}");
-                            consistency_rusqlite("cannot deserialize")
-                        })?;
-                    Ok(event)
-                },
-            )?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(DbErrorRead::from)
-    }
-
-    fn list_execution_events_paginated(
-        tx: &Transaction,
-        execution_id: &ExecutionId,
         pagination: Pagination<VersionType>,
         include_backtrace_id: bool,
     ) -> Result<Vec<ExecutionEvent>, DbErrorRead> {
@@ -4358,7 +4291,7 @@ impl DbExternalApi for SqlitePool {
         let execution_id = execution_id.clone();
         self.transaction(
             move |tx| {
-                let events = Self::list_execution_events_paginated(
+                let events = Self::list_execution_events(
                     tx,
                     &execution_id,
                     pagination,
@@ -4416,8 +4349,13 @@ impl DbExternalApi for SqlitePool {
                 let events = Self::list_execution_events(
                     tx,
                     &execution_id,
-                    req_since,
-                    req_since + req_max_length,
+                    Pagination::NewerThan {
+                        length: req_max_length
+                            .try_into()
+                            .expect("req_max_length fits in u16"),
+                        cursor: req_since,
+                        including_cursor: true,
+                    },
                     req_include_backtrace_id,
                 )?;
                 let responses = Self::list_responses(tx, &execution_id, Some(resp_pagination))?;
