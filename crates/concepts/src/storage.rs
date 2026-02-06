@@ -1232,6 +1232,19 @@ pub trait DbConnection: DbExecutor {
     async fn append_log(&self, row: LogInfoAppendRow) -> Result<(), DbErrorWrite>;
 
     async fn append_log_batch(&self, batch: &[LogInfoAppendRow]) -> Result<(), DbErrorWrite>;
+
+    /// Returns `TimeoutOutcome::Timeout` if not in Finished state.
+    #[cfg(feature = "test")]
+    async fn get_finished_result(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
+        self.wait_for_finished_result(
+            execution_id,
+            Some(Box::pin(std::future::ready(TimeoutOutcome::Timeout))),
+        )
+        .await
+    }
 }
 
 #[derive(Clone, Debug)]
