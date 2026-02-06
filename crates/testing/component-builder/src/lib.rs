@@ -276,9 +276,8 @@ fn run_cargo_build(dst_target_dir: &Path, name: &str, tripple: &str, profile: &s
             target_transformed.exists(),
             "Transformed target path must exist: {target_transformed:?}"
         );
-        // mv target_transformed -> target
-        std::fs::remove_file(&target).expect("deletion must succeed");
-        std::fs::rename(target_transformed, &target).expect("rename must succeed");
+        target_transformed
+    } else {
+        target
     }
-    target
 }

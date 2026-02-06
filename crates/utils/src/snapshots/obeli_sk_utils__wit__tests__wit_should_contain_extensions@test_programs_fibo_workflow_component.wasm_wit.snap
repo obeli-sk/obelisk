@@ -176,8 +176,6 @@ package obelisk:workflow@4.1.0 {
 
     join-set-create: func() -> join-set;
 
-    join-set-close: func(self: join-set);
-
     submit-json: func(join-set: borrow<join-set>, function: function, params: string, config: option<submit-config>) -> result<execution-id, submit-json-error>;
 
     get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
