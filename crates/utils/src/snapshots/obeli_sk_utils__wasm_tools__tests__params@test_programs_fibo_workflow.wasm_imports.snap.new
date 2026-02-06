@@ -1,0 +1,300 @@
+---
+source: crates/utils/src/wasm_tools.rs
+assertion_line: 1048
+expression: imports
+---
+{
+  "obelisk:types/join-set@4.1.0.[method]join-set.join-next": {
+    "ffqn": "obelisk:types/join-set@4.1.0.[method]join-set.join-next",
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "self",
+        "wit_type": "borrow<join-set>"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "variant": {
+                    "delay-id": {
+                      "record": {
+                        "id": "string"
+                      }
+                    },
+                    "execution-id": {
+                      "record": {
+                        "id": "string"
+                      }
+                    }
+                  }
+                },
+                {
+                  "result": {
+                    "ok": null,
+                    "err": null
+                  }
+                }
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null
+              }
+            }
+          }
+        },
+        "wit_type": "result<tuple<response-id, result>, join-next-error>"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
+  "obelisk:workflow/workflow-support@4.1.0.get-result-json": {
+    "ffqn": "obelisk:workflow/workflow-support@4.1.0.get-result-json",
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "result": {
+                "ok": {
+                  "option": "string"
+                },
+                "err": {
+                  "option": "string"
+                }
+              }
+            },
+            "err": {
+              "variant": {
+                "execution-id-parsing-error": "string",
+                "not-found-in-processed-responses": null
+              }
+            }
+          }
+        },
+        "wit_type": "result<result<option<string>, option<string>>, get-result-json-error>"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
+  "obelisk:workflow/workflow-support@4.1.0.join-set-create": {
+    "ffqn": "obelisk:workflow/workflow-support@4.1.0.join-set-create",
+    "parameter_types": [],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "own",
+        "wit_type": "join-set"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
+  "obelisk:workflow/workflow-support@4.1.0.submit-json": {
+    "ffqn": "obelisk:workflow/workflow-support@4.1.0.submit-json",
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
+      },
+      {
+        "type_wrapper": {
+          "record": {
+            "function-name": "string",
+            "interface-name": "string"
+          }
+        },
+        "name": "function",
+        "wit_type": "function"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "params",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": {
+          "option": {
+            "record": {
+              "timeout": {
+                "option": {
+                  "variant": {
+                    "days": "u32",
+                    "hours": "u32",
+                    "milliseconds": "u64",
+                    "minutes": "u32",
+                    "seconds": "u64"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "name": "config",
+        "wit_type": "option<submit-config>"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "record": {
+                "id": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "ffqn-parsing-error": "string",
+                "function-not-found": null,
+                "params-parsing-error": "string"
+              }
+            }
+          }
+        },
+        "wit_type": "result<execution-id, submit-json-error>"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
+  "testing:fibo-obelisk-ext/fibo.fibo-await-next": {
+    "ffqn": "testing:fibo-obelisk-ext/fibo.fibo-await-next",
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "tuple": [
+                {
+                  "record": {
+                    "id": "string"
+                  }
+                },
+                {
+                  "result": {
+                    "ok": "u64",
+                    "err": null
+                  }
+                }
+              ]
+            },
+            "err": {
+              "variant": {
+                "all-processed": null,
+                "function-mismatch": {
+                  "record": {
+                    "actual-function": {
+                      "option": {
+                        "record": {
+                          "function-name": "string",
+                          "interface-name": "string"
+                        }
+                      }
+                    },
+                    "actual-id": {
+                      "variant": {
+                        "delay-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        },
+                        "execution-id": {
+                          "record": {
+                            "id": "string"
+                          }
+                        }
+                      }
+                    },
+                    "specified-function": {
+                      "record": {
+                        "function-name": "string",
+                        "interface-name": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+      }
+    },
+    "extension": "await_next",
+    "submittable": false
+  },
+  "testing:fibo-obelisk-ext/fibo.fibo-submit": {
+    "ffqn": "testing:fibo-obelisk-ext/fibo.fibo-submit",
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "join-set",
+        "wit_type": "borrow<join-set>"
+      },
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
+    },
+    "extension": "submit",
+    "submittable": false
+  },
+  "testing:fibo/fibo.fibo": {
+    "ffqn": "testing:fibo/fibo.fibo",
+    "parameter_types": [
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    "return_type": {
+      "extendable": {
+        "type_wrapper_tl": {
+          "ok": "u64",
+          "err": null
+        },
+        "wit_type": "result<u64>"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  }
+}

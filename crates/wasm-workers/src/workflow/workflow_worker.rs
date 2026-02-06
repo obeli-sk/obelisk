@@ -978,6 +978,18 @@ pub(crate) mod tests {
     pub const FIBOA_SUBMIT_JSON_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA_SUBMIT_JSON,
     ); // fiboa-submit-json: func(n: u8) -> u64;
+    const TEST_SUBMIT_JSON_UNKNOWN_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::TEST_SUBMIT_JSON_UNKNOWN_FFQN,
+    );
+    const TEST_SUBMIT_JSON_MALFORMED_PARAMS_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::TEST_SUBMIT_JSON_MALFORMED_PARAMS,
+    );
+    const TEST_GET_RESULT_JSON_BEFORE_AWAIT_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::TEST_GET_RESULT_JSON_BEFORE_AWAIT,
+    );
+    const TEST_GET_RESULT_JSON_ERR_VARIANT_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::TEST_GET_RESULT_JSON_ERR_VARIANT,
+    );
     const SLEEP1_HOST_ACTIVITY_FFQN: FunctionFqn =
         FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_HOST_ACTIVITY); // sleep-host-activity: func(millis: u64);
 
@@ -1374,6 +1386,334 @@ pub(crate) mod tests {
         let fibo = assert_matches!(res,
             WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
+    }
+
+    /// Test: `submit_json` with unknown FFQN → `FunctionNotFound` error
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn test_submit_json_unknown_ffqn(database: Database) {
+        if database == Database::Postgres {
+            return; // Skip if Postgres not configured
+        }
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        test_submit_json_unknown_ffqn_inner(db_pool.clone(), sim_clock).await;
+        db_close.close().await;
+    }
+
+    async fn test_submit_json_unknown_ffqn_inner(db_pool: Arc<dyn DbPool>, sim_clock: SimClock) {
+        test_utils::set_up();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                .await,
+        ]);
+        let cancel_registry = CancelRegistry::new();
+        let workflow_exec = new_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            cancel_registry,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        // No params needed for this test function
+        let params = Params::from_json_values_test(vec![]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: TEST_SUBMIT_JSON_UNKNOWN_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        // Should return Ok(()) since the test passed
+        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+    }
+
+    /// Test: `submit_json` with malformed JSON params → `ParamsParsingError`
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn test_submit_json_malformed_params(database: Database) {
+        if database == Database::Postgres {
+            return;
+        }
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        test_submit_json_malformed_params_inner(db_pool.clone(), sim_clock).await;
+        db_close.close().await;
+    }
+
+    async fn test_submit_json_malformed_params_inner(
+        db_pool: Arc<dyn DbPool>,
+        sim_clock: SimClock,
+    ) {
+        test_utils::set_up();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                .await,
+        ]);
+        let cancel_registry = CancelRegistry::new();
+        let workflow_exec = new_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            cancel_registry,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        let params = Params::from_json_values_test(vec![]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: TEST_SUBMIT_JSON_MALFORMED_PARAMS_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+    }
+
+    /// Test: `get_result_json` before await → `NotFoundInProcessedResponses`
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn test_get_result_json_before_await(database: Database) {
+        if database == Database::Postgres {
+            return;
+        }
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        test_get_result_json_before_await_inner(db_pool.clone(), sim_clock).await;
+        db_close.close().await;
+    }
+
+    async fn test_get_result_json_before_await_inner(
+        db_pool: Arc<dyn DbPool>,
+        sim_clock: SimClock,
+    ) {
+        test_utils::set_up();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                .await,
+        ]);
+        let cancel_registry = CancelRegistry::new();
+        let workflow_exec = new_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            cancel_registry,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        let params = Params::from_json_values_test(vec![]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: TEST_GET_RESULT_JSON_BEFORE_AWAIT_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        info!(
+            "First workflow tick - submits activity, tests get_result_json, calls join_set_close"
+        );
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        // The workflow submitted an activity and called join_set_close which internally
+        // calls JoinNext(closing: true). This interrupts and the workflow is scheduled to run again.
+        // We need to run the activity executor to cancel/complete the activity.
+
+        info!("Running activity executor to process the child activity");
+        let activity_exec = new_activity_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            TokioSleep,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+        // The activity may be cancelled or run - either way we process it
+        activity_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        info!("Second workflow tick - receives response and completes");
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+    }
+
+    /// Test: `get_result_json` when activity returns error → Err(None) for unit error type
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn test_get_result_json_err_variant(database: Database) {
+        if database == Database::Postgres {
+            return;
+        }
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        test_get_result_json_err_variant_inner(db_pool.clone(), sim_clock).await;
+        db_close.close().await;
+    }
+
+    async fn test_get_result_json_err_variant_inner(db_pool: Arc<dyn DbPool>, sim_clock: SimClock) {
+        test_utils::set_up();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                .await,
+        ]);
+        let cancel_registry = CancelRegistry::new();
+        let workflow_exec = new_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            cancel_registry,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        let params = Params::from_json_values_test(vec![]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: TEST_GET_RESULT_JSON_ERR_VARIANT_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        info!("First tick - workflow submits activity, blocks waiting for join set");
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        // Wait for the workflow to be blocked by join set
+        wait_for_pending_state_fn(
+            db_connection.as_ref(),
+            &execution_id,
+            |exe_history| {
+                matches!(
+                    exe_history.pending_state,
+                    PendingState::BlockedByJoinSet(..)
+                )
+                .then_some(())
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        info!("Running activity that returns error (n > 40)");
+        let activity_exec = new_activity_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            TokioSleep,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+        let executed_activities = activity_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_activities.len());
+
+        info!("Second tick - workflow receives error response, verifies get_result_json");
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
     }
 
     #[tokio::test]

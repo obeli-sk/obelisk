@@ -29,5 +29,29 @@ interface workflow {
   fiboa-submit-json-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
 
   fiboa-submit-json-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
+
+  test-submit-json-unknown-ffqn-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+  test-submit-json-unknown-ffqn-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
+
+  test-submit-json-unknown-ffqn-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
+
+  test-submit-json-malformed-params-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+  test-submit-json-malformed-params-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
+
+  test-submit-json-malformed-params-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
+
+  test-get-result-json-before-await-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+  test-get-result-json-before-await-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
+
+  test-get-result-json-before-await-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
+
+  test-get-result-json-err-variant-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+  test-get-result-json-err-variant-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
+
+  test-get-result-json-err-variant-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
 }
 

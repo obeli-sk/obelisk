@@ -12,5 +12,13 @@ interface workflow {
   fiboa-concurrent-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
 
   fiboa-submit-json-schedule: func(schedule-at: schedule-at, n: u8) -> execution-id;
+
+  test-submit-json-unknown-ffqn-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  test-submit-json-malformed-params-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  test-get-result-json-before-await-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  test-get-result-json-err-variant-schedule: func(schedule-at: schedule-at) -> execution-id;
 }
 

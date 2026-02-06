@@ -101,5 +101,65 @@ expression: exports
     },
     "extension": null,
     "submittable": true
+  },
+  "testing:fibo-workflow/workflow.test-get-result-json-before-await": {
+    "ffqn": "testing:fibo-workflow/workflow.test-get-result-json-before-await",
+    "parameter_types": [],
+    "return_type": {
+      "extendable": {
+        "type_wrapper_tl": {
+          "ok": null,
+          "err": "string"
+        },
+        "wit_type": "result<_, string>"
+      }
+    },
+    "extension": null,
+    "submittable": true
+  },
+  "testing:fibo-workflow/workflow.test-get-result-json-err-variant": {
+    "ffqn": "testing:fibo-workflow/workflow.test-get-result-json-err-variant",
+    "parameter_types": [],
+    "return_type": {
+      "extendable": {
+        "type_wrapper_tl": {
+          "ok": null,
+          "err": "string"
+        },
+        "wit_type": "result<_, string>"
+      }
+    },
+    "extension": null,
+    "submittable": true
+  },
+  "testing:fibo-workflow/workflow.test-submit-json-malformed-params": {
+    "ffqn": "testing:fibo-workflow/workflow.test-submit-json-malformed-params",
+    "parameter_types": [],
+    "return_type": {
+      "extendable": {
+        "type_wrapper_tl": {
+          "ok": null,
+          "err": "string"
+        },
+        "wit_type": "result<_, string>"
+      }
+    },
+    "extension": null,
+    "submittable": true
+  },
+  "testing:fibo-workflow/workflow.test-submit-json-unknown-ffqn": {
+    "ffqn": "testing:fibo-workflow/workflow.test-submit-json-unknown-ffqn",
+    "parameter_types": [],
+    "return_type": {
+      "extendable": {
+        "type_wrapper_tl": {
+          "ok": null,
+          "err": "string"
+        },
+        "wit_type": "result<_, string>"
+      }
+    },
+    "extension": null,
+    "submittable": true
   }
 }

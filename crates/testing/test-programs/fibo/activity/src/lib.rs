@@ -11,7 +11,12 @@ export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn fibo(n: u8) -> Result<u64, ()> {
-        Ok(fibo(n))
+        if n > 40 {
+            // Return error for large n (used for testing error variant handling)
+            Err(())
+        } else {
+            Ok(fibo(n))
+        }
     }
 }
 

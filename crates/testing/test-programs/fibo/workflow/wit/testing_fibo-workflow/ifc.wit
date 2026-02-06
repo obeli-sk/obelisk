@@ -7,4 +7,12 @@ interface workflow {
     /// Test submit-json and get-result-json functions.
     /// Calls the fibo activity using submit-json with JSON params and retrieves result with get-result-json.
     fiboa-submit-json: func(n: u8) -> result<u64>;
+    /// Test submit-json with unknown FFQN - FunctionNotFound error.
+    test-submit-json-unknown-ffqn: func() -> result<_, string>;
+    /// Test submit-json with malformed JSON params - ParamsParsingError.
+    test-submit-json-malformed-params: func() -> result<_, string>;
+    /// Test get-result-json before await - NotFoundInProcessedResponses.
+    test-get-result-json-before-await: func() -> result<_, string>;
+    /// Test get-result-json when activity returns error variant - Err(Some(json)) or Err(None) in result.
+    test-get-result-json-err-variant: func() -> result<_, string>;
 }
