@@ -9,9 +9,9 @@ use super::host_exports::v4_1_0::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::workflow::event_history::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
-use crate::workflow::event_history::response_id::ResponseId;
 use crate::workflow::host_exports::ffqn_into_wast_val;
+use crate::workflow::host_exports::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
+use crate::workflow::host_exports::response_id::ResponseId;
 use crate::workflow::host_exports::v4_1_0;
 use crate::workflow::host_exports::v4_1_0::obelisk::types::execution as types_execution;
 use crate::workflow::host_exports::v4_1_0::obelisk::types::join_set as types_join_set;
@@ -2645,40 +2645,6 @@ impl EventCallNonBlocking {
     }
 }
 
-mod response_id {
-    use concepts::{
-        ComponentType,
-        prefixed_ulid::{DelayId, ExecutionIdDerived},
-    };
-    use std::hash::Hash;
-
-    use crate::workflow::host_exports::v4_1_0::{
-        DelayId_4_1_0, ExecutionId_4_1_0, ResponseId_4_1_0,
-    };
-
-    pub(crate) const INVALID_CHILD_TYPE_FOR_DELAYS: ComponentType = ComponentType::WebhookEndpoint;
-
-    #[derive(Debug, PartialEq, Eq, Hash)]
-    pub(crate) enum ResponseId {
-        ChildExecutionId(ExecutionIdDerived),
-        DelayId(DelayId),
-    }
-
-    impl From<ResponseId> for ResponseId_4_1_0 {
-        fn from(value: crate::workflow::event_history::ResponseId) -> Self {
-            use crate::workflow::event_history::ResponseId;
-            match value {
-                ResponseId::ChildExecutionId(child_execution_id) => {
-                    ResponseId_4_1_0::ExecutionId(ExecutionId_4_1_0::from(&child_execution_id))
-                }
-                ResponseId::DelayId(delay_id) => {
-                    ResponseId_4_1_0::DelayId(DelayId_4_1_0::from(&delay_id))
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::event_history::{
@@ -2691,11 +2657,11 @@ mod tests {
     use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
     use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
     use crate::workflow::deadline_tracker::deadline_tracker_factory_test;
-    use crate::workflow::event_history::response_id::ResponseId;
     use crate::workflow::event_history::{
         ApplyError, AwaitNextExtensionError, ChildReturnValue, JoinNextRequestingFfqn,
         JoinSetCreate, Schedule, Stub,
     };
+    use crate::workflow::host_exports::response_id::ResponseId;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};

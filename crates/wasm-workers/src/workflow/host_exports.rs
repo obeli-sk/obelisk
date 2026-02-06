@@ -214,7 +214,40 @@ pub(crate) mod v4_1_0 {
         }
     }
 }
+pub(crate) mod response_id {
+    use concepts::{
+        ComponentType,
+        prefixed_ulid::{DelayId, ExecutionIdDerived},
+    };
+    use std::hash::Hash;
 
+    use crate::workflow::host_exports::v4_1_0::{
+        DelayId_4_1_0, ExecutionId_4_1_0, ResponseId_4_1_0,
+    };
+
+    pub(crate) const INVALID_CHILD_TYPE_FOR_DELAYS: ComponentType = ComponentType::WebhookEndpoint;
+
+    #[derive(Debug, PartialEq, Eq, Hash)]
+    pub(crate) enum ResponseId {
+        ChildExecutionId(ExecutionIdDerived),
+        DelayId(DelayId),
+    }
+
+    impl From<ResponseId> for ResponseId_4_1_0 {
+        fn from(value: ResponseId) -> Self {
+            match value {
+                ResponseId::ChildExecutionId(child_execution_id) => {
+                    ResponseId_4_1_0::ExecutionId(ExecutionId_4_1_0::from(&child_execution_id))
+                }
+                ResponseId::DelayId(delay_id) => {
+                    ResponseId_4_1_0::DelayId(DelayId_4_1_0::from(&delay_id))
+                }
+            }
+        }
+    }
+}
+
+// Used by `server`
 pub fn history_event_schedule_at_from_wast_val(
     scheduled_at: &WastVal,
 ) -> Result<HistoryEventScheduleAt, &'static str> {
