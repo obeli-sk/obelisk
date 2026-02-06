@@ -1666,23 +1666,20 @@ impl EventHistory {
                     .expect("response_ffqn can only be exported and no-ext, thus must be returned by get_ret_type");
 
                 // Convert the result to WastVal and then serialize to JSON
-                let wast_val = result.clone().into_wast_val(|| ret_type);
-                match wast_val {
-                    val_json::wast_val::WastVal::Result(Ok(inner)) => {
+                let wast_val_res = result.clone().into_wast_val_res(|| ret_type);
+                match wast_val_res {
+                    Ok(inner) => {
                         let json = inner.map(|v| {
                             serde_json::to_string(&*v).expect("WastVal must be JSON serializable")
                         });
                         Ok(Ok(json))
                     }
-                    val_json::wast_val::WastVal::Result(Err(inner)) => {
+                    Err(inner) => {
                         let json = inner.map(|v| {
                             serde_json::to_string(&*v).expect("WastVal must be JSON serializable")
                         });
                         Ok(Err(json))
                     }
-                    _ => unreachable!(
-                        "SupportedFunctionReturnValue always produces a Result WastVal"
-                    ),
                 }
             }
             JoinSetResponse::DelayFinished { .. } => unreachable!(

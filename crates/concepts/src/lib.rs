@@ -503,6 +503,7 @@ pub type FnName = Name<FnMarker>;
     Hash, Clone, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
 )]
 pub struct FunctionFqn {
+    // TODO: Consider storing parsed IfcFqn instead.
     pub ifc_fqn: IfcFqnName,
     pub function_name: FnName,
 }
@@ -773,18 +774,49 @@ impl SupportedFunctionReturnValue {
 
     #[must_use]
     pub fn into_wast_val(self, get_return_type: impl FnOnce() -> TypeWrapperTopLevel) -> WastVal {
+        WastVal::Result(self.into_wast_val_res(get_return_type))
+    }
+
+    pub fn into_wast_val_res(
+        self,
+        get_return_type: impl FnOnce() -> TypeWrapperTopLevel,
+    ) -> Result<Option<Box<WastVal>>, Option<Box<WastVal>>> {
         match self {
-            SupportedFunctionReturnValue::Ok { ok: None } => WastVal::Result(Ok(None)),
-            SupportedFunctionReturnValue::Ok { ok: Some(v) } => {
-                WastVal::Result(Ok(Some(Box::new(v.value))))
-            }
-            SupportedFunctionReturnValue::Err { err: None } => WastVal::Result(Err(None)),
-            SupportedFunctionReturnValue::Err { err: Some(v) } => {
-                WastVal::Result(Err(Some(Box::new(v.value))))
-            }
+            SupportedFunctionReturnValue::Ok { ok: None } => Ok(None),
+            SupportedFunctionReturnValue::Ok { ok: Some(v) } => Ok(Some(Box::new(v.value))),
+            SupportedFunctionReturnValue::Err { err: None } => Err(None),
+            SupportedFunctionReturnValue::Err { err: Some(v) } => Err(Some(Box::new(v.value))),
             SupportedFunctionReturnValue::ExecutionError(_) => {
-                execution_error_to_wast_val(&get_return_type())
+                Err(Self::execution_error_to_wast_val_err(&get_return_type()))
             }
+        }
+    }
+
+    fn execution_error_to_wast_val_err(ret_type: &TypeWrapperTopLevel) -> Option<Box<WastVal>> {
+        match ret_type {
+            TypeWrapperTopLevel { ok: _, err: None } => None,
+            TypeWrapperTopLevel {
+                ok: _,
+                err: Some(inner),
+            } => match inner.as_ref() {
+                TypeWrapper::String => Some(Box::new(WastVal::String(
+                    EXECUTION_FAILED_STRING_OR_VARIANT.to_string(),
+                ))),
+                TypeWrapper::Variant(variants)
+                    if variants.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT))
+                        == Some(&None) =>
+                {
+                    Some(Box::new(WastVal::Variant(
+                        ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT),
+                        None,
+                    )))
+                }
+                _ => {
+                    unreachable!(
+                        "unexpected top-level return type {ret_type:?} cannot be ReturnTypeCompatible"
+                    )
+                }
+            },
         }
     }
 
@@ -800,35 +832,6 @@ impl SupportedFunctionReturnValue {
             }
         }
     }
-}
-
-#[must_use]
-pub fn execution_error_to_wast_val(ret_type: &TypeWrapperTopLevel) -> WastVal {
-    match ret_type {
-        TypeWrapperTopLevel { ok: _, err: None } => return WastVal::Result(Err(None)),
-        TypeWrapperTopLevel {
-            ok: _,
-            err: Some(inner),
-        } => match inner.as_ref() {
-            TypeWrapper::String => {
-                return WastVal::Result(Err(Some(Box::new(WastVal::String(
-                    EXECUTION_FAILED_STRING_OR_VARIANT.to_string(),
-                )))));
-            }
-            TypeWrapper::Variant(variants) => {
-                if variants.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT))
-                    == Some(&None)
-                {
-                    return WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                        ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT),
-                        None,
-                    )))));
-                }
-            }
-            _ => {}
-        },
-    }
-    unreachable!("unexpected top-level return type {ret_type:?} cannot be ReturnTypeCompatible")
 }
 
 #[derive(Debug, Clone)]
