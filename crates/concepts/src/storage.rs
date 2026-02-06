@@ -948,6 +948,9 @@ pub trait DbExternalApi: DbConnection {
     ///
     /// Results are always ordered from oldest to newest (ascending by cursor),
     /// regardless of pagination direction.
+    ///
+    /// As an optimization, the implementation can return an empty list of `responses`
+    /// and `max_cursor` set to 0 if the execution is not found.
     async fn list_responses(
         &self,
         execution_id: &ExecutionId,

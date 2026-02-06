@@ -3128,27 +3128,30 @@ impl SqlitePool {
     fn get_max_version(
         tx: &Transaction,
         execution_id: &ExecutionId,
-    ) -> Result<Option<Version>, DbErrorRead> {
+    ) -> Result<Version, DbErrorRead> {
         tx.prepare("SELECT MAX(version) FROM t_execution_log WHERE execution_id = :execution_id")?
             .query_row(
                 named_params! { ":execution_id": execution_id.to_string() },
                 |row| row.get::<_, Option<VersionType>>(0),
             )
-            .map(|v| v.map(Version::new))
+            .map(|v| v.map(Version::new).ok_or(DbErrorRead::NotFound))
             .map_err(DbErrorRead::from)
+            .flatten()
     }
 
     fn get_max_response_cursor(
         tx: &Transaction,
         execution_id: &ExecutionId,
     ) -> Result<ResponseCursor, DbErrorRead> {
-        tx.prepare("SELECT MAX(id) FROM t_join_set_response WHERE execution_id = :execution_id")?
+        let max_cursor = tx
+            .prepare("SELECT MAX(id) FROM t_join_set_response WHERE execution_id = :execution_id")?
             .query_row(
                 named_params! { ":execution_id": execution_id.to_string() },
-                |row| row.get(0),
-            )
-            .map(ResponseCursor)
-            .map_err(DbErrorRead::from)
+                |row| row.get::<_, Option<u32>>(0),
+            )?;
+        // Assume the execution exists and has no responses
+        let max_cursor = max_cursor.unwrap_or_default();
+        Ok(ResponseCursor(max_cursor))
     }
 
     fn list_execution_events(
@@ -4314,8 +4317,7 @@ impl DbExternalApi for SqlitePool {
                     pagination,
                     include_backtrace_id,
                 )?;
-                let max_version =
-                    Self::get_max_version(tx, &execution_id)?.ok_or(DbErrorRead::NotFound)?;
+                let max_version = Self::get_max_version(tx, &execution_id)?;
                 Ok(ListExecutionEventsResponse {
                     events,
                     max_version,
@@ -4376,8 +4378,7 @@ impl DbExternalApi for SqlitePool {
                     req_include_backtrace_id,
                 )?;
                 let responses = Self::list_responses(tx, &execution_id, Some(resp_pagination))?;
-                let max_version =
-                    Self::get_max_version(tx, &execution_id)?.ok_or(DbErrorRead::NotFound)?;
+                let max_version = Self::get_max_version(tx, &execution_id)?;
                 let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
                 Ok(ExecutionWithStateRequestsResponses {
                     execution_with_state: combined_state.execution_with_state,

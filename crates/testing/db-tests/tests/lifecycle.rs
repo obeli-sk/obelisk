@@ -2768,6 +2768,91 @@ async fn wait_for_finished_result_should_fetch_before_racing_with_timeout(databa
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn list_responses_empty_should_return_empty_list(database: Database) {
+    // Regression test
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+
+    // Create execution
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    let list_result = api_conn
+        .list_responses(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 10,
+                cursor: 0,
+                including_cursor: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(0, list_result.responses.len());
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn list_responses_wrong_id_returns_empty_list(database: Database) {
+    // Regression test
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    let execution_id = ExecutionId::generate();
+
+    let list_result = api_conn
+        .list_responses(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 10,
+                cursor: 0,
+                including_cursor: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(0, list_result.responses.len()); // According to contract NotFound is not returned.
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn test_list_responses(database: Database) {
     if database == Database::Memory {
         // external_api_conn not implemented for in-memory DB

@@ -3070,11 +3070,11 @@ async fn get_max_response_cursor(
             &[&execution_id.to_string()],
         )
         .await?;
+    // Assume the execution exists and has no responses
+    let max_cursor = get::<Option<i64>, _>(&row, "id")?.unwrap_or_default();
     let max_cursor = ResponseCursor(
-        u32::try_from(get::<i64, _>(&row, "id")?)
-            .map_err(|_| consistency_db_err("id must not be negative"))?,
+        u32::try_from(max_cursor).map_err(|_| consistency_db_err("id must not be negative"))?,
     );
-
     Ok(max_cursor)
 }
 
