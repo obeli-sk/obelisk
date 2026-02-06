@@ -42,14 +42,20 @@ where
         let timestamp = chrono::Utc::now();
         write!(
             &mut writer,
-            "{} {: <5} ",
-            timestamp.format(":%M:%S%.3f"),
-            metadata.level(),
+            "{ts} {level: <5} ",
+            ts = timestamp.format(":%M:%S%.3f"),
+            level = metadata.level(),
         )?;
 
-        // Write fields on the event
+        // file:line
         ctx.field_format().format_fields(writer.by_ref(), event)?;
+        if let Some(file) = metadata.file()
+            && let Some(line) = metadata.line()
+        {
+            write!(&mut writer, " {file}:{line} ")?;
+        }
 
+        // target
         write!(&mut writer, " Target({}) ", metadata.target(),)?;
 
         // Format all the spans in the event's span context.

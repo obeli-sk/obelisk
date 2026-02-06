@@ -141,6 +141,7 @@ pub(crate) mod tests {
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW
             ])]
         #[tokio::test]
         async fn workflow(wasm_path: &str) {

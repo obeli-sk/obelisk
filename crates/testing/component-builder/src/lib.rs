@@ -11,13 +11,21 @@ const WASM_CORE_MODULE: &str = "wasm32-unknown-unknown";
 pub struct BuildConfig {
     pub profile: String,
     pub custom_dst_target_dir: Option<PathBuf>,
+    pub rust_flags: String,
 }
 impl BuildConfig {
     pub fn target_subdir(target_dir: impl Into<PathBuf>) -> Self {
         Self {
             profile: "release_wasm".to_string(),
             custom_dst_target_dir: Some(get_target_dir().join(target_dir.into())),
+            rust_flags: String::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_rust_flags(mut self, rust_flags: String) -> Self {
+        self.rust_flags = rust_flags;
+        self
     }
 }
 
@@ -52,6 +60,15 @@ pub fn build_webhook_endpoint(conf: BuildConfig) -> PathBuf {
 #[allow(clippy::must_use_candidate)]
 pub fn build_workflow(conf: BuildConfig) -> PathBuf {
     build_internal(WASM_CORE_MODULE, ComponentType::Workflow, conf)
+}
+
+/// Build a workflow that requires WASI P2 (e.g., due to embedded runtime like Boa JS).
+///
+/// Unlike regular workflows that use `wasm32-unknown-unknown`, these workflows
+/// use `wasm32-wasip2` target.
+#[allow(clippy::must_use_candidate)]
+pub fn build_workflow_wasi_p2(conf: BuildConfig) -> PathBuf {
+    build_internal(WASI_P2, ComponentType::Workflow, conf)
 }
 
 enum ComponentType {
@@ -100,7 +117,13 @@ fn build_internal(
     let dst_target_dir = conf.custom_dst_target_dir.unwrap_or_else(get_target_dir);
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm_path = run_cargo_build(&dst_target_dir, pkg_name, target_tripple, &conf.profile);
+    let wasm_path = run_cargo_build(
+        &dst_target_dir,
+        pkg_name,
+        target_tripple,
+        &conf.profile,
+        &conf.rust_flags,
+    );
     if std::env::var("RUST_LOG").is_ok() {
         println!("cargo:warning=Built `{pkg_name}` - {wasm_path:?}");
     }
@@ -233,7 +256,14 @@ fn add_dependency(file: &Utf8Path) {
     println!("cargo:rerun-if-changed={file}");
 }
 
-fn run_cargo_build(dst_target_dir: &Path, name: &str, tripple: &str, profile: &str) -> PathBuf {
+fn run_cargo_build(
+    dst_target_dir: &Path,
+    name: &str,
+    tripple: &str,
+    profile: &str,
+    rust_flags: &str,
+) -> PathBuf {
+    // rustflags = ['--cfg', 'getrandom_backend="custom"']
     let mut cmd = Command::new("cargo");
     cmd.arg("build")
         .arg(format!("--profile={profile}"))
@@ -241,6 +271,7 @@ fn run_cargo_build(dst_target_dir: &Path, name: &str, tripple: &str, profile: &s
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", dst_target_dir)
         .env("CARGO_PROFILE_RELEASE_DEBUG", "limited") // debug = 1, retain line numbers
+        .env("RUSTFLAGS", rust_flags)
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env_remove("CLIPPY_ARGS"); // do not pass clippy parameters
     let status = cmd.status().unwrap();

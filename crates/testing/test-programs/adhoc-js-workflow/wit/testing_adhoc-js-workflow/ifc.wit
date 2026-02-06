@@ -1,0 +1,12 @@
+package testing:adhoc-js-workflow;
+
+interface workflow {
+    /// Execute JavaScript code as a workflow.
+    /// 
+    /// The JS code should define a `main(params)` function that:
+    /// - Receives params as a parsed JSON object
+    /// - Returns a JSON-serializable value
+    /// 
+    /// Returns Ok(json_result) on success, Err(error_message) on failure.
+    execute: func(js-code: string, params: string) -> result<string, string>;
+}
