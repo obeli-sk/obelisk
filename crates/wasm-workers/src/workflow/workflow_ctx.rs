@@ -1392,8 +1392,8 @@ pub(crate) mod workflow_support {
                     // Panic in host function would kill the worker task.
                     return Err(wasmtime::Error::msg("range must not be empty"));
                 }
-                let length_inclusive = rand::Rng::random_range(&mut self.rng, range);
-                (0..=length_inclusive)
+                let length = rand::Rng::random_range(&mut self.rng, range);
+                (0..length)
                     .map(|_| {
                         let idx =
                             rand::Rng::random_range(&mut self.rng, 0..CHARSET_ALPHANUMERIC.len());
