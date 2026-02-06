@@ -1305,6 +1305,7 @@ pub(crate) mod workflow_support {
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind, Params};
     use concepts::{FunctionFqn, storage};
+    use rand::rngs::StdRng;
     use std::sync::Arc;
     use tracing::trace;
     #[allow(unused_imports)]
@@ -1380,11 +1381,10 @@ pub(crate) mod workflow_support {
             Ok(value)
         }
 
-        pub(crate) async fn random_string(
-            &mut self,
+        pub(crate) fn generate_random_string(
+            rng: &mut StdRng,
             min_length: u16,
             max_length_exclusive: u16,
-            wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<String> {
             let value: String = {
                 let range = min_length..max_length_exclusive;
@@ -1392,11 +1392,10 @@ pub(crate) mod workflow_support {
                     // Panic in host function would kill the worker task.
                     return Err(wasmtime::Error::msg("range must not be empty"));
                 }
-                let length = rand::Rng::random_range(&mut self.rng, range);
+                let length = rand::Rng::random_range(rng, range);
                 (0..length)
                     .map(|_| {
-                        let idx =
-                            rand::Rng::random_range(&mut self.rng, 0..CHARSET_ALPHANUMERIC.len());
+                        let idx = rand::Rng::random_range(rng, 0..CHARSET_ALPHANUMERIC.len());
                         CHARSET_ALPHANUMERIC
                             .chars()
                             .nth(idx)
@@ -1404,6 +1403,17 @@ pub(crate) mod workflow_support {
                     })
                     .collect()
             };
+            Ok(value)
+        }
+
+        pub(crate) async fn random_string(
+            &mut self,
+            min_length: u16,
+            max_length_exclusive: u16,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> wasmtime::Result<String> {
+            let value =
+                Self::generate_random_string(&mut self.rng, min_length, max_length_exclusive)?;
             // Persist
             let value = Persist::apply_string(
                 value,
@@ -1736,6 +1746,28 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
+
+    #[test]
+    fn generate_random_string_should_respect_max_length() {
+        // regression test
+        test_utils::set_up();
+        for seed in get_seed() {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let string =
+                WorkflowCtx::generate_random_string(&mut rng, 1, 5 /* max length exclusive */)
+                    .expect("range is not empty");
+            assert!(!string.is_empty());
+            assert!(string.len() < 5);
+        }
+    }
+
+    #[test]
+    fn generate_random_string_should_fail_on_empty_range() {
+        // regression test
+        test_utils::set_up();
+        let mut rng = StdRng::seed_from_u64(0);
+        WorkflowCtx::generate_random_string(&mut rng, 1, 1 /* max length exclusive */).unwrap_err();
+    }
 
     impl From<WorkerPartialResult> for WorkerResult {
         fn from(worker_partial_result: WorkerPartialResult) -> Self {
