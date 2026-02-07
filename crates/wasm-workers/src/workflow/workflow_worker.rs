@@ -410,7 +410,11 @@ enum PrepareFuncOk {
 }
 
 impl WorkflowWorker {
-    async fn prepare_func(&self, ctx: WorkerContext) -> Result<PrepareFuncOk, WorkflowError> {
+    async fn prepare_func(
+        &self,
+        ctx: WorkerContext,
+        is_replaying_finished: bool,
+    ) -> Result<PrepareFuncOk, WorkflowError> {
         assert_eq!(self.config.component_id, ctx.locked_event.component_id);
 
         let deadline_tracker = match self
@@ -452,6 +456,7 @@ impl WorkflowWorker {
             self.config.lock_extension,
             self.config.subscription_interruption,
             self.logs_storage_config.clone(),
+            is_replaying_finished,
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);
@@ -754,7 +759,11 @@ impl WorkflowWorker {
         }
     }
 
-    async fn run_internal(&self, ctx: WorkerContext) -> Result<WorkerResultOk, WorkflowError> {
+    async fn run_internal(
+        &self,
+        ctx: WorkerContext,
+        is_replaying_finished: bool,
+    ) -> Result<WorkerResultOk, WorkflowError> {
         ctx.worker_span.in_scope(|| info!("Execution run started"));
         if !ctx.can_be_retried {
             warn!(
@@ -763,7 +772,7 @@ impl WorkflowWorker {
         }
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
-        match self.prepare_func(ctx).await? {
+        match self.prepare_func(ctx, is_replaying_finished).await? {
             PrepareFuncOk::Finished {
                 store,
                 func,
@@ -816,6 +825,7 @@ impl WorkflowWorker {
             .get(&execution_id)
             .await
             .map_err(DbErrorWrite::from)?;
+        let is_finished = log.is_finished();
         let ctx = WorkerContext {
             execution_id,
             metadata: ExecutionMetadata::empty(),
@@ -853,7 +863,7 @@ impl WorkflowWorker {
             logs_storage_config,
         );
         worker
-            .run_internal(ctx)
+            .run_internal(ctx, is_finished)
             .await
             .map(|_| ())
             .map_err(ReplayError::from)
@@ -903,7 +913,12 @@ impl Worker for WorkflowWorker {
     }
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
-        match self.run_internal(ctx).await {
+        match self
+            .run_internal(
+                ctx, false, // not replaying a finished execution.
+            )
+            .await
+        {
             Ok(ok) => WorkerResult::Ok(ok),
             Err(workflow_err) => WorkerResult::Err(WorkerError::from(workflow_err)),
         }
@@ -961,6 +976,7 @@ pub(crate) mod tests {
     use test_db_macro::expand_enum_database;
     use test_utils::ExecutionLogSanitized;
     use test_utils::sim_clock::SimClock;
+    use tokio::sync::mpsc;
     use tracing::debug;
     use tracing::info_span;
     use utils::sha256sum::calculate_sha256_file;
@@ -3569,7 +3585,7 @@ pub(crate) mod tests {
         let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
         let err = assert_matches!(&err.value, WastVal::String(s) => s);
         assert_eq!(
-            "params must be a JSON: expected ident at line 1 column 2",
+            "params 'throw 1' must be a JSON: expected ident at line 1 column 2",
             err
         );
     }
@@ -3620,13 +3636,19 @@ pub(crate) mod tests {
     async fn adhoc_js_workflow_all_apis(
         database: Database,
         #[values(false, true)] activity_should_win: bool,
+        #[values(false, true)] explicit_close: bool,
     ) {
         let (_guard, db_pool, db_close) = database.set_up().await;
-        adhoc_js_workflow_all_apis_inner(db_pool.clone(), activity_should_win).await;
+        adhoc_js_workflow_all_apis_inner(db_pool.clone(), activity_should_win, explicit_close)
+            .await;
         db_close.close().await;
     }
 
-    async fn adhoc_js_workflow_all_apis_inner(db_pool: Arc<dyn DbPool>, activity_should_win: bool) {
+    async fn adhoc_js_workflow_all_apis_inner(
+        db_pool: Arc<dyn DbPool>,
+        activity_should_win: bool,
+        explicit_close: bool,
+    ) {
         test_utils::set_up();
         let sim_clock = SimClock::epoch();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -3645,6 +3667,7 @@ pub(crate) mod tests {
             &workflow_engine,
         )
         .await;
+
         let worker = Arc::new(
             WorkflowWorkerCompiled::new_with_config(
                 runnable_component.clone(),
@@ -3738,7 +3761,11 @@ pub(crate) mod tests {
             } else {
                 loser = execId;
             }
-
+            if (params.explicit_close) {
+                js1.close();
+                js2.close();
+            }
+            console.log('all done');
             return {
                 rand1InRange: rand1 >= 0n && rand1 < 10n,
                 rand2InRange: rand2 >= 1n && rand2 <= 10n,
@@ -3748,7 +3775,10 @@ pub(crate) mod tests {
                 loser
             };
         }";
-        let params_json = r"{}";
+        let params_json = format!(
+            r#"{{"explicit_close": {} }}"#,
+            if explicit_close { "true" } else { "false" }
+        );
 
         let params = Params::from_json_values_test(vec![json!(js_code), json!(params_json)]);
         db_connection
@@ -3913,6 +3943,7 @@ pub(crate) mod tests {
             );
         }
         let stopwatch = std::time::Instant::now();
+        let (log_sender, mut log_storage_recv) = mpsc::channel(100);
         WorkflowWorker::replay(
             DeploymentId::generate(),
             workflow_exec.config.component_id.clone(),
@@ -3922,10 +3953,17 @@ pub(crate) mod tests {
             fn_registry,
             db_connection.as_ref(),
             execution_id,
-            None, // logs_storage_config
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender,
+            }),
         )
         .await
         .unwrap();
         info!("Replayed in {:?}", stopwatch.elapsed());
+        // Nothing should be added to logs
+        let mut buffer = Vec::new();
+        let received = log_storage_recv.recv_many(&mut buffer, 100).await;
+        assert_eq!(0, received, "expected no new messages, got {buffer:?}");
     }
 }

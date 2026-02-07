@@ -55,13 +55,13 @@ pub fn execute(js_code: &str, params: &str) -> Result<String, String> {
 
     // Verify that params can be deserialized
     serde_json::from_str::<serde_json::Value>(&params)
-        .map_err(|err| format!("params must be a JSON: {err}"))?;
+        .map_err(|err| format!("params '{params}' must be a JSON: {err}"))?;
 
     // Parse params and store as global __params__
     let params_code = format!("var __params__ = JSON.parse('{params}');",);
     context
         .eval(Source::from_bytes(&params_code))
-        .map_err(|e| format!("Failed to parse params: {e}"))?;
+        .map_err(|e| format!("Failed to parse params '{params}': {e}"))?;
 
     // Execute user code and call main
     const JS_PRE: &str = r#"

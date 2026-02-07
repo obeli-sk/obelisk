@@ -45,8 +45,8 @@ impl ComponentLogger {
                     message,
                 },
             });
-            if res.is_err() {
-                debug!("Dropping stream message");
+            if let Err(err) = res {
+                debug!("Dropping message: {err:?}");
             }
         }
     }

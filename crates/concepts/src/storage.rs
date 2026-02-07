@@ -110,6 +110,17 @@ impl ExecutionLog {
     }
 
     #[must_use]
+    pub fn is_finished(&self) -> bool {
+        matches!(
+            self.events.last(),
+            Some(ExecutionEvent {
+                event: ExecutionRequest::Finished { .. },
+                ..
+            })
+        )
+    }
+
+    #[must_use]
     pub fn as_finished_result(&self) -> Option<SupportedFunctionReturnValue> {
         if let ExecutionEvent {
             event: ExecutionRequest::Finished { result, .. },

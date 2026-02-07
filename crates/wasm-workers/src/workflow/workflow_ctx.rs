@@ -130,6 +130,7 @@ pub(crate) struct WorkflowCtx {
     pub(crate) resource_table: wasmtime::component::ResourceTable,
     backtrace_persist: bool,
     wasi_ctx: WasiCtx,
+    is_replaying_finished: bool,
 }
 
 #[derive(derive_more::Debug)]
@@ -803,6 +804,7 @@ impl WorkflowCtx {
         lock_extension: Duration,
         subscription_interruption: Option<Duration>,
         logs_storage_config: Option<LogStrageConfig>,
+        is_replaying_finished: bool,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -837,6 +839,7 @@ impl WorkflowCtx {
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace_persist,
             wasi_ctx: wasi_ctx_builder.build(),
+            is_replaying_finished,
         }
     }
 
@@ -1662,7 +1665,7 @@ pub(crate) mod workflow_support {
 }
 
 fn trace_on_replay(ctx: &mut WorkflowCtx, level: LogLevel, message: String) {
-    if ctx.event_history.has_unprocessed_requests() {
+    if ctx.event_history.has_unprocessed_requests() || ctx.is_replaying_finished {
         ctx.component_logger
             .log(LogLevel::Trace, format!("(replay) {message}"));
     } else {
@@ -1905,7 +1908,8 @@ pub(crate) mod tests {
                 ctx.locked_event,
                 Duration::from_secs(1), // lock extension
                 None,                   // subscription_interruption
-                None,                   // logs_storage_config
+                None,                   // logs_storage_config,
+                false,                  // is_finished
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
