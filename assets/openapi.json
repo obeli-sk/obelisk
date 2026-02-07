@@ -1,0 +1,1598 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Obelisk REST API",
+    "description": "REST API for the Obelisk deterministic workflow engine",
+    "contact": {
+      "name": "Project Developers"
+    },
+    "license": {
+      "name": "AGPL-3.0-only",
+      "identifier": "AGPL-3.0-only"
+    },
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/v1/components": {
+      "get": {
+        "tags": [
+          "components"
+        ],
+        "summary": "List components",
+        "operationId": "components_list",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Filter by component type (workflow, activity, webhook)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Filter by component name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "digest",
+            "in": "query",
+            "description": "Filter by component digest",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exports",
+            "in": "query",
+            "description": "Include exports in response",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "imports",
+            "in": "query",
+            "description": "Include imports in response",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "extensions",
+            "in": "query",
+            "description": "Include extension functions",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "submittable",
+            "in": "query",
+            "description": "If set to true, show only submittable exports",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of components",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComponentConfig"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/components/{digest}/wit": {
+      "get": {
+        "tags": [
+          "components"
+        ],
+        "summary": "Get WIT definition for a component",
+        "operationId": "component_wit",
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "description": "Component digest",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "WIT definition",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No WIT available"
+          },
+          "404": {
+            "description": "Component not found"
+          }
+        }
+      }
+    },
+    "/v1/delays/{delay_id}/cancel": {
+      "put": {
+        "tags": [
+          "delays"
+        ],
+        "summary": "Cancel a delay",
+        "operationId": "delay_cancel",
+        "parameters": [
+          {
+            "name": "delay_id",
+            "in": "path",
+            "description": "Delay ID to cancel",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delay cancelled"
+          },
+          "409": {
+            "description": "Already finished"
+          }
+        }
+      }
+    },
+    "/v1/deployment-id": {
+      "get": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Get current deployment ID",
+        "operationId": "get_current_deployment_id",
+        "responses": {
+          "200": {
+            "description": "Current deployment ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/deployments": {
+      "get": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "List deployments",
+        "operationId": "list_deployments",
+        "parameters": [
+          {
+            "name": "cursor_from",
+            "in": "query",
+            "description": "Cursor for pagination (deployment ID)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "length",
+            "in": "query",
+            "description": "Number of items to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "including_cursor",
+            "in": "query",
+            "description": "Include the cursor item in results",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of deployments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DeploymentStateSer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/execution-id": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Generate a new execution ID",
+        "operationId": "execution_id_generate",
+        "responses": {
+          "200": {
+            "description": "Generated execution ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "List executions with filtering and pagination",
+        "operationId": "executions_list",
+        "parameters": [
+          {
+            "name": "ffqn_prefix",
+            "in": "query",
+            "description": "Filter by function FQN prefix",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "show_derived",
+            "in": "query",
+            "description": "Show derived executions (child executions spawned by workflows)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "hide_finished",
+            "in": "query",
+            "description": "Hide finished executions",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "execution_id_prefix",
+            "in": "query",
+            "description": "Filter by execution ID prefix",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "component_digest",
+            "in": "query",
+            "description": "Filter by component digest",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "query",
+            "description": "Filter by deployment ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Pagination cursor (DateTime or ExecutionId)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "length",
+            "in": "query",
+            "description": "Number of items to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "including_cursor",
+            "in": "query",
+            "description": "Include the cursor item in results",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "Pagination direction",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PaginationDirection"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of executions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExecutionWithStateSer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Submit a new execution (auto-generated ID)",
+        "operationId": "execution_submit_post",
+        "parameters": [
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "If true, stream the result when execution finishes",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionSubmitPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Execution submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetVal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Get execution return value",
+        "operationId": "execution_get_retval",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "If true, stream the result when execution finishes",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetVal"
+                }
+              }
+            }
+          },
+          "425": {
+            "description": "Not finished yet"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Submit an execution with a specific ID",
+        "operationId": "execution_submit_put",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "If true, stream the result when execution finishes",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionSubmitPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Execution submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetVal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict"
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/cancel": {
+      "put": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Cancel an activity execution",
+        "operationId": "execution_cancel",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID to cancel",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution cancelled"
+          },
+          "409": {
+            "description": "Already finished"
+          },
+          "422": {
+            "description": "Not an activity"
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/events": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Get execution events (history)",
+        "operationId": "execution_events",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version cursor for pagination",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/u32"
+            }
+          },
+          {
+            "name": "length",
+            "in": "query",
+            "description": "Number of events to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "including_cursor",
+            "in": "query",
+            "description": "Include the cursor item in results",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "Pagination direction",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PaginationDirection"
+            }
+          },
+          {
+            "name": "include_backtrace_id",
+            "in": "query",
+            "description": "Include backtrace IDs in events",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionEventsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/logs": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Get execution logs",
+        "operationId": "execution_logs",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "Filter by log levels",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "stream_type",
+            "in": "query",
+            "description": "Filter by stream types (stdout, stderr)",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "show_logs",
+            "in": "query",
+            "description": "Include log entries",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "show_streams",
+            "in": "query",
+            "description": "Include stream entries (stdout/stderr)",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor for pagination",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "length",
+            "in": "query",
+            "description": "Number of entries to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "including_cursor",
+            "in": "query",
+            "description": "Include the cursor item in results",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "Pagination direction",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PaginationDirection"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution logs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LogEntryRowSer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/pause": {
+      "put": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Pause an execution",
+        "operationId": "execution_pause",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID to pause",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution paused"
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/replay": {
+      "put": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Replay an execution (re-run from execution log)",
+        "operationId": "execution_replay",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID to replay",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution replayed"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Replay failed"
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/responses": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Get execution responses (join set responses)",
+        "operationId": "execution_responses",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor for pagination",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "length",
+            "in": "query",
+            "description": "Number of responses to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "including_cursor",
+            "in": "query",
+            "description": "Include the cursor item in results",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "Pagination direction",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PaginationDirection"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution responses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionResponsesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/status": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Get execution status",
+        "operationId": "execution_status_get",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionWithStateSer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/stub": {
+      "put": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Stub an execution result (for testing/debugging)",
+        "operationId": "execution_stub",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Derived execution ID to stub",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionStubPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Execution stubbed"
+          },
+          "422": {
+            "description": "Invalid stub"
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/unpause": {
+      "put": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Unpause an execution",
+        "operationId": "execution_unpause",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID to unpause",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution unpaused"
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/upgrade": {
+      "put": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Upgrade an execution to a new component version",
+        "operationId": "execution_upgrade",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID to upgrade",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionUpgradePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Execution upgraded"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Upgrade failed"
+          }
+        }
+      }
+    },
+    "/v1/functions": {
+      "get": {
+        "tags": [
+          "functions"
+        ],
+        "summary": "List all functions",
+        "operationId": "functions_list",
+        "parameters": [
+          {
+            "name": "extensions",
+            "in": "query",
+            "description": "Include extension functions",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of functions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FunctionOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/functions/wit": {
+      "get": {
+        "tags": [
+          "functions"
+        ],
+        "summary": "Get WIT definition for a function",
+        "operationId": "function_wit",
+        "parameters": [
+          {
+            "name": "ffqn",
+            "in": "query",
+            "description": "Fully qualified function name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "WIT definition",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function not found"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ComponentConfig": {
+        "type": "object",
+        "description": "Component configuration with optional imports/exports",
+        "required": [
+          "component_id"
+        ],
+        "properties": {
+          "component_id": {
+            "type": "object",
+            "description": "Component identifier"
+          },
+          "exports": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/FunctionMetadataLite"
+            },
+            "description": "Exported functions"
+          },
+          "imports": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/FunctionMetadataLite"
+            },
+            "description": "Imported functions"
+          }
+        }
+      },
+      "DeploymentStateSer": {
+        "type": "object",
+        "description": "Deployment state with execution counts",
+        "required": [
+          "deployment_id",
+          "current",
+          "locked",
+          "pending",
+          "scheduled",
+          "blocked",
+          "finished"
+        ],
+        "properties": {
+          "blocked": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of blocked executions",
+            "minimum": 0
+          },
+          "current": {
+            "type": "boolean",
+            "description": "Whether this is the current deployment"
+          },
+          "deployment_id": {
+            "type": "string",
+            "description": "Deployment identifier",
+            "example": "Dep_01JKXYZ123456789ABCDEFGHIJ"
+          },
+          "finished": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of finished executions",
+            "minimum": 0
+          },
+          "locked": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of locked executions",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of pending executions",
+            "minimum": 0
+          },
+          "scheduled": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of scheduled executions",
+            "minimum": 0
+          }
+        }
+      },
+      "ExecutionEventsResponse": {
+        "type": "object",
+        "description": "Response containing execution events",
+        "required": [
+          "events",
+          "max_version"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "List of execution events"
+          },
+          "max_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum version in the response",
+            "minimum": 0
+          }
+        }
+      },
+      "ExecutionResponsesResponse": {
+        "type": "object",
+        "description": "Response containing execution responses",
+        "required": [
+          "responses",
+          "max_cursor"
+        ],
+        "properties": {
+          "max_cursor": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum cursor in the response",
+            "minimum": 0
+          },
+          "responses": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "List of responses with cursors"
+          }
+        }
+      },
+      "ExecutionStubPayload": {
+        "description": "Payload for stubbing an execution result"
+      },
+      "ExecutionSubmitPayload": {
+        "type": "object",
+        "description": "Payload for submitting a new execution",
+        "required": [
+          "ffqn",
+          "params"
+        ],
+        "properties": {
+          "ffqn": {
+            "type": "string",
+            "description": "Fully qualified function name to execute",
+            "example": "my-pkg:my-ifc/my-fn"
+          },
+          "params": {
+            "type": "array",
+            "items": {},
+            "description": "Function parameters as JSON values"
+          }
+        }
+      },
+      "ExecutionUpgradePayload": {
+        "type": "object",
+        "description": "Payload for upgrading an execution to a new component version",
+        "required": [
+          "old",
+          "new"
+        ],
+        "properties": {
+          "new": {
+            "type": "string",
+            "description": "New component digest to upgrade to"
+          },
+          "old": {
+            "type": "string",
+            "description": "Old component digest to upgrade from"
+          },
+          "skip_determinism_check": {
+            "type": "boolean",
+            "description": "Skip determinism check during upgrade"
+          }
+        }
+      },
+      "ExecutionWithStateSer": {
+        "type": "object",
+        "description": "Execution with current state information",
+        "required": [
+          "execution_id",
+          "ffqn",
+          "pending_state",
+          "created_at",
+          "first_scheduled_at",
+          "component_digest",
+          "component_type",
+          "deployment_id"
+        ],
+        "properties": {
+          "component_digest": {
+            "type": "string",
+            "description": "Component content digest"
+          },
+          "component_type": {
+            "type": "string",
+            "description": "Type of component (workflow, activity, webhook)"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the execution was created"
+          },
+          "deployment_id": {
+            "type": "string",
+            "description": "Deployment that created this execution",
+            "example": "Dep_01JKXYZ123456789ABCDEFGHIJ"
+          },
+          "execution_id": {
+            "type": "string",
+            "description": "Unique execution identifier",
+            "example": "E_01JKXYZ123456789ABCDEFGHIJ"
+          },
+          "ffqn": {
+            "type": "string",
+            "description": "Fully qualified function name",
+            "example": "my-pkg:my-ifc/my-fn"
+          },
+          "first_scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the execution was first scheduled"
+          },
+          "pending_state": {
+            "type": "object",
+            "description": "Current pending state of the execution"
+          }
+        }
+      },
+      "FunctionMetadataLite": {
+        "type": "object",
+        "description": "Lightweight function metadata",
+        "required": [
+          "ffqn",
+          "parameter_types",
+          "return_type",
+          "submittable"
+        ],
+        "properties": {
+          "extension": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Function extension type if any"
+          },
+          "ffqn": {
+            "type": "string",
+            "description": "Fully qualified function name"
+          },
+          "parameter_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParameterTypeLite"
+            },
+            "description": "Parameter types"
+          },
+          "return_type": {
+            "type": "string",
+            "description": "Return type as WIT string"
+          },
+          "submittable": {
+            "type": "boolean",
+            "description": "Externally submittable: primary functions + `-schedule` extended, but no activity stubs"
+          }
+        }
+      },
+      "FunctionOutput": {
+        "type": "object",
+        "description": "Function output information",
+        "required": [
+          "ffqn"
+        ],
+        "properties": {
+          "extension": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Extension type if any"
+          },
+          "ffqn": {
+            "type": "string",
+            "description": "Fully qualified function name"
+          }
+        }
+      },
+      "LogEntryRowSer": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LogEntrySer",
+            "description": "Log entry details"
+          },
+          {
+            "type": "object",
+            "required": [
+              "cursor",
+              "run_id"
+            ],
+            "properties": {
+              "cursor": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Cursor position",
+                "minimum": 0
+              },
+              "run_id": {
+                "type": "string",
+                "description": "Run ID that produced this log"
+              }
+            }
+          }
+        ],
+        "description": "Log entry row with cursor"
+      },
+      "LogEntrySer": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Structured log message",
+            "required": [
+              "created_at",
+              "level",
+              "message",
+              "type"
+            ],
+            "properties": {
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "level": {
+                "$ref": "#/components/schemas/LogLevelSer"
+              },
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "log"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Raw stream output (stdout/stderr)",
+            "required": [
+              "created_at",
+              "payload",
+              "stream_type",
+              "type"
+            ],
+            "properties": {
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "payload": {
+                "type": "string",
+                "description": "Base64 encoded payload"
+              },
+              "stream_type": {
+                "$ref": "#/components/schemas/LogStreamTypeSer"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "stream"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Log entry content"
+      },
+      "LogLevelParam": {
+        "type": "string",
+        "enum": [
+          "trace",
+          "debug",
+          "info",
+          "warn",
+          "error"
+        ]
+      },
+      "LogLevelSer": {
+        "type": "string",
+        "enum": [
+          "trace",
+          "debug",
+          "info",
+          "warn",
+          "error"
+        ]
+      },
+      "LogStreamTypeParam": {
+        "type": "string",
+        "enum": [
+          "stdout",
+          "stderr"
+        ]
+      },
+      "LogStreamTypeSer": {
+        "type": "string",
+        "enum": [
+          "stdout",
+          "stderr"
+        ]
+      },
+      "PaginationDirection": {
+        "type": "string",
+        "enum": [
+          "older",
+          "newer"
+        ]
+      },
+      "ParameterTypeLite": {
+        "type": "object",
+        "description": "Parameter type information",
+        "required": [
+          "name",
+          "wit_type"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Parameter name"
+          },
+          "wit_type": {
+            "type": "string",
+            "description": "WIT type representation"
+          }
+        }
+      },
+      "RetVal": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Successful result value",
+            "required": [
+              "ok"
+            ],
+            "properties": {
+              "ok": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "Successful result value"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Error result (WIT result's err variant)",
+            "required": [
+              "err"
+            ],
+            "properties": {
+              "err": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "Error result (WIT result's err variant)"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Execution failed with an error",
+            "required": [
+              "execution_error"
+            ],
+            "properties": {
+              "execution_error": {
+                "type": "object",
+                "description": "Execution failed with an error"
+              }
+            }
+          }
+        ],
+        "description": "Return value from a finished execution"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "executions",
+      "description": "Execution management"
+    },
+    {
+      "name": "components",
+      "description": "Component management"
+    },
+    {
+      "name": "functions",
+      "description": "Function management"
+    },
+    {
+      "name": "deployments",
+      "description": "Deployment management"
+    },
+    {
+      "name": "delays",
+      "description": "Delay management"
+    }
+  ]
+}

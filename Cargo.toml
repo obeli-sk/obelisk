@@ -71,6 +71,8 @@ tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 tracing-error.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
 wasmtime.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
@@ -277,6 +279,8 @@ rusqlite = { version = "0.38.0", features = [
 ] }
 schemars = "1.2.1"
 semver = "1.0.27"
+utoipa = { version = "5.4.0", features = ["chrono"] }
+utoipa-axum = "0.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_with = "3.16.1"

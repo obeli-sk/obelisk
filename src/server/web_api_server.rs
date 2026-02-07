@@ -1,3 +1,4 @@
+#![expect(clippy::needless_for_each)] // for #[openapi] annotation
 use crate::{
     command::server::{self, SubmitError, SubmitOutcome},
     server::web_api_server::{
@@ -39,6 +40,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{Instrument as _, Span, debug, info_span, instrument, trace, warn};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
     activity::cancel_registry::CancelRegistry, component_logger::LogStrageConfig, engines::Engines,
@@ -57,8 +59,84 @@ pub(crate) struct WebApiState {
     pub(crate) log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 }
 
+/// `OpenAPI` documentation for the Obelisk REST API
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Obelisk REST API",
+        description = "REST API for the Obelisk deterministic workflow engine",
+        version = "1.0.0"
+    ),
+    tags(
+        (name = "executions", description = "Execution management"),
+        (name = "components", description = "Component management"),
+        (name = "functions", description = "Function management"),
+        (name = "deployments", description = "Deployment management"),
+        (name = "delays", description = "Delay management")
+    ),
+    paths(
+        execution_id_generate,
+        delay_cancel,
+        executions_list,
+        execution_cancel,
+        execution_pause,
+        execution_unpause,
+        execution_events,
+        logs::execution_logs,
+        execution_responses,
+        execution_status_get,
+        execution_stub,
+        execution_get_retval,
+        execution_submit_put,
+        execution_submit_post,
+        execution_replay,
+        execution_upgrade,
+        components::component_wit,
+        components::components_list,
+        functions::functions_list,
+        functions::function_wit,
+        deployment::list_deployments,
+        deployment::get_current_deployment_id,
+    ),
+    components(schemas(
+        PaginationDirection,
+        ExecutionWithStateSer,
+        ExecutionEventsResponse,
+        ExecutionResponsesResponse,
+        ExecutionStubPayload,
+        RetVal,
+        ExecutionSubmitPayload,
+        ExecutionUpgradePayload,
+        logs::LogEntryRowSer,
+        logs::LogEntrySer,
+        logs::LogLevelSer,
+        logs::LogStreamTypeSer,
+        logs::LogLevelParam,
+        logs::LogStreamTypeParam,
+        components::ComponentConfig,
+        components::FunctionMetadataLite,
+        components::ParameterTypeLite,
+        functions::FunctionOutput,
+        deployment::DeploymentStateSer,
+    ))
+)]
+pub(crate) struct ApiDoc;
+
+/// Return the `OpenAPI` JSON schema
+#[utoipa::path(
+    get,
+    path = "/openapi.json",
+    responses(
+        (status = 200, description = "OpenAPI JSON schema")
+    )
+)]
+async fn openapi_json() -> impl IntoResponse {
+    Json(ApiDoc::openapi())
+}
+
 pub(crate) fn app_router(state: WebApiState) -> Router {
     Router::new()
+        .route("/openapi.json", routing::get(openapi_json))
         .nest("/v1", v1_router())
         .with_state(Arc::new(state))
 }
@@ -125,6 +203,15 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/deployment-id", routing::get(get_current_deployment_id))
 }
 
+/// Generate a new execution ID
+#[utoipa::path(
+    get,
+    path = "/v1/execution-id",
+    tag = "executions",
+    responses(
+        (status = 200, description = "Generated execution ID", body = String)
+    )
+)]
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
     let id = ExecutionId::generate();
     match accept {
@@ -133,6 +220,19 @@ async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader)
     }
 }
 
+/// Cancel a delay
+#[utoipa::path(
+    put,
+    path = "/v1/delays/{delay_id}/cancel",
+    tag = "delays",
+    params(
+        ("delay_id" = String, Path, description = "Delay ID to cancel")
+    ),
+    responses(
+        (status = 200, description = "Delay cancelled"),
+        (status = 409, description = "Already finished")
+    )
+)]
 #[instrument(skip_all, fields(delay_id))]
 async fn delay_cancel(
     Path(delay_id): Path<DelayId>,
@@ -151,31 +251,47 @@ async fn delay_cancel(
     Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ExecutionsListParams {
+    /// Filter by function FQN prefix
     ffqn_prefix: Option<String>,
+    /// Show derived executions (child executions spawned by workflows)
     #[serde(default)]
     show_derived: bool,
+    /// Hide finished executions
     #[serde(default)]
     hide_finished: bool,
+    /// Filter by execution ID prefix
     execution_id_prefix: Option<String>,
+    /// Filter by component digest
     #[serde(default)]
+    #[param(value_type = Option<String>)]
     component_digest: Option<InputContentDigest>,
+    /// Filter by deployment ID
     #[serde(default)]
+    #[param(value_type = Option<String>)]
     deployment_id: Option<DeploymentId>,
     // pagination
+    /// Pagination cursor (`DateTime` or `ExecutionId`)
+    #[param(value_type = Option<String>)]
     cursor: Option<ExecutionListCursorDeser>,
+    /// Number of items to return
     length: Option<u16>,
+    /// Include the cursor item in results
     #[serde(default)]
     including_cursor: bool,
+    /// Pagination direction
     #[serde(default)]
     direction: PaginationDirection,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, Default, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum PaginationDirection {
+    /// Fetch items older than cursor
     Older,
+    /// Fetch items newer than cursor
     #[default] // everything is newer than 0
     Newer,
 }
@@ -186,15 +302,30 @@ enum ExecutionListCursorDeser {
     CreatedBy(DateTime<Utc>),
     ExecutionId(ExecutionId),
 }
-#[derive(Serialize)]
+/// Execution with current state information
+#[derive(Serialize, ToSchema)]
 pub struct ExecutionWithStateSer {
+    /// Unique execution identifier
+    #[schema(value_type = String, example = "E_01JKXYZ123456789ABCDEFGHIJ")]
     pub execution_id: ExecutionId,
+    /// Fully qualified function name
+    #[schema(value_type = String, example = "my-pkg:my-ifc/my-fn")]
     pub ffqn: FunctionFqn,
+    /// Current pending state of the execution
+    #[schema(value_type = Object)]
     pub pending_state: PendingState,
+    /// When the execution was created
     pub created_at: DateTime<Utc>,
+    /// When the execution was first scheduled
     pub first_scheduled_at: DateTime<Utc>,
+    /// Component content digest
+    #[schema(value_type = String)]
     pub component_digest: InputContentDigest,
+    /// Type of component (workflow, activity, webhook)
+    #[schema(value_type = String)]
     pub component_type: ComponentType,
+    /// Deployment that created this execution
+    #[schema(value_type = String, example = "Dep_01JKXYZ123456789ABCDEFGHIJ")]
     pub deployment_id: DeploymentId,
 }
 impl From<ExecutionWithState> for ExecutionWithStateSer {
@@ -222,6 +353,16 @@ impl From<ExecutionWithState> for ExecutionWithStateSer {
     }
 }
 
+/// List executions with filtering and pagination
+#[utoipa::path(
+    get,
+    path = "/v1/executions",
+    tag = "executions",
+    params(ExecutionsListParams),
+    responses(
+        (status = 200, description = "List of executions", body = Vec<ExecutionWithStateSer>)
+    )
+)]
 #[instrument(skip_all)]
 async fn executions_list(
     state: State<Arc<WebApiState>>,
@@ -331,6 +472,20 @@ async fn executions_list(
     })
 }
 
+/// Cancel an activity execution
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}/cancel",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID to cancel")
+    ),
+    responses(
+        (status = 200, description = "Execution cancelled"),
+        (status = 409, description = "Already finished"),
+        (status = 422, description = "Not an activity")
+    )
+)]
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_cancel(
     Path(execution_id): Path<ExecutionId>,
@@ -364,6 +519,18 @@ async fn execution_cancel(
 }
 
 #[instrument(skip_all, fields(execution_id))]
+/// Pause an execution
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}/pause",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID to pause")
+    ),
+    responses(
+        (status = 200, description = "Execution paused")
+    )
+)]
 async fn execution_pause(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
@@ -386,6 +553,18 @@ async fn execution_pause(
     .into_response())
 }
 
+/// Unpause an execution
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}/unpause",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID to unpause")
+    ),
+    responses(
+        (status = 200, description = "Execution unpaused")
+    )
+)]
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_unpause(
     Path(execution_id): Path<ExecutionId>,
@@ -409,23 +588,47 @@ async fn execution_unpause(
     .into_response())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ExecutionEventsParams {
+    /// Version cursor for pagination
     version: Option<VersionType>,
+    /// Number of events to return
     length: Option<u16>,
+    /// Include the cursor item in results
     #[serde(default)]
     including_cursor: bool,
+    /// Pagination direction
     #[serde(default)]
     direction: PaginationDirection,
+    /// Include backtrace IDs in events
     #[serde(default)]
     include_backtrace_id: bool,
 }
 
-#[derive(Serialize)]
+/// Response containing execution events
+#[derive(Serialize, ToSchema)]
 struct ExecutionEventsResponse {
+    /// List of execution events
+    #[schema(value_type = Vec<Object>)]
     events: Vec<ExecutionEvent>,
+    /// Maximum version in the response
+    #[schema(value_type = u32)]
     max_version: Version,
 }
+/// Get execution events (history)
+#[utoipa::path(
+    get,
+    path = "/v1/executions/{execution_id}/events",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID"),
+        ExecutionEventsParams
+    ),
+    responses(
+        (status = 200, description = "Execution events", body = ExecutionEventsResponse)
+    )
+)]
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_events(
     Path(execution_id): Path<ExecutionId>,
@@ -487,22 +690,33 @@ mod logs {
         storage::{LogEntry, LogEntryRow, LogFilter, LogLevel, LogStreamType},
     };
 
-    #[derive(Deserialize, Debug)]
+    #[derive(Deserialize, Debug, IntoParams)]
+    #[into_params(parameter_in = Query)]
     pub(crate) struct ExecutionLogsParams {
+        /// Filter by log levels
         #[serde(default)]
+        #[param(value_type = Vec<String>)]
         level: Vec<LogLevelParam>,
+        /// Filter by stream types (stdout, stderr)
         #[serde(default)]
+        #[param(value_type = Vec<String>)]
         stream_type: Vec<LogStreamTypeParam>,
+        /// Include log entries
         #[serde(default = "default_true")]
         show_logs: bool,
+        /// Include stream entries (stdout/stderr)
         #[serde(default = "default_true")]
         show_streams: bool,
 
         // pagination
+        /// Cursor for pagination
         cursor: Option<u32>,
+        /// Number of entries to return
         length: Option<u16>,
+        /// Include the cursor item in results
         #[serde(default)]
         including_cursor: bool,
+        /// Pagination direction
         #[serde(default)]
         direction: PaginationDirection,
     }
@@ -511,7 +725,7 @@ mod logs {
         true
     }
 
-    #[derive(Debug, Deserialize, Clone, Copy)]
+    #[derive(Debug, Deserialize, Clone, Copy, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LogLevelParam {
         Trace,
@@ -533,7 +747,7 @@ mod logs {
         }
     }
 
-    #[derive(Debug, Deserialize, Clone, Copy)]
+    #[derive(Debug, Deserialize, Clone, Copy, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LogStreamTypeParam {
         Stdout,
@@ -549,25 +763,34 @@ mod logs {
         }
     }
 
-    #[derive(Serialize)]
-    struct LogEntryRowSer {
+    /// Log entry row with cursor
+    #[derive(Serialize, ToSchema)]
+    pub(crate) struct LogEntryRowSer {
+        /// Cursor position
         pub cursor: u32,
+        /// Run ID that produced this log
+        #[schema(value_type = String)]
         pub run_id: RunId,
+        /// Log entry details
         #[serde(flatten)]
         pub info: LogEntrySer,
     }
 
-    #[derive(Serialize)]
+    /// Log entry content
+    #[derive(Serialize, ToSchema)]
     #[serde(tag = "type", rename_all = "snake_case")]
-    enum LogEntrySer {
+    pub(crate) enum LogEntrySer {
+        /// Structured log message
         Log {
             created_at: DateTime<Utc>,
             level: LogLevelSer,
             message: String,
         },
+        /// Raw stream output (stdout/stderr)
         Stream {
             created_at: DateTime<Utc>,
-            payload: String, // Base64 encoded
+            /// Base64 encoded payload
+            payload: String,
             stream_type: LogStreamTypeSer,
         },
     }
@@ -601,7 +824,7 @@ mod logs {
         }
     }
 
-    #[derive(serde::Serialize, derive_more::Display)]
+    #[derive(serde::Serialize, derive_more::Display, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LogLevelSer {
         #[display("TRACE")]
@@ -628,7 +851,7 @@ mod logs {
         }
     }
 
-    #[derive(serde::Serialize, derive_more::Display)]
+    #[derive(serde::Serialize, derive_more::Display, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LogStreamTypeSer {
         #[display("STDOUT")]
@@ -646,6 +869,19 @@ mod logs {
         }
     }
 
+    /// Get execution logs
+    #[utoipa::path(
+        get,
+        path = "/v1/executions/{execution_id}/logs",
+        tag = "executions",
+        params(
+            ("execution_id" = String, Path, description = "Execution ID"),
+            ExecutionLogsParams
+        ),
+        responses(
+            (status = 200, description = "Execution logs", body = Vec<LogEntryRowSer>)
+        )
+    )]
     #[instrument(skip_all, fields(execution_id))]
     pub(crate) async fn execution_logs(
         Path(execution_id): Path<ExecutionId>,
@@ -749,21 +985,44 @@ mod logs {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ExecutionResponsesParams {
+    /// Cursor for pagination
     cursor: Option<u32>,
+    /// Number of responses to return
     length: Option<u16>,
+    /// Include the cursor item in results
     #[serde(default)]
     including_cursor: bool,
+    /// Pagination direction
     #[serde(default)]
     direction: PaginationDirection,
 }
 
-#[derive(Serialize)]
+/// Response containing execution responses
+#[derive(Serialize, ToSchema)]
 struct ExecutionResponsesResponse {
+    /// List of responses with cursors
+    #[schema(value_type = Vec<Object>)]
     responses: Vec<ResponseWithCursor>,
+    /// Maximum cursor in the response
+    #[schema(value_type = u32)]
     max_cursor: ResponseCursor,
 }
+/// Get execution responses (join set responses)
+#[utoipa::path(
+    get,
+    path = "/v1/executions/{execution_id}/responses",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID"),
+        ExecutionResponsesParams
+    ),
+    responses(
+        (status = 200, description = "Execution responses", body = ExecutionResponsesResponse)
+    )
+)]
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_responses(
     Path(execution_id): Path<ExecutionId>,
@@ -819,6 +1078,18 @@ async fn execution_responses(
     })
 }
 
+/// Get execution status
+#[utoipa::path(
+    get,
+    path = "/v1/executions/{execution_id}/status",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID")
+    ),
+    responses(
+        (status = 200, description = "Execution status", body = ExecutionWithStateSer)
+    )
+)]
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_status_get(
     Path(execution_id): Path<ExecutionId>,
@@ -841,9 +1112,27 @@ async fn execution_status_get(
     })
 }
 
-#[derive(Deserialize)]
-struct ExecutionStubPayload(serde_json::Value);
+/// Payload for stubbing an execution result
+#[derive(Deserialize, ToSchema)]
+struct ExecutionStubPayload(
+    /// The return value to stub
+    serde_json::Value,
+);
 
+/// Stub an execution result (for testing/debugging)
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}/stub",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Derived execution ID to stub")
+    ),
+    request_body = ExecutionStubPayload,
+    responses(
+        (status = 200, description = "Execution stubbed"),
+        (status = 422, description = "Invalid stub")
+    )
+)]
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_stub(
     Path(execution_id): Path<ExecutionIdDerived>,
@@ -914,11 +1203,18 @@ async fn execution_stub(
     .into_response())
 }
 
-#[derive(Debug, Serialize)]
+/// Return value from a finished execution
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum RetVal {
+    /// Successful result value
+    #[schema(value_type = Option<Object>)]
     Ok(Option<WastVal>),
-    Err(Option<WastVal>), // Mirrors `err` variant of WIT `result`.
+    /// Error result (WIT result's err variant)
+    #[schema(value_type = Option<Object>)]
+    Err(Option<WastVal>),
+    /// Execution failed with an error
+    #[schema(value_type = Object)]
     ExecutionError(FinishedExecutionError),
 }
 impl From<SupportedFunctionReturnValue> for RetVal {
@@ -935,6 +1231,20 @@ impl From<SupportedFunctionReturnValue> for RetVal {
     }
 }
 
+/// Get execution return value
+#[utoipa::path(
+    get,
+    path = "/v1/executions/{execution_id}",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID"),
+        ExecutionFollowParam
+    ),
+    responses(
+        (status = 200, description = "Execution result", body = RetVal),
+        (status = 425, description = "Not finished yet")
+    )
+)]
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_get_retval(
     Path(execution_id): Path<ExecutionId>,
@@ -970,18 +1280,39 @@ async fn execution_get_retval(
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+/// Payload for submitting a new execution
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub(crate) struct ExecutionSubmitPayload {
+    /// Fully qualified function name to execute
+    #[schema(value_type = String, example = "my-pkg:my-ifc/my-fn")]
     pub(crate) ffqn: FunctionFqn,
+    /// Function parameters as JSON values
     pub(crate) params: Vec<serde_json::Value>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ExecutionFollowParam {
+    /// If true, stream the result when execution finishes
     #[serde(default)]
     follow: bool,
 }
 
+/// Submit an execution with a specific ID
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID"),
+        ExecutionFollowParam
+    ),
+    request_body = ExecutionSubmitPayload,
+    responses(
+        (status = 200, description = "Execution submitted", body = RetVal),
+        (status = 409, description = "Conflict")
+    )
+)]
 async fn execution_submit_put(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
@@ -992,6 +1323,17 @@ async fn execution_submit_put(
     execution_submit(execution_id, state, payload, params.follow, accept).await
 }
 
+/// Submit a new execution (auto-generated ID)
+#[utoipa::path(
+    post,
+    path = "/v1/executions",
+    tag = "executions",
+    params(ExecutionFollowParam),
+    request_body = ExecutionSubmitPayload,
+    responses(
+        (status = 200, description = "Execution submitted", body = RetVal)
+    )
+)]
 async fn execution_submit_post(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
@@ -1142,6 +1484,20 @@ async fn stream_execution_response_task(
     }
 }
 
+/// Replay an execution (re-run from execution log)
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}/replay",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID to replay")
+    ),
+    responses(
+        (status = 200, description = "Execution replayed"),
+        (status = 404, description = "Not found"),
+        (status = 422, description = "Replay failed")
+    )
+)]
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_replay(
     Path(execution_id): Path<ExecutionId>,
@@ -1208,14 +1564,35 @@ async fn execution_replay(
     .into_response())
 }
 
-#[derive(Deserialize)]
+/// Payload for upgrading an execution to a new component version
+#[derive(Deserialize, ToSchema)]
 struct ExecutionUpgradePayload {
+    /// Old component digest to upgrade from
+    #[schema(value_type = String)]
     pub old: InputContentDigest,
+    /// New component digest to upgrade to
+    #[schema(value_type = String)]
     pub new: InputContentDigest,
+    /// Skip determinism check during upgrade
     #[serde(default)]
     pub skip_determinism_check: bool,
 }
 
+/// Upgrade an execution to a new component version
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}/upgrade",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID to upgrade")
+    ),
+    request_body = ExecutionUpgradePayload,
+    responses(
+        (status = 200, description = "Execution upgraded"),
+        (status = 404, description = "Not found"),
+        (status = 422, description = "Upgrade failed")
+    )
+)]
 #[instrument(skip_all, fields(execution_id))]
 async fn execution_upgrade(
     Path(execution_id): Path<ExecutionId>,
@@ -1284,8 +1661,8 @@ pub(crate) mod components {
     use crate::server::web_api_server::HttpResponse;
 
     use super::{
-        AcceptHeader, Arc, Deserialize, FunctionFqn, IntoResponse, Json, Query, Response,
-        Serialize, State, WebApiState,
+        AcceptHeader, Arc, Deserialize, FunctionFqn, IntoParams, IntoResponse, Json, Query,
+        Response, Serialize, State, ToSchema, WebApiState,
     };
     use axum::extract::Path;
     use concepts::{
@@ -1296,21 +1673,44 @@ pub(crate) mod components {
     use itertools::Itertools;
     use std::fmt::{Debug, Write as _};
 
-    #[derive(Deserialize, Debug)]
+    #[derive(Deserialize, Debug, IntoParams)]
+    #[into_params(parameter_in = Query)]
     pub(crate) struct ComponentsListParams {
+        /// Filter by component type (workflow, activity, webhook)
+        #[param(value_type = Option<String>)]
         r#type: Option<ComponentType>,
+        /// Filter by component name
         name: Option<String>,
+        /// Filter by component digest
+        #[param(value_type = Option<String>)]
         digest: Option<InputContentDigest>,
+        /// Include exports in response
         #[serde(default)]
         exports: bool,
+        /// Include imports in response
         #[serde(default)]
         imports: bool,
+        /// Include extension functions
         #[serde(default)]
         extensions: bool,
-        /// If set to true, show only submittable exports.
+        /// If set to true, show only submittable exports
         submittable: Option<bool>,
     }
 
+    /// Get WIT definition for a component
+    #[utoipa::path(
+        get,
+        path = "/v1/components/{digest}/wit",
+        tag = "components",
+        params(
+            ("digest" = String, Path, description = "Component digest")
+        ),
+        responses(
+            (status = 200, description = "WIT definition", body = String),
+            (status = 204, description = "No WIT available"),
+            (status = 404, description = "Component not found")
+        )
+    )]
     pub(crate) async fn component_wit(
         Path(digest): Path<InputContentDigest>,
         state: State<Arc<WebApiState>>,
@@ -1328,6 +1728,16 @@ pub(crate) mod components {
         })
     }
 
+    /// List components
+    #[utoipa::path(
+        get,
+        path = "/v1/components",
+        tag = "components",
+        params(ComponentsListParams),
+        responses(
+            (status = 200, description = "List of components", body = Vec<ComponentConfig>)
+        )
+    )]
     pub(crate) async fn components_list(
         state: State<Arc<WebApiState>>,
         Query(params): Query<ComponentsListParams>,
@@ -1415,22 +1825,34 @@ pub(crate) mod components {
         }
     }
 
-    #[derive(Serialize)]
+    /// Component configuration with optional imports/exports
+    #[derive(Serialize, ToSchema)]
     pub(crate) struct ComponentConfig {
+        /// Component identifier
+        #[schema(value_type = Object)]
         component_id: ComponentId,
+        /// Imported functions
         #[serde(skip_serializing_if = "Option::is_none")]
         imports: Option<Vec<FunctionMetadataLite>>,
+        /// Exported functions
         #[serde(skip_serializing_if = "Option::is_none")]
         exports: Option<Vec<FunctionMetadataLite>>,
     }
 
-    #[derive(serde::Serialize, derive_more::Display)]
+    /// Lightweight function metadata
+    #[derive(serde::Serialize, derive_more::Display, ToSchema)]
     #[display("{ffqn}: func({}) -> {return_type}", parameter_types.iter().join(", "))]
-    struct FunctionMetadataLite {
+    pub(crate) struct FunctionMetadataLite {
+        /// Fully qualified function name
+        #[schema(value_type = String)]
         ffqn: FunctionFqn,
+        /// Parameter types
         parameter_types: Vec<ParameterTypeLite>,
+        /// Return type as WIT string
         return_type: String,
+        /// Function extension type if any
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schema(value_type = Option<String>)]
         extension: Option<FunctionExtension>,
         /// Externally submittable: primary functions + `-schedule` extended, but no activity stubs
         submittable: bool,
@@ -1452,10 +1874,13 @@ pub(crate) mod components {
         }
     }
 
-    #[derive(serde::Serialize, derive_more::Display)]
+    /// Parameter type information
+    #[derive(serde::Serialize, derive_more::Display, ToSchema)]
     #[display("{name}: {wit_type}")]
-    struct ParameterTypeLite {
+    pub(crate) struct ParameterTypeLite {
+        /// Parameter name
         name: String,
+        /// WIT type representation
         wit_type: String,
     }
 
@@ -1471,17 +1896,30 @@ pub(crate) mod components {
 
 mod functions {
     use super::{
-        AcceptHeader, Arc, Deserialize, IntoResponse, Json, Query, Response, State, WebApiState,
+        AcceptHeader, Arc, Deserialize, IntoParams, IntoResponse, Json, Query, Response, State,
+        ToSchema, WebApiState,
     };
     use concepts::{FunctionExtension, FunctionFqn, FunctionRegistry};
     use std::fmt::Write as _;
 
-    #[derive(Deserialize, Debug)]
+    #[derive(Deserialize, Debug, IntoParams)]
+    #[into_params(parameter_in = Query)]
     pub(crate) struct FunctionsListParams {
+        /// Include extension functions
         #[serde(default)]
         extensions: bool,
     }
 
+    /// List all functions
+    #[utoipa::path(
+        get,
+        path = "/v1/functions",
+        tag = "functions",
+        params(FunctionsListParams),
+        responses(
+            (status = 200, description = "List of functions", body = Vec<FunctionOutput>)
+        )
+    )]
     pub(crate) async fn functions_list(
         state: State<Arc<WebApiState>>,
         Query(params): Query<FunctionsListParams>,
@@ -1511,20 +1949,39 @@ mod functions {
         }
     }
 
-    #[derive(serde::Serialize)]
-    struct FunctionOutput {
+    /// Function output information
+    #[derive(serde::Serialize, ToSchema)]
+    pub(crate) struct FunctionOutput {
+        /// Fully qualified function name
+        #[schema(value_type = String)]
         ffqn: FunctionFqn,
+        /// Extension type if any
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schema(value_type = Option<String>)]
         extension: Option<FunctionExtension>,
     }
 
     use super::HttpResponse;
 
-    #[derive(Deserialize, Debug)]
+    #[derive(Deserialize, Debug, IntoParams)]
+    #[into_params(parameter_in = Query)]
     pub(crate) struct FunctionWitParams {
+        /// Fully qualified function name
+        #[param(value_type = String)]
         ffqn: FunctionFqn,
     }
 
+    /// Get WIT definition for a function
+    #[utoipa::path(
+        get,
+        path = "/v1/functions/wit",
+        tag = "functions",
+        params(FunctionWitParams),
+        responses(
+            (status = 200, description = "WIT definition", body = String),
+            (status = 404, description = "Function not found")
+        )
+    )]
     pub(crate) async fn function_wit(
         Query(params): Query<FunctionWitParams>,
         state: State<Arc<WebApiState>>,
@@ -1576,15 +2033,25 @@ mod deployment {
     use serde::{Deserialize, Serialize};
     use std::{fmt::Write as _, sync::Arc};
     use tracing::instrument;
+    use utoipa::{IntoParams, ToSchema};
 
-    #[derive(Debug, Serialize)]
+    /// Deployment state with execution counts
+    #[derive(Debug, Serialize, ToSchema)]
     pub struct DeploymentStateSer {
+        /// Deployment identifier
+        #[schema(value_type = String, example = "Dep_01JKXYZ123456789ABCDEFGHIJ")]
         pub deployment_id: DeploymentId,
+        /// Whether this is the current deployment
         pub current: bool,
+        /// Number of locked executions
         pub locked: u32,
+        /// Number of pending executions
         pub pending: u32,
+        /// Number of scheduled executions
         pub scheduled: u32,
+        /// Number of blocked executions
         pub blocked: u32,
+        /// Number of finished executions
         pub finished: u32,
     }
 
@@ -1601,15 +2068,30 @@ mod deployment {
             }
         }
     }
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, IntoParams)]
+    #[into_params(parameter_in = Query)]
     pub(crate) struct ListDeploymentsParams {
+        /// Cursor for pagination (deployment ID)
         #[serde(default)]
+        #[param(value_type = Option<String>)]
         cursor_from: Option<DeploymentId>,
+        /// Number of items to return
         length: Option<u16>,
+        /// Include the cursor item in results
         #[serde(default)]
         including_cursor: bool,
     }
 
+    /// List deployments
+    #[utoipa::path(
+        get,
+        path = "/v1/deployments",
+        tag = "deployments",
+        params(ListDeploymentsParams),
+        responses(
+            (status = 200, description = "List of deployments", body = Vec<DeploymentStateSer>)
+        )
+    )]
     #[instrument(skip_all)]
     pub(crate) async fn list_deployments(
         state: State<Arc<WebApiState>>,
@@ -1659,6 +2141,15 @@ mod deployment {
         })
     }
 
+    /// Get current deployment ID
+    #[utoipa::path(
+        get,
+        path = "/v1/deployment-id",
+        tag = "deployments",
+        responses(
+            (status = 200, description = "Current deployment ID", body = String)
+        )
+    )]
     pub(crate) async fn get_current_deployment_id(
         state: State<Arc<WebApiState>>,
         accept: AcceptHeader,

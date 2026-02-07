@@ -1,4 +1,4 @@
-name: check-toml-schema
+name: check-schemas
 
 on:
   push:
@@ -18,7 +18,7 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  check-build-verify-toml-schema:
+  check-build-verify-schema:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -30,10 +30,18 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - name: Run `obelisk generate config-schema`
+      - name: Run `update-toml-schema.sh`
         run: |
           nix develop --command scripts/update-toml-schema.sh
           if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::Uncommitted changes after running 'obelisk generate config-schema toml/schema.json'"
+            echo "::error::Uncommitted changes after running 'update-toml-schema.sh'"
+            exit 1
+          fi
+
+      - name: Run `update-openapi-schema`
+        run: |
+          nix develop --command scripts/update-openapi-schema
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Uncommitted changes after running 'update-openapi-schema.sh'"
             exit 1
           fi
