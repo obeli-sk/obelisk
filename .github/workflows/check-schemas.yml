@@ -38,9 +38,9 @@ jobs:
             exit 1
           fi
 
-      - name: Run `update-openapi-schema`
+      - name: Run `update-openapi-schema.sh`
         run: |
-          nix develop --command scripts/update-openapi-schema
+          nix develop --command scripts/update-openapi-schema.sh
           if [ -n "$(git status --porcelain)" ]; then
             echo "::error::Uncommitted changes after running 'update-openapi-schema.sh'"
             exit 1
