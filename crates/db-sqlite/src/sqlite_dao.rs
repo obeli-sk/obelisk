@@ -2,8 +2,8 @@ use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ExecutionId, FunctionFqn, JoinSetId,
-    StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, JoinSetId, StrVariant,
+    SupportedFunctionReturnValue,
     component_id::InputContentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
@@ -18,14 +18,17 @@ use concepts::{
         ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
         LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter,
         LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
-        PendingStateBlockedByJoinSet, PendingStateFinished, PendingStateFinishedResultKind,
-        PendingStateLocked, PendingStateMergedPause, PendingStatePaused, PendingStatePendingAt,
+        PendingStateBlockedByJoinSet, PendingStateFinishedResultKind, PendingStateMergedPause,
         ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
         STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
     },
 };
 use const_format::formatcp;
-use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite};
+use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
+use db_common::{
+    AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
+    PendingFfqnSubscribersHolder,
+};
 use hashbrown::HashMap;
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Params, Row, ToSql, Transaction,
@@ -384,6 +387,16 @@ mod conversions {
         }
     }
 
+    /// Convert a `DbErrorGeneric` to `rusqlite::Error` for use in row mapping closures.
+    #[track_caller]
+    pub fn from_generic_error(err: &DbErrorGeneric) -> rusqlite::Error {
+        FromSqlError::other(OtherError {
+            reason: err.to_string().into(),
+            loc: Location::caller(),
+        })
+        .into()
+    }
+
     impl From<RusqliteError> for DbErrorRead {
         fn from(err: RusqliteError) -> Self {
             if matches!(err, RusqliteError::NotFound) {
@@ -480,398 +493,6 @@ mod conversions {
     }
 }
 
-#[derive(Debug)]
-struct CombinedStateDTO {
-    execution_id: ExecutionId,
-    state: String,
-    ffqn: FunctionFqn,
-    component_digest: InputContentDigest,
-    component_type: ComponentType,
-    deployment_id: DeploymentId,
-    created_at: DateTime<Utc>,
-    first_scheduled_at: DateTime<Utc>,
-    pending_expires_finished: DateTime<Utc>,
-    is_paused: bool,
-    // Locked:
-    last_lock_version: Option<Version>,
-    executor_id: Option<ExecutorId>,
-    run_id: Option<RunId>,
-    // Blocked by join set:
-    join_set_id: Option<JoinSetId>,
-    join_set_closing: Option<bool>,
-    // Finished:
-    result_kind: Option<PendingStateFinishedResultKind>,
-}
-#[derive(Debug)]
-struct CombinedState {
-    execution_with_state: ExecutionWithState,
-    corresponding_version: Version,
-}
-impl CombinedState {
-    fn get_next_version_assert_not_finished(&self) -> Version {
-        assert!(!self.execution_with_state.pending_state.is_finished());
-        self.corresponding_version.increment()
-    }
-
-    #[track_caller]
-    fn get_next_version_fail_if_finished(&self) -> Result<Version, DbErrorWrite> {
-        if self.execution_with_state.pending_state.is_finished() {
-            debug!("Execution is already finished");
-            return Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::IllegalState {
-                    reason: "already finished".into(),
-                    context: SpanTrace::capture(),
-                    source: None,
-                    loc: Location::caller(),
-                },
-            ));
-        }
-        Ok(self.corresponding_version.increment())
-    }
-
-    fn get_next_version_or_finished(&self) -> Version {
-        if self.execution_with_state.pending_state.is_finished() {
-            self.corresponding_version.clone()
-        } else {
-            self.corresponding_version.increment()
-        }
-    }
-}
-
-#[derive(Debug)]
-struct NotifierPendingAt {
-    scheduled_at: DateTime<Utc>,
-    ffqn: FunctionFqn,
-    component_input_digest: InputContentDigest,
-}
-
-#[derive(Debug)]
-struct NotifierExecutionFinished {
-    execution_id: ExecutionId,
-    retval: SupportedFunctionReturnValue,
-}
-
-#[derive(Debug, Default)]
-struct AppendNotifier {
-    pending_at: Option<NotifierPendingAt>,
-    execution_finished: Option<NotifierExecutionFinished>,
-    response: Option<(ExecutionId, ResponseWithCursor)>,
-}
-
-impl CombinedState {
-    fn new(dto: CombinedStateDTO, corresponding_version: Version) -> Result<Self, rusqlite::Error> {
-        let execution_with_state = match dto {
-            // Pending - just created
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: scheduled_at,
-                last_lock_version: None,
-                executor_id: None,
-                run_id: None,
-                join_set_id: None,
-                join_set_closing: None,
-                result_kind: None,
-                is_paused: false,
-            } if state == STATE_PENDING_AT => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::PendingAt(PendingStatePendingAt {
-                    scheduled_at,
-                    last_lock: None,
-                }),
-            },
-            // Pending, previously locked
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: scheduled_at,
-                last_lock_version: None,
-                executor_id: Some(executor_id),
-                run_id: Some(run_id),
-                join_set_id: None,
-                join_set_closing: None,
-                result_kind: None,
-                is_paused: false,
-            } if state == STATE_PENDING_AT => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::PendingAt(PendingStatePendingAt {
-                    scheduled_at,
-                    last_lock: Some(LockedBy {
-                        executor_id,
-                        run_id,
-                    }),
-                }),
-            },
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: lock_expires_at,
-                last_lock_version: Some(_),
-                executor_id: Some(executor_id),
-                run_id: Some(run_id),
-                join_set_id: None,
-                join_set_closing: None,
-                result_kind: None,
-                is_paused: false,
-            } if state == STATE_LOCKED => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::Locked(PendingStateLocked {
-                    locked_by: LockedBy {
-                        executor_id,
-                        run_id,
-                    },
-                    lock_expires_at,
-                }),
-            },
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: lock_expires_at,
-                last_lock_version: None,
-                executor_id: _,
-                run_id: _,
-                join_set_id: Some(join_set_id),
-                join_set_closing: Some(join_set_closing),
-                result_kind: None,
-                is_paused: false,
-            } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
-                    join_set_id: join_set_id.clone(),
-                    closing: join_set_closing,
-                    lock_expires_at,
-                }),
-            },
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: finished_at,
-                last_lock_version: None,
-                executor_id: None,
-                run_id: None,
-                join_set_id: None,
-                join_set_closing: None,
-                result_kind: Some(result_kind),
-                is_paused: false,
-            } if state == STATE_FINISHED => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::Finished(PendingStateFinished {
-                    finished_at,
-                    version: corresponding_version.0,
-                    result_kind,
-                }),
-            },
-            // Paused - PendingAt (just created)
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: scheduled_at,
-                last_lock_version: None,
-                executor_id: None,
-                run_id: None,
-                join_set_id: None,
-                join_set_closing: None,
-                result_kind: None,
-                is_paused: true,
-            } if state == STATE_PENDING_AT => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
-                    PendingStatePendingAt {
-                        scheduled_at,
-                        last_lock: None,
-                    },
-                )),
-            },
-            // Paused - PendingAt (previously locked)
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: scheduled_at,
-                last_lock_version: None,
-                executor_id: Some(executor_id),
-                run_id: Some(run_id),
-                join_set_id: None,
-                join_set_closing: None,
-                result_kind: None,
-                is_paused: true,
-            } if state == STATE_PENDING_AT => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
-                    PendingStatePendingAt {
-                        scheduled_at,
-                        last_lock: Some(LockedBy {
-                            executor_id,
-                            run_id,
-                        }),
-                    },
-                )),
-            },
-            // Paused - Locked
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: lock_expires_at,
-                last_lock_version: Some(_),
-                executor_id: Some(executor_id),
-                run_id: Some(run_id),
-                join_set_id: None,
-                join_set_closing: None,
-                result_kind: None,
-                is_paused: true,
-            } if state == STATE_LOCKED => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStatePaused::Locked(
-                    PendingStateLocked {
-                        locked_by: LockedBy {
-                            executor_id,
-                            run_id,
-                        },
-                        lock_expires_at,
-                    },
-                )),
-            },
-            // Paused - BlockedByJoinSet
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: lock_expires_at,
-                last_lock_version: None,
-                executor_id: _,
-                run_id: _,
-                join_set_id: Some(join_set_id),
-                join_set_closing: Some(join_set_closing),
-                result_kind: None,
-                is_paused: true,
-            } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStatePaused::BlockedByJoinSet(
-                    PendingStateBlockedByJoinSet {
-                        join_set_id: join_set_id.clone(),
-                        closing: join_set_closing,
-                        lock_expires_at,
-                    },
-                )),
-            },
-            _ => {
-                error!("Cannot deserialize pending state from  {dto:?}");
-                return Err(consistency_rusqlite("invalid `t_state`"));
-            }
-        };
-        Ok(Self {
-            execution_with_state,
-            corresponding_version,
-        })
-    }
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum TxType {
     MultipleWrites, // PhyTx must be rolled back, other LTX restarted
@@ -916,49 +537,6 @@ type ResponseSubscribers =
 type PendingSubscribers = Arc<Mutex<PendingFfqnSubscribersHolder>>;
 type ExecutionFinishedSubscribers =
     Mutex<HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>>;
-
-#[derive(Default)]
-struct PendingFfqnSubscribersHolder {
-    by_ffqns: HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>,
-    by_component: HashMap<InputContentDigest /* input digest */, (mpsc::Sender<()>, u64)>,
-}
-impl PendingFfqnSubscribersHolder {
-    fn notify(&self, notifier: &NotifierPendingAt) {
-        if let Some((subscription, _)) = self.by_ffqns.get(&notifier.ffqn) {
-            debug!("Notifying pending subscriber by ffqn");
-            // Does not block
-            let _ = subscription.try_send(());
-        }
-        if let Some((subscription, _)) = self.by_component.get(&notifier.component_input_digest) {
-            debug!("Notifying pending subscriber by component");
-            // Does not block
-            let _ = subscription.try_send(());
-        }
-    }
-
-    fn insert_ffqn(&mut self, ffqn: FunctionFqn, value: (mpsc::Sender<()>, u64)) {
-        self.by_ffqns.insert(ffqn, value);
-    }
-
-    fn remove_ffqn(&mut self, ffqn: &FunctionFqn) -> Option<(mpsc::Sender<()>, u64)> {
-        self.by_ffqns.remove(ffqn)
-    }
-
-    fn insert_by_component(
-        &mut self,
-        input_content_digest: InputContentDigest,
-        value: (mpsc::Sender<()>, u64),
-    ) {
-        self.by_component.insert(input_content_digest, value);
-    }
-
-    fn remove_by_component(
-        &mut self,
-        input_content_digest: &InputContentDigest,
-    ) -> Option<(mpsc::Sender<()>, u64)> {
-        self.by_component.remove(input_content_digest)
-    }
-}
 
 #[derive(Clone)]
 struct SqlitePoolInner {
@@ -2101,6 +1679,7 @@ impl SqlitePool {
                     },
                     Version::new(row.get("corresponding_version")?),
                 )
+                .map_err(|e| from_generic_error(&e))
             },
         )
         .map_err(DbErrorRead::from)
@@ -2292,7 +1871,8 @@ impl SqlitePool {
                             is_paused: row.get("is_paused")?,
                         },
                         Version::new(row.get("corresponding_version")?),
-                    )?;
+                    )
+                    .map_err(|e| from_generic_error(&e))?;
                     Ok(combined_state.execution_with_state)
                 },
             )?

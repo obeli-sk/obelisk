@@ -2944,6 +2944,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "obeli-sk-db-common"
+version = "0.34.1"
+dependencies = [
+ "chrono",
+ "hashbrown 0.16.1",
+ "obeli-sk-concepts",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-error",
+]
+
+[[package]]
 name = "obeli-sk-db-postgres"
 version = "0.34.1"
 dependencies = [
@@ -2956,6 +2969,7 @@ dependencies = [
  "derive_more",
  "hashbrown 0.16.1",
  "obeli-sk-concepts",
+ "obeli-sk-db-common",
  "obeli-sk-val-json",
  "rand 0.9.2",
  "strum",
@@ -2979,6 +2993,7 @@ dependencies = [
  "hdrhistogram",
  "itertools",
  "obeli-sk-concepts",
+ "obeli-sk-db-common",
  "obeli-sk-val-json",
  "rand 0.9.2",
  "rusqlite",

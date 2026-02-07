@@ -1,0 +1,23 @@
+[package]
+name = "obeli-sk-db-common"
+description = "Common types and utilities shared between database implementations"
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+concepts.workspace = true
+
+chrono.workspace = true
+hashbrown.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-error.workspace = true
+
+[lints]
+workspace = true

@@ -11,6 +11,7 @@ version.workspace = true
 
 [dependencies]
 concepts = { workspace = true, features = ["rusqlite"] }
+db-common.workspace = true
 val-json.workspace = true
 
 assert_matches.workspace = true
