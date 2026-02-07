@@ -100,5 +100,5 @@ backtrace.ignore_component_digest = true
 
 [[workflow]]
 name = "test_programs_adhoc_workflow"
-location = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/adhoc_js_workflow.wasm"
+location = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_adhoc_js_workflow.wasm"
 exec.lock_expiry.seconds = 5
