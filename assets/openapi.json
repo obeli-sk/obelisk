@@ -330,7 +330,7 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "Pagination cursor (DateTime or ExecutionId)",
+            "description": "Pagination cursor (`DateTime` or `ExecutionId`)",
             "required": false,
             "schema": {
               "type": "string"
