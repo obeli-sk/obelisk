@@ -3701,7 +3701,7 @@ pub(crate) mod tests {
             console.log('Starting comprehensive API test');
 
             /* Test random functions */
-            const rand1 = obelisk.randomU64(0, 100);
+            const rand1 = obelisk.randomU64(0, 10);
             const rand2 = obelisk.randomU64Inclusive(1, 10);
             const randStr = obelisk.randomString(5, 10);
             console.debug('Random values:', Number(rand1), Number(rand2), randStr);
@@ -3740,7 +3740,7 @@ pub(crate) mod tests {
             }
 
             return {
-                rand1InRange: rand1 >= 0n && rand1 < 100n,
+                rand1InRange: rand1 >= 0n && rand1 < 10n,
                 rand2InRange: rand2 >= 1n && rand2 <= 10n,
                 randStrLenOk: randStr.length >= 5 && randStr.length < 10,
                 fiboResult: fiboResult,

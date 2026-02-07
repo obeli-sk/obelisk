@@ -1061,8 +1061,9 @@ impl WorkflowCtx {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let random_u64 =
-                            host.random_u64(min, max_exclusive, wasm_backtrace).await?;
+                        let random_u64 = host
+                            .random_u64_exclusive(min, max_exclusive, wasm_backtrace)
+                            .await?;
                         Ok((random_u64,))
                     })
                 },
@@ -1340,18 +1341,18 @@ pub(crate) mod workflow_support {
             Ok(())
         }
 
-        pub(crate) async fn random_u64(
+        pub(crate) async fn random_u64_exclusive(
             &mut self,
             min: u64,
             max_exclusive: u64,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<u64> {
-            let Some(max_inclusive) = max_exclusive.checked_add(1) else {
-                // Panic in host function would kill the worker task.
-                return Err(wasmtime::Error::msg("integer overflow"));
-            };
-            self.random_u64_inclusive(min, max_inclusive, wasm_backtrace)
-                .await
+            self.random_u64_inclusive(
+                min,
+                max_exclusive.saturating_sub(1), // if zero, it will be an empty range and error
+                wasm_backtrace,
+            )
+            .await
         }
 
         pub(crate) async fn random_u64_inclusive(
@@ -1360,13 +1361,12 @@ pub(crate) mod workflow_support {
             max_inclusive: u64,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<u64> {
-            let range = min..=max_inclusive;
+            let range = min..max_inclusive;
             if range.is_empty() {
                 // Panic in host function would kill the worker task.
                 return Err(wasmtime::Error::msg("range must not be empty"));
             }
             let value = rand::Rng::random_range(&mut self.rng, range);
-
             let value = Persist::apply_u64(
                 value,
                 min,
