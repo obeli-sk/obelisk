@@ -1283,6 +1283,26 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function join-next", err))?;
 
+        // join-next-try: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-try-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "join-next-try",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource,): (Resource<JoinSetId>,)| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let res = host
+                            .join_next_try(join_set_id, wasm_backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((res,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function join-next-try", err))?;
+
         Ok(())
     }
 
@@ -1341,9 +1361,10 @@ enum JoinSetCreateError {
 
 pub(crate) mod workflow_support {
     use super::{SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, types_4_1_0};
-    use crate::workflow::event_history::{JoinNext, Persist, SubmitDelay};
+    use crate::workflow::event_history::{JoinNext, JoinNextTry, Persist, SubmitDelay};
     use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v4_1_0::obelisk::types::join_set::JoinNextError;
+    use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, v4_1_0};
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4_1, JoinSetCreateError};
     use concepts::prefixed_ulid::ExecutionIdDerived;
@@ -1604,6 +1625,27 @@ pub(crate) mod workflow_support {
                 self.clock_fn.now(),
             )
             .await
+        }
+
+        pub(crate) async fn join_next_try(
+            &mut self,
+            join_set_id: JoinSetId,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> Result<
+            Result<(types_4_1_0::execution::ResponseId, Result<(), ()>), WitJoinNextTryError>,
+            WorkflowFunctionError,
+        > {
+            let result = JoinNextTry {
+                join_set_id,
+                wasm_backtrace,
+            }
+            .apply(
+                &mut self.event_history,
+                &mut self.db_connection,
+                self.clock_fn.now(),
+            )
+            .await?;
+            Ok(result)
         }
 
         /// Submit a child execution request with JSON-serialized parameters.

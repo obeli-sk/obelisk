@@ -1,0 +1,101 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
+expression: "ExecutionLogSanitized::from(execution_log.clone())"
+---
+{
+  "execution_id": "E_00000000000000000000000000",
+  "events": [
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "created": {
+          "ffqn": "testing:sleep-workflow/workflow.join-next-try-all-processed",
+          "params": [],
+          "parent": null,
+          "scheduled_at": "1970-01-01T00:00:00Z",
+          "component_id": {
+            "component_type": "workflow",
+            "name": "",
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "deployment_id": "Dep_00000000000000000000000000",
+          "metadata": null,
+          "scheduled_by": null
+        }
+      },
+      "version": 0
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "locked": {
+          "component_id": {
+            "component_type": "workflow",
+            "name": "",
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "executor_id": "Exr_00000000000000000000000000",
+          "deployment_id": "Dep_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000001",
+          "lock_expires_at": "1970-01-01T00:00:01Z",
+          "retry_config": {
+            "max_retries": null,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
+          }
+        }
+      },
+      "version": 1
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "join_set_create",
+            "join_set_id": "g:1"
+          }
+        }
+      },
+      "version": 2
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "join_next_try",
+            "join_set_id": "g:1",
+            "found_response": false
+          }
+        }
+      },
+      "version": 3
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "finished": {
+          "result": {
+            "ok": {
+              "ok": null
+            }
+          },
+          "http_client_traces": null
+        }
+      },
+      "version": 4
+    }
+  ],
+  "responses": [],
+  "next_version": 4,
+  "pending_state": {
+    "status": "finished",
+    "version": 4,
+    "finished_at": "1970-01-01T00:00:00Z",
+    "result_kind": "ok"
+  },
+  "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}

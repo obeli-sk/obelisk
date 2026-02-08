@@ -15,6 +15,7 @@ use crate::workflow::host_exports::response_id::ResponseId;
 use crate::workflow::host_exports::v4_1_0;
 use crate::workflow::host_exports::v4_1_0::obelisk::types::execution as types_execution;
 use crate::workflow::host_exports::v4_1_0::obelisk::types::join_set as types_join_set;
+use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextTryError;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ComponentId;
@@ -68,6 +69,7 @@ enum ChildReturnValue {
     WastVal(WastVal),
     JoinSetCreate(JoinSetId),
     JoinNext(Result<(ResponseId, Result<(), ()>), types_join_set::JoinNextError>),
+    JoinNextTry(Result<(ResponseId, Result<(), ()>), JoinNextTryError>),
     JoinNextRequestingFfqn(Result<(ExecutionIdDerived, WastVal), AwaitNextExtensionError>),
     OneOffDelay {
         scheduled_at: DateTime<Utc>,
@@ -574,6 +576,13 @@ impl EventHistory {
             })
     }
 
+    /// Check if there's an unprocessed response for the given join set.
+    fn has_unprocessed_response_for_join_set(&self, join_set_id: &JoinSetId) -> bool {
+        self.responses.iter().any(|(event, status)| {
+            *status == Unprocessed && event.event.event.join_set_id == *join_set_id
+        })
+    }
+
     fn mark_next_unprocessed_response(
         &'_ mut self,
         parent_event_idx: usize, // needs to be marked as Processed as well if found
@@ -962,6 +971,77 @@ impl EventHistory {
                 )))
             }
 
+            // JoinNextTry with found_response=true: match with actual response
+            (
+                DeterministicKey::JoinNextTry { join_set_id },
+                HistoryEvent::JoinNextTry {
+                    join_set_id: found_join_set_id,
+                    found_response: true,
+                },
+            ) if *join_set_id == *found_join_set_id => {
+                trace!(%join_set_id, "DeterministicKey::JoinNextTry(found): Peeked at JoinNextTry");
+                match self.mark_next_unprocessed_response(found_idx, join_set_id) {
+                    Some(JoinSetResponseEnriched::ChildExecutionFinished(
+                        ChildExecutionFinished {
+                            child_execution_id,
+                            result: res,
+                            response_ffqn: _,
+                        },
+                    )) => {
+                        trace!(%join_set_id, %child_execution_id, "DeterministicKey::JoinNextTry: Matched ChildExecutionFinished");
+                        Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNextTry(
+                            Ok((
+                                ResponseId::ChildExecutionId(child_execution_id.clone()),
+                                res.as_pending_state_finished_result()
+                                    .as_result()
+                                    .map_err(|_| ()),
+                            )),
+                        )))
+                    }
+                    Some(JoinSetResponseEnriched::DelayFinished {
+                        delay_id,
+                        result,
+                        expires_at: _,
+                    }) => {
+                        trace!(%join_set_id, %delay_id, "DeterministicKey::JoinNextTry: Matched DelayFinished");
+                        Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNextTry(
+                            Ok((ResponseId::DelayId(delay_id.clone()), result)),
+                        )))
+                    }
+                    None => {
+                        // This is a nondeterminism: history says found_response=true but no response available
+                        Err(ApplyError::NondeterminismDetected(format!(
+                            "JoinNextTry recorded found_response=true but no response available for join set `{join_set_id}`"
+                        )))
+                    }
+                }
+            }
+
+            // JoinNextTry with found_response=false: return error based on pending requests
+            (
+                DeterministicKey::JoinNextTry { join_set_id },
+                HistoryEvent::JoinNextTry {
+                    join_set_id: found_join_set_id,
+                    found_response: false,
+                },
+            ) if *join_set_id == *found_join_set_id => {
+                trace!(%join_set_id, "DeterministicKey::JoinNextTry(not found): returning error");
+                self.event_history[found_idx].1 = Processed;
+                // Check if there are pending requests to determine Pending vs AllProcessed
+                let error = if self
+                    .index_join_set_to_unawaited_requests
+                    .get(join_set_id)
+                    .is_some_and(|requests| !requests.is_empty())
+                {
+                    JoinNextTryError::Pending
+                } else {
+                    JoinNextTryError::AllProcessed
+                };
+                Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNextTry(
+                    Err(error),
+                )))
+            }
+
             (
                 DeterministicKey::Schedule {
                     target_execution_id,
@@ -1239,10 +1319,9 @@ impl EventHistory {
                 result,
                 wasm_backtrace,
             }) => {
-                // Cannot be cacheable.
-                // Attempt to write to target_execution_id, will continue on conflict.
-                // Non-cacheable event. (could be turned into one)
-                // The idempotent write is needed to avoid race with stub requests originating from gRPC.
+                // Cannot be cacheable as we need the result now.
+                // Idempotently attempt to write to target_execution_id.
+                // The idempotent write is needed to avoid race with stub requests originating from remote systems.
                 debug!(%target_execution_id, "StubRequest: Flushing and appending");
 
                 // Flush the cache before getting the stub's create request, because it might be this execution's child.
@@ -1339,6 +1418,36 @@ impl EventHistory {
                     .append_batch(
                         called_at,
                         vec![history_event_req],
+                        db_connection.execution_id.clone(),
+                        wasm_backtrace,
+                        &self.locked_event.component_id,
+                    )
+                    .await?;
+                Ok(history_event)
+            }
+
+            EventCallNonBlocking::JoinNextTry(JoinNextTry {
+                join_set_id,
+                wasm_backtrace,
+            }) => {
+                // Check if there's an unprocessed response available for this join set
+                let found_response = self.has_unprocessed_response_for_join_set(&join_set_id);
+
+                debug!(%join_set_id, found_response, "JoinNextTry");
+                let event = HistoryEvent::JoinNextTry {
+                    join_set_id,
+                    found_response,
+                };
+                let history_event = (event.clone(), db_connection.version.clone());
+                let request = AppendRequest {
+                    created_at: called_at,
+                    event: ExecutionRequest::HistoryEvent { event },
+                };
+                // TODO: append_non_blocking
+                db_connection
+                    .append_batch(
+                        called_at,
+                        vec![request],
                         db_connection.execution_id.clone(),
                         wasm_backtrace,
                         &self.locked_event.component_id,
@@ -1722,6 +1831,7 @@ impl EventHistory {
                         HistoryEvent::Persist { .. }
                         | HistoryEvent::JoinSetCreate { .. }
                         | HistoryEvent::JoinNext { .. }
+                        | HistoryEvent::JoinNextTry { .. }
                         | HistoryEvent::JoinNextTooMany { .. }
                         | HistoryEvent::Schedule { .. }
                         | HistoryEvent::Stub { .. } => false,
@@ -1744,6 +1854,7 @@ impl EventHistory {
                         HistoryEvent::Persist { .. }
                         | HistoryEvent::JoinSetCreate { .. }
                         | HistoryEvent::JoinSetRequest { .. }
+                        | HistoryEvent::JoinNextTry { .. }
                         | HistoryEvent::JoinNextTooMany { .. }
                         | HistoryEvent::Schedule { .. }
                         | HistoryEvent::Stub { .. } => false,
@@ -1914,6 +2025,7 @@ pub(crate) enum EventCallNonBlocking {
     JoinSetCreate(JoinSetCreate),
     SubmitChildExecution(SubmitChildExecution),
     SubmitDelay(SubmitDelay),
+    JoinNextTry(JoinNextTry),
     Schedule(Schedule),
     Stub(Stub),
     Persist(Persist),
@@ -2244,6 +2356,53 @@ impl JoinNext {
 }
 
 #[derive(derive_more::Debug, Clone)]
+pub(crate) struct JoinNextTry {
+    pub(crate) join_set_id: JoinSetId,
+    #[debug(skip)]
+    pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
+}
+impl JoinNextTry {
+    pub(crate) async fn apply(
+        self,
+        event_history: &mut EventHistory,
+        db_connection: &mut CachingDbConnection,
+        called_at: DateTime<Utc>,
+    ) -> Result<
+        Result<(types_execution::ResponseId, Result<(), ()>), JoinNextTryError>,
+        WorkflowFunctionError,
+    > {
+        assert!(
+            self.join_set_id.kind != JoinSetKind::OneOff,
+            "one-off join set cannot be constructed outside of OneOff*Request"
+        );
+        let join_set_id = self.join_set_id.clone();
+        let value = event_history
+            .apply_inner(
+                EventCall::NonBlocking(EventCallNonBlocking::JoinNextTry(self)),
+                db_connection,
+                called_at,
+            )
+            .await?;
+        let value = assert_matches!(value, ChildReturnValue::JoinNextTry(value) => value);
+        if let Ok((response_id, _)) = &value {
+            let was_present = event_history
+                .index_join_set_to_unawaited_requests
+                .get_mut(&join_set_id)
+                .ok_or_else(|| {
+                    WorkflowFunctionError::ConstraintViolation(
+                        format!("not found in open join sets: `{join_set_id}`").into(),
+                    )
+                })?
+                .shift_remove(response_id);
+            assert!(was_present.is_some());
+        } // else it is JoinNextTryError
+        let value = value
+            .map(|(response_id, result)| (types_execution::ResponseId::from(response_id), result));
+        Ok(value)
+    }
+}
+
+#[derive(derive_more::Debug, Clone)]
 pub(crate) struct OneOffChildExecutionRequest {
     ffqn: FunctionFqn,
     fn_component_id: ComponentId,
@@ -2490,6 +2649,9 @@ enum DeterministicKey {
         closing: bool,
     },
 
+    #[display("JoinNextTry({join_set_id})")]
+    JoinNextTry { join_set_id: JoinSetId },
+
     #[display("Schedule({target_execution_id}, {schedule_at})")]
     Schedule {
         target_execution_id: ExecutionId,
@@ -2638,6 +2800,11 @@ impl EventCallNonBlocking {
                 target_execution_id: target_execution_id.clone(),
                 return_value: return_value.clone(),
             },
+            EventCallNonBlocking::JoinNextTry(JoinNextTry { join_set_id, .. }) => {
+                DeterministicKey::JoinNextTry {
+                    join_set_id: join_set_id.clone(),
+                }
+            }
         }
     }
 }
@@ -2655,8 +2822,8 @@ mod tests {
     use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
     use crate::workflow::deadline_tracker::deadline_tracker_factory_test;
     use crate::workflow::event_history::{
-        ApplyError, AwaitNextExtensionError, ChildReturnValue, JoinNextRequestingFfqn,
-        JoinSetCreate, Schedule, Stub,
+        ApplyError, AwaitNextExtensionError, ChildReturnValue, JoinNextRequestingFfqn, JoinNextTry,
+        JoinNextTryError, JoinSetCreate, Schedule, Stub, SubmitDelay,
     };
     use crate::workflow::host_exports::response_id::ResponseId;
     use assert_matches::assert_matches;
@@ -3611,5 +3778,298 @@ mod tests {
                     )
                 }
             })
+    }
+
+    #[tokio::test]
+    async fn join_next_try_processes_response() {
+        use concepts::prefixed_ulid::DelayId;
+
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        // Create an execution.
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
+
+        let (mut event_history, mut caching_db_connection) = load_event_history(
+            db_pool.connection_test().await.unwrap(),
+            execution_id.clone(),
+            sim_clock.now(),
+            Duration::from_secs(1), // execution deadline
+            deadline_tracker_factory_test(&sim_clock),
+            JoinNextBlockingStrategy::Interrupt,
+            fn_registry.clone(),
+        )
+        .await;
+
+        // Create a join set using JoinSetCreate::apply which updates the index
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::Named, StrVariant::Arc("test".into())).unwrap();
+        JoinSetCreate {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+
+        // Submit a delay using SubmitDelay::apply which updates the index
+        let delay_id = DelayId::new(&execution_id, &join_set_id);
+        let schedule_at = HistoryEventScheduleAt::In(Duration::from_millis(10));
+        let expires_at = schedule_at.as_date_time(sim_clock.now()).unwrap();
+        SubmitDelay {
+            join_set_id: join_set_id.clone(),
+            delay_id: delay_id.clone(),
+            schedule_at,
+            expires_at_if_new: expires_at,
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+
+        // Try join_next_try before response arrives - should return Pending
+        let result = JoinNextTry {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        assert_matches!(result, Err(JoinNextTryError::Pending));
+
+        // Append delay response to DB
+        db_connection
+            .append_response(
+                sim_clock.now(),
+                execution_id.clone(),
+                JoinSetResponseEvent {
+                    join_set_id: join_set_id.clone(),
+                    event: JoinSetResponse::DelayFinished {
+                        delay_id: delay_id.clone(),
+                        result: Ok(()),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        // Reload event history to pick up the response
+        let (mut event_history, mut caching_db_connection) = load_event_history(
+            db_pool.connection_test().await.unwrap(),
+            execution_id.clone(),
+            sim_clock.now(),
+            Duration::from_secs(1),
+            deadline_tracker_factory_test(&sim_clock),
+            JoinNextBlockingStrategy::Interrupt,
+            fn_registry.clone(),
+        )
+        .await;
+
+        // Replay the join set creation and delay submission (updates index)
+        JoinSetCreate {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+
+        SubmitDelay {
+            join_set_id: join_set_id.clone(),
+            delay_id: delay_id.clone(),
+            schedule_at,
+            expires_at_if_new: expires_at,
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+
+        // Replay: First JoinNextTry returned Pending (replay should return same)
+        let result = JoinNextTry {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        assert_matches!(
+            result,
+            Err(JoinNextTryError::Pending),
+            "replay should return same result as original"
+        );
+
+        // Now call join_next_try again - should find the response
+        let result = JoinNextTry {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        let (response_id, delay_result) = result.expect("should find response");
+        // Check that response_id is a delay with the expected id
+        use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::ResponseId as WitResponseId;
+        let WitResponseId::DelayId(wit_delay_id) = response_id else {
+            panic!("expected DelayId, got {response_id:?}");
+        };
+        assert_eq!(delay_id.to_string(), wit_delay_id.id);
+        assert!(delay_result.is_ok(), "delay should not be cancelled");
+
+        // Verify response is marked as processed - should return AllProcessed
+        let result = JoinNextTry {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        assert_matches!(
+            result,
+            Err(JoinNextTryError::AllProcessed),
+            "response should be marked as processed"
+        );
+
+        event_history
+            .finalize(&mut caching_db_connection, sim_clock.now())
+            .await
+            .unwrap();
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn join_next_try_all_processed_should_be_persisted() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        // Create an execution.
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
+
+        let (mut event_history, mut caching_db_connection) = load_event_history(
+            db_pool.connection_test().await.unwrap(),
+            execution_id.clone(),
+            sim_clock.now(),
+            Duration::from_secs(1), // execution deadline
+            deadline_tracker_factory_test(&sim_clock),
+            JoinNextBlockingStrategy::Interrupt,
+            fn_registry.clone(),
+        )
+        .await;
+
+        // Create a join set
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::Named, StrVariant::Arc("test".into())).unwrap();
+        JoinSetCreate {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+
+        // Try join_next_try should return AllProcessed
+        let result = JoinNextTry {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        assert_matches!(result, Err(JoinNextTryError::AllProcessed));
+
+        // no new events should be appended.
+        event_history
+            .finalize(&mut caching_db_connection, sim_clock.now())
+            .await
+            .unwrap();
+
+        // Replay without the buggy join-next-try should trigger nondeterminism error.
+        let (mut event_history, mut caching_db_connection) = load_event_history(
+            db_pool.connection_test().await.unwrap(),
+            execution_id.clone(),
+            sim_clock.now(),
+            Duration::from_secs(1),
+            deadline_tracker_factory_test(&sim_clock),
+            JoinNextBlockingStrategy::Interrupt,
+            fn_registry.clone(),
+        )
+        .await;
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::Named, StrVariant::Arc("test".into())).unwrap();
+        JoinSetCreate {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+
+        let err = event_history
+            .finalize(&mut caching_db_connection, sim_clock.now())
+            .await
+            .unwrap_err();
+
+        let reason = assert_matches!(err, ApplyError::NondeterminismDetected(reason) => reason);
+        assert_eq!(
+            "found unprocessed request stored at version 2: event: JoinNextTry(n:test)",
+            reason
+        );
+
+        drop(db_connection);
+        db_close.close().await;
     }
 }

@@ -494,6 +494,12 @@ pub enum HistoryEvent {
         /// Closing request must never set `requested_ffqn` and is ignored by determinism checks.
         closing: bool,
     },
+    /// Attempt to process next response without changing the pending state.
+    #[display("JoinNextTry({join_set_id})")]
+    JoinNextTry {
+        join_set_id: JoinSetId,
+        found_response: bool, // False means `JoinNextTryError::Pending` or `JoinNextTryError::AllProcessed` based on previous events.
+    },
     /// Records the fact that a join set was awaited more times than its submission count.
     #[display("JoinNextTooMany({join_set_id})")]
     JoinNextTooMany {

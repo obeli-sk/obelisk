@@ -2392,7 +2392,8 @@ impl SqlitePool {
                     | HistoryEvent::Persist { .. }
                     | HistoryEvent::Schedule { .. }
                     | HistoryEvent::Stub { .. }
-                    | HistoryEvent::JoinNextTooMany { .. },
+                    | HistoryEvent::JoinNextTooMany { .. }
+                    | HistoryEvent::JoinNextTry { .. },
             } => {
                 return Ok((
                     Self::bump_state_next_version(tx, execution_id, &appending_version, None)?,

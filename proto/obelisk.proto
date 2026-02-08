@@ -419,6 +419,11 @@ message ExecutionEvent {
             optional FunctionName function = 2;
         }
 
+        message JoinNextTry {
+            JoinSetId join_set_id = 1;
+            bool found_response = 2;
+        }
+
         message Schedule {
             message ScheduledAt {
                 message Now {}
@@ -452,6 +457,7 @@ message ExecutionEvent {
             JoinSetRequest join_set_request = 3;
             JoinNext join_next = 4;
             JoinNextTooMany join_next_too_many = 7;
+            JoinNextTry join_next_try = 8;
             Schedule schedule = 5;
             Stub stub = 6;
         }

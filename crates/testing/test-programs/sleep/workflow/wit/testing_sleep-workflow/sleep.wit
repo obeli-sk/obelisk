@@ -12,6 +12,9 @@ interface workflow {
 
     two-delays-in-same-join-set: func() -> result;
     join-next-produces-all-processed-error: func() -> result;
+    join-next-try-pending: func() -> result;
+    join-next-try-all-processed: func() -> result;
+    join-next-try-found: func() -> result;
 
     sleep-activity-submit: func() -> result;
     sleep-activity-submit-then-trap: func() -> result;

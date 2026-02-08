@@ -444,7 +444,8 @@ impl ExecutionJournal {
                         | HistoryEvent::Persist { .. }
                         | HistoryEvent::Schedule { .. }
                         | HistoryEvent::Stub { .. }
-                        | HistoryEvent::JoinNextTooMany { .. },
+                        | HistoryEvent::JoinNextTooMany { .. }
+                        | HistoryEvent::JoinNextTry { .. }, // Non-blocking, no state change
                 } => None,
             })
             .expect("journal must begin with Created event");

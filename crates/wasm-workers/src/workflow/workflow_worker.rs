@@ -970,6 +970,7 @@ pub(crate) mod tests {
     };
     use rstest::rstest;
     use serde_json::json;
+    use std::collections::VecDeque;
     use std::ops::Deref;
     use std::str::FromStr as _;
     use std::time::Duration;
@@ -2812,10 +2813,78 @@ pub(crate) mod tests {
         .await;
     }
 
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn join_next_try_pending(db: db_tests::Database) {
+        const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::JOIN_NEXT_TRY_PENDING
+        );
+        execute_workflow_fn_with_single_delay(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            FFQN,
+            None, // No delay needed - we want to test that join_next_try returns Pending immediately
+            db,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn join_next_try_all_processed(db: db_tests::Database) {
+        const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::JOIN_NEXT_TRY_ALL_PROCESSED
+        );
+        execute_workflow_fn_with_single_delay(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            FFQN,
+            None, // No delay needed
+            db,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn join_next_try_found(db: db_tests::Database) {
+        const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::JOIN_NEXT_TRY_FOUND
+        );
+        execute_workflow_fn_with_delays(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            FFQN,
+            vec![Duration::from_millis(1), Duration::from_millis(9)], // Both delay requests should expire
+            db,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+    }
+
     async fn execute_workflow_fn_with_single_delay(
         workflow_wasm_path: &'static str,
         ffqn: FunctionFqn,
         delay: Option<Duration>,
+        db: db_tests::Database,
+        locking_strategy: LockingStrategy,
+    ) -> ExecutionLog {
+        execute_workflow_fn_with_delays(
+            workflow_wasm_path,
+            ffqn,
+            delay.into_iter().collect(),
+            db,
+            locking_strategy,
+        )
+        .await
+    }
+
+    async fn execute_workflow_fn_with_delays(
+        workflow_wasm_path: &'static str,
+        ffqn: FunctionFqn,
+        delays: Vec<Duration>,
         db: db_tests::Database,
         locking_strategy: LockingStrategy,
     ) -> ExecutionLog {
@@ -2897,7 +2966,8 @@ pub(crate) mod tests {
             assert_eq!(1, task_count);
         }
 
-        if let Some(delay) = delay {
+        let mut delays = VecDeque::from(delays);
+        while let Some(delay) = delays.pop_front() {
             // If delay is expected, move time forward and tick expired timers watcher
             let pending_state = db_connection
                 .get_pending_state(&execution_id)

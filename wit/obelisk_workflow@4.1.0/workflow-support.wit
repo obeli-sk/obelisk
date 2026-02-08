@@ -32,6 +32,15 @@ interface workflow-support {
         params-parsing-error(string),
     }
 
+    /// Error variants that may occur when calling `join-next-try` function.
+    @since(version = 4.1.0)
+    variant join-next-try-error {
+        /// All submitted requests and their responses were already processed.
+        all-processed,
+        /// No response is available yet, but there are pending requests.
+        pending,
+    }
+
     /// Returns a random u64 in the range [min, max).
     @since(version = 3.0.0)
     random-u64: func(min: u64, max-exclusive: u64) -> u64;
@@ -83,7 +92,15 @@ interface workflow-support {
     /// The response is marked as processed.
     /// Child execution result can be obtained using `-get` extension function using the
     /// returned execution ID.
-    /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+    /// Return `join-next-error::all-processed` if the join set has all requests matched with responses already processed.
     @since(version = 4.1.0)
     join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
+
+    /// Attempt to process next response without blocking.
+    /// Child execution result can be obtained using `-get` extension function using the
+    /// returned execution ID.
+    /// Return `join-next-try-error::all-processed` if the join set has all requests matched with responses already processed.
+    /// Return `join-next-try-error::pending` if no response is available yet, but there are pending requests.
+    @since(version = 4.1.0)
+    join-next-try: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-try-error>;
 }
