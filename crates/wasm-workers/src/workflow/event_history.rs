@@ -1445,12 +1445,19 @@ impl EventHistory {
                 };
                 // TODO: append_non_blocking
                 db_connection
-                    .append_batch(
+                    .append_non_blocking(
+                        CacheableDbEvent::JoinNextTry {
+                            request,
+                            version: db_connection.version.clone(),
+                            backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+                                execution_id: db_connection.execution_id.clone(),
+                                component_id: self.locked_event.component_id.clone(),
+                                wasm_backtrace,
+                                version_min_including: db_connection.version.clone(),
+                                version_max_excluding: Version::new(db_connection.version.0 + 1),
+                            }),
+                        },
                         called_at,
-                        vec![request],
-                        db_connection.execution_id.clone(),
-                        wasm_backtrace,
-                        &self.locked_event.component_id,
                     )
                     .await?;
                 Ok(history_event)

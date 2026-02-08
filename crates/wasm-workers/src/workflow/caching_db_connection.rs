@@ -46,6 +46,11 @@ pub(crate) enum CacheableDbEvent {
         version: Version,
         backtrace: Option<BacktraceInfo>,
     },
+    JoinNextTry {
+        request: AppendRequest,
+        version: Version,
+        backtrace: Option<BacktraceInfo>,
+    },
 }
 
 pub(crate) struct CachingBuffer {
@@ -124,6 +129,11 @@ impl CachingDbConnection {
                     backtrace,
                 }
                 | CacheableDbEvent::SubmitDelay {
+                    request,
+                    version,
+                    backtrace,
+                }
+                | CacheableDbEvent::JoinNextTry {
                     request,
                     version,
                     backtrace,
@@ -334,6 +344,11 @@ impl CachingDbConnection {
                         backtrace,
                     }
                     | CacheableDbEvent::SubmitDelay {
+                        request,
+                        version,
+                        backtrace,
+                    }
+                    | CacheableDbEvent::JoinNextTry {
                         request,
                         version,
                         backtrace,
