@@ -157,7 +157,6 @@ members = [
     "crates/testing/test-programs/stub/activity/builder",
     "crates/testing/test-programs/stub/workflow",
     "crates/testing/test-programs/stub/workflow/builder",
-    "crates/testing/test-programs/adhoc-js-workflow",
     "crates/testing/test-programs/adhoc-js-workflow/builder",
     "crates/testing/test-utils",
     "crates/utils",
