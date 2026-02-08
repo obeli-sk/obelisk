@@ -942,7 +942,7 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use chrono::DateTime;
     use concepts::component_id::InputContentDigest;
-    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutionIdDerived};
+    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived};
     use concepts::storage::{
         AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, JoinSetResponse, Locked,
         LockedBy, PendingStateFinishedError,
@@ -972,12 +972,10 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::collections::VecDeque;
     use std::ops::Deref;
-    use std::str::FromStr as _;
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
     use test_utils::ExecutionLogSanitized;
     use test_utils::sim_clock::SimClock;
-    use tokio::sync::mpsc;
     use tracing::debug;
     use tracing::info_span;
     use utils::sha256sum::calculate_sha256_file;
@@ -3363,691 +3361,698 @@ pub(crate) mod tests {
         assert_matches!(result.kind, ExecutionFailureKind::Cancelled);
     }
 
-    // Ad-hoc JS workflow tests
-    const ADHOC_JS_EXECUTE_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
-        test_programs_adhoc_js_workflow_builder::exports::testing::adhoc_js_workflow::workflow::EXECUTE,
-    );
+    #[cfg(feature = "boa-unstable")]
+    mod boa {
+        use super::*;
+        use concepts::prefixed_ulid::DelayId;
+        use std::str::FromStr as _;
+        use tokio::sync::mpsc;
 
-    async fn compile_adhoc_js_workflow(
-        db_pool: Arc<dyn DbPool>,
-        clock_fn: Box<dyn ClockFn>,
-        fn_registry: &Arc<dyn FunctionRegistry>,
-        cancel_registry: CancelRegistry,
-    ) -> ExecTask {
-        new_workflow_exec_task(
-            db_pool,
-            test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
-            clock_fn,
-            JoinNextBlockingStrategy::Interrupt,
-            fn_registry,
-            cancel_registry,
-            LockingStrategy::ByComponentDigest,
-        )
-        .await
-    }
+        const ADHOC_JS_EXECUTE_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_adhoc_js_workflow_builder::exports::testing::adhoc_js_workflow::workflow::EXECUTE,
+        );
 
-    async fn adhoc_js(
-        js_code: impl Into<String>,
-        params: impl Into<String>,
-    ) -> SupportedFunctionReturnValue {
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-        let sim_clock = SimClock::default();
-        let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_workflow(
+        async fn compile_adhoc_js_workflow(
+            db_pool: Arc<dyn DbPool>,
+            clock_fn: Box<dyn ClockFn>,
+            fn_registry: &Arc<dyn FunctionRegistry>,
+            cancel_registry: CancelRegistry,
+        ) -> ExecTask {
+            new_workflow_exec_task(
+                db_pool,
                 test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
-            )
-            .await,
-        ]);
-        let cancel_registry = CancelRegistry::new();
-        let workflow_exec = compile_adhoc_js_workflow(
-            db_pool.clone(),
-            sim_clock.clone_box(),
-            &fn_registry,
-            cancel_registry,
-        )
-        .await;
-
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection_test().await.unwrap();
-
-        let params = Params::from_json_values_test(vec![
-            serde_json::Value::String(js_code.into()),
-            serde_json::Value::String(params.into()),
-        ]);
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: ADHOC_JS_EXECUTE_FFQN,
-                params,
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                component_id: workflow_exec.config.component_id.clone(),
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
-
-        workflow_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-
-        let res = db_connection
-            .wait_for_finished_result(&execution_id, None)
-            .await
-            .unwrap();
-
-        db_close.close().await;
-        debug!("res: {res:?}");
-        res
-    }
-
-    #[tokio::test]
-    async fn adhoc_js_workflow_ok_string() {
-        test_utils::set_up();
-
-        let js_code = r"function main(params) { return 'ok'; }";
-        let params = r"null";
-
-        let res = adhoc_js(js_code, params).await;
-
-        let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
-        let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
-        assert_eq!("ok", ok);
-    }
-
-    #[tokio::test]
-    async fn adhoc_js_workflow_ok_object() {
-        use serde_json::Value;
-        test_utils::set_up();
-
-        let js_code = r"function main(params) { return {'foo':true}; }";
-        let params = r"null";
-
-        let res = adhoc_js(js_code, params).await;
-
-        let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
-        let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
-        let ok: Value = serde_json::from_str(ok).unwrap();
-        assert_eq!(json!({"foo":true}), ok);
-    }
-
-    #[tokio::test]
-    async fn adhoc_js_workflow_return_params() {
-        use serde_json::Value;
-        test_utils::set_up();
-
-        let js_code = r"function main(params) { return params; }";
-        let params = r#"{"foo":true}"#;
-
-        let res = adhoc_js(js_code, params).await;
-
-        let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
-        let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
-        let ok: Value = serde_json::from_str(ok).unwrap();
-        assert_eq!(json!({"foo":true}), ok);
-    }
-
-    #[tokio::test]
-    async fn adhoc_js_workflow_ok_null() {
-        use serde_json::Value;
-        test_utils::set_up();
-
-        let js_code = r"function main(params) { return null; }";
-        let params = r"null";
-
-        let res = adhoc_js(js_code, params).await;
-
-        let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
-        let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
-        let ok: Value = serde_json::from_str(ok).unwrap();
-        assert_eq!(Value::Null, ok);
-    }
-
-    #[tokio::test]
-    async fn adhoc_js_workflow_undefined() {
-        test_utils::set_up();
-
-        let js_code = r"function main(params) { }";
-        let params = r"null";
-
-        let res = adhoc_js(js_code, params).await;
-
-        let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
-        let err = assert_matches!(&err.value, WastVal::String(s) => s);
-        assert_eq!("result is not a string: JsValue(Undefined)", err);
-    }
-
-    #[tokio::test]
-    async fn adhoc_js_workflow_no_main() {
-        test_utils::set_up();
-
-        let js_code = r"";
-        let params = r"null";
-
-        let res = adhoc_js(js_code, params).await;
-
-        let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
-        let err = assert_matches!(&err.value, WastVal::String(s) => s);
-        assert_eq!("main function not defined", err);
-    }
-
-    #[tokio::test]
-    async fn adhoc_js_workflow_illegal_params() {
-        test_utils::set_up();
-
-        let js_code = r"";
-        let params = r"throw 1";
-
-        let res = adhoc_js(js_code, params).await;
-
-        let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
-        let err = assert_matches!(&err.value, WastVal::String(s) => s);
-        assert_eq!(
-            "params 'throw 1' must be a JSON: expected ident at line 1 column 2",
-            err
-        );
-    }
-
-    #[tokio::test]
-    async fn adhoc_js_workflow_throws_string_error() {
-        test_utils::set_up();
-
-        let js_code = r"function main(params) { throw 'test error'; }";
-        let params = r"null";
-
-        let res = adhoc_js(js_code, params).await;
-
-        let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
-        let err = assert_matches!(&err.value, WastVal::String(s) => s);
-        debug!("Error message: {err}");
-        assert_eq!("test error", err);
-    }
-
-    #[tokio::test]
-    async fn adhoc_js_workflow_throws_object_error() {
-        test_utils::set_up();
-
-        let js_code = r"function main(params) { throw {'foo':1}; }";
-        let params = r"null";
-
-        let res = adhoc_js(js_code, params).await;
-
-        let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
-        let err = assert_matches!(&err.value, WastVal::String(s) => s);
-        debug!("Error message: {err}");
-        assert_eq!("{\"foo\":1}", err);
-    }
-
-    /// Test: joinNextTry successfully finds a delay response after it expires
-    #[expand_enum_database]
-    #[rstest]
-    #[tokio::test]
-    async fn adhoc_js_workflow_join_next_try_found(database: Database) {
-        test_utils::set_up();
-        let (_guard, db_pool, db_close) = database.set_up().await;
-        let sim_clock = SimClock::epoch();
-        let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_workflow(
-                test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
-            )
-            .await,
-        ]);
-
-        let cancel_registry = CancelRegistry::new();
-        let workflow_exec = compile_adhoc_js_workflow(
-            db_pool.clone(),
-            sim_clock.clone_box(),
-            &fn_registry,
-            cancel_registry,
-        )
-        .await;
-
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection_test().await.unwrap();
-
-        // JS code that submits a delay and uses joinNextTry to process it
-        let js_code = r"function main(params) {
-            const js = obelisk.createJoinSet();
-
-            /* Submit a short delay */
-            const delayId = js.submitDelay({ milliseconds: 10 });
-
-            /* Wait for it to expire using sleep */
-            obelisk.sleep({ milliseconds: 20 });
-
-            /* Now joinNextTry should find the response */
-            const response = js.joinNextTry();
-
-            /* After processing, joinNextTry should return allProcessed */
-            const afterResponse = js.joinNextTry();
-
-            return {
-                responseType: response.type,
-                responseOk: response.ok,
-                afterStatus: afterResponse.status
-            };
-        }";
-
-        let params = Params::from_json_values_test(vec![json!(js_code), json!("{}")]);
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: ADHOC_JS_EXECUTE_FFQN,
-                params,
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                component_id: workflow_exec.config.component_id.clone(),
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
-
-        // Run until blocked by sleep
-        workflow_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-
-        // Move time forward to expire the sleep
-        sim_clock.move_time_forward(Duration::from_millis(30));
-        expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
-            .await
-            .unwrap();
-
-        // Resume workflow - should complete
-        workflow_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-
-        let res = db_connection
-            .get_finished_result(&execution_id)
-            .await
-            .unwrap();
-
-        let ok_val =
-            assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
-        let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
-        let result: serde_json::Value = serde_json::from_str(json_str).unwrap();
-
-        assert_eq!(json!("delay"), result["responseType"]);
-        assert_eq!(json!(true), result["responseOk"]);
-        assert_eq!(json!("allProcessed"), result["afterStatus"]);
-
-        db_close.close().await;
-    }
-
-    /// Test: Ad-hoc JS workflow exercises all workflow-support APIs
-    /// - createJoinSet (with and without name)
-    /// - joinSet.submit (calls fibo activity)
-    /// - joinSet.joinNext
-    /// - joinSet.joinNextTry
-    /// - obelisk.getResult
-    /// - obelisk.randomU64, randomU64Inclusive, randomString
-    /// - joinSet.submitDelay
-    /// - joinSet.close
-    /// - console logging
-    /// Also verifies determinism via replay.
-    #[expand_enum_database]
-    #[rstest]
-    #[tokio::test]
-    async fn adhoc_js_workflow_all_apis(
-        database: Database,
-        #[values(false, true)] activity_should_win: bool,
-        #[values(false, true)] explicit_close: bool,
-    ) {
-        let (_guard, db_pool, db_close) = database.set_up().await;
-        adhoc_js_workflow_all_apis_inner(db_pool.clone(), activity_should_win, explicit_close)
-            .await;
-        db_close.close().await;
-    }
-
-    async fn adhoc_js_workflow_all_apis_inner(
-        db_pool: Arc<dyn DbPool>,
-        activity_should_win: bool,
-        explicit_close: bool,
-    ) {
-        test_utils::set_up();
-        let sim_clock = SimClock::epoch();
-        let fn_registry = TestingFnRegistry::new_from_components(vec![
-            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
-                .await,
-            compile_workflow(
-                test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
-            )
-            .await,
-        ]);
-
-        let workflow_engine =
-            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let (runnable_component, component_id) = compile_workflow_with_engine(
-            test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
-            &workflow_engine,
-        )
-        .await;
-
-        let worker = Arc::new(
-            WorkflowWorkerCompiled::new_with_config(
-                runnable_component.clone(),
-                WorkflowConfig {
-                    component_id,
-                    join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-                    backtrace_persist: false,
-                    stub_wasi: false,
-                    fuel: None,
-                    lock_extension: Duration::ZERO,
-                    subscription_interruption: None,
-                },
-                workflow_engine.clone(),
-                sim_clock.clone_box(),
-            )
-            .unwrap()
-            .link(fn_registry.clone())
-            .unwrap()
-            .into_worker(
-                DEPLOYMENT_ID_DUMMY,
-                db_pool.clone(),
-                Arc::new(DeadlineTrackerFactoryTokio {
-                    leeway: Duration::ZERO,
-                    clock_fn: sim_clock.clone_box(),
-                }),
-                CancelRegistry::new(),
-                None, // logs_storage_config
-            ),
-        );
-
-        let exec_config = ExecConfig {
-            batch_size: 1,
-            lock_expiry: Duration::from_secs(3),
-            tick_sleep: TICK_SLEEP,
-            component_id: worker.config.component_id.clone(),
-            task_limiter: None,
-            executor_id: ExecutorId::generate(),
-            retry_config: ComponentRetryConfig::WORKFLOW,
-            locking_strategy: LockingStrategy::ByComponentDigest,
-        };
-        let workflow_exec = ExecTask::new_all_ffqns_test(
-            worker,
-            exec_config,
-            sim_clock.clone_box(),
-            db_pool.clone(),
-        );
-
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection_test().await.unwrap();
-
-        // JS code that exercises all workflow-support APIs
-        let js_code = r"function main(params) {
-            console.log('Starting comprehensive API test');
-
-            /* Test random functions */
-            const rand1 = obelisk.randomU64(0, 10);
-            const rand2 = obelisk.randomU64Inclusive(1, 10);
-            const randStr = obelisk.randomString(5, 10);
-            console.debug('Random values:', Number(rand1), Number(rand2), randStr);
-
-            /* Test createJoinSet (unnamed) */
-            const js1 = obelisk.createJoinSet();
-            console.log('Created unnamed join set:', js1.id());
-
-            /* Test createJoinSet (named) */
-            const js2 = obelisk.createJoinSet({ name: 'my-named-set' });
-            console.log('Created named join set:', js2.id());
-
-            /* Test joinNextTry on empty join set - should return allProcessed */
-            const tryEmpty = js2.joinNextTry();
-            console.log('joinNextTry on empty:', JSON.stringify(tryEmpty));
-
-            /* Submit fibo(10) activity call */
-            const fiboFfqn = 'testing:fibo/fibo.fibo';
-            const execId = js1.submit(fiboFfqn, [10]);
-            console.log('Submitted fibo(10), execId:', execId);
-
-            /* Submit a delay */
-            const delayId = js1.submitDelay({ milliseconds: 100 });
-            console.log('Submitted delay, delayId:', delayId);
-
-            /* Test joinNextTry before any response is ready - should return pending */
-            const tryPending = js1.joinNextTry();
-            console.log('joinNextTry pending:', JSON.stringify(tryPending));
-
-            /* Join next - should get fibo result first (activity completes before delay) */
-            const response1 = js1.joinNext();
-            console.log('joinNext response 1:', JSON.stringify(response1));
-
-            /* Get the fibo result */
-            let fiboResult = null;
-            let loser = null;
-            if (response1.type === 'execution') {
-                const result = obelisk.getResult(response1.id);
-                console.log('Got fibo result:', JSON.stringify(result));
-                fiboResult = result.ok;
-                loser = delayId;
-            } else {
-                loser = execId;
-            }
-            if (params.explicit_close) {
-                js1.close();
-                js2.close();
-            }
-            console.log('all done');
-            return {
-                rand1InRange: rand1 >= 0n && rand1 < 10n,
-                rand2InRange: rand2 >= 1n && rand2 <= 10n,
-                randStrLenOk: randStr.length >= 5 && randStr.length < 10,
-                fiboResult: fiboResult,
-                response1Type: response1.type,
-                loser,
-                joinNextTryEmpty: tryEmpty.status,
-                joinNextTryPending: tryPending.status
-            };
-        }";
-        let params_json = format!(
-            r#"{{"explicit_close": {} }}"#,
-            if explicit_close { "true" } else { "false" }
-        );
-
-        let params = Params::from_json_values_test(vec![json!(js_code), json!(params_json)]);
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: ADHOC_JS_EXECUTE_FFQN,
-                params,
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                component_id: workflow_exec.config.component_id.clone(),
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
-
-        info!("Step 1: Run workflow until blocked by join set (waiting for activity)");
-        assert_eq!(
-            1,
-            workflow_exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await
-                .len()
-        );
-
-        assert_matches!(
-            db_connection
-                .get_pending_state(&execution_id)
-                .await
-                .unwrap()
-                .pending_state,
-            PendingState::BlockedByJoinSet(..)
-        );
-
-        if activity_should_win {
-            info!("Step 2: Run activity to complete the fibo(10) child execution");
-            let activity_exec = new_activity_fibo(
-                db_pool.clone(),
-                sim_clock.clone_box(),
-                TokioSleep,
+                clock_fn,
+                JoinNextBlockingStrategy::Interrupt,
+                fn_registry,
+                cancel_registry,
                 LockingStrategy::ByComponentDigest,
             )
+            .await
+        }
+
+        async fn adhoc_js(
+            js_code: impl Into<String>,
+            params: impl Into<String>,
+        ) -> SupportedFunctionReturnValue {
+            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+            let sim_clock = SimClock::default();
+            let fn_registry = TestingFnRegistry::new_from_components(vec![
+                compile_workflow(
+                    test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
+                )
+                .await,
+            ]);
+            let cancel_registry = CancelRegistry::new();
+            let workflow_exec = compile_adhoc_js_workflow(
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                &fn_registry,
+                cancel_registry,
+            )
             .await;
-            let executed_activities = activity_exec
+
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            let db_connection = db_pool.connection_test().await.unwrap();
+
+            let params = Params::from_json_values_test(vec![
+                serde_json::Value::String(js_code.into()),
+                serde_json::Value::String(params.into()),
+            ]);
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn: ADHOC_JS_EXECUTE_FFQN,
+                    params,
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    component_id: workflow_exec.config.component_id.clone(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+
+            workflow_exec
                 .tick_test_await(sim_clock.now(), RunId::generate())
                 .await;
-            assert_eq!(1, executed_activities.len());
-        } else {
-            info!("Step 2: Move time forward to complete the delay");
-            sim_clock.move_time_forward(Duration::from_millis(200));
-            {
-                let timer =
-                    expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
-                        .await
-                        .unwrap();
-                assert_eq!(1, timer.expired_async_timers);
-            }
+
+            let res = db_connection
+                .wait_for_finished_result(&execution_id, None)
+                .await
+                .unwrap();
+
+            db_close.close().await;
+            debug!("res: {res:?}");
+            res
         }
 
-        info!("Step 3: Resume workflow - should process the winner");
-        assert_eq!(
-            1,
+        #[tokio::test]
+        async fn adhoc_js_workflow_ok_string() {
+            test_utils::set_up();
+
+            let js_code = r"function main(params) { return 'ok'; }";
+            let params = r"null";
+
+            let res = adhoc_js(js_code, params).await;
+
+            let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
+            assert_eq!("ok", ok);
+        }
+
+        #[tokio::test]
+        async fn adhoc_js_workflow_ok_object() {
+            use serde_json::Value;
+            test_utils::set_up();
+
+            let js_code = r"function main(params) { return {'foo':true}; }";
+            let params = r"null";
+
+            let res = adhoc_js(js_code, params).await;
+
+            let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
+            let ok: Value = serde_json::from_str(ok).unwrap();
+            assert_eq!(json!({"foo":true}), ok);
+        }
+
+        #[tokio::test]
+        async fn adhoc_js_workflow_return_params() {
+            use serde_json::Value;
+            test_utils::set_up();
+
+            let js_code = r"function main(params) { return params; }";
+            let params = r#"{"foo":true}"#;
+
+            let res = adhoc_js(js_code, params).await;
+
+            let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
+            let ok: Value = serde_json::from_str(ok).unwrap();
+            assert_eq!(json!({"foo":true}), ok);
+        }
+
+        #[tokio::test]
+        async fn adhoc_js_workflow_ok_null() {
+            use serde_json::Value;
+            test_utils::set_up();
+
+            let js_code = r"function main(params) { return null; }";
+            let params = r"null";
+
+            let res = adhoc_js(js_code, params).await;
+
+            let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
+            let ok: Value = serde_json::from_str(ok).unwrap();
+            assert_eq!(Value::Null, ok);
+        }
+
+        #[tokio::test]
+        async fn adhoc_js_workflow_undefined() {
+            test_utils::set_up();
+
+            let js_code = r"function main(params) { }";
+            let params = r"null";
+
+            let res = adhoc_js(js_code, params).await;
+
+            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err = assert_matches!(&err.value, WastVal::String(s) => s);
+            assert_eq!("result is not a string: JsValue(Undefined)", err);
+        }
+
+        #[tokio::test]
+        async fn adhoc_js_workflow_no_main() {
+            test_utils::set_up();
+
+            let js_code = r"";
+            let params = r"null";
+
+            let res = adhoc_js(js_code, params).await;
+
+            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err = assert_matches!(&err.value, WastVal::String(s) => s);
+            assert_eq!("main function not defined", err);
+        }
+
+        #[tokio::test]
+        async fn adhoc_js_workflow_illegal_params() {
+            test_utils::set_up();
+
+            let js_code = r"";
+            let params = r"throw 1";
+
+            let res = adhoc_js(js_code, params).await;
+
+            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err = assert_matches!(&err.value, WastVal::String(s) => s);
+            assert_eq!(
+                "params 'throw 1' must be a JSON: expected ident at line 1 column 2",
+                err
+            );
+        }
+
+        #[tokio::test]
+        async fn adhoc_js_workflow_throws_string_error() {
+            test_utils::set_up();
+
+            let js_code = r"function main(params) { throw 'test error'; }";
+            let params = r"null";
+
+            let res = adhoc_js(js_code, params).await;
+
+            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err = assert_matches!(&err.value, WastVal::String(s) => s);
+            debug!("Error message: {err}");
+            assert_eq!("test error", err);
+        }
+
+        #[tokio::test]
+        async fn adhoc_js_workflow_throws_object_error() {
+            test_utils::set_up();
+
+            let js_code = r"function main(params) { throw {'foo':1}; }";
+            let params = r"null";
+
+            let res = adhoc_js(js_code, params).await;
+
+            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err = assert_matches!(&err.value, WastVal::String(s) => s);
+            debug!("Error message: {err}");
+            assert_eq!("{\"foo\":1}", err);
+        }
+
+        /// Test: joinNextTry successfully finds a delay response after it expires
+        #[expand_enum_database]
+        #[rstest]
+        #[tokio::test]
+        async fn adhoc_js_workflow_join_next_try_found(database: Database) {
+            test_utils::set_up();
+            let (_guard, db_pool, db_close) = database.set_up().await;
+            let sim_clock = SimClock::epoch();
+            let fn_registry = TestingFnRegistry::new_from_components(vec![
+                compile_workflow(
+                    test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
+                )
+                .await,
+            ]);
+
+            let cancel_registry = CancelRegistry::new();
+            let workflow_exec = compile_adhoc_js_workflow(
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                &fn_registry,
+                cancel_registry,
+            )
+            .await;
+
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            let db_connection = db_pool.connection_test().await.unwrap();
+
+            // JS code that submits a delay and uses joinNextTry to process it
+            let js_code = r"function main(params) {
+                const js = obelisk.createJoinSet();
+
+                /* Submit a short delay */
+                const delayId = js.submitDelay({ milliseconds: 10 });
+
+                /* Wait for it to expire using sleep */
+                obelisk.sleep({ milliseconds: 20 });
+
+                /* Now joinNextTry should find the response */
+                const response = js.joinNextTry();
+
+                /* After processing, joinNextTry should return allProcessed */
+                const afterResponse = js.joinNextTry();
+
+                return {
+                    responseType: response.type,
+                    responseOk: response.ok,
+                    afterStatus: afterResponse.status
+                };
+            }";
+
+            let params = Params::from_json_values_test(vec![json!(js_code), json!("{}")]);
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn: ADHOC_JS_EXECUTE_FFQN,
+                    params,
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    component_id: workflow_exec.config.component_id.clone(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+
+            // Run until blocked by sleep
             workflow_exec
                 .tick_test_await(sim_clock.now(), RunId::generate())
-                .await
-                .len()
-        );
+                .await;
 
-        info!("Step 4: Resume workflow - should close the join set");
-        assert_eq!(
-            1,
+            // Move time forward to expire the sleep
+            sim_clock.move_time_forward(Duration::from_millis(30));
+            expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
+                .await
+                .unwrap();
+
+            // Resume workflow - should complete
             workflow_exec
                 .tick_test_await(sim_clock.now(), RunId::generate())
-                .await
-                .len()
-        );
+                .await;
 
-        let res = db_connection
-            .get_finished_result(&execution_id)
+            let res = db_connection
+                .get_finished_result(&execution_id)
+                .await
+                .unwrap();
+
+            let ok_val =
+                assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
+            let result: serde_json::Value = serde_json::from_str(json_str).unwrap();
+
+            assert_eq!(json!("delay"), result["responseType"]);
+            assert_eq!(json!(true), result["responseOk"]);
+            assert_eq!(json!("allProcessed"), result["afterStatus"]);
+
+            db_close.close().await;
+        }
+
+        /// Test: Ad-hoc JS workflow exercises all workflow-support APIs
+        /// - createJoinSet (with and without name)
+        /// - joinSet.submit (calls fibo activity)
+        /// - joinSet.joinNext
+        /// - joinSet.joinNextTry
+        /// - obelisk.getResult
+        /// - obelisk.randomU64, randomU64Inclusive, randomString
+        /// - joinSet.submitDelay
+        /// - joinSet.close
+        /// - console logging
+        /// Also verifies determinism via replay.
+        #[expand_enum_database]
+        #[rstest]
+        #[tokio::test]
+        async fn adhoc_js_workflow_all_apis(
+            database: Database,
+            #[values(false, true)] activity_should_win: bool,
+            #[values(false, true)] explicit_close: bool,
+        ) {
+            let (_guard, db_pool, db_close) = database.set_up().await;
+            adhoc_js_workflow_all_apis_inner(db_pool.clone(), activity_should_win, explicit_close)
+                .await;
+            db_close.close().await;
+        }
+
+        async fn adhoc_js_workflow_all_apis_inner(
+            db_pool: Arc<dyn DbPool>,
+            activity_should_win: bool,
+            explicit_close: bool,
+        ) {
+            test_utils::set_up();
+            let sim_clock = SimClock::epoch();
+            let fn_registry = TestingFnRegistry::new_from_components(vec![
+                compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                    .await,
+                compile_workflow(
+                    test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
+                )
+                .await,
+            ]);
+
+            let workflow_engine =
+                Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+            let (runnable_component, component_id) = compile_workflow_with_engine(
+                test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
+                &workflow_engine,
+            )
+            .await;
+
+            let worker = Arc::new(
+                WorkflowWorkerCompiled::new_with_config(
+                    runnable_component.clone(),
+                    WorkflowConfig {
+                        component_id,
+                        join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+                        backtrace_persist: false,
+                        stub_wasi: false,
+                        fuel: None,
+                        lock_extension: Duration::ZERO,
+                        subscription_interruption: None,
+                    },
+                    workflow_engine.clone(),
+                    sim_clock.clone_box(),
+                )
+                .unwrap()
+                .link(fn_registry.clone())
+                .unwrap()
+                .into_worker(
+                    DEPLOYMENT_ID_DUMMY,
+                    db_pool.clone(),
+                    Arc::new(DeadlineTrackerFactoryTokio {
+                        leeway: Duration::ZERO,
+                        clock_fn: sim_clock.clone_box(),
+                    }),
+                    CancelRegistry::new(),
+                    None, // logs_storage_config
+                ),
+            );
+
+            let exec_config = ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(3),
+                tick_sleep: TICK_SLEEP,
+                component_id: worker.config.component_id.clone(),
+                task_limiter: None,
+                executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::WORKFLOW,
+                locking_strategy: LockingStrategy::ByComponentDigest,
+            };
+            let workflow_exec = ExecTask::new_all_ffqns_test(
+                worker,
+                exec_config,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+            );
+
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            let db_connection = db_pool.connection_test().await.unwrap();
+
+            // JS code that exercises all workflow-support APIs
+            let js_code = r"function main(params) {
+                console.log('Starting comprehensive API test');
+
+                /* Test random functions */
+                const rand1 = obelisk.randomU64(0, 10);
+                const rand2 = obelisk.randomU64Inclusive(1, 10);
+                const randStr = obelisk.randomString(5, 10);
+                console.debug('Random values:', Number(rand1), Number(rand2), randStr);
+
+                /* Test createJoinSet (unnamed) */
+                const js1 = obelisk.createJoinSet();
+                console.log('Created unnamed join set:', js1.id());
+
+                /* Test createJoinSet (named) */
+                const js2 = obelisk.createJoinSet({ name: 'my-named-set' });
+                console.log('Created named join set:', js2.id());
+
+                /* Test joinNextTry on empty join set - should return allProcessed */
+                const tryEmpty = js2.joinNextTry();
+                console.log('joinNextTry on empty:', JSON.stringify(tryEmpty));
+
+                /* Submit fibo(10) activity call */
+                const fiboFfqn = 'testing:fibo/fibo.fibo';
+                const execId = js1.submit(fiboFfqn, [10]);
+                console.log('Submitted fibo(10), execId:', execId);
+
+                /* Submit a delay */
+                const delayId = js1.submitDelay({ milliseconds: 100 });
+                console.log('Submitted delay, delayId:', delayId);
+
+                /* Test joinNextTry before any response is ready - should return pending */
+                const tryPending = js1.joinNextTry();
+                console.log('joinNextTry pending:', JSON.stringify(tryPending));
+
+                /* Join next - should get fibo result first (activity completes before delay) */
+                const response1 = js1.joinNext();
+                console.log('joinNext response 1:', JSON.stringify(response1));
+
+                /* Get the fibo result */
+                let fiboResult = null;
+                let loser = null;
+                if (response1.type === 'execution') {
+                    const result = obelisk.getResult(response1.id);
+                    console.log('Got fibo result:', JSON.stringify(result));
+                    fiboResult = result.ok;
+                    loser = delayId;
+                } else {
+                    loser = execId;
+                }
+                if (params.explicit_close) {
+                    js1.close();
+                    js2.close();
+                }
+                console.log('all done');
+                return {
+                    rand1InRange: rand1 >= 0n && rand1 < 10n,
+                    rand2InRange: rand2 >= 1n && rand2 <= 10n,
+                    randStrLenOk: randStr.length >= 5 && randStr.length < 10,
+                    fiboResult: fiboResult,
+                    response1Type: response1.type,
+                    loser,
+                    joinNextTryEmpty: tryEmpty.status,
+                    joinNextTryPending: tryPending.status
+                };
+            }";
+            let params_json = format!(
+                r#"{{"explicit_close": {} }}"#,
+                if explicit_close { "true" } else { "false" }
+            );
+
+            let params = Params::from_json_values_test(vec![json!(js_code), json!(params_json)]);
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn: ADHOC_JS_EXECUTE_FFQN,
+                    params,
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    component_id: workflow_exec.config.component_id.clone(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+
+            info!("Step 1: Run workflow until blocked by join set (waiting for activity)");
+            assert_eq!(
+                1,
+                workflow_exec
+                    .tick_test_await(sim_clock.now(), RunId::generate())
+                    .await
+                    .len()
+            );
+
+            assert_matches!(
+                db_connection
+                    .get_pending_state(&execution_id)
+                    .await
+                    .unwrap()
+                    .pending_state,
+                PendingState::BlockedByJoinSet(..)
+            );
+
+            if activity_should_win {
+                info!("Step 2: Run activity to complete the fibo(10) child execution");
+                let activity_exec = new_activity_fibo(
+                    db_pool.clone(),
+                    sim_clock.clone_box(),
+                    TokioSleep,
+                    LockingStrategy::ByComponentDigest,
+                )
+                .await;
+                let executed_activities = activity_exec
+                    .tick_test_await(sim_clock.now(), RunId::generate())
+                    .await;
+                assert_eq!(1, executed_activities.len());
+            } else {
+                info!("Step 2: Move time forward to complete the delay");
+                sim_clock.move_time_forward(Duration::from_millis(200));
+                {
+                    let timer =
+                        expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
+                            .await
+                            .unwrap();
+                    assert_eq!(1, timer.expired_async_timers);
+                }
+            }
+
+            info!("Step 3: Resume workflow - should process the winner");
+            assert_eq!(
+                1,
+                workflow_exec
+                    .tick_test_await(sim_clock.now(), RunId::generate())
+                    .await
+                    .len()
+            );
+
+            info!("Step 4: Resume workflow - should close the join set");
+            assert_eq!(
+                1,
+                workflow_exec
+                    .tick_test_await(sim_clock.now(), RunId::generate())
+                    .await
+                    .len()
+            );
+
+            let res = db_connection
+                .get_finished_result(&execution_id)
+                .await
+                .unwrap();
+            info!("Got result: {res:?}");
+
+            // Verify results
+            let ok_val =
+                assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
+            let result: serde_json::Value = serde_json::from_str(json_str).unwrap();
+
+            assert_eq!(
+                json!(true),
+                result["rand1InRange"],
+                "rand1 should be in range [0, 100)"
+            );
+            assert_eq!(
+                json!(true),
+                result["rand2InRange"],
+                "rand2 should be in range [1, 10]"
+            );
+            assert_eq!(
+                json!(true),
+                result["randStrLenOk"],
+                "random string length should be in range [5, 10)"
+            );
+            assert_eq!(
+                json!("allProcessed"),
+                result["joinNextTryEmpty"],
+                "joinNextTry on empty join set should return allProcessed"
+            );
+            assert_eq!(
+                json!("pending"),
+                result["joinNextTryPending"],
+                "joinNextTry before response ready should return pending"
+            );
+            if activity_should_win {
+                assert_eq!(
+                    json!("execution"),
+                    result["response1Type"],
+                    "first response should be execution"
+                );
+                assert_eq!(
+                    json!(FIBO_10_OUTPUT),
+                    result["fiboResult"],
+                    "fibo(10) should be 55"
+                );
+            } else {
+                assert_eq!(
+                    json!("delay"),
+                    result["response1Type"],
+                    "first response should be delay"
+                );
+            }
+            // check that the loser is cancelled.
+            if activity_should_win {
+                let delay_id = DelayId::from_str(result["loser"].as_str().unwrap()).unwrap();
+                let responses = db_connection.get(&execution_id).await.unwrap().responses;
+                let resp = responses
+                    .iter()
+                    .find_map(|resp| {
+                        if let JoinSetResponse::DelayFinished {
+                            delay_id: found,
+                            result,
+                        } = &resp.event.event.event
+                            && *found == delay_id
+                        {
+                            Some(result)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap();
+                assert!(resp.is_err());
+            } else {
+                let child_id = ExecutionId::from_str(result["loser"].as_str().unwrap()).unwrap();
+                let state = db_connection
+                    .get_pending_state(&child_id)
+                    .await
+                    .unwrap()
+                    .pending_state;
+                assert_matches!(
+                    state,
+                    PendingState::Finished(PendingStateFinished {
+                        result_kind: PendingStateFinishedResultKind::Err(
+                            PendingStateFinishedError::ExecutionFailure(
+                                ExecutionFailureKind::Cancelled
+                            )
+                        ),
+                        ..
+                    })
+                );
+            }
+            let stopwatch = std::time::Instant::now();
+            let (log_sender, mut log_storage_recv) = mpsc::channel(100);
+            WorkflowWorker::replay(
+                DeploymentId::generate(),
+                workflow_exec.config.component_id.clone(),
+                runnable_component.wasmtime_component,
+                &runnable_component.wasm_component.exim,
+                workflow_engine,
+                fn_registry,
+                db_connection.as_ref(),
+                execution_id,
+                Some(LogStrageConfig {
+                    min_level: concepts::storage::LogLevel::Debug,
+                    log_sender,
+                }),
+            )
             .await
             .unwrap();
-        info!("Got result: {res:?}");
-
-        // Verify results
-        let ok_val =
-            assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
-        let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
-        let result: serde_json::Value = serde_json::from_str(json_str).unwrap();
-
-        assert_eq!(
-            json!(true),
-            result["rand1InRange"],
-            "rand1 should be in range [0, 100)"
-        );
-        assert_eq!(
-            json!(true),
-            result["rand2InRange"],
-            "rand2 should be in range [1, 10]"
-        );
-        assert_eq!(
-            json!(true),
-            result["randStrLenOk"],
-            "random string length should be in range [5, 10)"
-        );
-        assert_eq!(
-            json!("allProcessed"),
-            result["joinNextTryEmpty"],
-            "joinNextTry on empty join set should return allProcessed"
-        );
-        assert_eq!(
-            json!("pending"),
-            result["joinNextTryPending"],
-            "joinNextTry before response ready should return pending"
-        );
-        if activity_should_win {
-            assert_eq!(
-                json!("execution"),
-                result["response1Type"],
-                "first response should be execution"
-            );
-            assert_eq!(
-                json!(FIBO_10_OUTPUT),
-                result["fiboResult"],
-                "fibo(10) should be 55"
-            );
-        } else {
-            assert_eq!(
-                json!("delay"),
-                result["response1Type"],
-                "first response should be delay"
-            );
+            info!("Replayed in {:?}", stopwatch.elapsed());
+            // Nothing should be added to logs
+            let mut buffer = Vec::new();
+            let received = log_storage_recv.recv_many(&mut buffer, 100).await;
+            assert_eq!(0, received, "expected no new messages, got {buffer:?}");
         }
-        // check that the loser is cancelled.
-        if activity_should_win {
-            let delay_id = DelayId::from_str(result["loser"].as_str().unwrap()).unwrap();
-            let responses = db_connection.get(&execution_id).await.unwrap().responses;
-            let resp = responses
-                .iter()
-                .find_map(|resp| {
-                    if let JoinSetResponse::DelayFinished {
-                        delay_id: found,
-                        result,
-                    } = &resp.event.event.event
-                        && *found == delay_id
-                    {
-                        Some(result)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap();
-            assert!(resp.is_err());
-        } else {
-            let child_id = ExecutionId::from_str(result["loser"].as_str().unwrap()).unwrap();
-            let state = db_connection
-                .get_pending_state(&child_id)
-                .await
-                .unwrap()
-                .pending_state;
-            assert_matches!(
-                state,
-                PendingState::Finished(PendingStateFinished {
-                    result_kind: PendingStateFinishedResultKind::Err(
-                        PendingStateFinishedError::ExecutionFailure(
-                            ExecutionFailureKind::Cancelled
-                        )
-                    ),
-                    ..
-                })
-            );
-        }
-        let stopwatch = std::time::Instant::now();
-        let (log_sender, mut log_storage_recv) = mpsc::channel(100);
-        WorkflowWorker::replay(
-            DeploymentId::generate(),
-            workflow_exec.config.component_id.clone(),
-            runnable_component.wasmtime_component,
-            &runnable_component.wasm_component.exim,
-            workflow_engine,
-            fn_registry,
-            db_connection.as_ref(),
-            execution_id,
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender,
-            }),
-        )
-        .await
-        .unwrap();
-        info!("Replayed in {:?}", stopwatch.elapsed());
-        // Nothing should be added to logs
-        let mut buffer = Vec::new();
-        let received = log_storage_recv.recv_many(&mut buffer, 100).await;
-        assert_eq!(0, received, "expected no new messages, got {buffer:?}");
     }
 }

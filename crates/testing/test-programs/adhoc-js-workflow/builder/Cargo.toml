@@ -8,5 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[features]
+boa-unstable = []
+
 [build-dependencies]
 obelisk-component-builder.workspace = true
