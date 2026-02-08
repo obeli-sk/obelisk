@@ -3228,6 +3228,7 @@ dependencies = [
  "serde_with",
  "sha2",
  "strum",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",

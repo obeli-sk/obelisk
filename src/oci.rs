@@ -96,7 +96,6 @@ pub(crate) async fn pull_to_cache_dir(
         return Ok((content_digest, wasm_path));
     }
     info!("Pulling image to {wasm_path:?}");
-    let content_digest = content_digest.clone();
     client
         .pull_with_retry(image, &wasm_path, &layer, &content_digest)
         .await
@@ -261,19 +260,33 @@ impl WasmClientWithRetry {
     ) -> anyhow::Result<()> {
         debug!("Pulling image: {:?}", image);
         let oci_client = self.client.as_ref();
+
+        // Write to a unique temp file first, then atomically rename to avoid race conditions
+        // when multiple processes try to download the same file concurrently.
+        let wasm_dir = wasm_path
+            .parent()
+            .context("wasm_path must have a parent directory")?;
+        let temp_file = tempfile::NamedTempFile::new_in(wasm_dir)?;
+        let temp_path = temp_file.path().to_path_buf();
+        // Keep the file but allow us to rename it
+        temp_file.keep()?;
         {
-            // Crashing while writing is safe: File will be discarded on next startup during "Verify file content digest"
-            let file = tokio::fs::File::create(wasm_path).await?;
+            let file = tokio::fs::File::create(&temp_path).await?;
             let mut buffer = tokio::io::BufWriter::new(file);
             oci_client.pull_blob(image, &layer, &mut buffer).await?;
             buffer.flush().await?;
-            // No `sync_all` for better performance. Starting after crash here would make digest mismatch and redownload the file.
         }
-        let actual_content_digest = calculate_sha256_file(wasm_path).await?;
-        ensure!(
-            *requested_content_digest == actual_content_digest,
-            "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {requested_content_digest}, got {actual_content_digest}"
-        );
+        let actual_content_digest = calculate_sha256_file(&temp_path).await?;
+        if *requested_content_digest != actual_content_digest {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            bail!(
+                "sha256 digest mismatch for {image}, file {temp_path:?}. Expected {requested_content_digest}, got {actual_content_digest}"
+            );
+        }
+        // Atomic rename - ensures readers never see a partially written file
+        tokio::fs::rename(&temp_path, wasm_path)
+            .await
+            .with_context(|| format!("cannot rename {temp_path:?} to {wasm_path:?}"))?;
         Ok(())
     }
 

@@ -153,9 +153,12 @@ pub(crate) async fn pull_to_cache_dir(
             )
         })?;
 
-    // Download the asset to a temporary location first
+    // Download the asset to a unique temporary file first to avoid race conditions
+    // when multiple processes download the same asset concurrently.
     info!("Downloading asset from GitHub release");
-    let temp_path = wasm_cache_dir.join(format!("{}.tmp", github_ref.asset_name));
+    let temp_file = tempfile::NamedTempFile::new_in(wasm_cache_dir)?;
+    let temp_path = temp_file.path().to_path_buf();
+    temp_file.keep()?;
     client
         .download_asset(&asset.browser_download_url, &temp_path)
         .await?;
@@ -165,15 +168,12 @@ pub(crate) async fn pull_to_cache_dir(
         .await
         .context("failed to calculate sha256 of downloaded file")?;
 
-    // Move to final location based on content digest
+    // Atomic rename to final location based on content digest.
+    // Rename is atomic on the same filesystem, which is guaranteed since temp file is in wasm_cache_dir.
     let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &actual_content_digest);
-    if let Err(_rename_err) = tokio::fs::rename(&temp_path, &wasm_path).await {
-        // rename can fail across filesystems, fall back to copy+delete
-        tokio::fs::copy(&temp_path, &wasm_path)
-            .await
-            .with_context(|| format!("failed to copy downloaded file to {wasm_path:?}"))?;
-        let _ = tokio::fs::remove_file(&temp_path).await;
-    }
+    tokio::fs::rename(&temp_path, &wasm_path)
+        .await
+        .with_context(|| format!("failed to rename {temp_path:?} to {wasm_path:?}"))?;
 
     Ok((actual_content_digest, wasm_path))
 }
