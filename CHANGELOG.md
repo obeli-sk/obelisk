@@ -6,6 +6,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0](https://github.com/obeli-sk/obelisk/compare/v0.34.1...v0.35.0)
+
+This release introduces **workflow replay** for debugging and recovery, **execution pausing/unpausing**, and **persistent logs storage**. Component management has been streamlined with `component add` and GitHub release path support (`gh://`). The database schema has changed - delete the old SQLite database with `obelisk server run --clean-sqlite-directory`.
+
+### Highlights
+
+- **Workflow Replay**: Re-execute workflows from their event history for compatibility testing between workflow versions
+- **Pause/Unpause Executions**: Temporarily halt and resume workflow executions via API or WebUI
+- **Persistent Logs**: Store execution logs and output streams in the database, access via API or WebUI
+- **Component Management**: New `component add` command with `--locked` support and GitHub release paths (`gh://`)
+- **OpenAPI Schema**: Auto-generated OpenAPI documentation for the Web API
+- **Permanent Error Handling**: Activities returning a variant containing `permanent` skip retries
+- **snake_case JSON Serialization**: JSON representation of WIT values now uses `snake_case` instead of `kebab-case`
+
+### Added
+
+- Implement workflow replay ([e4d9a92](https://github.com/obeli-sk/obelisk/commit/e4d9a92281cda744bba0687df5eb09ce0feaa615))
+- Implement pausing/unpausing of executions ([3f4df76](https://github.com/obeli-sk/obelisk/commit/3f4df76742689cd6d717b2dd92cc5c9795b37147))
+- Implement persistence layer for logs and streams ([3257336](https://github.com/obeli-sk/obelisk/commit/32573361c7cdcded8e0a95c559d9c58d6cf745d2))
+- Add `component add` command with `--locked` option ([19b990e](https://github.com/obeli-sk/obelisk/commit/19b990ea9f9d72137ac4f58be6308a815a098b06), [d1dac13](https://github.com/obeli-sk/obelisk/commit/d1dac13f3ecba0d695bf3f733f79ec251f47b6ce))
+- Allow specifying component location as GitHub release path (`gh://`) ([d704f31](https://github.com/obeli-sk/obelisk/commit/d704f315ec687d4cba86f6c5098b74e570dd181b))
+- Add OpenAPI schema generation for web API ([5aae330](https://github.com/obeli-sk/obelisk/commit/5aae3301b26436dfe4639ddcacba4539fbb990b2))
+- Skip retrying activity if it returns variant containing `permanent` ([ba08f0a](https://github.com/obeli-sk/obelisk/commit/ba08f0ae2e5f0c62f66cde8d6ef9df58097f37b5))
+- Add `join-next-try` to WIT ([0e33fb7](https://github.com/obeli-sk/obelisk/commit/0e33fb75644a62e36f84f3002b6415eedd074b4c))
+- Add `submit-json` and `get-result-json` to `workflow_support` ([9a9a66e](https://github.com/obeli-sk/obelisk/commit/9a9a66eac6be61d7ebf25681b3b160be23459383))
+- Add `obelisk-version` field to config for version compatibility checking ([3df7516](https://github.com/obeli-sk/obelisk/commit/3df75160e477527f3f8d8dd963f861b7ed03ef20))
+- Allow using URLs as a TOML config source ([ad5284b](https://github.com/obeli-sk/obelisk/commit/ad5284b6c98cc628638c6897a9c216f6e0ddb586))
+- [**breaking**] Allow inspecting remote components ([84b6468](https://github.com/obeli-sk/obelisk/commit/84b6468caf78e30443a2c00cfab96c106899d384))
+- Implement `/v1/executions/{id}/logs` ([ab068cf](https://github.com/obeli-sk/obelisk/commit/ab068cfde3a29b5ea7c3e15d61ef633c4545cbd3))
+- Allow filtering executions by digest, deployment ID ([1c305b6](https://github.com/obeli-sk/obelisk/commit/1c305b62613e38551251ed535cc92256a58388ff))
+- Add `GET /v1/deployment-id` and deployment state listing ([b0c7935](https://github.com/obeli-sk/obelisk/commit/b0c79355db749ab2942e11bff21869614bd2aa16), [b2c163d](https://github.com/obeli-sk/obelisk/commit/b2c163d33bf42755e8585e8575b4e75dbf2099b5))
+- Add `/v1/functions` and `/v1/functions/wit?ffqn={ffqn}` endpoints ([b7b9a13](https://github.com/obeli-sk/obelisk/commit/b7b9a13768b4a69259b49d4ac04670494fc872ac), [73c47fd](https://github.com/obeli-sk/obelisk/commit/73c47fd7f389301b80b877c1ee67c8095d7ce8f8))
+- Fail on type checking errors by default for `run`, `verify` ([fd7ac55](https://github.com/obeli-sk/obelisk/commit/fd7ac55c348071fc979d735a0c38b9f640583a05))
+
+### Fixed
+
+- Fix off-by-one errors in `random-u64` and `random_string` ([b1d8953](https://github.com/obeli-sk/obelisk/commit/b1d89539cb89d05d3d6200eece7af42d128d0119), [fd24910](https://github.com/obeli-sk/obelisk/commit/fd249108e60839262a14bd85e5c75356e0f16911))
+- Return to pending if paused execution receives a response and unpauses ([bfcec56](https://github.com/obeli-sk/obelisk/commit/bfcec5600d016e776bf11852532cf6e73e5ff3e7))
+- Close join sets on fatal errors ([0058fb2](https://github.com/obeli-sk/obelisk/commit/0058fb2fdac6843a19165440cf626fe178cc5022))
+- Flush db cache before join set close ([48054ab](https://github.com/obeli-sk/obelisk/commit/48054abc5beabb6b3e9292b522173bc3a5a7ed52))
+- Make server WIT types 4.0.0 compatible ([c3b0906](https://github.com/obeli-sk/obelisk/commit/c3b090685c78f5fc111dbc520ffa5fd681f487e9))
+
+### Changed
+
+- [**breaking**] Use `snake_case` for JSON serialization ([31e523e](https://github.com/obeli-sk/obelisk/commit/31e523e2e2629e9356e67de1014f8a99512d7547))
+- [**breaking**] Use single `location` field with optional `oci://` prefix ([b744628](https://github.com/obeli-sk/obelisk/commit/b7446286e22ea88d2ebb96aabfda8a9102522461))
+- [**breaking**] Make locking `by_component_digest` the default ([d2a3da6](https://github.com/obeli-sk/obelisk/commit/d2a3da6148cec48ec59432bd7c415c191e613a33))
+- [**breaking**] Rename `log.stdout` to `log.console` ([ff07143](https://github.com/obeli-sk/obelisk/commit/ff07143cc3927d23976f80846e55cd51884ebb74))
+- [**breaking**] Add "UNSPECIFIED" variant and prefixes to gRPC enums ([d26301f](https://github.com/obeli-sk/obelisk/commit/d26301f7afd3b296a96126b6225a5eeda0e306fd))
+- [**breaking**] Database schema changes - delete old database required
+
+### Removed
+- [**breaking**] Remove `convert_core_module` from TOML config ([f28fa9e](https://github.com/obeli-sk/obelisk/commit/f28fa9e7b4fcec2940cae71772140036f27d0748))
+
+
 ## [0.34.1](https://github.com/obeli-sk/obelisk/compare/v0.34.0...v0.34.1)
 
 This release contains a fix for transforming Core WASM workflows to WASM Components which was skipped in 0.34.0 if the WASM file was pulled from an OCI registry.
