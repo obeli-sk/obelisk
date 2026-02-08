@@ -3582,10 +3582,112 @@ pub(crate) mod tests {
         assert_eq!("{\"foo\":1}", err);
     }
 
+    /// Test: joinNextTry successfully finds a delay response after it expires
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn adhoc_js_workflow_join_next_try_found(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let sim_clock = SimClock::epoch();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_workflow(
+                test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW,
+            )
+            .await,
+        ]);
+
+        let cancel_registry = CancelRegistry::new();
+        let workflow_exec = compile_adhoc_js_workflow(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            &fn_registry,
+            cancel_registry,
+        )
+        .await;
+
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        // JS code that submits a delay and uses joinNextTry to process it
+        let js_code = r"function main(params) {
+            const js = obelisk.createJoinSet();
+
+            /* Submit a short delay */
+            const delayId = js.submitDelay({ milliseconds: 10 });
+
+            /* Wait for it to expire using sleep */
+            obelisk.sleep({ milliseconds: 20 });
+
+            /* Now joinNextTry should find the response */
+            const response = js.joinNextTry();
+
+            /* After processing, joinNextTry should return allProcessed */
+            const afterResponse = js.joinNextTry();
+
+            return {
+                responseType: response.type,
+                responseOk: response.ok,
+                afterStatus: afterResponse.status
+            };
+        }";
+
+        let params = Params::from_json_values_test(vec![json!(js_code), json!("{}")]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: ADHOC_JS_EXECUTE_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        // Run until blocked by sleep
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        // Move time forward to expire the sleep
+        sim_clock.move_time_forward(Duration::from_millis(30));
+        expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
+            .await
+            .unwrap();
+
+        // Resume workflow - should complete
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        let res = db_connection
+            .get_finished_result(&execution_id)
+            .await
+            .unwrap();
+
+        let ok_val =
+            assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+        let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
+        let result: serde_json::Value = serde_json::from_str(json_str).unwrap();
+
+        assert_eq!(json!("delay"), result["responseType"]);
+        assert_eq!(json!(true), result["responseOk"]);
+        assert_eq!(json!("allProcessed"), result["afterStatus"]);
+
+        db_close.close().await;
+    }
+
     /// Test: Ad-hoc JS workflow exercises all workflow-support APIs
     /// - createJoinSet (with and without name)
     /// - joinSet.submit (calls fibo activity)
     /// - joinSet.joinNext
+    /// - joinSet.joinNextTry
     /// - obelisk.getResult
     /// - obelisk.randomU64, randomU64Inclusive, randomString
     /// - joinSet.submitDelay
@@ -3699,6 +3801,10 @@ pub(crate) mod tests {
             const js2 = obelisk.createJoinSet({ name: 'my-named-set' });
             console.log('Created named join set:', js2.id());
 
+            /* Test joinNextTry on empty join set - should return allProcessed */
+            const tryEmpty = js2.joinNextTry();
+            console.log('joinNextTry on empty:', JSON.stringify(tryEmpty));
+
             /* Submit fibo(10) activity call */
             const fiboFfqn = 'testing:fibo/fibo.fibo';
             const execId = js1.submit(fiboFfqn, [10]);
@@ -3707,6 +3813,10 @@ pub(crate) mod tests {
             /* Submit a delay */
             const delayId = js1.submitDelay({ milliseconds: 100 });
             console.log('Submitted delay, delayId:', delayId);
+
+            /* Test joinNextTry before any response is ready - should return pending */
+            const tryPending = js1.joinNextTry();
+            console.log('joinNextTry pending:', JSON.stringify(tryPending));
 
             /* Join next - should get fibo result first (activity completes before delay) */
             const response1 = js1.joinNext();
@@ -3734,7 +3844,9 @@ pub(crate) mod tests {
                 randStrLenOk: randStr.length >= 5 && randStr.length < 10,
                 fiboResult: fiboResult,
                 response1Type: response1.type,
-                loser
+                loser,
+                joinNextTryEmpty: tryEmpty.status,
+                joinNextTryPending: tryPending.status
             };
         }";
         let params_json = format!(
@@ -3846,6 +3958,16 @@ pub(crate) mod tests {
             json!(true),
             result["randStrLenOk"],
             "random string length should be in range [5, 10)"
+        );
+        assert_eq!(
+            json!("allProcessed"),
+            result["joinNextTryEmpty"],
+            "joinNextTry on empty join set should return allProcessed"
+        );
+        assert_eq!(
+            json!("pending"),
+            result["joinNextTryPending"],
+            "joinNextTry before response ready should return pending"
         );
         if activity_should_win {
             assert_eq!(

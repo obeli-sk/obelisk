@@ -11,9 +11,9 @@ use crate::generated::obelisk::types::execution::{ExecutionId, Function, Respons
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    SubmitConfig, get_result_json, join_next, join_set_close, join_set_create,
-    join_set_create_named, random_string, random_u64, random_u64_inclusive, sleep, submit_delay,
-    submit_json,
+    JoinNextTryError, SubmitConfig, get_result_json, join_next, join_next_try, join_set_close,
+    join_set_create, join_set_create_named, random_string, random_u64, random_u64_inclusive, sleep,
+    submit_delay, submit_json,
 };
 
 // Thread-local storage for JoinSets (WASM is single-threaded)
@@ -448,6 +448,69 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
     obj.set(
         js_string!("joinNext"),
         join_next_fn.to_js_function(ctx.realm()),
+        false,
+        ctx,
+    )?;
+
+    // joinSet.joinNextTry()
+    let join_next_try_fn = NativeFunction::from_fn_ptr(|this, _args, ctx| {
+        let this_obj = this
+            .as_object()
+            .ok_or_else(|| JsNativeError::typ().with_message("this is not an object"))?;
+        let idx = this_obj
+            .get(js_string!(JOIN_SET_IDX_KEY), ctx)?
+            .to_u32(ctx)? as usize;
+
+        let join_result = with_join_set(idx, |js| join_next_try(js))
+            .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))?;
+
+        match join_result {
+            Ok((response_id, result)) => {
+                let result_obj = new_object(ctx);
+
+                match response_id {
+                    ResponseId::ExecutionId(exec_id) => {
+                        result_obj.set(js_string!("type"), js_string!("execution"), false, ctx)?;
+                        result_obj.set(js_string!("id"), js_string!(exec_id.id), false, ctx)?;
+                        result_obj.set(js_string!("ok"), result.is_ok(), false, ctx)?;
+                    }
+                    ResponseId::DelayId(delay_id) => {
+                        result_obj.set(js_string!("type"), js_string!("delay"), false, ctx)?;
+                        result_obj.set(js_string!("id"), js_string!(delay_id.id), false, ctx)?;
+                        match result {
+                            Ok(()) => {
+                                result_obj.set(js_string!("ok"), true, false, ctx)?;
+                            }
+                            Err(()) => {
+                                result_obj.set(js_string!("ok"), false, false, ctx)?;
+                                result_obj.set(
+                                    js_string!("error"),
+                                    js_string!("cancelled"),
+                                    false,
+                                    ctx,
+                                )?;
+                            }
+                        }
+                    }
+                }
+
+                Ok(result_obj.into())
+            }
+            Err(JoinNextTryError::AllProcessed) => {
+                let result_obj = new_object(ctx);
+                result_obj.set(js_string!("status"), js_string!("allProcessed"), false, ctx)?;
+                Ok(result_obj.into())
+            }
+            Err(JoinNextTryError::Pending) => {
+                let result_obj = new_object(ctx);
+                result_obj.set(js_string!("status"), js_string!("pending"), false, ctx)?;
+                Ok(result_obj.into())
+            }
+        }
+    });
+    obj.set(
+        js_string!("joinNextTry"),
+        join_next_try_fn.to_js_function(ctx.realm()),
         false,
         ctx,
     )?;
