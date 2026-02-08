@@ -92,6 +92,8 @@ console-subscriber = { workspace = true, optional = true }
 
 
 [dev-dependencies]
+test-utils.workspace = true
+
 rstest.workspace = true
 
 [[bin]]

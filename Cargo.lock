@@ -3229,6 +3229,7 @@ dependencies = [
  "sha2",
  "strum",
  "tempfile",
+ "test-utils",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",

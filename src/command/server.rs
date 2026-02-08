@@ -1966,6 +1966,8 @@ mod tests {
         )]
         obelisk_toml: &'static str,
     ) -> Result<(), anyhow::Error> {
+        test_utils::set_up();
+
         let obelisk_toml = get_workspace_dir().join(obelisk_toml);
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
