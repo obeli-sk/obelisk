@@ -3458,7 +3458,8 @@ pub(crate) mod tests {
 
             let res = adhoc_js(js_code, params).await;
 
-            let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let ok =
+                assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
             let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
             assert_eq!("ok", ok);
         }
@@ -3473,7 +3474,8 @@ pub(crate) mod tests {
 
             let res = adhoc_js(js_code, params).await;
 
-            let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let ok =
+                assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
             let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
             let ok: Value = serde_json::from_str(ok).unwrap();
             assert_eq!(json!({"foo":true}), ok);
@@ -3489,7 +3491,8 @@ pub(crate) mod tests {
 
             let res = adhoc_js(js_code, params).await;
 
-            let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let ok =
+                assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
             let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
             let ok: Value = serde_json::from_str(ok).unwrap();
             assert_eq!(json!({"foo":true}), ok);
@@ -3505,7 +3508,8 @@ pub(crate) mod tests {
 
             let res = adhoc_js(js_code, params).await;
 
-            let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let ok =
+                assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
             let ok = assert_matches!(&ok.value, WastVal::String(s) => s);
             let ok: Value = serde_json::from_str(ok).unwrap();
             assert_eq!(Value::Null, ok);
@@ -3520,7 +3524,8 @@ pub(crate) mod tests {
 
             let res = adhoc_js(js_code, params).await;
 
-            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err =
+                assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
             let err = assert_matches!(&err.value, WastVal::String(s) => s);
             assert_eq!("result is not a string: JsValue(Undefined)", err);
         }
@@ -3534,7 +3539,8 @@ pub(crate) mod tests {
 
             let res = adhoc_js(js_code, params).await;
 
-            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err =
+                assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
             let err = assert_matches!(&err.value, WastVal::String(s) => s);
             assert_eq!("main function not defined", err);
         }
@@ -3548,7 +3554,8 @@ pub(crate) mod tests {
 
             let res = adhoc_js(js_code, params).await;
 
-            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err =
+                assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
             let err = assert_matches!(&err.value, WastVal::String(s) => s);
             assert_eq!(
                 "params 'throw 1' must be a JSON: expected ident at line 1 column 2",
@@ -3565,7 +3572,8 @@ pub(crate) mod tests {
 
             let res = adhoc_js(js_code, params).await;
 
-            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err =
+                assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
             let err = assert_matches!(&err.value, WastVal::String(s) => s);
             debug!("Error message: {err}");
             assert_eq!("test error", err);
@@ -3580,7 +3588,8 @@ pub(crate) mod tests {
 
             let res = adhoc_js(js_code, params).await;
 
-            let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
+            let err =
+                assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(val) } => val);
             let err = assert_matches!(&err.value, WastVal::String(s) => s);
             debug!("Error message: {err}");
             assert_eq!("{\"foo\":1}", err);
