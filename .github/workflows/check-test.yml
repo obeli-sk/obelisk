@@ -39,15 +39,15 @@ jobs:
         run: nix develop --command echo
 
       - name: Build tests
-        run: nix develop --command cargo nextest run --workspace --all-features --no-run
+        run: nix develop --command cargo nextest run --workspace --no-run
 
       - name: Populate the codegen cache
-        run: nix develop --command cargo nextest run --workspace --all-features --profile ci-test-populate-codegen-cache populate_codegen_cache --test-threads 1
+        run: nix develop --command cargo nextest run --workspace --profile ci-test-populate-codegen-cache populate_codegen_cache --test-threads 1
         env:
           CI: true
 
       - name: cargo test
-        run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }}
+        run: nix develop --command cargo nextest run --workspace --profile ${{ github.job }}
         env:
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
           CI: true
