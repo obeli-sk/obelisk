@@ -1108,26 +1108,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "db-mem"
-version = "0.35.0"
-dependencies = [
- "arbitrary",
- "assert_matches",
- "async-trait",
- "chrono",
- "derive_more",
- "hashbrown 0.16.1",
- "itertools",
- "obeli-sk-concepts",
- "obeli-sk-utils",
- "obeli-sk-val-json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-error",
-]
-
-[[package]]
 name = "deadpool"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2579,8 +2559,8 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "chrono",
- "db-mem",
  "obeli-sk-concepts",
+ "obeli-sk-db-mem",
  "obeli-sk-db-postgres",
  "obeli-sk-db-sqlite",
  "obeli-sk-utils",
@@ -2647,6 +2627,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "obeli-sk-db-mem"
+version = "0.35.0"
+dependencies = [
+ "arbitrary",
+ "assert_matches",
+ "async-trait",
+ "chrono",
+ "derive_more",
+ "hashbrown 0.16.1",
+ "itertools",
+ "obeli-sk-concepts",
+ "obeli-sk-utils",
+ "obeli-sk-val-json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-error",
+]
+
+[[package]]
 name = "obeli-sk-db-postgres"
 version = "0.35.0"
 dependencies = [
@@ -2706,12 +2706,12 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "chrono",
- "db-mem",
  "derive_more",
  "hashbrown 0.16.1",
  "indexmap 2.13.0",
  "obeli-db-tests",
  "obeli-sk-concepts",
+ "obeli-sk-db-mem",
  "obeli-sk-db-sqlite",
  "obeli-sk-utils",
  "obeli-sk-val-json",
@@ -2815,7 +2815,6 @@ dependencies = [
  "bytes",
  "chrono",
  "const_format",
- "db-mem",
  "derive_more",
  "futures-util",
  "hashbrown 0.16.1",
@@ -2828,6 +2827,7 @@ dependencies = [
  "libc",
  "obeli-db-tests",
  "obeli-sk-concepts",
+ "obeli-sk-db-mem",
  "obeli-sk-db-sqlite",
  "obeli-sk-executor",
  "obeli-sk-utils",
