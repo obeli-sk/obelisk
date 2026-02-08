@@ -162,6 +162,7 @@ package obelisk:types@4.1.0 {
 
     /// Error variants that may occur when calling `join-next` function.
     @since(version = 4.0.0)
+    @deprecated(version = 4.1.0)
     variant join-next-error {
       /// All submitted requests and their responses were already processed.
       all-processed,

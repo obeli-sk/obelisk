@@ -1,0 +1,239 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
+expression: "ExecutionLogSanitized::from(execution_log.clone())"
+---
+{
+  "execution_id": "E_00000000000000000000000000",
+  "events": [
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "created": {
+          "ffqn": "testing:stub-workflow/workflow.submit-race-join-next-delay",
+          "params": [],
+          "parent": null,
+          "scheduled_at": "1970-01-01T00:00:00Z",
+          "component_id": {
+            "component_type": "workflow",
+            "name": "",
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "deployment_id": "Dep_00000000000000000000000000",
+          "metadata": null,
+          "scheduled_by": null
+        }
+      },
+      "version": 0
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "locked": {
+          "component_id": {
+            "component_type": "workflow",
+            "name": "",
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "executor_id": "Exr_00000000000000000000000000",
+          "deployment_id": "Dep_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000001",
+          "lock_expires_at": "1970-01-01T00:00:01Z",
+          "retry_config": {
+            "max_retries": null,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
+          }
+        }
+      },
+      "version": 1
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "join_set_create",
+            "join_set_id": "g:1"
+          }
+        }
+      },
+      "version": 2
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "join_set_request",
+            "join_set_id": "g:1",
+            "request": {
+              "type": "child_execution_request",
+              "child_execution_id": "E_00000000000000000000000000.g:1_1",
+              "target_ffqn": "testing:stub-activity/activity.foo",
+              "params": [
+                "some param"
+              ]
+            }
+          }
+        }
+      },
+      "version": 3
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "join_set_request",
+            "join_set_id": "g:1",
+            "request": {
+              "type": "delay_request",
+              "delay_id": "Delay_00000000000000000000000000.g:1_0",
+              "expires_at": "1970-01-01T00:00:00.010Z",
+              "schedule_at": {
+                "in": {
+                  "secs": 0,
+                  "nanos": 10000000
+                }
+              }
+            }
+          }
+        }
+      },
+      "version": 4
+    },
+    {
+      "created_at": "1970-01-01T00:00:00Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "join_next",
+            "join_set_id": "g:1",
+            "run_expires_at": "1970-01-01T00:00:00Z",
+            "requested_ffqn": null,
+            "closing": false
+          }
+        }
+      },
+      "version": 5
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "locked": {
+          "component_id": {
+            "component_type": "workflow",
+            "name": "",
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "executor_id": "Exr_00000000000000000000000000",
+          "deployment_id": "Dep_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000002",
+          "lock_expires_at": "1970-01-01T00:00:01.010Z",
+          "retry_config": {
+            "max_retries": null,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
+          }
+        }
+      },
+      "version": 6
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "join_next",
+            "join_set_id": "g:1",
+            "run_expires_at": "1970-01-01T00:00:00.010Z",
+            "requested_ffqn": null,
+            "closing": true
+          }
+        }
+      },
+      "version": 7
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "locked": {
+          "component_id": {
+            "component_type": "workflow",
+            "name": "",
+            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "executor_id": "Exr_00000000000000000000000000",
+          "deployment_id": "Dep_00000000000000000000000000",
+          "run_id": "Run_00000000000000000000000003",
+          "lock_expires_at": "1970-01-01T00:00:01.010Z",
+          "retry_config": {
+            "max_retries": null,
+            "retry_exp_backoff": {
+              "secs": 0,
+              "nanos": 0
+            }
+          }
+        }
+      },
+      "version": 8
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "finished": {
+          "result": {
+            "ok": {
+              "ok": null
+            }
+          },
+          "http_client_traces": null
+        }
+      },
+      "version": 9
+    }
+  ],
+  "responses": [
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "join_set_id": "g:1",
+        "event": {
+          "type": "delay_finished",
+          "delay_id": "Delay_00000000000000000000000000.g:1_0",
+          "result": {
+            "Ok": null
+          }
+        }
+      }
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.010Z",
+      "event": {
+        "join_set_id": "g:1",
+        "event": {
+          "type": "child_execution_finished",
+          "child_execution_id": "E_00000000000000000000000000.g:1_1",
+          "finished_version": 1,
+          "result": {
+            "execution_error": {
+              "kind": "cancelled"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "next_version": 9,
+  "pending_state": {
+    "status": "finished",
+    "version": 9,
+    "finished_at": "1970-01-01T00:00:00.010Z",
+    "result_kind": "ok"
+  },
+  "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}

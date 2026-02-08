@@ -154,6 +154,7 @@ package obelisk:types@4.1.0 {
 
     /// Error variants that may occur when calling `join-next` function.
     @since(version = 4.0.0)
+    @deprecated(version = 4.1.0)
     variant join-next-error {
       /// All submitted requests and their responses were already processed.
       all-processed,
@@ -166,7 +167,6 @@ package obelisk:workflow@4.1.0 {
   interface workflow-support {
     use obelisk:types/join-set@4.1.0.{join-set};
     use obelisk:types/execution@4.1.0.{function, submit-config, execution-id, response-id};
-    use obelisk:types/join-set@4.1.0.{join-next-error};
 
     variant submit-json-error {
       ffqn-parsing-error(string),
@@ -177,6 +177,10 @@ package obelisk:workflow@4.1.0 {
     variant get-result-json-error {
       execution-id-parsing-error(string),
       not-found-in-processed-responses,
+    }
+
+    variant join-next-error {
+      all-processed,
     }
 
     join-set-create: func() -> join-set;

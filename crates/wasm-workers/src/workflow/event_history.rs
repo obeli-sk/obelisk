@@ -14,7 +14,7 @@ use crate::workflow::host_exports::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
 use crate::workflow::host_exports::response_id::ResponseId;
 use crate::workflow::host_exports::v4_1_0;
 use crate::workflow::host_exports::v4_1_0::obelisk::types::execution as types_execution;
-use crate::workflow::host_exports::v4_1_0::obelisk::types::join_set as types_join_set;
+use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextError;
 use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextTryError;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
@@ -68,7 +68,7 @@ use wasmtime::component::Val;
 enum ChildReturnValue {
     WastVal(WastVal),
     JoinSetCreate(JoinSetId),
-    JoinNext(Result<(ResponseId, Result<(), ()>), types_join_set::JoinNextError>),
+    JoinNext(Result<(ResponseId, Result<(), ()>), JoinNextError>),
     JoinNextTry(Result<(ResponseId, Result<(), ()>), JoinNextTryError>),
     JoinNextRequestingFfqn(Result<(ExecutionIdDerived, WastVal), AwaitNextExtensionError>),
     OneOffDelay {
@@ -967,7 +967,7 @@ impl EventHistory {
                 trace!(%join_set_id, "matched JoinNext with JoinNextTooMany");
                 self.event_history[found_idx].1 = Processed;
                 Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(
-                    Err(types_join_set::JoinNextError::AllProcessed),
+                    Err(JoinNextError::AllProcessed),
                 )))
             }
 
@@ -2328,7 +2328,7 @@ impl JoinNext {
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
     ) -> Result<
-        Result<(types_execution::ResponseId, Result<(), ()>), types_join_set::JoinNextError>,
+        Result<(types_execution::ResponseId, Result<(), ()>), JoinNextError>,
         WorkflowFunctionError,
     > {
         assert!(

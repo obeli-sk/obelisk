@@ -997,6 +997,7 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("cannot link function id", err))?;
 
+        // deprecated
         // submit-delay: func(timeout: schedule-at) -> delay-id
         inst_join_set_ifc
             .func_wrap_async(
@@ -1024,6 +1025,7 @@ impl WorkflowCtx {
                 err
             ))?;
 
+        // deprecated
         // join-next: func() -> result<tuple<response-id, result>, join-next-error>
         inst_join_set_ifc
             .func_wrap_async(
@@ -1363,7 +1365,7 @@ pub(crate) mod workflow_support {
     use super::{SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, types_4_1_0};
     use crate::workflow::event_history::{JoinNext, JoinNextTry, Persist, SubmitDelay};
     use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::Host as ExecutionIfcHost;
-    use crate::workflow::host_exports::v4_1_0::obelisk::types::join_set::JoinNextError;
+    use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextError;
     use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, v4_1_0};
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4_1, JoinSetCreateError};
