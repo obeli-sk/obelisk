@@ -11,8 +11,9 @@ use crate::generated::obelisk::types::execution::{ExecutionId, Function, Respons
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    SubmitConfig, get_result_json, join_set_close, join_set_create, join_set_create_named,
-    random_string, random_u64, random_u64_inclusive, sleep, submit_json,
+    SubmitConfig, get_result_json, join_next, join_set_close, join_set_create,
+    join_set_create_named, random_string, random_u64, random_u64_inclusive, sleep, submit_delay,
+    submit_json,
 };
 
 // Thread-local storage for JoinSets (WASM is single-threaded)
@@ -383,7 +384,7 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
 
         let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
 
-        let delay_id = with_join_set(idx, |js| js.submit_delay(schedule))
+        let delay_id = with_join_set(idx, |js| submit_delay(js, schedule))
             .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))?;
 
         Ok(JsValue::from(js_string!(delay_id.id)))
@@ -404,7 +405,7 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             .get(js_string!(JOIN_SET_IDX_KEY), ctx)?
             .to_u32(ctx)? as usize;
 
-        let join_result = with_join_set(idx, |js| js.join_next())
+        let join_result = with_join_set(idx, |js| join_next(js))
             .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))?;
 
         match join_result {

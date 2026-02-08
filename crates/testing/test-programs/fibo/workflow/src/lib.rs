@@ -3,7 +3,7 @@ use generated::export;
 use generated::exports::testing::fibo_workflow::workflow::Guest;
 use generated::obelisk::types::execution::Function;
 use generated::obelisk::workflow::workflow_support::{
-    GetResultJsonError, SubmitJsonError, get_result_json, join_set_create, submit_json,
+    GetResultJsonError, SubmitJsonError, get_result_json, join_next, join_set_create, submit_json,
 };
 use generated::testing::{
     fibo::fibo::fibo as fibo_activity,
@@ -72,7 +72,7 @@ impl Guest for Component {
             .expect("submit_json should succeed");
 
         // Await the result
-        let (response_id, is_success) = join_set.join_next().expect("all-processed cannot happen");
+        let (response_id, is_success) = join_next(&join_set).expect("all-processed cannot happen");
         let result_exec_id = assert_matches!(response_id, ResponseId::ExecutionId(exe) => exe);
         // Verify the execution IDs match
         assert_eq!(

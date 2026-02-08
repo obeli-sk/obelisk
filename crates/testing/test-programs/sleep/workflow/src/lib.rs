@@ -2,10 +2,9 @@ use crate::generated::obelisk::log::log;
 use generated::export;
 use generated::exports::testing::sleep_workflow::workflow::Guest;
 use generated::obelisk::types::execution::ResponseId;
-use generated::obelisk::types::join_set::JoinNextError;
 use generated::obelisk::types::time::Duration as DurationEnum;
 use generated::obelisk::types::time::ScheduleAt;
-use generated::obelisk::workflow::workflow_support;
+use generated::obelisk::workflow::workflow_support::{self, JoinNextError};
 use generated::testing::sleep::sleep as sleep_activity;
 use generated::testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
 use generated::testing::sleep_obelisk_schedule::sleep as sleep_activity_schedule;
@@ -64,12 +63,15 @@ impl Guest for Component {
 
     fn two_delays_in_same_join_set() -> Result<(), ()> {
         let join_set = workflow_support::join_set_create();
-        let _long = join_set.submit_delay(ScheduleAt::In(DurationEnum::Seconds(10)));
-        let short = join_set.submit_delay(ScheduleAt::In(DurationEnum::Milliseconds(10)));
+        let _long =
+            workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Seconds(10)));
+        let short = workflow_support::submit_delay(
+            &join_set,
+            ScheduleAt::In(DurationEnum::Milliseconds(10)),
+        );
         // result<tuple<response-id, result>, join-next-error>
-        let (ResponseId::DelayId(first), res) = join_set
-            .join_next()
-            .expect("submitted two delays, joining first")
+        let (ResponseId::DelayId(first), res) =
+            workflow_support::join_next(&join_set).expect("submitted two delays, joining first")
         else {
             unreachable!("only delays have been submitted");
         };
@@ -81,10 +83,11 @@ impl Guest for Component {
 
     fn join_next_produces_all_processed_error() -> Result<(), ()> {
         let join_set = workflow_support::join_set_create();
-        join_set.submit_delay(ScheduleAt::In(DurationEnum::Milliseconds(10)));
-        let (_delay_id, res) = join_set.join_next().expect("join set contains 1 delay");
+        workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Milliseconds(10)));
+        let (_delay_id, res) =
+            workflow_support::join_next(&join_set).expect("join set contains 1 delay");
         res.expect("not cancelled");
-        let JoinNextError::AllProcessed = join_set.join_next().unwrap_err();
+        let JoinNextError::AllProcessed = workflow_support::join_next(&join_set).unwrap_err();
         Ok(())
     }
 }

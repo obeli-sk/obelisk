@@ -1242,6 +1242,47 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function get-result-json", err))?;
 
+        // submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id
+        inst_workflow_support
+            .func_wrap_async(
+                "submit-delay",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, schedule_at): (Resource<JoinSetId>, ScheduleAt_4_1_0)| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let delay_id: DelayId_4_1_0 = host
+                            .submit_delay(join_set_id, schedule_at, wasm_backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((delay_id,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function submit-delay", err))?;
+
+        // join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "join-next",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource,): (Resource<JoinSetId>,)| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let res = host
+                            .join_next(join_set_id, wasm_backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((res,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function join-next", err))?;
+
         Ok(())
     }
 

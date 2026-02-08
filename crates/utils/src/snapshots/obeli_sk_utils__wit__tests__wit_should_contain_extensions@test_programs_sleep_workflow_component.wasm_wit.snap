@@ -146,14 +146,18 @@ package obelisk:types@4.1.0 {
       @since(version = 4.0.0)
       id: func() -> string;
       /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
+      /// This function has been moved to `workflow-support`.
       @since(version = 4.0.0)
+      @deprecated(version = 4.1.0)
       submit-delay: func(timeout: schedule-at) -> delay-id;
       /// Block the workflow execution until next response associated with the join set arrives.
       /// The response is marked as processed.
       /// Child execution result can be obtained using `-get` extension function using the
       /// returned execution ID.
       /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+      /// This function has been moved to `workflow-support`.
       @since(version = 4.0.0)
+      @deprecated(version = 4.1.0)
       join-next: func() -> result<tuple<response-id, result>, join-next-error>;
     }
 
@@ -170,13 +174,21 @@ package obelisk:types@4.1.0 {
 package obelisk:workflow@4.1.0 {
   interface workflow-support {
     use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/time@4.1.0.{schedule-at, datetime};
+    use obelisk:types/time@4.1.0.{schedule-at};
+    use obelisk:types/execution@4.1.0.{delay-id};
+    use obelisk:types/time@4.1.0.{datetime};
+    use obelisk:types/execution@4.1.0.{response-id};
+    use obelisk:types/join-set@4.1.0.{join-next-error};
 
     random-u64-inclusive: func(min: u64, max-inclusive: u64) -> u64;
 
     sleep: func(schedule-at: schedule-at) -> result<datetime>;
 
     join-set-create: func() -> join-set;
+
+    submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
+
+    join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
   }
 }
 

@@ -139,14 +139,18 @@ package obelisk:types@4.1.0 {
       @since(version = 4.0.0)
       id: func() -> string;
       /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
+      /// This function has been moved to `workflow-support`.
       @since(version = 4.0.0)
+      @deprecated(version = 4.1.0)
       submit-delay: func(timeout: schedule-at) -> delay-id;
       /// Block the workflow execution until next response associated with the join set arrives.
       /// The response is marked as processed.
       /// Child execution result can be obtained using `-get` extension function using the
       /// returned execution ID.
       /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+      /// This function has been moved to `workflow-support`.
       @since(version = 4.0.0)
+      @deprecated(version = 4.1.0)
       join-next: func() -> result<tuple<response-id, result>, join-next-error>;
     }
 

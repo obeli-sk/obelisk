@@ -73,12 +73,12 @@ impl Guest for Component {
         {
             let join_set_a = join_set_create_named("a").expect("name is valid");
             activity_ext::foo_submit(&join_set_a, "a");
-            join_set_a.submit_delay(ScheduleAt::In(Duration::Days(1)));
+            workflow_support::submit_delay(&join_set_a, ScheduleAt::In(Duration::Days(1)));
 
             let join_set_b = join_set_create_named("b").expect("name is valid");
             let exe_b = activity_ext::foo_submit(&join_set_b, "b");
             activity_stub::foo_stub(&exe_b, Err(())).unwrap();
-            let (response_b, b_result) = join_set_b.join_next().unwrap();
+            let (response_b, b_result) = workflow_support::join_next(&join_set_b).unwrap();
             b_result.unwrap_err();
             let ResponseId::ExecutionId(found) = response_b else {
                 unreachable!()
@@ -87,7 +87,7 @@ impl Guest for Component {
 
             let join_set_f = join_set_create_named("f").expect("name is valid");
             activity_ext::foo_submit(&join_set_f, "f");
-            join_set_f.submit_delay(ScheduleAt::In(Duration::Days(1)));
+            workflow_support::submit_delay(&join_set_f, ScheduleAt::In(Duration::Days(1)));
             std::mem::forget(join_set_f);
             // a and b are dropped here, b is already processed.
         }
@@ -116,9 +116,10 @@ fn submit_race_join_next(config: RaceConfig) {
     const OK_STUB_RESP: &str = "ok";
     let join_set = join_set_create();
     let execution_id = activity_ext::foo_submit(&join_set, "some param");
-    let delay_id = join_set.submit_delay(obelisk::types::time::ScheduleAt::In(
-        obelisk::types::time::Duration::Milliseconds(10),
-    ));
+    let delay_id = workflow_support::submit_delay(
+        &join_set,
+        obelisk::types::time::ScheduleAt::In(obelisk::types::time::Duration::Milliseconds(10)),
+    );
     match config {
         RaceConfig::Stub => {
             activity_stub::foo_stub(&execution_id, Ok(OK_STUB_RESP))
@@ -132,8 +133,7 @@ fn submit_race_join_next(config: RaceConfig) {
             // wait for timeout
         }
     }
-    match join_set
-        .join_next()
+    match workflow_support::join_next(&join_set)
         .expect("two submissions and no response was processed yet")
     {
         (ResponseId::ExecutionId(reported_id), res) => {

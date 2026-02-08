@@ -4,7 +4,7 @@ package obelisk:workflow@4.1.0;
 interface workflow-support {
     use obelisk:types/time@4.1.0.{schedule-at, datetime};
     use obelisk:types/execution@4.1.0.{delay-id, execution-id, response-id, function, submit-config};
-    use obelisk:types/join-set@4.1.0.{join-set};
+    use obelisk:types/join-set@4.1.0.{join-set, join-next-error};
 
     /// Error variants that may occur on named join set creation.
     /// The name may only contain alphanumeric characters and the following extra characters:
@@ -74,4 +74,16 @@ interface workflow-support {
     /// Obtain child execution result after it has been awaited using `-await-next` extension or `join-set.join-next`.
     @since(version = 4.1.0)
     get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
+
+    /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
+    @since(version = 4.1.0)
+    submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
+
+    /// Block the workflow execution until next response associated with the join set arrives.
+    /// The response is marked as processed.
+    /// Child execution result can be obtained using `-get` extension function using the
+    /// returned execution ID.
+    /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+    @since(version = 4.1.0)
+    join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
 }
