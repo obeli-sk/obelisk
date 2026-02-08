@@ -1,6 +1,6 @@
 [package]
 name = "obeli-sk-utils"
-description = "Internal package of obeli-sk"
+description = "Internal package of obelisk"
 
 authors.workspace = true
 edition.workspace = true
