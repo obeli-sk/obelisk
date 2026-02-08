@@ -1,20 +1,22 @@
 # see https://github.com/obeli-sk/components/tree/main/docker/activity-docker
+# [activities]
+# directories.enabled = true
 # [[activity_wasm]]
 # name = "activity_docker"
-# location = "oci://docker.io/getobelisk/components_docker_activity_docker:2026-01-10@sha256:60f655080c46a65f04361c4180545f8a55694e2df3cc6ffad100ffaaacc0606e"
+# location = "oci://docker.io/getobelisk/components_docker_activity_docker:2026-02-08@sha256:39607793f16fb9d428bd6dfb91d5d2b310e710fbdf227fb2cf3725b546a64bf2"
 # directories  = { enabled = true, process_provider = "native"}
 
 # see https://github.com/obeli-sk/components/tree/main/fly/activity-fly-http
 # [[activity_wasm]]
 # name = "activity_fly_http"
-# location = "oci://docker.io/getobelisk/components_fly_activity_fly_http:2026-01-13-1@sha256:7b39b252793821b0b7a1cfb4c330fa41c869a8895cfd0ee69c9a9b7e2d3d1b9d"
+# location = "oci://docker.io/getobelisk/components_fly_activity_fly_http:2026-02-08@sha256:5daa32a03c563eeaeda48273cc0e12dfec70258bcc435a3fb52b9e12ec169de7"
 # exec.lock_expiry.seconds = 15
 # env_vars = ["FLY_API_TOKEN"]
 
 # see https://github.com/obeli-sk/components/tree/main/fly/webhook-fly-secrets-updater
 # [[webhook_endpoint]]
 # name = "webhook_fly_secrets_updater"
-# location = "oci://docker.io/getobelisk/components_fly_webhook_fly_secrets_updater:2026-01-10@sha256:e4c834f152c9b68fc007588d74332c198e237080ba43f1718b67174f1a52d9ba"
+# location = "oci://docker.io/getobelisk/components_fly_webhook_fly_secrets_updater:2026-02-08@sha256:e957a9734d13d88861f0abc2a9901367895441c8651bfb6e36e9409dcdd5a06a"
 # http_server = "webhook_server"
 # routes = [{ methods = ["POST"], route = "/" }]
 # env_vars = ["FLY_API_TOKEN"]
@@ -26,18 +28,38 @@
 # see https://github.com/obeli-sk/components/tree/main/github/activity-github-graphql
 # [[activity_wasm]]
 # name = "activity_github_graphql"
-# location = "oci://docker.io/getobelisk/components_github_activity_github_graphql:2026-01-13@sha256:f3486f825825a6a16c98b50d517b26e928badcac7310f8066b27723f8cb285a3"
+# location = "oci://docker.io/getobelisk/components_github_activity_github_graphql:2026-02-08@sha256:21f61fa354e05a5df98278c7d7434c87d8eb0838f29814241f9a47a9f079006e"
 # exec.lock_expiry.seconds = 5
 # env_vars = ["GITHUB_TOKEN"]
 
 # see https://github.com/obeli-sk/components/tree/main/http/activity-http-generic
 # [[activity_wasm]]
 # name = "activity_http_generic"
-# location = "oci://docker.io/getobelisk/components_http_activity_http_generic:2026-01-13@sha256:f64b64aa176224645a21d583312ad1e832afae57af138998711771c4411e3b3e"
+# location = "oci://docker.io/getobelisk/components_http_activity_http_generic:2026-02-08@sha256:bfe61f1bbabd67c72086c62446b73b8da330972658dc4282b1e27df23f4624c0"
 # exec.lock_expiry.seconds = 5
 
 # see https://github.com/obeli-sk/components/tree/main/obelisk/activity-obelisk-client-http
 # [[activity_wasm]]
 # name = "activity_obelisk_client_http"
-# location = "oci://docker.io/getobelisk/components_obelisk_activity_obelisk_client_http:2026-01-10@sha256:ca99fa1f0b08d1883784baff2966e07abe36b450b63d8deac25f8abf8cecd0ce"
+# location = "oci://docker.io/getobelisk/components_obelisk_activity_obelisk_client_http:2026-02-08@sha256:8199bf77e6c0084c843fab116dba929c661b418b231f68e3eb4ddbb342be049c"
 
+# see https://github.com/obeli-sk/components/tree/main/openai/activity-openai-responses
+# [[activity_wasm]]
+# name = "activity_openai_responses"
+# location = "oci://docker.io/getobelisk/components_openai_activity_openai_responses:2026-02-08@sha256:adb87fa3a8f8da5f7d12f203be685aa3ee4ef56a2b2683643da680c543562dea"
+# exec.lock_expiry.seconds = 60
+# env_vars = ["OPENAI_API_KEY"]
+
+# see https://github.com/obeli-sk/components/tree/main/postmark/activity-postmark-email
+# [[activity_wasm]]
+# name = "activity_postmark_email"
+# location = "oci://docker.io/getobelisk/components_postmark_activity_postmark_email:2026-02-08@sha256:a68b3b22d54fe58f099006801142f32707c2f6abc7f8414ee605986064f7708b"
+# exec.lock_expiry.seconds = 30
+# env_vars = ["POSTMARK_SERVER_TOKEN"]
+
+# see https://github.com/obeli-sk/components/tree/main/sendgrid/activity-sendgrid-email
+# [[activity_wasm]]
+# name = "activity_sendgrid_email"
+# location = "oci://docker.io/getobelisk/components_sendgrid_activity_sendgrid_email:2026-02-08@sha256:ce3782c627d71be8437ed203959af168969271062559c608f28cc00707e8fd0a"
+# exec.lock_expiry.seconds = 30
+# env_vars = ["SENDGRID_API_KEY"]
