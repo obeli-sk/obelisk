@@ -1,8 +1,11 @@
 use crate::config::config_holder::ConfigSource;
 use crate::config::toml::ComponentLocationToml;
 use clap::Parser;
-use concepts::{ComponentType, ExecutionId, FunctionFqn, prefixed_ulid::ExecutionIdDerived};
-use std::path::PathBuf;
+use concepts::{
+    ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
+    prefixed_ulid::ExecutionIdDerived,
+};
+use std::{path::PathBuf, str::FromStr};
 
 pub(crate) mod shadow {
     pub(crate) const PKG_VERSION: &str = env!("PKG_VERSION");
@@ -189,6 +192,41 @@ pub(crate) enum Component {
     },
 }
 
+#[derive(Debug, Clone)]
+pub enum FunctionFqnOrShort {
+    Ffqn(FunctionFqn),
+    Short {
+        ifc_name: String,
+        function_name: String,
+    }, // starts with `.../` prefix
+}
+impl FromStr for FunctionFqnOrShort {
+    type Err = FunctionFqnParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        const PREFIX: &str = ".../";
+
+        if let Some(rest) = input.strip_prefix(PREFIX) {
+            let Some((ifc_name, fn_name)) = rest.split_once('.') else {
+                return Err(FunctionFqnParseError::DelimiterNotFound(input.to_string()));
+            };
+            // Ensure exactly two parts
+            if fn_name.contains('.') {
+                return Err(FunctionFqnParseError::DelimiterFoundInFunctionName(
+                    input.to_string(),
+                ));
+            }
+
+            Ok(FunctionFqnOrShort::Short {
+                ifc_name: ifc_name.to_string(),
+                function_name: fn_name.to_string(),
+            })
+        } else {
+            Ok(FunctionFqnOrShort::Ffqn(FunctionFqn::from_str(input)?))
+        }
+    }
+}
+
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Execution {
     /// Submit new execution and optionally follow its status stream until the it finishes.
@@ -198,9 +236,9 @@ pub(crate) enum Execution {
         api_url: String,
         #[arg(short, long)]
         execution_id: Option<ExecutionId>,
-        /// Function in the fully qualified format
+        /// Function in the fully qualified format or shortened to .../ifc.fn
         #[arg(value_name = "function")]
-        ffqn: FunctionFqn,
+        ffqn: FunctionFqnOrShort,
         /// Follow the stream of events until the execution finishes
         #[arg(short, long)]
         follow: bool,

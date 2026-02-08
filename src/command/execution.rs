@@ -1,6 +1,7 @@
 use crate::ExecutionRepositoryClient;
 use crate::args;
 use crate::args::CancelCommand;
+use crate::args::FunctionFqnOrShort;
 use crate::args::params::parse_params;
 use crate::get_execution_repository_client;
 use crate::get_fn_repository_client;
@@ -93,49 +94,53 @@ pub(crate) enum SubmitOutputOpts {
 pub(crate) async fn submit(
     api_url: &str,
     execution_id: Option<ExecutionId>,
-    ffqn: FunctionFqn,
+    ffqn: FunctionFqnOrShort,
     params: Vec<serde_json::Value>,
     opts: SubmitOutputOpts,
 ) -> anyhow::Result<()> {
     let channel = to_channel(api_url).await?;
     let mut client = get_execution_repository_client(channel.clone()).await?;
     let mut component_client = get_fn_repository_client(channel).await?;
-    let ffqn = if let Some(ifc_name) = ffqn.ifc_fqn.strip_prefix(".../") {
-        // Guess function
-        let components = component_client
-            .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
-                function_name: None,
-                component_digest: None,
-                extensions: false,
-            }))
-            .await?
-            .into_inner()
-            .components;
-        let mut matched = Vec::new();
-        for export in components
-            .into_iter()
-            .flat_map(|component| component.exports)
-            .map(|detail| detail.function_name.expect("function_name is sent"))
-        {
-            if export.function_name == ffqn.function_name.as_ref() {
-                let ffqn =
-                    FunctionFqn::try_from(export).expect("sent FunctionName must be parseable");
-                if ffqn.ifc_fqn.ifc_name() == ifc_name {
-                    matched.push(ffqn);
+    let ffqn = match ffqn {
+        FunctionFqnOrShort::Short {
+            ifc_name,
+            function_name,
+        } => {
+            // Guess function
+            let components = component_client
+                .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
+                    function_name: None,
+                    component_digest: None,
+                    extensions: false,
+                }))
+                .await?
+                .into_inner()
+                .components;
+            let mut matched = Vec::new();
+            for export in components
+                .into_iter()
+                .flat_map(|component| component.exports)
+                .map(|detail| detail.function_name.expect("function_name is sent"))
+            {
+                if export.function_name == function_name.as_ref() {
+                    let ffqn =
+                        FunctionFqn::try_from(export).expect("sent FunctionName must be parseable");
+                    if ffqn.ifc_fqn.ifc_name() == ifc_name {
+                        matched.push(ffqn);
+                    }
                 }
             }
+            let ffqn = match matched.as_slice() {
+                [] => bail!("no matching function found"),
+                [_] => matched.remove(0),
+                _ => bail!("more than one matching function found: {matched:?}"),
+            };
+            if matches!(opts, SubmitOutputOpts::Plain { .. }) {
+                println!("Matched {ffqn}");
+            }
+            ffqn
         }
-        let ffqn = match matched.as_slice() {
-            [] => bail!("no matching function found"),
-            [_] => matched.remove(0),
-            _ => bail!("more than one matching function found: {matched:?}"),
-        };
-        if matches!(opts, SubmitOutputOpts::Plain { .. }) {
-            println!("Matched {ffqn}");
-        }
-        ffqn
-    } else {
-        ffqn
+        FunctionFqnOrShort::Ffqn(ffqn) => ffqn,
     };
     let execution_id = execution_id.unwrap_or_else(ExecutionId::generate);
     match opts {
