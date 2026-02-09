@@ -38,19 +38,19 @@ pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
 ];
 const WIT_OBELISK_TYPES_PACKAGE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@latest/types.wit"
+    "/wit/obelisk_types@4.1.0/types.wit"
 ));
 pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
-    "obelisk_types@latest",
+    "obelisk_types@4.1.0",
     "types.wit",
     WIT_OBELISK_TYPES_PACKAGE_CONTENT,
 ];
 pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
-    "obelisk_workflow@latest",
+    "obelisk_workflow@4.1.0",
     "workflow-support.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_workflow@latest/workflow-support.wit"
+        "/wit/obelisk_workflow@4.1.0/workflow-support.wit"
     )),
 ];
 
