@@ -91,6 +91,10 @@ pub fn set_up() {
 
         std::panic::set_hook(Box::new(utils::panic_hook::tracing_panic_hook));
 
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .expect("default tls provider must be installed");
+
         let fmt_layer = tracing_subscriber::fmt::layer().event_format(MessageFirstFormatter);
 
         let builder = tracing_subscriber::registry()

@@ -85,6 +85,10 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("default tls provider must be installed");
+
     let mut guard = Guard::default();
 
     let console_layer = if config.log.console.enabled {
