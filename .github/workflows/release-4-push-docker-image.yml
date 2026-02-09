@@ -65,7 +65,7 @@ jobs:
           cd tmp
           wget -q https://github.com/obeli-sk/obelisk/releases/download/${TAG}/${{ matrix.tarfile }}
           tar xvfz ${{ matrix.tarfile }}
-          obelisk generate config obelisk.toml
+          ./obelisk generate config obelisk.toml
           IMAGE_BASE="getobelisk/obelisk"
           IMAGE="${IMAGE_BASE}:${{ matrix.image_tag }}"
           docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag $IMAGE
