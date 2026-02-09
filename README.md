@@ -172,10 +172,15 @@ Run the program:
 ```sh
 cargo run --release
 ```
+See [DEVELOPMENT.md](DEVELOPMENT.md) for repository structure, build instructions,
+testing, code patterns, and contribution conventions.
 
 ## Running Tests
 Postgres must be running. See `.envrc-example` for how to set up the environment variables.
+Quick start:
 ```sh
+cp .envrc-example .envrc && $EDITOR .envrc && direnv allow
+cargo run --release
 ./scripts/test.sh
 ```
 
