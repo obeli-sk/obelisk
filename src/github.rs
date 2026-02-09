@@ -110,8 +110,8 @@ struct GitHubRelease {
 /// GitHub API response for a release asset
 #[derive(Debug, Deserialize)]
 struct GitHubAsset {
+    id: u64,
     name: String,
-    browser_download_url: String,
 }
 
 pub(crate) fn content_digest_to_wasm_file(
@@ -146,7 +146,7 @@ pub(crate) async fn pull_to_cache_dir(
         .ok_or_else(|| {
             let available: Vec<_> = release.assets.iter().map(|a| &a.name).collect();
             anyhow::anyhow!(
-                "asset '{}' not found in release '{}'. Available assets: {:?}",
+                "asset `{}` not found in release `{}`. Available assets: {:?}",
                 github_ref.asset_name,
                 release.tag_name,
                 available
@@ -159,9 +159,11 @@ pub(crate) async fn pull_to_cache_dir(
     let temp_file = tempfile::NamedTempFile::new_in(wasm_cache_dir)?;
     let temp_path = temp_file.path().to_path_buf();
     temp_file.keep()?;
-    client
-        .download_asset(&asset.browser_download_url, &temp_path)
-        .await?;
+    let asset_api_url = format!(
+        "https://api.github.com/repos/{}/{}/releases/assets/{}",
+        github_ref.owner, github_ref.repo, asset.id
+    );
+    client.download_asset(&asset_api_url, &temp_path).await?;
 
     // Calculate the actual content digest
     let actual_content_digest = calculate_sha256_file(&temp_path)
@@ -312,7 +314,12 @@ impl GitHubClient {
     async fn download_asset(&self, url: &str, dest: &Path) -> Result<(), anyhow::Error> {
         self.retry(
             || async {
-                let response = self
+                // Use the GitHub API asset endpoint with Accept: application/octet-stream.
+                // GitHub will respond with a 302 redirect to a pre-signed URL.
+                // We must NOT follow the redirect with the Authorization header
+                // (the pre-signed URL has its own auth), so we use a separate
+                // client without default headers for the redirect target.
+                let api_response = self
                     .client
                     .get(url)
                     .header(reqwest::header::ACCEPT, "application/octet-stream")
@@ -320,12 +327,13 @@ impl GitHubClient {
                     .await
                     .with_context(|| format!("failed to download asset from {url}"))?;
 
-                let status = response.status();
+                let status = api_response.status();
                 if !status.is_success() {
-                    bail!("failed to download asset (status {status})");
+                    let body = api_response.text().await.unwrap_or_default();
+                    bail!("failed to download asset (status {status}): {body}");
                 }
 
-                let bytes = response
+                let bytes = api_response
                     .bytes()
                     .await
                     .context("failed to read asset bytes")?;
