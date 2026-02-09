@@ -278,9 +278,7 @@ rustls = { version = "0.23", default-features = false, features = [
     "std",
     "tls12",
 ] }
-jsonwebtoken = { version = "10", default-features = false, features = [
-    "rust_crypto",
-] }
+jsonwebtoken = { version = "10", default-features = false }
 route-recognizer = "0.3.1"
 rstest = "0.26"
 rusqlite = { version = "0.38.0", features = [
