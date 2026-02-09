@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.2](https://github.com/obeli-sk/obelisk/compare/v0.35.1...v0.35.2)
+Fixes the previous release, which has moved to `rustls-no-provider` feature of `reqwest` but failed to initialize the
+`rustls-ring` crypto provider.
+
+### Fixed
+
+- Download artifacts from GH releases using - ([ed3dfcd](https://github.com/obeli-sk/obelisk/commit/ed3dfcd586a7da81ce3e9cbf9af37c28baf53d16))
+- Explicitly initialize default TLS provider - ([159548d](https://github.com/obeli-sk/obelisk/commit/159548db3bedcbbe03e660ff88e47e405ea91fdc))
+
 ## [0.35.1](https://github.com/obeli-sk/obelisk/compare/v0.35.1...v0.35.1)
 Fixes cross-compilation for MacOS.
 
