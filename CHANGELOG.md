@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.3](https://github.com/obeli-sk/obelisk/compare/v0.35.2...v0.35.3)
+
+### Fixed
+
+- Move the `rustls` crypto provider `ring` into `main` - ([2d97e5d](https://github.com/obeli-sk/obelisk/commit/2d97e5d34ab62bd221ef106f1489623014ce40ca))
+- Use actual version instead of `latest` in `generate wit-support` - ([64946fc](https://github.com/obeli-sk/obelisk/commit/64946fcd493212fb0e9f4ce8836b654cd31ff8e4))
+
+
 ## [0.35.2](https://github.com/obeli-sk/obelisk/compare/v0.35.1...v0.35.2)
 Fixes the previous release, which has moved to `rustls-no-provider` feature of `reqwest` but failed to initialize the
 `rustls-ring` crypto provider.

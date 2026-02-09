@@ -63,13 +63,9 @@ body = """
 """
 
 commit_parsers = [
-    { message = "^feat", group = "<!-- 0 -->⛰️ Features" },
-    { message = "^fix", group = "<!-- 1 -->🐛 Bug Fixes" },
-    { message = "^doc", group = "<!-- 2 -->📚 Documentation" },
-    { message = "^perf", group = "<!-- 3 -->⚡ Performance" },
-    { body = ".*security", group = "<!-- 5 -->🛡️ Security" },
-    { message = "^revert", group = "<!-- 6 -->◀️ Revert" },
-    { message = "^refactor|^r", group = "<!-- 7 -->🚜 Refactor" },
+    { message = "^feat|^perf", group = "<!-- 0 -->Added" },
+    { message = "^fix", group = "<!-- 1 -->Fixed" },
+    { message = "^refactor|^r", group = "<!-- 7 -->Changed" },
     { message = "^test", skip = true },
     { message = "^style", skip = true },
     { message = "^chore", skip = true },
