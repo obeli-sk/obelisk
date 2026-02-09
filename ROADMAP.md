@@ -2,13 +2,10 @@
 
 # Upcoming goals
 
-## Add WebAPI and DB JSON Schemas
+## Add DB JSON Schema
 
 ## feat: `generate wit-extensions` with specified interface(s)
 Allows self referential exports, also enables generating on import side.
-
-## feat: Add `obelisk generate project`
-show templates, blank workflow should have obelisk types and workflow support
 
 ## feat: Multiple versions of a component
 dont use global registry, mock locally using imports, allow same component twice. Toml dependency routing using `requires = "auto" | ["dep1"]`
@@ -25,12 +22,6 @@ Allow specifying queue ID when submitting, and when configuring an executor.
 
 ## feat: Configurable network access for activities, webhooks
 Enable allow/deny lists of remote hosts for HTTP client.
-
-## feat: Inspect remote or cached components
-`obelisk client component inspect/wit` should accept: path, componentId, oci location
-
-## feat: obelisk.lock
-Save the digest of each downloaded OCI image into a lockfile, then remove the optional digest from toml,
 
 ## feat: Support WIT-only WASM files
 Allow pushing and declaring WASM resources only containing the WIT.
