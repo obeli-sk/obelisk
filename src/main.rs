@@ -17,6 +17,9 @@ use tracing::error;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("default tls provider must be installed");
     match Args::parse().command {
         Subcommand::Server(server) => server
             .run()
