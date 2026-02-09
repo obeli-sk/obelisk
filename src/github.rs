@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument, trace, warn};
 use utils::sha256sum::calculate_sha256_file;
 
 pub(crate) const GH_SCHEMA_PREFIX: &str = "gh://";
@@ -137,7 +137,7 @@ pub(crate) async fn pull_to_cache_dir(
     info!("Fetching GitHub release metadata");
     let release = client.get_release(github_ref).await?;
     debug!("Resolved tag: {}", release.tag_name);
-
+    trace!("All assets: {:#?}", release.assets);
     // Find the asset
     let asset = release
         .assets
@@ -201,6 +201,7 @@ impl GitHubClient {
 
         // Add authorization if GITHUB_TOKEN is set
         if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+            trace!("Adding GITHUB_TOKEN to the GitHub http client");
             let mut headers = headers;
             headers.insert(
                 reqwest::header::AUTHORIZATION,

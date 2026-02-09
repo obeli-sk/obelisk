@@ -1,5 +1,5 @@
 use super::{config_holder::PathPrefixes, env_var::EnvVarConfig};
-use crate::github::{self, GH_SCHEMA_PREFIX, GitHubReleaseReference, GitHubReleaseTag};
+use crate::github::{self, GH_SCHEMA_PREFIX, GitHubReleaseReference};
 use crate::oci;
 use crate::{
     config::{
@@ -531,16 +531,10 @@ impl ComponentLocationToml {
                     github::pull_to_cache_dir(github_ref, wasm_cache_dir)
                         .await
                         .context("try cleaning the cache directory with `--clean-cache`")?;
-                // Warn if no content_digest was specified (for reproducibility)
-                if expected_digest.is_none() && github_ref.tag != GitHubReleaseTag::Latest {
-                    warn!(
-                        "No content_digest specified for GitHub release component. Consider adding `content_digest` to your configuration for reproducible builds."
-                    );
-                }
                 // Suggest adding content_digest to config
                 if expected_digest.is_none() {
                     info!(
-                        "Downloaded asset has content_digest: sha256:{}",
+                        r#"No content_digest specified for GitHub release component. Consider adding content_digest = "{}" to avoid refetching"#,
                         actual_digest.with_infix(":")
                     );
                 }
