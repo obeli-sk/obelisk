@@ -39,8 +39,10 @@ futures-util.workspace = true
 hashbrown.workspace = true
 http.workspace = true
 itertools.workspace = true
+jsonwebtoken.workspace = true # Enable rust_crypto features for oci-client's jsonwebtoken dep
 oci-client.workspace = true
 oci-wasm.workspace = true
+rustls.workspace = true # Enable ring crypto provider for rustls (instead of aws-lc-rs)
 prost-wkt-types.workspace = true
 prost.workspace = true
 rand.workspace = true
@@ -62,6 +64,7 @@ tonic = { workspace = true, default-features = true, features = [
     "zstd",
     "gzip",
     "tls-native-roots",
+    "tls-ring",
 ] }
 tonic-prost.workspace = true
 tonic-reflection.workspace = true
@@ -258,12 +261,8 @@ insta = { version = "1.46.3", features = ["json"] }
 itertools = "0.14"
 lazy_static = "1.5"
 libc = "0.2.180"
-oci-client = { version = "0.16.0", default-features = false, features = [
-    "rustls-tls",
-] }
-oci-wasm = { version = "0.4.0", default-features = false, features = [ # Dependent on matching oci-client
-    "rustls-tls",
-] }
+oci-client = { version = "0.16.0", default-features = false }
+oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
 tokio-postgres = { version = "0.7.16", features = ["with-chrono-0_4", "with-serde_json-1"] }
 prost = "0.14.3"
 prost-wkt-types = "0.7"
@@ -271,6 +270,16 @@ quote = "1"
 rand = "0.9"
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
+    "rustls-no-provider",
+] }
+rustls = { version = "0.23", default-features = false, features = [
+    "logging",
+    "ring",
+    "std",
+    "tls12",
+] }
+jsonwebtoken = { version = "10", default-features = false, features = [
+    "rust_crypto",
 ] }
 route-recognizer = "0.3.1"
 rstest = "0.26"
