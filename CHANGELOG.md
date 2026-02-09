@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.1](https://github.com/obeli-sk/obelisk/compare/v0.35.1...v0.35.1)
+Fixes cross-compilation for MacOS.
+
 ## [0.35.0](https://github.com/obeli-sk/obelisk/compare/v0.34.1...v0.35.0)
 
 This release introduces **workflow replay** for debugging and recovery, **execution pausing/unpausing**, and **persistent logs storage**. Component management has been streamlined with `component add` and GitHub release path support (`gh://`). The database schema has changed - delete the old SQLite database with `obelisk server run --clean-sqlite-directory`.
