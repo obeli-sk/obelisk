@@ -1,5 +1,6 @@
 ---
 source: crates/wasm-workers/src/workflow/workflow_worker.rs
+assertion_line: 2939
 expression: "ExecutionLogSanitized::from(execution_log.clone())"
 ---
 {
@@ -91,7 +92,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "event": {
             "type": "join_next_try",
             "join_set_id": "g:1",
-            "found_response": false
+            "outcome": "pending"
           }
         }
       },

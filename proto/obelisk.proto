@@ -421,7 +421,14 @@ message ExecutionEvent {
 
         message JoinNextTry {
             JoinSetId join_set_id = 1;
+            // Deprecated: use `outcome` instead. Kept for wire compatibility.
             bool found_response = 2;
+            enum Outcome {
+                FOUND = 0;
+                PENDING = 1;
+                ALL_PROCESSED = 2;
+            }
+            Outcome outcome = 3;
         }
 
         message Schedule {

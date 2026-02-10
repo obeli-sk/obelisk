@@ -717,10 +717,18 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                             join_set_id: Some(join_set_id.into()),
                             function: requested_ffqn.map(Into::into)
                         }),
-                        HistoryEvent::JoinNextTry { join_set_id, found_response } => history_event::Event::JoinNextTry(history_event::JoinNextTry {
-                            join_set_id: Some(join_set_id.into()),
-                            found_response,
-                        }),
+                        HistoryEvent::JoinNextTry { join_set_id, outcome } => {
+                            let (found_response, proto_outcome) = match outcome {
+                                concepts::storage::JoinNextTryOutcome::Found => (true, history_event::join_next_try::Outcome::Found),
+                                concepts::storage::JoinNextTryOutcome::Pending => (false, history_event::join_next_try::Outcome::Pending),
+                                concepts::storage::JoinNextTryOutcome::AllProcessed => (false, history_event::join_next_try::Outcome::AllProcessed),
+                            };
+                            history_event::Event::JoinNextTry(history_event::JoinNextTry {
+                                join_set_id: Some(join_set_id.into()),
+                                found_response,
+                                outcome: proto_outcome.into(),
+                            })
+                        }
                         HistoryEvent::Schedule { execution_id, schedule_at: scheduled_at } => history_event::Event::Schedule(history_event::Schedule {
                             execution_id: Some(grpc_gen::ExecutionId { id: execution_id.to_string() }),
                             scheduled_at: Some(history_event::schedule::ScheduledAt {
