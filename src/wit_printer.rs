@@ -9,6 +9,8 @@ use tracing::{debug, info};
 use wit_component::{Output, TypeKind, WitPrinter};
 use wit_parser::{PackageName, Resolve, Type, TypeDefKind, TypeOwner, UnresolvedPackageGroup};
 
+use crate::{args::shadow::PKG_VERSION, command::generate::OBELISK_WIT_HEADER};
+
 /// Convert `wit_parser::PackageName` to `concepts::PkgFqn`.
 pub fn package_name_to_pkg_fqn(value: &PackageName) -> PkgFqn {
     PkgFqn {
@@ -350,7 +352,7 @@ impl OutputToFile {
         output_directory: &Path,
         overwrite: bool,
     ) -> Result<(), anyhow::Error> {
-        for (pkg_fqn, contents) in self.all_pkgs {
+        for (pkg_fqn, content) in self.all_pkgs {
             let pkg_file_name = pkg_fqn.as_file_name();
             let directory = output_directory.join(&pkg_file_name);
             tokio::fs::create_dir_all(&directory)
@@ -376,8 +378,8 @@ impl OutputToFile {
                         }
                     )
                 })?;
-
-            file.write_all(contents.as_bytes())
+            let content = format!("{OBELISK_WIT_HEADER} {PKG_VERSION}\n{content}");
+            file.write_all(content.as_bytes())
                 .await
                 .with_context(|| format!("cannot write to {target_wit:?}"))?;
         }
