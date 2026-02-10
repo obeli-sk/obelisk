@@ -2,7 +2,6 @@ package obelisk:types@4.1.0;
 
 @since(version = 3.0.0)
 interface time {
-
     @since(version = 3.0.0)
     variant duration {
         milliseconds(u64),
@@ -27,7 +26,6 @@ interface time {
         in(duration),
     }
 }
-
 @since(version = 4.0.0)
 interface execution {
     use time.{duration};
@@ -44,9 +42,9 @@ interface execution {
 
     @since(version = 3.0.0)
     record function {
-        // `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+        /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
         interface-name: string,
-        // must not contain dot (`.`)
+        /// must not contain dot (`.`)
         function-name: string,
     }
 
