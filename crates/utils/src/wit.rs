@@ -22,35 +22,35 @@ const OBELISK_TYPES_PACKAGE_NAME: &str = formatcp!("obelisk:types@{OBELISK_TYPES
 
 pub const WIT_OBELISK_ACTIVITY_PACKAGE_PROCESS: [&str; 3] = [
     "obelisk_activity@1.0.0",
-    "process.wit",
+    "obelisk_activity@1.0.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_activity@1.0.0/process.wit"
+        "/wit/obelisk_activity@1.0.0/obelisk_activity@1.0.0.wit"
     )),
 ];
 pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
     "obelisk_log@1.0.0",
-    "log.wit",
+    "obelisk_log@1.0.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_log@1.0.0/log.wit"
+        "/wit/obelisk_log@1.0.0/obelisk_log@1.0.0.wit"
     )),
 ];
 const WIT_OBELISK_TYPES_PACKAGE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@4.1.0/types.wit"
+    "/wit/obelisk_types@4.1.0/obelisk_types@4.1.0.wit"
 ));
 pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
     "obelisk_types@4.1.0",
-    "types.wit",
+    "obelisk_types@4.1.0.wit",
     WIT_OBELISK_TYPES_PACKAGE_CONTENT,
 ];
 pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
     "obelisk_workflow@4.1.0",
-    "workflow-support.wit",
+    "obelisk_workflow@4.1.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_workflow@4.1.0/workflow-support.wit"
+        "/wit/obelisk_workflow@4.1.0/obelisk_workflow@4.1.0.wit"
     )),
 ];
 

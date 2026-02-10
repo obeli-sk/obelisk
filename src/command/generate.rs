@@ -97,8 +97,9 @@ pub(crate) async fn generate_exported_extension_wits(
     let wasm_component = WasmComponent::new_from_wit_folder(&input_wit_directory, component_type)?;
     let pkgs_to_wits = wasm_component.exported_extension_wits()?;
     for (pkg_fqn, new_content) in pkgs_to_wits {
-        let pkg_folder = output_directory.join(pkg_fqn.to_string().replace(':', "_"));
-        let wit_file = pkg_folder.join(format!("{}.wit", pkg_fqn.package_name));
+        let pkg_file_name = pkg_fqn.as_file_name();
+        let pkg_folder = output_directory.join(&pkg_file_name);
+        let wit_file = pkg_folder.join(format!("{pkg_file_name}.wit"));
 
         let old_content = tokio::fs::read_to_string(&wit_file)
             .await
