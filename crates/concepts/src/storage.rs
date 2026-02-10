@@ -495,10 +495,14 @@ pub enum HistoryEvent {
         closing: bool,
     },
     /// Attempt to process next response without changing the pending state.
-    #[display("JoinNextTry({join_set_id})")]
+    #[display("JoinNextTry({join_set_id}, {outcome})")]
     JoinNextTry {
         join_set_id: JoinSetId,
-        found_response: bool, // False means `JoinNextTryError::Pending` or `JoinNextTryError::AllProcessed` based on previous events.
+        /// The outcome replaces the old `found_response: bool` field.
+        /// Deserialization from old records uses [`JoinNextTryOutcome`]'s `Deserialize`
+        /// impl which accepts both the new string values and legacy booleans.
+        #[serde(alias = "found_response")]
+        outcome: JoinNextTryOutcome,
     },
     /// Records the fact that a join set was awaited more times than its submission count.
     #[display("JoinNextTooMany({join_set_id})")]
@@ -520,6 +524,59 @@ pub enum HistoryEvent {
         result: SupportedFunctionReturnValue, // Only stored for nondeterminism checks. TODO: Consider using a hashed value.
         persist_result: Result<(), ()>, // Does the row (target_execution_id,Version:1) match the proposed `result`?
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
+#[serde(rename_all = "snake_case")]
+pub enum JoinNextTryOutcome {
+    /// A response was found and processed.
+    #[display("found")]
+    Found,
+    /// No response available, but there are still pending requests.
+    #[display("pending")]
+    Pending,
+    /// No response available, and all requests have been processed.
+    #[display("all_processed")]
+    AllProcessed,
+}
+
+impl<'de> serde::Deserialize<'de> for JoinNextTryOutcome {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::Deserialize;
+        // Accept both the new string values and the legacy bool from `found_response`.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum BoolOrString {
+            Bool(bool),
+            String(String),
+        }
+        match BoolOrString::deserialize(deserializer)? {
+            BoolOrString::Bool(b) => Ok(JoinNextTryOutcome::from(b)),
+            BoolOrString::String(s) => match s.as_str() {
+                "found" => Ok(JoinNextTryOutcome::Found),
+                "pending" => Ok(JoinNextTryOutcome::Pending),
+                "all_processed" => Ok(JoinNextTryOutcome::AllProcessed),
+                other => Err(serde::de::Error::unknown_variant(
+                    other,
+                    &["found", "pending", "all_processed"],
+                )),
+            },
+        }
+    }
+}
+
+impl From<bool> for JoinNextTryOutcome {
+    /// Migration helper: converts old `found_response: bool` to the new enum.
+    /// `false` maps to `Pending` as a conservative default (the exact error
+    /// was not stored before).
+    fn from(found_response: bool) -> Self {
+        if found_response {
+            JoinNextTryOutcome::Found
+        } else {
+            JoinNextTryOutcome::Pending
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
@@ -1999,11 +2056,14 @@ pub mod http_client_trace {
 
 #[cfg(test)]
 mod tests {
+    use super::HistoryEvent;
     use super::HistoryEventScheduleAt;
+    use super::JoinNextTryOutcome;
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
     use crate::ExecutionFailureKind;
+    use crate::JoinSetId;
     use crate::SupportedFunctionReturnValue;
     use chrono::DateTime;
     use chrono::Datelike;
@@ -2083,5 +2143,64 @@ mod tests {
         );
         let schedule_at = HistoryEventScheduleAt::In(duration);
         schedule_at.as_date_time(DateTime::UNIX_EPOCH).unwrap_err();
+    }
+
+    #[test]
+    fn join_next_try_outcome_new_format() {
+        let json = r#"{"type":"join_next_try","join_set_id":"n:test","outcome":"found"}"#;
+        let event: HistoryEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            event,
+            HistoryEvent::JoinNextTry {
+                join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+                outcome: JoinNextTryOutcome::Found,
+            }
+        );
+
+        let json = r#"{"type":"join_next_try","join_set_id":"n:test","outcome":"all_processed"}"#;
+        let event: HistoryEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            event,
+            HistoryEvent::JoinNextTry {
+                join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+                outcome: JoinNextTryOutcome::AllProcessed,
+            }
+        );
+    }
+
+    #[test]
+    fn join_next_try_outcome_old_format_compat() {
+        // Old format: `found_response: true` -> Found
+        let json = r#"{"type":"join_next_try","join_set_id":"n:test","found_response":true}"#;
+        let event: HistoryEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            event,
+            HistoryEvent::JoinNextTry {
+                join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+                outcome: JoinNextTryOutcome::Found,
+            }
+        );
+
+        // Old format: `found_response: false` -> Pending (conservative default)
+        let json = r#"{"type":"join_next_try","join_set_id":"n:test","found_response":false}"#;
+        let event: HistoryEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            event,
+            HistoryEvent::JoinNextTry {
+                join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+                outcome: JoinNextTryOutcome::Pending,
+            }
+        );
+    }
+
+    #[test]
+    fn join_next_try_outcome_serializes_new_format() {
+        let event = HistoryEvent::JoinNextTry {
+            join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+            outcome: JoinNextTryOutcome::AllProcessed,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""outcome":"all_processed""#), "expected outcome field, got: {json}");
+        assert!(!json.contains("found_response"), "should not contain old field, got: {json}");
     }
 }

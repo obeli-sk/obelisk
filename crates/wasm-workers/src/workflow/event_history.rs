@@ -44,7 +44,7 @@ use concepts::storage::TimeoutOutcome;
 use concepts::storage::{
     AppendRequest, CreateRequest, ExecutionRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
-use concepts::storage::{HistoryEvent, JoinSetRequest};
+use concepts::storage::{HistoryEvent, JoinNextTryOutcome, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params};
 use hashbrown::HashMap;
@@ -971,12 +971,12 @@ impl EventHistory {
                 )))
             }
 
-            // JoinNextTry with found_response=true: match with actual response
+            // JoinNextTry with outcome=Found: match with actual response
             (
                 DeterministicKey::JoinNextTry { join_set_id },
                 HistoryEvent::JoinNextTry {
                     join_set_id: found_join_set_id,
-                    found_response: true,
+                    outcome: JoinNextTryOutcome::Found,
                 },
             ) if *join_set_id == *found_join_set_id => {
                 trace!(%join_set_id, "DeterministicKey::JoinNextTry(found): Peeked at JoinNextTry");
@@ -1009,36 +1009,41 @@ impl EventHistory {
                         )))
                     }
                     None => {
-                        // This is a nondeterminism: history says found_response=true but no response available
+                        // This is a nondeterminism: history says outcome=Found but no response available
                         Err(ApplyError::NondeterminismDetected(format!(
-                            "JoinNextTry recorded found_response=true but no response available for join set `{join_set_id}`"
+                            "JoinNextTry recorded outcome=Found but no response available for join set `{join_set_id}`"
                         )))
                     }
                 }
             }
 
-            // JoinNextTry with found_response=false: return error based on pending requests
+            // JoinNextTry with outcome=Pending: return Pending error
             (
                 DeterministicKey::JoinNextTry { join_set_id },
                 HistoryEvent::JoinNextTry {
                     join_set_id: found_join_set_id,
-                    found_response: false,
+                    outcome: JoinNextTryOutcome::Pending,
                 },
             ) if *join_set_id == *found_join_set_id => {
-                trace!(%join_set_id, "DeterministicKey::JoinNextTry(not found): returning error");
+                trace!(%join_set_id, "DeterministicKey::JoinNextTry(pending): returning Pending error");
                 self.event_history[found_idx].1 = Processed;
-                // Check if there are pending requests to determine Pending vs AllProcessed
-                let error = if self
-                    .index_join_set_to_unawaited_requests
-                    .get(join_set_id)
-                    .is_some_and(|requests| !requests.is_empty())
-                {
-                    JoinNextTryError::Pending
-                } else {
-                    JoinNextTryError::AllProcessed
-                };
                 Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNextTry(
-                    Err(error),
+                    Err(JoinNextTryError::Pending),
+                )))
+            }
+
+            // JoinNextTry with outcome=AllProcessed: return AllProcessed error
+            (
+                DeterministicKey::JoinNextTry { join_set_id },
+                HistoryEvent::JoinNextTry {
+                    join_set_id: found_join_set_id,
+                    outcome: JoinNextTryOutcome::AllProcessed,
+                },
+            ) if *join_set_id == *found_join_set_id => {
+                trace!(%join_set_id, "DeterministicKey::JoinNextTry(all_processed): returning AllProcessed error");
+                self.event_history[found_idx].1 = Processed;
+                Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNextTry(
+                    Err(JoinNextTryError::AllProcessed),
                 )))
             }
 
@@ -1430,13 +1435,23 @@ impl EventHistory {
                 join_set_id,
                 wasm_backtrace,
             }) => {
-                // Check if there's an unprocessed response available for this join set
-                let found_response = self.has_unprocessed_response_for_join_set(&join_set_id);
+                // Determine the outcome: Found, Pending, or AllProcessed
+                let outcome = if self.has_unprocessed_response_for_join_set(&join_set_id) {
+                    JoinNextTryOutcome::Found
+                } else if self
+                    .index_join_set_to_unawaited_requests
+                    .get(&join_set_id)
+                    .is_some_and(|requests| !requests.is_empty())
+                {
+                    JoinNextTryOutcome::Pending
+                } else {
+                    JoinNextTryOutcome::AllProcessed
+                };
 
-                debug!(%join_set_id, found_response, "JoinNextTry");
+                debug!(%join_set_id, %outcome, "JoinNextTry");
                 let event = HistoryEvent::JoinNextTry {
                     join_set_id,
-                    found_response,
+                    outcome,
                 };
                 let history_event = (event.clone(), db_connection.version.clone());
                 let request = AppendRequest {
@@ -4072,7 +4087,7 @@ mod tests {
 
         let reason = assert_matches!(err, ApplyError::NondeterminismDetected(reason) => reason);
         assert_eq!(
-            "found unprocessed request stored at version 2: event: JoinNextTry(n:test)",
+            "found unprocessed request stored at version 2: event: JoinNextTry(n:test, all_processed)",
             reason
         );
 
