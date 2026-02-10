@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replace `found_response: bool` in `JoinNextTry` history event with `JoinNextTryOutcome` enum (`found`, `pending`, `all_processed`). Old serialized data is deserialized via backwards-compatible serde support. The gRPC `JoinNextTry` message now has an `Outcome` enum field alongside the deprecated `found_response` bool. ([#247](https://github.com/obeli-sk/obelisk/pull/247))
+
+### Notes for next breaking release
+
+- Remove deprecated `found_response` field (proto field 2) from `JoinNextTry` gRPC message, keeping only the `outcome` enum (field 3).
+- Remove `#[serde(alias = "found_response")]` and the bool branch in `JoinNextTryOutcome`'s `Deserialize` impl once old data no longer needs to be read.
+
 ## [0.35.3](https://github.com/obeli-sk/obelisk/compare/v0.35.2...v0.35.3)
 
 ### Fixed
