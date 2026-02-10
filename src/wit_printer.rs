@@ -172,7 +172,7 @@ impl Output for OutputToString {
     fn indent_if_needed(&mut self) -> bool {
         if self.ignore_until_end_of_line == 0 && self.needs_indent {
             for _ in 0..self.indent {
-                self.output.push_str("  ");
+                self.output.push_str("    ");
             }
             self.needs_indent = false;
             true
@@ -393,7 +393,7 @@ impl Output for OutputToFile {
     fn indent_if_needed(&mut self) -> bool {
         if self.needs_indent {
             for _ in 0..self.indent {
-                self.output.push_str("  ");
+                self.output.push_str("    ");
             }
             self.needs_indent = false;
             true
