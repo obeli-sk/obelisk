@@ -64,6 +64,8 @@ pub(crate) enum Generate {
         component_type: ComponentType,
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
+        #[arg(long, short)]
+        overwrite: bool,
     },
     /// Generate WIT dependency folder based on activities and workflows found in provided TOML configuration.
     WitDeps {
