@@ -13,6 +13,8 @@ use directories::{BaseDirs, ProjectDirs};
 use hashbrown::HashSet;
 use std::sync::Arc;
 use std::{borrow::Cow, path::PathBuf};
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt as _;
 use tokio::sync::watch;
 use utils::{wasm_tools::WasmComponent, wit};
 
@@ -44,7 +46,8 @@ impl Generate {
             Generate::WitSupport {
                 component_type,
                 output_directory,
-            } => generate_support_wits(component_type, output_directory).await,
+                overwrite,
+            } => generate_support_wits(component_type, output_directory, overwrite).await,
             Generate::WitDeps {
                 config,
                 output_directory,
@@ -154,6 +157,7 @@ fn strip_header(old_content: &str) -> String {
 pub(crate) async fn generate_support_wits(
     component_type: ComponentType,
     output_directory: PathBuf,
+    overwrite: bool,
 ) -> Result<(), anyhow::Error> {
     let files = match component_type {
         ComponentType::ActivityWasm => {
@@ -175,21 +179,39 @@ pub(crate) async fn generate_support_wits(
             ]
         }
     };
-    for [folder, filename, content] in files {
+    for [folder, filename, contents] in files {
         let output_directory = output_directory.join(folder);
-        let path = output_directory.join(filename);
-        if let Ok(actual) = tokio::fs::read_to_string(&path).await
-            && actual == content
+        let target_wit = output_directory.join(filename);
+        if let Ok(actual) = tokio::fs::read_to_string(&target_wit).await
+            && actual == contents
         {
-            println!("{path:?} is up to date");
+            println!("{target_wit:?} is up to date");
         } else {
             tokio::fs::create_dir_all(&output_directory)
                 .await
                 .with_context(|| format!("cannot write {output_directory:?}"))?;
-            tokio::fs::write(&path, content)
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .create_new(!overwrite)
+                .open(&target_wit)
                 .await
-                .with_context(|| format!("cannot write {path:?}"))?;
-            println!("{path:?} created or updated");
+                .with_context(|| {
+                    format!(
+                        "cannot open {target_wit:?} for writing{}",
+                        if !overwrite {
+                            ", try using `--overwrite`"
+                        } else {
+                            ""
+                        }
+                    )
+                })?;
+            file.write_all(contents.as_bytes())
+                .await
+                .with_context(|| format!("cannot write to {target_wit:?}"))?;
+
+            println!("{target_wit:?} created or updated");
         }
     }
     Ok(())
