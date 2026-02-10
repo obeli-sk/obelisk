@@ -2152,7 +2152,11 @@ mod tests {
         assert_eq!(
             event,
             HistoryEvent::JoinNextTry {
-                join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+                join_set_id: JoinSetId::new(
+                    crate::JoinSetKind::Named,
+                    crate::StrVariant::Static("test")
+                )
+                .unwrap(),
                 outcome: JoinNextTryOutcome::Found,
             }
         );
@@ -2162,7 +2166,11 @@ mod tests {
         assert_eq!(
             event,
             HistoryEvent::JoinNextTry {
-                join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+                join_set_id: JoinSetId::new(
+                    crate::JoinSetKind::Named,
+                    crate::StrVariant::Static("test")
+                )
+                .unwrap(),
                 outcome: JoinNextTryOutcome::AllProcessed,
             }
         );
@@ -2176,7 +2184,11 @@ mod tests {
         assert_eq!(
             event,
             HistoryEvent::JoinNextTry {
-                join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+                join_set_id: JoinSetId::new(
+                    crate::JoinSetKind::Named,
+                    crate::StrVariant::Static("test")
+                )
+                .unwrap(),
                 outcome: JoinNextTryOutcome::Found,
             }
         );
@@ -2187,7 +2199,11 @@ mod tests {
         assert_eq!(
             event,
             HistoryEvent::JoinNextTry {
-                join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+                join_set_id: JoinSetId::new(
+                    crate::JoinSetKind::Named,
+                    crate::StrVariant::Static("test")
+                )
+                .unwrap(),
                 outcome: JoinNextTryOutcome::Pending,
             }
         );
@@ -2196,11 +2212,21 @@ mod tests {
     #[test]
     fn join_next_try_outcome_serializes_new_format() {
         let event = HistoryEvent::JoinNextTry {
-            join_set_id: JoinSetId::new(crate::JoinSetKind::Named, crate::StrVariant::Static("test")).unwrap(),
+            join_set_id: JoinSetId::new(
+                crate::JoinSetKind::Named,
+                crate::StrVariant::Static("test"),
+            )
+            .unwrap(),
             outcome: JoinNextTryOutcome::AllProcessed,
         };
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains(r#""outcome":"all_processed""#), "expected outcome field, got: {json}");
-        assert!(!json.contains("found_response"), "should not contain old field, got: {json}");
+        assert!(
+            json.contains(r#""outcome":"all_processed""#),
+            "expected outcome field, got: {json}"
+        );
+        assert!(
+            !json.contains("found_response"),
+            "should not contain old field, got: {json}"
+        );
     }
 }
