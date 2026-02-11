@@ -13,7 +13,7 @@ set -euo pipefail
 #   tag ...         One or more image tags (e.g. getobelisk/obelisk:ubuntu)
 #
 # Environment:
-#   PUSH  If set to any non-empty value, push all tags after building.
+#   PUSH  If set to "true" value, push all tags after building.
 
 if [ $# -lt 3 ]; then
   echo "Usage: $0 <obelisk-binary> <default-toml> <dockerfile> [tag ...]" >&2
@@ -52,7 +52,7 @@ echo "Building docker image from $DOCKERFILE"
 docker build --progress=plain -f "$DOCKERFILE" "${TAG_ARGS[@]}" "$BUILD_DIR"
 
 # Push if requested
-if [ -n "${PUSH:-}" ]; then
+if [ "$PUSH" == "true" ]; then
   for tag in "${TAGS[@]}"; do
     echo "Pushing $tag"
     docker push "$tag"

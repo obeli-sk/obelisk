@@ -82,7 +82,7 @@ jobs:
           if [ "${{ inputs.skip_latest }}" != "true" ] && [ "${{ matrix.image_tag }}" = "ubuntu" ]; then
             TAGS+=("${IMAGE_BASE}:latest")
           fi
-          PUSH=1 scripts/build-docker-image.sh \
+          PUSH=true scripts/build-docker-image.sh \
             tmp/obelisk \
             tmp/obelisk.toml \
             .github/workflows/release/docker-image/${{ matrix.dockerfile }} \
