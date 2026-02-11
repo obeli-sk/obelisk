@@ -6,14 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Replace `found_response: bool` in `JoinNextTry` history event with `JoinNextTryOutcome` enum (`found`, `pending`, `all_processed`). Old serialized data is deserialized via backwards-compatible serde support. The gRPC `JoinNextTry` message now has an `Outcome` enum field alongside the deprecated `found_response` bool. ([#247](https://github.com/obeli-sk/obelisk/pull/247))
-
 ### Notes for next breaking release
 
 - Remove deprecated `found_response` field (proto field 2) from `JoinNextTry` gRPC message, keeping only the `outcome` enum (field 3).
 - Remove `#[serde(alias = "found_response")]` and the bool branch in `JoinNextTryOutcome`'s `Deserialize` impl once old data no longer needs to be read.
+
+## [0.35.4](https://github.com/obeli-sk/obelisk/compare/v0.35.3...v0.35.4)
+
+### Added
+
+- *(cli)* Add `--overwrite` option to `obelisk generate wit-support` - ([24dfe10](https://github.com/obeli-sk/obelisk/commit/24dfe1099281c2cefd16191ded95edca65da9404))
+
+### Fixed
+
+- Replace deprecated 'obelisk client' with 'obelisk' in README - ([d109392](https://github.com/obeli-sk/obelisk/commit/d109392e640efd45126324484efcf78e7e5798ed))
+- Install system CAs in docker images - ([f78ce87](https://github.com/obeli-sk/obelisk/commit/f78ce87d5c657e3bc29b4a983dd701d24e8bea44))
+- Use consistent ns_package@version.wit naming for all generated WIT files - ([cdc1e47](https://github.com/obeli-sk/obelisk/commit/cdc1e47e2a88c71a6e1705861f5c84df52838574))
+
+### Changed
+
+- Write Obelisk header in `generate wit-deps` files - ([3fe7b7a](https://github.com/obeli-sk/obelisk/commit/3fe7b7aa255bab9cc2ef5c05c24058f32c4bb0be))
+- Indent WIT by 4 spaces - ([65a0908](https://github.com/obeli-sk/obelisk/commit/65a090838a9e59895a8ce86d91ceb0fbea2f0a2a))
+- Replace `found_response: bool` in `JoinNextTry` history event with `JoinNextTryOutcome` enum (`found`, `pending`, `all_processed`). Old serialized data is deserialized via backwards-compatible serde support. The gRPC `JoinNextTry` message now has an `Outcome` enum field alongside the deprecated `found_response` bool. ([#247](https://github.com/obeli-sk/obelisk/pull/247))
+
 
 ## [0.35.3](https://github.com/obeli-sk/obelisk/compare/v0.35.2...v0.35.3)
 
