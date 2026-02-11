@@ -145,9 +145,9 @@ obelisk server run --config obelisk-testing-postgres-oci.toml
 
 ### [CLI Usage](https://obeli.sk/docs/latest/cli/)
 ```sh
-obelisk client component list
+obelisk component list
 # Call fibonacci(10) activity from the workflow 500 times in series.
-obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]' --follow
+obelisk execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]' --follow
 ```
 
 ### Web UI
