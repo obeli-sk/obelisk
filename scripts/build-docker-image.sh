@@ -52,7 +52,7 @@ echo "Building docker image from $DOCKERFILE"
 docker build --progress=plain -f "$DOCKERFILE" "${TAG_ARGS[@]}" "$BUILD_DIR"
 
 # Push if requested
-if [ "$PUSH" == "true" ]; then
+if [ "${PUSH:-}" == "true" ]; then
   for tag in "${TAGS[@]}"; do
     echo "Pushing $tag"
     docker push "$tag"
