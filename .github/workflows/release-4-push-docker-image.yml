@@ -59,31 +59,33 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-      - run: |
-          docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
+      - name: Download and extract binary
+        run: |
           mkdir tmp
           cd tmp
           wget -q https://github.com/obeli-sk/obelisk/releases/download/${TAG}/${{ matrix.tarfile }}
           tar xvfz ${{ matrix.tarfile }}
-          ./obelisk generate config obelisk.toml
-          IMAGE_BASE="getobelisk/obelisk"
-          IMAGE="${IMAGE_BASE}:${{ matrix.image_tag }}"
-          docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag $IMAGE
-          docker push $IMAGE
-
-
-          echo "Tagging with version ${VERSION}"
-          IMAGE2="${IMAGE_BASE}:${VERSION}-${{ matrix.image_tag }}"
-          echo "Tagging as $IMAGE2"
-          docker tag $IMAGE $IMAGE2
-          docker push $IMAGE2
-
-          if [ "${{ inputs.skip_latest }}" = "true" ]; then
-            echo "Skipping latest tag"
-          elif [ "${{ matrix.image_tag }}" = "ubuntu" ]; then
-            docker tag $IMAGE $IMAGE_BASE:latest
-            docker push $IMAGE_BASE:latest
-          fi
         env:
           TAG: ${{ steps.git-info.outputs.tag }}
+
+      - name: Generate default config
+        run: tmp/obelisk generate config tmp/obelisk.toml
+
+      - name: Build and push docker image
+        run: |
+          docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
+          IMAGE_BASE="getobelisk/obelisk"
+          TAGS=(
+            "${IMAGE_BASE}:${{ matrix.image_tag }}"
+            "${IMAGE_BASE}:${VERSION}-${{ matrix.image_tag }}"
+          )
+          if [ "${{ inputs.skip_latest }}" != "true" ] && [ "${{ matrix.image_tag }}" = "ubuntu" ]; then
+            TAGS+=("${IMAGE_BASE}:latest")
+          fi
+          PUSH=1 scripts/build-docker-image.sh \
+            tmp/obelisk \
+            tmp/obelisk.toml \
+            .github/workflows/release/docker-image/${{ matrix.dockerfile }} \
+            "${TAGS[@]}"
+        env:
           VERSION: ${{ steps.git-info.outputs.version }}
