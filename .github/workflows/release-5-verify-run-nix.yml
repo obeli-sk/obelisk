@@ -62,7 +62,6 @@ jobs:
         run: |
           full_target="github:obeli-sk/obelisk/${TAG}#${{ matrix.target }}"
           nix run $full_target -- --version
-          nix run $full_target -- generate config obelisk.toml
-          nix run $full_target -- server verify
+          nix run $full_target -- server verify -c ../obelisk-testing-sqlite-oci.toml
         env:
           TAG: ${{ steps.git-info.outputs.tag }}

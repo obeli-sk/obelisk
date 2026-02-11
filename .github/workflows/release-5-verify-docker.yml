@@ -1,6 +1,4 @@
-name: release-5-verify-cargo-install
-
-# Contrary to `check-run-cargo-install`, install latest Rust and run cargo install using sources from crates.io .
+name: release-5-verify-docker
 
 on:
   workflow_dispatch:
@@ -11,7 +9,7 @@ on:
         type: string
   workflow_run:
     workflows:
-      - release-2-cargo-publish
+      - release-4-push-docker-image
     types:
       - completed
 
@@ -20,11 +18,17 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  verify-assets:
+  verify-docker-image:
+    name: verify-${{ matrix.image_tag }}
     runs-on: ubuntu-24.04
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
+      matrix:
+        include:
+          - image_tag: ubuntu
+          - image_tag: alpine
+          - image_tag: ubuntu-litestream
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -38,24 +42,12 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Install latest Rust
+      - name: Verify docker image
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install protobuf-compiler -y
-
-      - name: Run cargo install
-        run: |
-          source "$HOME/.cargo/env"
-          cargo install obelisk@$VERSION --locked
+          IMAGE="getobelisk/obelisk:${VERSION}-${{ matrix.image_tag }}"
+          echo "Pulling $IMAGE"
+          docker pull $IMAGE
+          docker run --rm $IMAGE --version | grep $VERSION
+          docker run --rm -v $PWD/obelisk-testing-sqlite-oci.toml:/etc/obelisk/obelisk.toml $IMAGE server verify
         env:
           VERSION: ${{ steps.git-info.outputs.version }}
-
-      - name: Verify Obelisk
-        run: |
-          source "$HOME/.cargo/env"
-          obelisk --version
-          obelisk server verify -c obelisk-testing-sqlite-oci.toml

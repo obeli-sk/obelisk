@@ -56,8 +56,7 @@ jobs:
             https://github.com/obeli-sk/obelisk/releases/download/$TAG/$FILE
           tar xzfv "$FILE"
           ./obelisk --version | grep $VERSION
-          ./obelisk generate config obelisk.toml
-          ./obelisk server verify
+          ./obelisk server verify -c ../obelisk-testing-sqlite-oci.toml
         env:
           TAG: ${{ steps.git-info.outputs.tag }}
           VERSION: ${{ steps.git-info.outputs.version }}

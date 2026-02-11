@@ -47,8 +47,7 @@ jobs:
           cd temp
           curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
           ./obelisk --version | grep $VERSION
-          ./obelisk generate config obelisk.toml
-          ./obelisk server verify
+          ./obelisk server verify -c ../obelisk-testing-sqlite-oci.toml
         env:
           VERSION: ${{ steps.git-info.outputs.version }}
 
@@ -76,15 +75,15 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
       - run: |
-          docker build --progress=plain --build-arg VERSION=$VERSION - <<EOF
+          docker build --progress=plain --build-arg VERSION=$VERSION -f - . <<EOF
             FROM alpine:latest
             ARG VERSION
             WORKDIR /root
+            COPY obelisk-testing-sqlite-oci.toml .
             RUN apk add curl
             RUN curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | sh
             RUN ./obelisk --version | grep $VERSION
-            RUN ./obelisk generate config obelisk.toml
-            RUN ./obelisk server verify
+            RUN ./obelisk server verify -c obelisk-testing-sqlite-oci.toml
           EOF
         env:
           VERSION: ${{ steps.git-info.outputs.version }}
