@@ -48,6 +48,6 @@ jobs:
           echo "Pulling $IMAGE"
           docker pull $IMAGE
           docker run --rm $IMAGE --version | grep $VERSION
-          docker run --rm -v $PWD/obelisk-testing-sqlite-oci.toml:/etc/obelisk/obelisk.toml $IMAGE server verify
+          docker run --rm -v $PWD/obelisk-testing-sqlite-oci.toml:/etc/obelisk/obelisk.toml $IMAGE server verify -c /etc/obelisk/obelisk.toml # TODO: remove -c .. after 0.35.3
         env:
           VERSION: ${{ steps.git-info.outputs.version }}
