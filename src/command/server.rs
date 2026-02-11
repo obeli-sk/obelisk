@@ -14,7 +14,6 @@ use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
-use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
@@ -126,7 +125,7 @@ use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 use wasmtime::Engine;
 
 const EPOCH_MILLIS: u64 = 10;
-const WEBUI_OCI_REFERENCE: &str = include_str!("../../assets/webui-version.txt");
+const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
 
 pub(crate) type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 
@@ -814,11 +813,9 @@ impl ServerVerified {
             webhooks.push(webhook::WebhookComponentConfigToml {
                 common: ComponentCommon {
                     name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
-                    location: ComponentLocationToml::Oci(
-                        WEBUI_OCI_REFERENCE
-                            .parse()
-                            .expect("hard-coded webui reference must be parsed"),
-                    ),
+                    location: WEBUI_LOCATION
+                        .parse()
+                        .expect("hard-coded webui reference must be parsed"),
                     content_digest: None,
                 },
                 http_server: http_server_name,
