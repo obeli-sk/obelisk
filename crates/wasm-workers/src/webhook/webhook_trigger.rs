@@ -1,6 +1,7 @@
 use crate::activity::activity_ctx::HttpClientTracesContainer;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
+use crate::http_request_policy::{HttpRequestPolicy, PlaceholderSecret, generate_placeholder};
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
 use crate::webhook::webhook_trigger::types_v4_1_0::obelisk::types::join_set::JoinNextError;
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
@@ -391,6 +392,8 @@ pub struct WebhookEndpointConfig {
     pub backtrace_persist: bool,
     pub subscription_interruption: Option<Duration>,
     pub logs_store_min_level: Option<LogLevel>,
+    pub secrets: Arc<[crate::http_request_policy::SecretConfig]>,
+    pub allowed_hosts: Option<Vec<crate::http_request_policy::HostPattern>>,
 }
 
 struct WebhookEndpointCtx<S: Sleep> {
@@ -411,6 +414,7 @@ struct WebhookEndpointCtx<S: Sleep> {
     connection_drop_watcher: watch::Receiver<()>,
     server_termination_watcher: watch::Receiver<()>,
     http_client_traces: HttpClientTracesContainer,
+    http_policy: HttpRequestPolicy,
 }
 
 impl<S: Sleep> HostJoinSet for WebhookEndpointCtx<S> {
@@ -836,6 +840,26 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
         for env_var in config.env_vars.as_ref() {
             wasi_ctx.env(&env_var.key, &env_var.val);
         }
+
+        // Generate fresh placeholders for this execution run
+        let mut policy_secrets = Vec::new();
+        for secret_config in config.secrets.iter() {
+            for (env_key, real_value) in &secret_config.env_mappings {
+                let placeholder = generate_placeholder();
+                wasi_ctx.env(env_key, &placeholder);
+                policy_secrets.push(PlaceholderSecret {
+                    placeholder,
+                    real_value: real_value.clone(),
+                    allowed_hosts: secret_config.hosts.clone(),
+                    replace_in: secret_config.replace_in.clone(),
+                });
+            }
+        }
+        let http_policy = HttpRequestPolicy {
+            allowed_hosts: config.allowed_hosts.clone(),
+            secrets: policy_secrets,
+        };
+
         for (key, val) in params {
             wasi_ctx.env(key, val);
         }
@@ -864,6 +888,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
             connection_drop_watcher,
             server_termination_watcher,
             http_client_traces: HttpClientTracesContainer::default(),
+            http_policy,
         };
         let mut store = Store::new(engine, ctx);
 
@@ -1007,9 +1032,12 @@ impl<S: Sleep> WasiHttpView for WebhookEndpointCtx<S> {
 
     fn send_request(
         &mut self,
-        request: hyper::Request<HyperOutgoingBody>,
+        mut request: hyper::Request<HyperOutgoingBody>,
         config: OutgoingRequestConfig,
     ) -> HttpResult<HostFutureIncomingResponse> {
+        // Apply HTTP policy (allowlist + placeholder replacement)
+        self.http_policy.apply(&mut request)?;
+
         let span = info_span!(parent: &self.component_logger.span, "send_request",
             otel.name = format!("send_request {} {}", request.method(), request.uri()),
             method = %request.method(),
@@ -1380,6 +1408,8 @@ pub(crate) mod tests {
                             backtrace_persist: false,
                             subscription_interruption: None,
                             logs_store_min_level: None,
+                            secrets: Arc::from([]),
+                            allowed_hosts: None,
                         },
                         wasm_file,
                         &engine,
@@ -1648,6 +1678,8 @@ pub(crate) mod tests {
                         backtrace_persist: false,
                         subscription_interruption: None,
                         logs_store_min_level: None,
+                        secrets: Arc::from([]),
+                        allowed_hosts: None,
                     },
                     wasm_file,
                     &engine,

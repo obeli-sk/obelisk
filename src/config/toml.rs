@@ -33,6 +33,7 @@ use utils::wasm_tools::WasmComponent;
 use wasm_workers::{
     activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
     envvar::EnvVar,
+    http_request_policy::{HostPattern, ReplacementLocation, SecretConfig},
     std_output_stream::StdOutputConfig,
     workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
@@ -730,6 +731,12 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     pub(crate) directories: ActivityDirectoriesConfigToml,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
+    /// Only these hosts can be reached by outgoing HTTP requests.
+    #[serde(default)]
+    pub(crate) allowed_hosts: Option<Vec<String>>,
+    /// Secrets injected via placeholder replacement in outgoing HTTP requests.
+    #[serde(default)]
+    pub(crate) secrets: Vec<SecretConfigToml>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -754,6 +761,29 @@ impl From<LogLevelToml> for Option<LogLevel> {
             LogLevelToml::Error => Some(LogLevel::Error),
         }
     }
+}
+
+/// Where in the outgoing request placeholders are replaced.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ReplaceIn {
+    Headers,
+    Body,
+    Params,
+}
+
+/// A secret group: env vars bound to specific hosts.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SecretConfigToml {
+    /// Hosts where these secrets are allowed to be injected.
+    pub hosts: Vec<String>,
+    /// Env vars using the same syntax as top-level `env_vars`.
+    pub env_vars: Vec<EnvVarConfig>,
+    /// Where in the request to perform replacement.
+    /// Default: empty (no replacement — deny by default).
+    #[serde(default)]
+    pub replace_in: Vec<ReplaceIn>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -853,6 +883,23 @@ impl ActivityWasmComponentConfigToml {
             .await?;
 
         let env_vars = resolve_env_vars(self.env_vars, ignore_missing_env_vars)?;
+        let secrets = resolve_secrets(self.secrets, ignore_missing_env_vars)?;
+        let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, &secrets)?;
+
+        // Validate no collision between env_vars and secret env names
+        {
+            let env_var_keys: hashbrown::HashSet<_> =
+                env_vars.iter().map(|e| e.key.as_str()).collect();
+            for secret in secrets.iter() {
+                for (key, _) in &secret.env_mappings {
+                    ensure!(
+                        !env_var_keys.contains(key.as_str()),
+                        "secret env var `{key}` collides with an `env_vars` entry"
+                    );
+                }
+            }
+        }
+
         let directories_config = match (parent_preopen_dir, self.directories.enabled) {
             (Some(parent_preopen_dir), true) => Some(ActivityDirectoriesConfig {
                 parent_preopen_dir,
@@ -881,6 +928,8 @@ impl ActivityWasmComponentConfigToml {
             retry_on_err: self.retry_on_err,
             directories_config,
             fuel,
+            secrets,
+            allowed_hosts,
         };
         let retry_config = ComponentRetryConfig {
             max_retries: Some(self.max_retries),
@@ -1416,14 +1465,14 @@ impl From<ComponentStdOutputToml> for Option<StdOutputConfig> {
 pub(crate) mod webhook {
     use super::{
         ComponentBacktraceConfig, ComponentCommon, ComponentStdOutputToml, ConfigName,
-        resolve_env_vars,
+        SecretConfigToml, resolve_allowed_hosts, resolve_env_vars, resolve_secrets,
     };
     use crate::config::{
         config_holder::PathPrefixes,
         env_var::EnvVarConfig,
         toml::{ComponentBacktraceConfigVerified, LogLevelToml},
     };
-    use anyhow::Context;
+    use anyhow::{Context, ensure};
     use concepts::{
         ComponentId, ComponentType, StrVariant, component_id::InputContentDigest, storage::LogLevel,
     };
@@ -1436,7 +1485,11 @@ pub(crate) mod webhook {
         time::Duration,
     };
     use tracing::instrument;
-    use wasm_workers::{envvar::EnvVar, std_output_stream::StdOutputConfig};
+    use wasm_workers::{
+        envvar::EnvVar,
+        http_request_policy::{HostPattern, SecretConfig},
+        std_output_stream::StdOutputConfig,
+    };
 
     #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -1463,6 +1516,12 @@ pub(crate) mod webhook {
         pub(crate) backtrace: ComponentBacktraceConfig,
         #[serde(default)]
         pub(crate) logs_store_min_level: LogLevelToml,
+        /// Only these hosts can be reached by outgoing HTTP requests.
+        #[serde(default)]
+        pub(crate) allowed_hosts: Option<Vec<String>>,
+        /// Secrets injected via placeholder replacement in outgoing HTTP requests.
+        #[serde(default)]
+        pub(crate) secrets: Vec<SecretConfigToml>,
     }
 
     impl WebhookComponentConfigToml {
@@ -1486,6 +1545,24 @@ pub(crate) mod webhook {
                 StrVariant::from(common.name.clone()),
                 InputContentDigest(common.content_digest),
             )?;
+            let env_vars = resolve_env_vars(self.env_vars, ignore_missing_env_vars)?;
+            let secrets = resolve_secrets(self.secrets, ignore_missing_env_vars)?;
+            let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, &secrets)?;
+
+            // Validate no collision between env_vars and secret env names
+            {
+                let env_var_keys: hashbrown::HashSet<_> =
+                    env_vars.iter().map(|e| e.key.as_str()).collect();
+                for secret in secrets.iter() {
+                    for (key, _) in &secret.env_mappings {
+                        ensure!(
+                            !env_var_keys.contains(key.as_str()),
+                            "secret env var `{key}` collides with an `env_vars` entry"
+                        );
+                    }
+                }
+            }
+
             Ok((
                 common.name, // TODO: remove, already in component id
                 WebhookComponentConfigVerified {
@@ -1498,10 +1575,12 @@ pub(crate) mod webhook {
                         .collect::<Result<Vec<_>, _>>()?,
                     forward_stdout: self.forward_stdout.into(),
                     forward_stderr: self.forward_stderr.into(),
-                    env_vars: resolve_env_vars(self.env_vars, ignore_missing_env_vars)?,
+                    env_vars,
                     backtrace_config,
                     subscription_interruption,
                     logs_store_min_level: self.logs_store_min_level.into(),
+                    secrets,
+                    allowed_hosts,
                 },
             ))
         }
@@ -1540,6 +1619,8 @@ pub(crate) mod webhook {
         pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
         pub(crate) subscription_interruption: Option<Duration>,
         pub(crate) logs_store_min_level: Option<LogLevel>,
+        pub(crate) secrets: Arc<[SecretConfig]>,
+        pub(crate) allowed_hosts: Option<Vec<HostPattern>>,
     }
 
     #[derive(Debug)]
@@ -1651,6 +1732,108 @@ fn resolve_env_vars(
             },
         })
         .collect::<Result<_, _>>()
+}
+
+fn resolve_secrets(
+    secrets: Vec<SecretConfigToml>,
+    ignore_missing_env_vars: bool,
+) -> Result<Arc<[SecretConfig]>, anyhow::Error> {
+    secrets
+        .into_iter()
+        .map(|secret| {
+            ensure!(
+                !secret.hosts.is_empty(),
+                "secret group has empty `hosts` list"
+            );
+            ensure!(
+                !secret.env_vars.is_empty(),
+                "secret group has empty `env_vars` list"
+            );
+            if secret.replace_in.is_empty() {
+                warn!("secret group has empty `replace_in` - secrets will never be injected");
+            }
+            let hosts: hashbrown::HashSet<HostPattern> = secret
+                .hosts
+                .into_iter()
+                .map(|h| {
+                    let pattern = HostPattern::parse(&h)
+                        .map_err(|e| anyhow!("invalid host pattern `{h}`: {e}"))?;
+                    if pattern.scheme == "http" {
+                        warn!(
+                            "unencrypted HTTP allowed for host `{}`",
+                            pattern
+                        );
+                    }
+                    Ok::<_, anyhow::Error>(pattern)
+                })
+                .collect::<Result<_, _>>()?;
+
+            let env_mappings: Vec<(String, String)> = secret
+                .env_vars
+                .into_iter()
+                .map(|EnvVarConfig { key, val }| {
+                    let real_value = match val {
+                        Some(val) => replace_env_vars(&val)?,
+                        None => match std::env::var(&key) {
+                            Ok(val) => val,
+                            Err(err) => {
+                                if ignore_missing_env_vars {
+                                    String::new()
+                                } else {
+                                    return Err(anyhow!(
+                                        "cannot get secret environment variable `{key}` from the host - {err}"
+                                    ));
+                                }
+                            }
+                        },
+                    };
+                    Ok::<_, anyhow::Error>((key, real_value))
+                })
+                .collect::<Result<_, _>>()?;
+
+            let replace_in: hashbrown::HashSet<ReplacementLocation> = secret
+                .replace_in
+                .into_iter()
+                .map(|r| match r {
+                    ReplaceIn::Headers => ReplacementLocation::Headers,
+                    ReplaceIn::Body => ReplacementLocation::Body,
+                    ReplaceIn::Params => ReplacementLocation::Params,
+                })
+                .collect();
+
+            Ok(SecretConfig {
+                hosts,
+                env_mappings,
+                replace_in,
+            })
+        })
+        .collect::<Result<_, _>>()
+}
+
+fn resolve_allowed_hosts(
+    allowed_hosts: Option<Vec<String>>,
+    secrets: &[SecretConfig],
+) -> Result<Option<Vec<HostPattern>>, anyhow::Error> {
+    let mut secret_hosts: Vec<HostPattern> = secrets
+        .iter()
+        .flat_map(|s| s.hosts.iter().cloned())
+        .collect();
+
+    match allowed_hosts {
+        Some(explicit) => {
+            for h in explicit {
+                let pattern = HostPattern::parse(&h)
+                    .map_err(|e| anyhow!("invalid allowed_hosts pattern `{h}`: {e}"))?;
+                if pattern.scheme == "http" {
+                    warn!("unencrypted HTTP allowed for host `{}`", pattern);
+                }
+                secret_hosts.push(pattern);
+            }
+            Ok(Some(secret_hosts))
+        }
+        None if !secret_hosts.is_empty() => Ok(Some(secret_hosts)),
+        None => Ok(None),
+    }
 }
 
 const fn default_parallel_compilation() -> bool {

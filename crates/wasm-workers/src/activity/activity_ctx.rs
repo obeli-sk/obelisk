@@ -1,5 +1,6 @@
 use super::activity_worker::{ActivityConfig, ProcessProvider};
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
+use crate::http_request_policy::{HttpRequestPolicy, PlaceholderSecret, generate_placeholder};
 use crate::std_output_stream::{LogStream, StdOutput};
 use bytes::Bytes;
 use concepts::ExecutionId;
@@ -37,6 +38,7 @@ pub struct ActivityCtx {
     pub(crate) http_client_traces: HttpClientTracesContainer,
     pub(crate) preopened_dir: Option<Arc<Path>>,
     pub(crate) process_provider: Option<ProcessProvider>,
+    http_policy: HttpRequestPolicy,
 }
 
 impl wasmtime::component::HasData for ActivityCtx {
@@ -82,9 +84,12 @@ impl WasiHttpView for ActivityCtx {
     /// Send an outgoing request.
     fn send_request(
         &mut self,
-        request: hyper::Request<HyperOutgoingBody>,
+        mut request: hyper::Request<HyperOutgoingBody>,
         config: OutgoingRequestConfig,
     ) -> HttpResult<HostFutureIncomingResponse> {
+        // Apply HTTP policy (allowlist + placeholder replacement)
+        self.http_policy.apply(&mut request)?;
+
         let span = info_span!(parent: &self.component_logger.span, "send_request",
             otel.name = format!("send_request {} {}", request.method(), request.uri()),
             method = %request.method(),
@@ -161,6 +166,25 @@ pub(crate) fn store(
         wasi_ctx.env(&env_var.key, &env_var.val);
     }
 
+    // Generate fresh placeholders for this execution run
+    let mut policy_secrets = Vec::new();
+    for secret_config in config.secrets.iter() {
+        for (env_key, real_value) in &secret_config.env_mappings {
+            let placeholder = generate_placeholder();
+            wasi_ctx.env(env_key, &placeholder);
+            policy_secrets.push(PlaceholderSecret {
+                placeholder,
+                real_value: real_value.clone(),
+                allowed_hosts: secret_config.hosts.clone(),
+                replace_in: secret_config.replace_in.clone(),
+            });
+        }
+    }
+    let http_policy = HttpRequestPolicy {
+        allowed_hosts: config.allowed_hosts.clone(),
+        secrets: policy_secrets,
+    };
+
     if let Some(preopened_dir) = &preopened_dir {
         let res = wasi_ctx.preopened_dir(preopened_dir, ".", DirPerms::all(), FilePerms::all());
         if let Err(err) = res {
@@ -185,6 +209,7 @@ pub(crate) fn store(
             .directories_config
             .as_ref()
             .and_then(|dir| dir.process_provider),
+        http_policy,
     };
     Ok(Store::new(engine, ctx))
 }

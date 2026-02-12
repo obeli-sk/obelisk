@@ -833,6 +833,8 @@ impl ServerVerified {
                 }],
                 backtrace: ComponentBacktraceConfig::default(),
                 logs_store_min_level: LogLevelToml::Off,
+                allowed_hosts: None,
+                secrets: vec![],
             });
         }
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
@@ -1551,6 +1553,8 @@ async fn compile_and_verify(
                                 backtrace_persist: global_backtrace_persist,
                                 subscription_interruption: webhook.subscription_interruption,
                                 logs_store_min_level: webhook.logs_store_min_level,
+                                secrets: webhook.secrets,
+                                allowed_hosts: webhook.allowed_hosts,
                             };
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
