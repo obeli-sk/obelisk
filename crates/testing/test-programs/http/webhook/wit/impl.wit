@@ -1,0 +1,6 @@
+package any:any;
+
+world any {
+    import obelisk:log/log@1.0.0;
+    import testing:fibo-workflow-obelisk-schedule/workflow;
+}

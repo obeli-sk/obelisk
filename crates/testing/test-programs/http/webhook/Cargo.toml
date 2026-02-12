@@ -1,0 +1,20 @@
+[package]
+name = "test-programs-http-get-webhook"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+wit-bindgen.workspace = true
+wstd.workspace = true
+
+[build-dependencies]
+anyhow.workspace = true
+wit-bindgen-rust.workspace = true
+
+[lib]
+crate-type = ["cdylib"]

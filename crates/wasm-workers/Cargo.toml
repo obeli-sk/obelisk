@@ -63,6 +63,7 @@ test-programs-fibo-webhook-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-programs-adhoc-js-workflow-builder.workspace = true
 test-programs-http-get-activity-builder.workspace = true
+test-programs-http-get-webhook-builder.workspace = true
 test-programs-http-get-workflow-builder.workspace = true
 test-programs-process-activity-builder.workspace = true
 test-programs-serde-activity-builder.workspace = true

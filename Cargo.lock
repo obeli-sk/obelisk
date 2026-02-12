@@ -2794,6 +2794,7 @@ dependencies = [
  "test-programs-fibo-webhook-builder",
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",
+ "test-programs-http-get-webhook-builder",
  "test-programs-http-get-workflow-builder",
  "test-programs-process-activity-builder",
  "test-programs-serde-activity-builder",
@@ -4621,6 +4622,23 @@ dependencies = [
 
 [[package]]
 name = "test-programs-http-get-activity-builder"
+version = "0.35.4"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
+name = "test-programs-http-get-webhook"
+version = "0.35.4"
+dependencies = [
+ "anyhow",
+ "wit-bindgen 0.52.0",
+ "wit-bindgen-rust",
+ "wstd",
+]
+
+[[package]]
+name = "test-programs-http-get-webhook-builder"
 version = "0.35.4"
 dependencies = [
  "obelisk-component-builder",
