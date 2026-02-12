@@ -1630,7 +1630,10 @@ fn resolve_env_vars(
     env_vars
         .into_iter()
         .map(|EnvVarConfig { key, val }| match val {
-            Some(val) => Ok(EnvVar { key, val }),
+            Some(val) => Ok(EnvVar {
+                key,
+                val: replace_env_vars(&val)?,
+            }),
             None => match std::env::var(&key) {
                 Ok(val) => Ok(EnvVar { key, val }),
                 Err(err) => {
