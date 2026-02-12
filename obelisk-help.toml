@@ -96,8 +96,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "db".
 # forward_stdout="db" # Persist guest's stdout to the database.
 # forward_stderr="db" # Persist guest's stderr to the database.
-## Environment variables: Set to a specific value or forward from the host. Default is empty.
-# env_vars = ["ENV1", "ENV2=somevalue"]
+## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
+# env_vars = ["ENV1", "ENV2=somevalue", "ENV3=${HOST_VAR}", "ENV4=prefix ${HOST_VAR}"]
 ## Preopened directory support
 ## When enabled, `.` will be available to the activity with all permissions.
 ## On host the folder is mapped to `activities.directories.parent_directory`/ExecutionID.
@@ -171,8 +171,8 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # forward_stdout="stderr" # forwards stdout to host's stderr
 # forward_stderr="stderr" # forwards stderr to host's stderr
 
-## Environment variables: Set to a specific value or forward from the host. Default is empty.
-# env_vars = ["ENV1", "ENV2=somevalue"]
+## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
+# env_vars = ["ENV1", "ENV2=somevalue", "ENV3=${HOST_VAR}", "ENV4=prefix ${HOST_VAR}"]
 
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
 # backtrace.ignore_component_digest = false # If set to true, sha256 digest of the requested component will not be compared to the loaded component's digset.

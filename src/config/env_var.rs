@@ -71,3 +71,65 @@ pub(crate) fn replace_env_vars(input: &str) -> Result<String, anyhow::Error> {
 
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_interpolation() {
+        assert_eq!(replace_env_vars("hello world").unwrap(), "hello world");
+    }
+
+    #[test]
+    fn single_interpolation() {
+        // SAFETY: test-only, no concurrent access to this env var.
+        unsafe { std::env::set_var("TEST_ENV_VAR_1", "value1") };
+        assert_eq!(replace_env_vars("${TEST_ENV_VAR_1}").unwrap(), "value1");
+    }
+
+    #[test]
+    fn interpolation_with_prefix_suffix() {
+        // SAFETY: test-only, no concurrent access to this env var.
+        unsafe { std::env::set_var("TEST_ENV_VAR_2", "middle") };
+        assert_eq!(
+            replace_env_vars("prefix ${TEST_ENV_VAR_2} suffix").unwrap(),
+            "prefix middle suffix"
+        );
+    }
+
+    #[test]
+    fn multiple_interpolations() {
+        // SAFETY: test-only, no concurrent access to these env vars.
+        unsafe {
+            std::env::set_var("TEST_ENV_VAR_A", "aaa");
+            std::env::set_var("TEST_ENV_VAR_B", "bbb");
+        }
+        assert_eq!(
+            replace_env_vars("${TEST_ENV_VAR_A}-${TEST_ENV_VAR_B}").unwrap(),
+            "aaa-bbb"
+        );
+    }
+
+    #[test]
+    fn missing_env_var() {
+        let result = replace_env_vars("${NONEXISTENT_TEST_VAR_XYZ}");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("NONEXISTENT_TEST_VAR_XYZ")
+        );
+    }
+
+    #[test]
+    fn dollar_without_brace_is_literal() {
+        assert_eq!(replace_env_vars("$hello").unwrap(), "$hello");
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(replace_env_vars("").unwrap(), "");
+    }
+}
