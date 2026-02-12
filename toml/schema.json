@@ -189,6 +189,17 @@
     "ActivityWasmComponentConfigToml": {
       "type": "object",
       "properties": {
+        "allowed_hosts": {
+          "description": "Only these hosts can be reached by outgoing HTTP requests.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
         "content_digest": {
           "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
           "type": [
@@ -236,6 +247,13 @@
         "retry_on_err": {
           "type": "boolean",
           "default": true
+        },
+        "secrets": {
+          "description": "Secrets injected via placeholder replacement in outgoing HTTP requests.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SecretConfigToml"
+          }
         }
       },
       "additionalProperties": false,
@@ -765,6 +783,15 @@
         }
       ]
     },
+    "ReplaceIn": {
+      "description": "Where in the outgoing request placeholders are replaced.",
+      "type": "string",
+      "enum": [
+        "headers",
+        "body",
+        "params"
+      ]
+    },
     "Rotation": {
       "type": "string",
       "enum": [
@@ -772,6 +799,38 @@
         "hourly",
         "daily",
         "never"
+      ]
+    },
+    "SecretConfigToml": {
+      "description": "A secret group: env vars bound to specific hosts.",
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "description": "Env vars using the same syntax as top-level `env_vars`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
+        "hosts": {
+          "description": "Hosts where these secrets are allowed to be injected.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "replace_in": {
+          "description": "Where in the request to perform replacement.\nDefault: empty (no replacement — deny by default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReplaceIn"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "hosts",
+        "env_vars"
       ]
     },
     "SpanConfig": {
@@ -1055,6 +1114,17 @@
     "WebhookComponentConfigToml": {
       "type": "object",
       "properties": {
+        "allowed_hosts": {
+          "description": "Only these hosts can be reached by outgoing HTTP requests.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
         "backtrace": {
           "$ref": "#/$defs/ComponentBacktraceConfig"
         },
@@ -1094,6 +1164,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/WebhookRoute"
+          }
+        },
+        "secrets": {
+          "description": "Secrets injected via placeholder replacement in outgoing HTTP requests.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SecretConfigToml"
           }
         }
       },
