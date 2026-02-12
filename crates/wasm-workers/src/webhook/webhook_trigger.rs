@@ -1,3 +1,4 @@
+use crate::activity::activity_ctx::HttpClientTracesContainer;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
@@ -12,6 +13,7 @@ use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric,
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent, JoinSetRequest,
     LogInfoAppendRow, LogLevel, LogStreamType, TimeoutOutcome, Version,
+    http_client_trace::{HttpClientTrace, RequestTrace, ResponseTrace},
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -33,7 +35,7 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::select;
-use tokio::sync::{OwnedSemaphorePermit, mpsc, watch};
+use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot, watch};
 use tracing::{
     Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace, warn,
 };
@@ -48,7 +50,10 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_http::types::{
+    HostFutureIncomingResponse, OutgoingRequestConfig, default_send_request_handler,
+};
+use wasmtime_wasi_http::{HttpResult, WasiHttpCtx, WasiHttpView};
 use wasmtime_wasi_io::IoView;
 
 const HTTP_HANDLER_FFQN: FunctionFqn =
@@ -405,6 +410,7 @@ struct WebhookEndpointCtx<S: Sleep> {
     subscription_interruption: Option<Duration>,
     connection_drop_watcher: watch::Receiver<()>,
     server_termination_watcher: watch::Receiver<()>,
+    http_client_traces: HttpClientTracesContainer,
 }
 
 impl<S: Sleep> HostJoinSet for WebhookEndpointCtx<S> {
@@ -857,6 +863,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
             subscription_interruption: config.subscription_interruption,
             connection_drop_watcher,
             server_termination_watcher,
+            http_client_traces: HttpClientTracesContainer::default(),
         };
         let mut store = Store::new(engine, ctx);
 
@@ -925,6 +932,15 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
             }
         };
         if let Some(version) = self.version {
+            let http_client_traces = Some(
+                self.http_client_traces
+                    .into_iter()
+                    .map(|(req, mut resp)| HttpClientTrace {
+                        req,
+                        resp: resp.try_recv().ok(),
+                    })
+                    .collect(),
+            );
             self.db_pool
                 .connection()
                 .await?
@@ -935,7 +951,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
                         created_at: self.clock_fn.now(),
                         event: ExecutionRequest::Finished {
                             result,
-                            http_client_traces: None,
+                            http_client_traces,
                         },
                     },
                 )
@@ -987,6 +1003,44 @@ impl<S: Sleep> WasiHttpView for WebhookEndpointCtx<S> {
 
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
+    }
+
+    fn send_request(
+        &mut self,
+        request: hyper::Request<HyperOutgoingBody>,
+        config: OutgoingRequestConfig,
+    ) -> HttpResult<HostFutureIncomingResponse> {
+        let span = info_span!(parent: &self.component_logger.span, "send_request",
+            otel.name = format!("send_request {} {}", request.method(), request.uri()),
+            method = %request.method(),
+            uri = %request.uri(),
+        );
+        let req = RequestTrace {
+            sent_at: self.clock_fn.now(),
+            uri: request.uri().to_string(),
+            method: request.method().to_string(),
+        };
+        let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
+        self.http_client_traces.push((req, resp_trace_rx));
+        let clock_fn = self.clock_fn.clone_box();
+        span.in_scope(|| debug!("Sending {request:?}"));
+        let handle = wasmtime_wasi::runtime::spawn(
+            async move {
+                let resp_result = default_send_request_handler(request, config).await;
+                debug!("Got response {resp_result:?}");
+                let resp_trace = ResponseTrace {
+                    finished_at: clock_fn.now(),
+                    status: resp_result
+                        .as_ref()
+                        .map(|resp| resp.resp.status().as_u16())
+                        .map_err(std::string::ToString::to_string),
+                };
+                let _ = resp_trace_tx.send(resp_trace);
+                Ok(resp_result)
+            }
+            .instrument(span),
+        );
+        Ok(HostFutureIncomingResponse::pending(handle))
     }
 }
 
@@ -1202,6 +1256,7 @@ fn execution_id_into_val(execution_id: &ExecutionId) -> Val {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::MethodAwareRouter;
+    use assert_matches::assert_matches;
     use hyper::{Method, Uri};
 
     pub(crate) mod nosim {
@@ -1506,6 +1561,186 @@ pub(crate) mod tests {
             assert_eq!(resp.status().as_u16(), 500);
             assert_eq!("Component Error", resp.text().await.unwrap());
             fibo_webhook_harness.close().await;
+        }
+
+        #[expand_enum_database]
+        #[rstest]
+        #[tokio::test]
+        async fn http_client_traces_should_be_captured(
+            db: db_tests::Database,
+            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+            locking_strategy: LockingStrategy,
+        ) {
+            use concepts::storage::ExecutionRequest;
+            use concepts::storage::http_client_trace::{
+                HttpClientTrace, RequestTrace, ResponseTrace,
+            };
+            use wiremock::{
+                Mock, MockServer, ResponseTemplate,
+                matchers::{method, path},
+            };
+            const BODY: &str = "webhook-http-trace-test-body";
+            test_utils::set_up();
+            let sim_clock = SimClock::default();
+            let (guard, db_pool, db_close) = db.set_up().await;
+
+            // Set up mock HTTP server
+            let mock_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let mock_address = mock_listener.local_addr().unwrap();
+            let mock_uri = format!("http://127.0.0.1:{port}/", port = mock_address.port());
+            let mock_server = MockServer::builder().listener(mock_listener).start().await;
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            // Set up fibo workflow/activity workers (needed for schedule call)
+            let activity_exec = crate::activity::activity_worker::tests::new_activity_fibo(
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                TokioSleep,
+                locking_strategy,
+            )
+            .await;
+
+            let (workflow_runnable, workflow_component_id) =
+                crate::workflow::workflow_worker::tests::compile_workflow(
+                    test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+                )
+                .await;
+
+            let fn_registry =
+                crate::testing_fn_registry::TestingFnRegistry::new_from_components(vec![
+                    crate::activity::activity_worker::tests::compile_activity(
+                        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+                    )
+                    .await,
+                    (workflow_runnable, workflow_component_id),
+                ]);
+
+            let engine = crate::engines::Engines::get_webhook_engine(
+                crate::engines::EngineConfig::on_demand_testing(),
+            )
+            .unwrap();
+
+            // Build the HTTP GET webhook
+            let (db_forwarder_sender, _) = mpsc::channel(1);
+            let wasm_file = test_programs_http_get_webhook_builder::TEST_PROGRAMS_HTTP_GET_WEBHOOK;
+            let router = {
+                let instance = WebhookEndpointCompiled::new(
+                    WebhookEndpointConfig {
+                        component_id: ComponentId::new(
+                            ComponentType::WebhookEndpoint,
+                            StrVariant::empty(),
+                            concepts::component_id::InputContentDigest(
+                                utils::sha256sum::calculate_sha256_file(wasm_file)
+                                    .await
+                                    .unwrap(),
+                            ),
+                        )
+                        .unwrap(),
+                        forward_stdout: None,
+                        forward_stderr: None,
+                        env_vars: Arc::from([]),
+                        fuel: None,
+                        backtrace_persist: false,
+                        subscription_interruption: None,
+                        logs_store_min_level: None,
+                    },
+                    wasm_file,
+                    &engine,
+                )
+                .unwrap()
+                .link(&engine, fn_registry.as_ref())
+                .unwrap()
+                .build(&db_forwarder_sender);
+                let mut router = MethodAwareRouter::default();
+                router.add(Some(Method::GET), "/http-get/:PORT", instance);
+                router
+            };
+
+            let tcp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let server_addr = tcp_listener.local_addr().unwrap();
+            info!("Listening on port {}", server_addr.port());
+            let (_server_termination_sender, server_termination_watcher) = watch::channel(());
+            let server = AbortOnDrop(
+                tokio::spawn(webhook_trigger::server(
+                    DEPLOYMENT_ID_DUMMY,
+                    StrVariant::Static("test"),
+                    tcp_listener,
+                    engine,
+                    router,
+                    db_pool.clone(),
+                    sim_clock.clone_box(),
+                    TokioSleep,
+                    fn_registry,
+                    None,
+                    server_termination_watcher,
+                ))
+                .abort_handle(),
+            );
+
+            // Send request to webhook with mock server port as route param
+            let mock_port = mock_address.port();
+            let resp = reqwest::get(format!("http://{server_addr}/http-get/{mock_port}"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let resp_body = resp.text().await.unwrap();
+            let mut lines = resp_body.lines();
+            assert_eq!(Some(BODY), lines.next());
+            let child_execution_id_str = lines.next().expect("response must contain execution id");
+            let child_execution_id = ExecutionId::from_str(child_execution_id_str).unwrap();
+
+            // Give a moment for close() to persist the Finished event
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            // Find the webhook execution via the child's scheduled_by
+            let conn = db_pool.connection().await.unwrap();
+            let create_req = conn.get_create_request(&child_execution_id).await.unwrap();
+            let webhook_exec_id = create_req
+                .scheduled_by
+                .expect("child must have scheduled_by set");
+
+            // Get the webhook execution log and check the Finished event
+            let exec_log = conn.get(&webhook_exec_id).await.unwrap();
+            let finished_event = match &exec_log.last_event().event {
+                ExecutionRequest::Finished {
+                    http_client_traces, ..
+                } => http_client_traces,
+                other => panic!("expected Finished event, got {other:?}"),
+            };
+
+            let http_client_traces = finished_event
+                .as_ref()
+                .expect("http_client_traces must be Some");
+            assert_eq!(1, http_client_traces.len());
+            let trace = &http_client_traces[0];
+            assert_matches!(
+                trace,
+                HttpClientTrace {
+                    req: RequestTrace {
+                        method,
+                        uri,
+                        sent_at: _,
+                    },
+                    resp: Some(ResponseTrace {
+                        status: Ok(200),
+                        finished_at: _,
+                    }),
+                } => {
+                    assert_eq!("GET", method);
+                    assert_eq!(&mock_uri, uri);
+                }
+            );
+
+            drop(conn);
+            drop(activity_exec);
+            drop(server);
+            drop(guard);
+            db_close.close().await;
         }
     }
 

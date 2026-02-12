@@ -144,6 +144,8 @@ members = [
     "crates/testing/test-programs/http/activity/builder",
     "crates/testing/test-programs/http/workflow",
     "crates/testing/test-programs/http/workflow/builder",
+    "crates/testing/test-programs/http/webhook",
+    "crates/testing/test-programs/http/webhook/builder",
     "crates/testing/test-programs/process/activity",
     "crates/testing/test-programs/process/activity/builder",
     "crates/testing/test-programs/serde/activity",
@@ -195,6 +197,7 @@ test-programs-fibo-workflow-builder = { path = "crates/testing/test-programs/fib
 test-programs-adhoc-js-workflow-builder = { path = "crates/testing/test-programs/adhoc-js-workflow/builder" }
 test-programs-http-get-activity-builder = { path = "crates/testing/test-programs/http/activity/builder" }
 test-programs-http-get-workflow-builder = { path = "crates/testing/test-programs/http/workflow/builder" }
+test-programs-http-get-webhook-builder = { path = "crates/testing/test-programs/http/webhook/builder" }
 test-programs-process-activity-builder = { path = "crates/testing/test-programs/process/activity/builder" }
 test-programs-serde-activity-builder = { path = "crates/testing/test-programs/serde/activity/builder" }
 test-programs-serde-workflow-builder = { path = "crates/testing/test-programs/serde/workflow/builder" }
