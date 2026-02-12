@@ -8,6 +8,7 @@ pub mod activity;
 pub mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
+pub mod http_request_policy;
 pub mod log_db_forwarder;
 pub mod preopens_cleaner;
 pub mod registry;

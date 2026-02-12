@@ -38,6 +38,8 @@ pub struct ActivityConfig {
     pub retry_on_err: bool,
     pub directories_config: Option<ActivityDirectoriesConfig>,
     pub fuel: Option<u64>,
+    pub secrets: Arc<[crate::http_request_policy::SecretConfig]>,
+    pub allowed_hosts: Option<Vec<crate::http_request_policy::HostPattern>>,
 }
 
 #[derive(Clone, Debug)]
@@ -635,6 +637,8 @@ pub(crate) mod tests {
             retry_on_err: true,
             directories_config: None,
             fuel: None,
+            secrets: Arc::from([]),
+            allowed_hosts: None,
         }
     }
 
@@ -1593,6 +1597,8 @@ pub(crate) mod tests {
                     process_provider: None,
                 }),
                 fuel: None,
+                secrets: Arc::from([]),
+                allowed_hosts: None,
             },
             retry_config,
             locking_strategy,
@@ -1695,6 +1701,8 @@ pub(crate) mod tests {
                     process_provider: Some(ProcessProvider::Native),
                 }),
                 fuel: None,
+                secrets: Arc::from([]),
+                allowed_hosts: None,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1759,6 +1767,8 @@ pub(crate) mod tests {
                 retry_on_err: true,
                 directories_config: None,
                 fuel: None,
+                secrets: Arc::from([]),
+                allowed_hosts: None,
             },
             engine,
             sim_clock.clone_box(),
@@ -1820,6 +1830,8 @@ pub(crate) mod tests {
                     process_provider: Some(ProcessProvider::Native),
                 }),
                 fuel: None,
+                secrets: Arc::from([]),
+                allowed_hosts: None,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1903,6 +1915,8 @@ pub(crate) mod tests {
                 retry_on_err: false,
                 directories_config: None,
                 fuel: None,
+                secrets: Arc::from([]),
+                allowed_hosts: None,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1970,6 +1984,8 @@ pub(crate) mod tests {
                 retry_on_err: false,
                 directories_config: None,
                 fuel: None,
+                secrets: Arc::from([]),
+                allowed_hosts: None,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -2043,6 +2059,8 @@ pub(crate) mod tests {
                 retry_on_err: true, // Would retry on error, but permanent variant prevents it
                 directories_config: None,
                 fuel: None,
+                secrets: Arc::from([]),
+                allowed_hosts: None,
             },
             retry_config,
             locking_strategy,
