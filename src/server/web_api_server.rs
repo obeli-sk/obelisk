@@ -2161,9 +2161,10 @@ mod deployment {
     }
 }
 
-#[derive(AcceptExtractor, Clone, Copy)]
+#[derive(AcceptExtractor, Clone, Copy, Default)]
 pub(crate) enum AcceptHeader {
     #[accept(mediatype = "text/plain")]
+    #[default]
     Text,
     #[accept(mediatype = "application/json")]
     Json,
