@@ -1793,7 +1793,10 @@ pub(crate) mod tests {
             #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
             locking_strategy: LockingStrategy,
         ) {
-            use wiremock::{Mock, MockServer, ResponseTemplate, matchers::{method, path}};
+            use wiremock::{
+                Mock, MockServer, ResponseTemplate,
+                matchers::{method, path},
+            };
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (guard, db_pool, db_close) = Database::Memory.set_up().await;
