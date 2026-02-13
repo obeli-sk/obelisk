@@ -7,8 +7,14 @@ interface http-get {
         status-code: u16,
     }
 
+    record response-str {
+        body: string,
+        status-code: u16,
+    }
 
     get: func(url: string) -> result<string, string>;
     get-resp: func(url: string) -> result<response, string>;
     get-successful: func(url: string) -> result<string, string>;
+
+    secret-get: func(url: string, env-var: string, header: option<tuple<string, string>>) -> result<response-str, string>;
 }
