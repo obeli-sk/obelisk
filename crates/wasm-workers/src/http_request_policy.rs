@@ -299,18 +299,18 @@ impl HttpRequestPolicy {
 
         // Buffer the body
         let body = std::mem::take(request.body_mut());
+        // TODO: consider chunking instead of waiting for the whole request body.
         let Ok(collected) = http_body_util::BodyExt::collect(body).await else {
             return;
         };
         let body_bytes = collected.to_bytes();
         let Ok(mut body_str) = String::from_utf8(body_bytes.to_vec()) else {
             // Not valid UTF-8, put original bytes back
-            let restored = http_body_util::combinators::UnsyncBoxBody::new(
-                http_body_util::BodyExt::map_err(
+            let restored =
+                http_body_util::combinators::UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
                     http_body_util::Full::new(body_bytes),
                     |_| unreachable!(),
-                ),
-            );
+                ));
             *request.body_mut() = restored;
             return;
         };
@@ -320,12 +320,11 @@ impl HttpRequestPolicy {
             body_str = body_str.replace(&secret.placeholder, secret.real_value.expose_secret());
         }
 
-        let new_body = http_body_util::combinators::UnsyncBoxBody::new(
-            http_body_util::BodyExt::map_err(
+        let new_body =
+            http_body_util::combinators::UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
                 http_body_util::Full::new(hyper::body::Bytes::from(body_str)),
                 |_| unreachable!(),
-            ),
-        );
+            ));
         *request.body_mut() = new_body;
     }
 }
