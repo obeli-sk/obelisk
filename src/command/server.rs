@@ -810,6 +810,13 @@ impl ServerVerified {
                     .parse()
                     .context("error converting `webui.listening_addr` to a socket address")?,
             });
+            let target_url = format!(
+                "http://{}",
+                config
+                    .api
+                    .listening_addr
+                    .context("cannot expose webui without configuring `api.listening_addr`")?
+            );
             webhooks.push(webhook::WebhookComponentConfigToml {
                 common: ComponentCommon {
                     name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
@@ -824,16 +831,11 @@ impl ServerVerified {
                 forward_stderr: ComponentStdOutputToml::default(),
                 env_vars: vec![EnvVarConfig {
                     key: "TARGET_URL".to_string(),
-                    val: Some(format!(
-                        "http://{}",
-                        config.api.listening_addr.context(
-                            "cannot expose webui without configuring `api.listening_addr`"
-                        )?
-                    )),
+                    val: Some(target_url.clone()),
                 }],
                 backtrace: ComponentBacktraceConfig::default(),
                 logs_store_min_level: LogLevelToml::Off,
-                allowed_hosts: vec![],
+                allowed_hosts: vec![target_url],
                 secrets: vec![],
             });
         }
