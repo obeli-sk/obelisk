@@ -1301,6 +1301,7 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::{compile_activity, new_activity_fibo};
         use crate::activity::cancel_registry::CancelRegistry;
         use crate::engines::{EngineConfig, Engines};
+        use crate::http_request_policy::HostPattern;
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, WebhookEndpointCompiled, WebhookEndpointConfig,
@@ -1625,7 +1626,8 @@ pub(crate) mod tests {
             // Set up mock HTTP server
             let mock_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let mock_address = mock_listener.local_addr().unwrap();
-            let mock_uri = format!("http://127.0.0.1:{port}/", port = mock_address.port());
+            let mock_allowed_host = format!("http://127.0.0.1:{port}", port = mock_address.port());
+            let mock_uri = format!("{mock_allowed_host}/");
             let mock_server = MockServer::builder().listener(mock_listener).start().await;
             Mock::given(method("GET"))
                 .and(path("/"))
@@ -1687,7 +1689,9 @@ pub(crate) mod tests {
                         subscription_interruption: None,
                         logs_store_min_level: None,
                         secrets: Arc::from([]),
-                        allowed_hosts: Arc::from([]),
+                        allowed_hosts: Arc::from(vec![
+                            HostPattern::parse(&mock_allowed_host).unwrap(),
+                        ]),
                     },
                     wasm_file,
                     &engine,

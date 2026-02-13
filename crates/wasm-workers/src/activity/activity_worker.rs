@@ -643,7 +643,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn activity_config_allowed_host(
+    pub(crate) fn activity_config_allowed_host(
         component_id: ComponentId,
         allowed_host: &str,
     ) -> ActivityConfig {
