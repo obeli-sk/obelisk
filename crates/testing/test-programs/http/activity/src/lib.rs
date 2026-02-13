@@ -1,6 +1,8 @@
+use crate::generated::exports::testing::http::http_get::ResponseStr;
 use generated::export;
 use generated::exports::testing::http::http_get;
-use generated::exports::testing::http::http_get::Guest;
+use generated::exports::testing::http::http_get::Guest as GetGuest;
+use generated::exports::testing::http::http_post::Guest as PostGuest;
 use wstd::{
     http::{Body, Client, Method, Request},
     runtime::block_on,
@@ -27,7 +29,7 @@ async fn get_resp(url: String) -> Result<http_get::Response, anyhow::Error> {
     Ok(http_get::Response { body, status_code })
 }
 
-impl Guest for Component {
+impl GetGuest for Component {
     fn get(url: String) -> Result<String, String> {
         let resp = Self::get_resp(url)?;
         Ok(String::from_utf8_lossy(&resp.body).into_owned())
@@ -51,7 +53,7 @@ impl Guest for Component {
         url: String,
         env_var: String,
         header: Option<(String, String)>,
-    ) -> Result<http_get::ResponseStr, String> {
+    ) -> Result<ResponseStr, String> {
         let secret_placeholder =
             std::env::var(&env_var).map_err(|_| "cannot get env var".to_string())?;
         println!("Resolved env var: {env_var}={secret_placeholder}");
@@ -76,7 +78,45 @@ impl Guest for Component {
             Ok::<_, anyhow::Error>(http_get::Response { body, status_code })
         })
         .map_err(|err| err.to_string())?;
-        Ok(http_get::ResponseStr {
+        Ok(ResponseStr {
+            body: String::from_utf8_lossy(&resp.body).to_string(),
+            status_code: resp.status_code,
+        })
+    }
+}
+
+impl PostGuest for Component {
+    fn secret_post(
+        url: String,
+        env_var: String,
+        header: Option<(String, String)>,
+        body: String,
+    ) -> Result<ResponseStr, String> {
+        let secret_placeholder =
+            std::env::var(&env_var).map_err(|_| "cannot get env var".to_string())?;
+        println!("Resolved env var: {env_var}={secret_placeholder}");
+        let url = url.replace(&env_var, &secret_placeholder);
+        println!("Connecting to {url:?}");
+        let resp = block_on(async {
+            let request = Request::builder().method(Method::POST).uri(url);
+            let request = if let Some((header_key, header_val)) = header {
+                request.header(
+                    header_key.replace(&env_var, &secret_placeholder),
+                    header_val.replace(&env_var, &secret_placeholder),
+                )
+            } else {
+                request
+            };
+            let body = body.replace(&env_var, &secret_placeholder);
+            let request = request.body(Body::from(body))?;
+            let response = Client::new().send(request).await?;
+            let status_code = response.status().as_u16();
+            let mut response = response.into_body();
+            let body = Vec::from(response.contents().await?);
+            Ok::<_, anyhow::Error>(http_get::Response { body, status_code })
+        })
+        .map_err(|err| err.to_string())?;
+        Ok(ResponseStr {
             body: String::from_utf8_lossy(&resp.body).to_string(),
             status_code: resp.status_code,
         })
