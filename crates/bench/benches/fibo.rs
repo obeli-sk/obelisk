@@ -59,7 +59,7 @@ mod bench {
             directories_config: None,
             fuel: None,
             secrets: Arc::from([]),
-            allowed_hosts: None,
+            allowed_hosts: Arc::from([]),
         }
     }
 

@@ -833,7 +833,7 @@ impl ServerVerified {
                 }],
                 backtrace: ComponentBacktraceConfig::default(),
                 logs_store_min_level: LogLevelToml::Off,
-                allowed_hosts: None,
+                allowed_hosts: vec![],
                 secrets: vec![],
             });
         }

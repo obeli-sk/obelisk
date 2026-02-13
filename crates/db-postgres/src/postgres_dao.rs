@@ -29,6 +29,7 @@ use db_common::{
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
+use secrecy::{ExposeSecret as _, SecretString};
 use std::{collections::VecDeque, pin::Pin, str::FromStr as _, sync::Arc, time::Duration};
 use std::{fmt::Write as _, panic::Location};
 use strum::IntoEnumIterator as _;
@@ -261,12 +262,11 @@ CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_created_at ON t_log (execution
 ";
 }
 
-#[derive(derive_more::Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct PostgresConfig {
     pub host: String,
     pub user: String,
-    #[debug(skip)]
-    pub password: String,
+    pub password: SecretString,
     pub db_name: String,
 }
 
@@ -281,7 +281,7 @@ async fn create_database(
     let mut admin_cfg = deadpool_postgres::Config::new();
     admin_cfg.host = Some(config.host.clone());
     admin_cfg.user = Some(config.user.clone());
-    admin_cfg.password = Some(config.password.clone());
+    admin_cfg.password = Some(config.password.expose_secret().to_string());
     admin_cfg.dbname = Some(ADMIN_DB_NAME.into());
     admin_cfg.manager = Some(ManagerConfig {
         recycling_method: RecyclingMethod::Fast,
@@ -450,7 +450,7 @@ impl PostgresPool {
         let mut cfg = deadpool_postgres::Config::new();
         cfg.host = Some(config.host.clone());
         cfg.user = Some(config.user.clone());
-        cfg.password = Some(config.password.clone());
+        cfg.password = Some(config.password.expose_secret().to_string());
         cfg.dbname = Some(config.db_name.clone());
         cfg.manager = Some(ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
@@ -4305,7 +4305,7 @@ impl PostgresPool {
         let mut cfg = deadpool_postgres::Config::new();
         cfg.host = Some(self.config.host.clone());
         cfg.user = Some(self.config.user.clone());
-        cfg.password = Some(self.config.password.clone());
+        cfg.password = Some(self.config.password.expose_secret().to_string());
         cfg.dbname = Some(ADMIN_DB_NAME.into());
         cfg.manager = Some(ManagerConfig {
             recycling_method: RecyclingMethod::Fast,

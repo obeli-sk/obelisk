@@ -1,4 +1,5 @@
 use super::activity_worker::{ActivityConfig, ProcessProvider};
+use crate::component_logger::log_activities::obelisk::log::log::Host;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::http_request_policy::{HttpRequestPolicy, PlaceholderSecret, generate_placeholder};
 use crate::std_output_stream::{LogStream, StdOutput};
@@ -87,8 +88,13 @@ impl WasiHttpView for ActivityCtx {
         mut request: hyper::Request<HyperOutgoingBody>,
         config: OutgoingRequestConfig,
     ) -> HttpResult<HostFutureIncomingResponse> {
-        // Apply HTTP policy (allowlist + placeholder replacement)
-        self.http_policy.apply(&mut request)?;
+        // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
+        let http_policy_res = self.http_policy.apply(&mut request);
+        if let Err(err) = http_policy_res {
+            self.warn(format!("{err}"));
+            let err = wasmtime_wasi_http::bindings::http::types::ErrorCode::from(err);
+            return Err(err.into());
+        }
 
         let span = info_span!(parent: &self.component_logger.span, "send_request",
             otel.name = format!("send_request {} {}", request.method(), request.uri()),
@@ -106,6 +112,7 @@ impl WasiHttpView for ActivityCtx {
         span.in_scope(|| debug!("Sending {request:?}"));
         let handle = wasmtime_wasi::runtime::spawn(
             async move {
+                // FIXME: Replace placeholders in body
                 let resp_result = default_send_request_handler(request, config).await;
                 debug!("Got response {resp_result:?}");
                 let resp_trace = ResponseTrace {

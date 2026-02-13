@@ -1,7 +1,8 @@
 use hashbrown::HashSet;
+use hyper::Uri;
 use rand::RngCore;
-use std::fmt;
-use tracing::warn;
+use secrecy::{ExposeSecret, SecretString};
+use std::{fmt, sync::Arc};
 use wasmtime_wasi_http::bindings::http::types::ErrorCode;
 
 /// Where in the outgoing request placeholders are replaced.
@@ -13,27 +14,16 @@ pub enum ReplacementLocation {
 }
 
 /// A secret that uses placeholder-based injection.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PlaceholderSecret {
     /// The placeholder string exposed to WASM.
     pub placeholder: String,
     /// The real secret value.
-    pub real_value: String,
+    pub real_value: SecretString,
     /// Hosts where replacement is allowed (scheme, host, port triples).
     pub allowed_hosts: HashSet<HostPattern>,
     /// Where in the request replacement is allowed.
     pub replace_in: HashSet<ReplacementLocation>,
-}
-
-impl fmt::Debug for PlaceholderSecret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PlaceholderSecret")
-            .field("placeholder", &self.placeholder)
-            .field("real_value", &"[REDACTED]")
-            .field("allowed_hosts", &self.allowed_hosts)
-            .field("replace_in", &self.replace_in)
-            .finish()
-    }
 }
 
 /// A parsed host pattern for matching outgoing requests.
@@ -46,6 +36,13 @@ pub struct HostPattern {
     pub port: u16,
 }
 
+#[derive(Debug, Clone, thiserror::Error)]
+
+pub enum HostPatternError {
+    #[error("wildcard `*` must be the first or last character in host pattern: `{host}`")]
+    Wildcard { host: String },
+}
+
 impl HostPattern {
     /// Parse a host specification string into a `HostPattern`.
     /// Rules:
@@ -55,7 +52,7 @@ impl HostPattern {
     ///
     /// # Errors
     /// Returns an error if the wildcard is in the middle of the host.
-    pub fn parse(input: &str) -> Result<Self, String> {
+    pub fn parse(input: &str) -> Result<Self, HostPatternError> {
         let (scheme, rest) = if let Some(rest) = input.strip_prefix("https://") {
             ("https", rest)
         } else if let Some(rest) = input.strip_prefix("http://") {
@@ -79,9 +76,7 @@ impl HostPattern {
 
         // Validate wildcard: must be first or last character
         if host.contains('*') && !host.starts_with('*') && !host.ends_with('*') {
-            return Err(format!(
-                "wildcard `*` must be the first or last character in host pattern: `{host}`"
-            ));
+            return Err(HostPatternError::Wildcard { host });
         }
 
         Ok(HostPattern {
@@ -129,10 +124,7 @@ fn match_wildcard(pattern: &str, value: &str) -> bool {
 /// Per-component HTTP outgoing request policy.
 #[derive(Clone, Debug, Default)]
 pub struct HttpRequestPolicy {
-    /// Allowed host patterns. If `Some`, only matching hosts can be reached.
-    /// `None` = no restrictions (when neither `allowed_hosts` nor secrets is set).
-    pub allowed_hosts: Option<Vec<HostPattern>>,
-    /// Placeholder secrets for substitution.
+    pub allowed_hosts: Arc<[HostPattern]>,
     pub secrets: Vec<PlaceholderSecret>,
 }
 
@@ -155,36 +147,41 @@ fn extract_request_target(uri: &hyper::Uri) -> Option<(String, String, u16)> {
     Some((scheme, host, port))
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PolicyError {
+    #[error("outgoing HTTP request has no host in URI: {0}")]
+    RequestHasNoHost(Uri),
+    #[error("outgoing HTTP request to {scheme}://{host}:{port} denied")]
+    RequestDenied {
+        scheme: String,
+        host: String,
+        port: u16,
+    },
+}
+impl From<PolicyError> for ErrorCode {
+    fn from(_value: PolicyError) -> Self {
+        ErrorCode::HttpRequestDenied
+    }
+}
+
 impl HttpRequestPolicy {
-    /// Check if a host is allowed and perform secret placeholder replacement.
+    /// Check if a host is allowed and perform secret placeholder replacement in headers and query parameters.
     /// Returns the (possibly modified) request, or an error if the host is denied.
-    ///
-    /// # Errors
-    /// Returns `ErrorCode::HttpRequestDenied` if the request target is not allowed.
-    pub fn apply(
+    pub(crate) fn apply(
         &self,
         request: &mut hyper::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
-    ) -> Result<(), ErrorCode> {
+    ) -> Result<(), PolicyError> {
         let Some((scheme, host, port)) = extract_request_target(request.uri()) else {
-            warn!(
-                "outgoing HTTP request has no host in URI: {}",
-                request.uri()
-            );
-            return Err(ErrorCode::HttpRequestDenied);
+            return Err(PolicyError::RequestHasNoHost(request.uri().clone()));
         };
 
         // 1. Check allowlist
-        if let Some(allowed) = &self.allowed_hosts {
-            let is_allowed = allowed
-                .iter()
-                .any(|pattern| pattern.matches(&scheme, &host, port));
-            if !is_allowed {
-                warn!(
-                    "outgoing HTTP request to {scheme}://{host}:{port} denied \
-                     - host not in allowed_hosts"
-                );
-                return Err(ErrorCode::HttpRequestDenied);
-            }
+        let is_allowed = self
+            .allowed_hosts
+            .iter()
+            .any(|pattern| pattern.matches(&scheme, &host, port));
+        if !is_allowed {
+            return Err(PolicyError::RequestDenied { scheme, host, port });
         }
 
         // 2. Collect applicable secrets for this host
@@ -216,7 +213,8 @@ impl HttpRequestPolicy {
                 {
                     let mut replaced = val_str.to_string();
                     for secret in &header_secrets {
-                        replaced = replaced.replace(&secret.placeholder, &secret.real_value);
+                        replaced = replaced
+                            .replace(&secret.placeholder, secret.real_value.expose_secret());
                     }
                     if replaced != val_str
                         && let Ok(new_val) = hyper::header::HeaderValue::from_str(&replaced)
@@ -236,7 +234,8 @@ impl HttpRequestPolicy {
             let uri_str = request.uri().to_string();
             let mut uri_replaced = uri_str.clone();
             for secret in &param_secrets {
-                uri_replaced = uri_replaced.replace(&secret.placeholder, &secret.real_value);
+                uri_replaced =
+                    uri_replaced.replace(&secret.placeholder, secret.real_value.expose_secret());
             }
             if uri_replaced != uri_str
                 && let Ok(new_uri) = uri_replaced.parse::<hyper::Uri>()
@@ -245,7 +244,7 @@ impl HttpRequestPolicy {
             }
         }
 
-        // 5. Body replacement is handled asynchronously via `body_secrets_for`.
+        // 5. Body replacement is handled asynchronously via ... FIXME
 
         Ok(())
     }
@@ -302,7 +301,7 @@ pub fn generate_placeholder() -> String {
 pub struct SecretConfig {
     pub hosts: HashSet<HostPattern>,
     /// `(env_key_for_wasm, real_value)` pairs.
-    pub env_mappings: Vec<(String, String)>,
+    pub env_mappings: Vec<(String, SecretString)>,
     /// Where in the request to perform replacement.
     pub replace_in: HashSet<ReplacementLocation>,
 }

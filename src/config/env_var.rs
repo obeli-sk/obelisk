@@ -1,5 +1,5 @@
-use anyhow::anyhow;
 use schemars::JsonSchema;
+use secrecy::SecretString;
 use serde::{Deserialize, Deserializer};
 
 #[derive(Clone, derive_more::Debug, Hash, JsonSchema)]
@@ -44,7 +44,22 @@ impl<'de> Deserialize<'de> for EnvVarConfig {
     }
 }
 
-pub(crate) fn replace_env_vars(input: &str) -> Result<String, anyhow::Error> {
+#[derive(Debug, thiserror::Error)]
+#[error("environment variable not set: `{0}`")]
+pub(crate) struct EnvVarMissing(pub(crate) String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("environment variables not set: `{0:?}`")]
+pub(crate) struct EnvVarsMissing(pub(crate) Vec<String>);
+
+pub(crate) fn interpolate_env_vars_plaintext(input: &str) -> Result<String, EnvVarMissing> {
+    interpolate_env_vars_inner(input)
+}
+pub(crate) fn interpolate_env_vars_secret(input: &str) -> Result<SecretString, EnvVarMissing> {
+    interpolate_env_vars_inner(input).map(SecretString::from)
+}
+
+fn interpolate_env_vars_inner(input: &str) -> Result<String, EnvVarMissing> {
     let mut out = String::new();
     let mut chars = input.chars().peekable();
 
@@ -60,15 +75,14 @@ pub(crate) fn replace_env_vars(input: &str) -> Result<String, anyhow::Error> {
                 }
                 key.push(ch);
             }
+            // FIXME: What if } never arrived - it should not be treated as an env var.
 
-            let val = std::env::var(&key)
-                .map_err(|_| anyhow!("environment variable not set: `{key}`"))?;
+            let val = std::env::var(&key).map_err(|_| EnvVarMissing(key))?;
             out.push_str(&val);
         } else {
             out.push(c);
         }
     }
-
     Ok(out)
 }
 
@@ -78,14 +92,20 @@ mod tests {
 
     #[test]
     fn no_interpolation() {
-        assert_eq!(replace_env_vars("hello world").unwrap(), "hello world");
+        assert_eq!(
+            interpolate_env_vars_inner("hello world").unwrap(),
+            "hello world"
+        );
     }
 
     #[test]
     fn single_interpolation() {
         // SAFETY: test-only, no concurrent access to this env var.
         unsafe { std::env::set_var("TEST_ENV_VAR_1", "value1") };
-        assert_eq!(replace_env_vars("${TEST_ENV_VAR_1}").unwrap(), "value1");
+        assert_eq!(
+            interpolate_env_vars_inner("${TEST_ENV_VAR_1}").unwrap(),
+            "value1"
+        );
     }
 
     #[test]
@@ -93,7 +113,7 @@ mod tests {
         // SAFETY: test-only, no concurrent access to this env var.
         unsafe { std::env::set_var("TEST_ENV_VAR_2", "middle") };
         assert_eq!(
-            replace_env_vars("prefix ${TEST_ENV_VAR_2} suffix").unwrap(),
+            interpolate_env_vars_inner("prefix ${TEST_ENV_VAR_2} suffix").unwrap(),
             "prefix middle suffix"
         );
     }
@@ -106,14 +126,14 @@ mod tests {
             std::env::set_var("TEST_ENV_VAR_B", "bbb");
         }
         assert_eq!(
-            replace_env_vars("${TEST_ENV_VAR_A}-${TEST_ENV_VAR_B}").unwrap(),
+            interpolate_env_vars_inner("${TEST_ENV_VAR_A}-${TEST_ENV_VAR_B}").unwrap(),
             "aaa-bbb"
         );
     }
 
     #[test]
     fn missing_env_var() {
-        let result = replace_env_vars("${NONEXISTENT_TEST_VAR_XYZ}");
+        let result = interpolate_env_vars_inner("${NONEXISTENT_TEST_VAR_XYZ}");
         assert!(result.is_err());
         assert!(
             result
@@ -125,11 +145,11 @@ mod tests {
 
     #[test]
     fn dollar_without_brace_is_literal() {
-        assert_eq!(replace_env_vars("$hello").unwrap(), "$hello");
+        assert_eq!(interpolate_env_vars_inner("$hello").unwrap(), "$hello");
     }
 
     #[test]
     fn empty_string() {
-        assert_eq!(replace_env_vars("").unwrap(), "");
+        assert_eq!(interpolate_env_vars_inner("").unwrap(), "");
     }
 }

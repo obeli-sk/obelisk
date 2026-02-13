@@ -2514,6 +2514,7 @@ dependencies = [
  "obeli-sk-val-json",
  "rand 0.9.2",
  "rstest",
+ "secrecy",
  "serde_json",
  "tempfile",
  "test-db-macro",
@@ -2609,6 +2610,7 @@ dependencies = [
  "obeli-sk-db-common",
  "obeli-sk-val-json",
  "rand 0.9.2",
+ "secrecy",
  "strum",
  "thiserror 2.0.18",
  "tokio",
@@ -2783,6 +2785,7 @@ dependencies = [
  "reqwest 0.13.2",
  "route-recognizer",
  "rstest",
+ "secrecy",
  "serde",
  "serde_json",
  "strum",
@@ -2862,6 +2865,7 @@ dependencies = [
  "rstest",
  "rustls 0.23.36",
  "schemars 1.2.1",
+ "secrecy",
  "semver",
  "serde",
  "serde_json",
@@ -3976,7 +3980,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4079,6 +4083,15 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
+ "zeroize",
+]
 
 [[package]]
 name = "security-framework"
