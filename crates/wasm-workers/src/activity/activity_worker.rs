@@ -583,6 +583,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::engines::PoolingOptions;
     use crate::engines::{EngineConfig, Engines};
+    use crate::http_request_policy::HostPattern;
     use assert_matches::assert_matches;
     use concepts::component_id::InputContentDigest;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
@@ -639,6 +640,23 @@ pub(crate) mod tests {
             fuel: None,
             secrets: Arc::from([]),
             allowed_hosts: Arc::from([]),
+        }
+    }
+
+    fn activity_config_allowed_host(
+        component_id: ComponentId,
+        allowed_host: &str,
+    ) -> ActivityConfig {
+        ActivityConfig {
+            component_id,
+            forward_stdout: None,
+            forward_stderr: None,
+            env_vars: Arc::from([]),
+            retry_on_err: true,
+            directories_config: None,
+            fuel: None,
+            secrets: Arc::from([]),
+            allowed_hosts: Arc::from(vec![HostPattern::parse(allowed_host).unwrap()]),
         }
     }
 
@@ -1140,13 +1158,25 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let (worker, _) = new_activity_worker(
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_address = listener
+            .local_addr()
+            .expect("Failed to get server address.");
+        let uri = format!("http://127.0.0.1:{port}", port = server_address.port());
+
+        let (worker, _) = new_activity_worker_with_config(
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             engine,
             sim_clock.clone_box(),
             TokioSleep,
+            {
+                let uri = uri.clone();
+                move |component_id| activity_config_allowed_host(component_id, &uri)
+            },
         )
         .await;
+
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1166,11 +1196,6 @@ pub(crate) mod tests {
             ffqns,
         );
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let server_address = listener
-            .local_addr()
-            .expect("Failed to get server address.");
-        let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
         let params = Params::from_json_values_test(vec![json!(uri.clone())]);
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -1241,7 +1266,7 @@ pub(crate) mod tests {
             => (method, uri)
         );
         assert_eq!("GET", method);
-        assert_eq!(uri, *uri_actual);
+        assert_eq!(format!("{uri}/"), *uri_actual);
         drop(db_connection);
         drop(exec_task);
         db_close.close().await;
@@ -1263,13 +1288,25 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let (worker, _) = new_activity_worker(
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_address = listener
+            .local_addr()
+            .expect("Failed to get server address.");
+        let uri = format!("http://127.0.0.1:{port}", port = server_address.port());
+
+        let (worker, _) = new_activity_worker_with_config(
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             engine,
             sim_clock.clone_box(),
             TokioSleep,
+            {
+                let uri = uri.clone();
+                move |component_id| activity_config_allowed_host(component_id, &uri)
+            },
         )
         .await;
+
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1289,11 +1326,6 @@ pub(crate) mod tests {
             ffqns,
         );
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let server_address = listener
-            .local_addr()
-            .expect("Failed to get server address.");
-        let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
         let params = Params::from_json_values_test(vec![json!(uri.clone())]);
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -1370,7 +1402,7 @@ pub(crate) mod tests {
             => (method, uri)
         );
         assert_eq!("GET", method);
-        assert_eq!(uri, *uri_actual);
+        assert_eq!(format!("{uri}/"), *uri_actual);
         drop(db_connection);
         drop(exec_task);
         db_close.close().await;
@@ -1396,13 +1428,25 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let (worker, _) = new_activity_worker(
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_address = listener
+            .local_addr()
+            .expect("Failed to get server address.");
+        let uri = format!("http://127.0.0.1:{port}", port = server_address.port());
+
+        let (worker, _) = new_activity_worker_with_config(
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             engine,
             sim_clock.clone_box(),
             TokioSleep,
+            {
+                let uri = uri.clone();
+                move |component_id| activity_config_allowed_host(component_id, &uri)
+            },
         )
         .await;
+
         let retry_config = ComponentRetryConfig {
             max_retries: Some(1),
             retry_exp_backoff: RETRY_EXP_BACKOFF,
@@ -1426,11 +1470,6 @@ pub(crate) mod tests {
             ffqns,
         );
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let server_address = listener
-            .local_addr()
-            .expect("Failed to get server address.");
-        let uri = format!("http://127.0.0.1:{port}/", port = server_address.port());
         let params = Params::from_json_values_test(vec![json!(uri.clone())]);
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -1509,7 +1548,7 @@ pub(crate) mod tests {
                 => (method, uri)
             );
             assert_eq!("GET", method);
-            assert_eq!(uri, *uri_actual);
+            assert_eq!(format!("{uri}/"), *uri_actual);
             server.verify().await;
         }
         // Noop until the timeout expires

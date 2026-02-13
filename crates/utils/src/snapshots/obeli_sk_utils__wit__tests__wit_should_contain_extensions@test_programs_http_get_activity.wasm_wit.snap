@@ -9,6 +9,7 @@ world root {
   import wasi:clocks/monotonic-clock@0.2.9;
   import wasi:io/error@0.2.9;
   import wasi:io/streams@0.2.9;
+  import wasi:cli/stdout@0.2.9;
   import wasi:cli/stderr@0.2.9;
   import wasi:http/types@0.2.9;
   import wasi:http/outgoing-handler@0.2.9;
@@ -181,8 +182,8 @@ package wasi:io@0.2.9 {
     }
   }
   interface streams {
-    use error.{error};
     use poll.{pollable};
+    use error.{error};
 
     resource output-stream {
       check-write: func() -> result<u64, stream-error>;
@@ -217,6 +218,11 @@ package wasi:clocks@0.2.9 {
 
 
 package wasi:cli@0.2.9 {
+  interface stdout {
+    use wasi:io/streams@0.2.9.{output-stream};
+
+    get-stdout: func() -> output-stream;
+  }
   interface stderr {
     use wasi:io/streams@0.2.9.{output-stream};
 
@@ -233,14 +239,35 @@ package wasi:cli@0.2.9 {
 
 package wasi:http@0.2.9 {
   interface types {
+    use wasi:io/streams@0.2.9.{input-stream};
     use wasi:clocks/monotonic-clock@0.2.9.{duration};
-    use wasi:io/streams@0.2.9.{output-stream, input-stream};
+    use wasi:io/streams@0.2.9.{output-stream};
     use wasi:io/poll@0.2.9.{pollable};
+
+    resource outgoing-body {
+      write: func() -> result<output-stream>;
+      finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+    }
+
+    resource future-incoming-response {
+      subscribe: func() -> pollable;
+      get: func() -> option<result<result<incoming-response, error-code>>>;
+    }
+
+    resource incoming-body {
+      %stream: func() -> result<input-stream>;
+      finish: static func(this: incoming-body) -> future-trailers;
+    }
 
     resource fields {
       constructor();
       append: func(name: field-name, value: field-value) -> result<_, header-error>;
       entries: func() -> list<tuple<field-name, field-value>>;
+    }
+
+    resource future-trailers {
+      subscribe: func() -> pollable;
+      get: func() -> option<result<result<option<trailers>, error-code>>>;
     }
 
     type headers = fields;
@@ -273,31 +300,11 @@ package wasi:http@0.2.9 {
       other(string),
     }
 
-    resource outgoing-body {
-      write: func() -> result<output-stream>;
-      finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
-    }
-
     resource request-options {
       constructor();
       set-connect-timeout: func(duration: option<duration>) -> result;
       set-first-byte-timeout: func(duration: option<duration>) -> result;
       set-between-bytes-timeout: func(duration: option<duration>) -> result;
-    }
-
-    resource incoming-body {
-      %stream: func() -> result<input-stream>;
-      finish: static func(this: incoming-body) -> future-trailers;
-    }
-
-    resource future-trailers {
-      subscribe: func() -> pollable;
-      get: func() -> option<result<result<option<trailers>, error-code>>>;
-    }
-
-    resource future-incoming-response {
-      subscribe: func() -> pollable;
-      get: func() -> option<result<result<incoming-response, error-code>>>;
     }
 
     resource incoming-response {
@@ -401,18 +408,25 @@ package testing:http {
       status-code: u16,
     }
 
+    record response-str {
+      body: string,
+      status-code: u16,
+    }
+
     get: func(url: string) -> result<string, string>;
 
     get-resp: func(url: string) -> result<response, string>;
 
     get-successful: func(url: string) -> result<string, string>;
+
+    secret-get: func(url: string, env-var: string, header: option<tuple<string, string>>) -> result<response-str, string>;
   }
 }
 
 
 package testing:http-obelisk-ext {
   interface http-get {
-    use testing:http/http-get.{response};
+    use testing:http/http-get.{response, response-str};
     use obelisk:types/execution@4.1.0.{execution-id};
     use obelisk:types/join-set@4.1.0.{join-set};
     use obelisk:types/execution@4.1.0.{await-next-extension-error, get-extension-error};
@@ -434,13 +448,19 @@ package testing:http-obelisk-ext {
     get-successful-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
 
     get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+
+    secret-get-submit: func(join-set: borrow<join-set>, url: string, env-var: string, header: option<tuple<string, string>>) -> execution-id;
+
+    secret-get-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<response-str, string>>, await-next-extension-error>;
+
+    secret-get-get: func(execution-id: execution-id) -> result<result<response-str, string>, get-extension-error>;
   }
 }
 
 
 package testing:http-obelisk-schedule {
   interface http-get {
-    use testing:http/http-get.{response};
+    use testing:http/http-get.{response, response-str};
     use obelisk:types/execution@4.1.0.{execution-id};
     use obelisk:types/time@4.1.0.{schedule-at};
 
@@ -449,5 +469,7 @@ package testing:http-obelisk-schedule {
     get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
     get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+
+    secret-get-schedule: func(schedule-at: schedule-at, url: string, env-var: string, header: option<tuple<string, string>>) -> execution-id;
   }
 }
