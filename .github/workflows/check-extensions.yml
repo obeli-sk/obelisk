@@ -29,7 +29,7 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - name: Run `obelisk generate config-schema`
+      - name: Run `scripts/regenerate-wit-extensions.sh`
         run: |
           nix develop --command scripts/regenerate-wit-extensions.sh
           if [ -n "$(git status --porcelain)" ]; then
