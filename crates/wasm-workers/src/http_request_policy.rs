@@ -53,6 +53,7 @@ impl HostPattern {
     /// # Errors
     /// Returns an error if the wildcard is in the middle of the host.
     pub fn parse(input: &str) -> Result<Self, HostPatternError> {
+        // FIXME: Fail if user insert a trailing slash, e.g. `http:localhost:1234/`
         let (scheme, rest) = if let Some(rest) = input.strip_prefix("https://") {
             ("https", rest)
         } else if let Some(rest) = input.strip_prefix("http://") {
