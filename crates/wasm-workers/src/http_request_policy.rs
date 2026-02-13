@@ -298,13 +298,7 @@ impl HttpRequestPolicy {
         }
 
         // Buffer the body
-        let body = std::mem::replace(
-            request.body_mut(),
-            http_body_util::combinators::UnsyncBoxBody::new(
-                http_body_util::Empty::new()
-                    .map_err(|never| match never {}),
-            ),
-        );
+        let body = std::mem::take(request.body_mut());
         let Ok(collected) = http_body_util::BodyExt::collect(body).await else {
             return;
         };
