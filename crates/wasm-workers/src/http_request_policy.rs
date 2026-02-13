@@ -37,10 +37,11 @@ pub struct HostPattern {
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
-
 pub enum HostPatternError {
     #[error("wildcard `*` must be the first or last character in host pattern: `{host}`")]
     Wildcard { host: String },
+    #[error("host pattern must not contain a path: `{input}`")]
+    ContainsPath { input: String },
 }
 
 impl HostPattern {
@@ -53,7 +54,6 @@ impl HostPattern {
     /// # Errors
     /// Returns an error if the wildcard is in the middle of the host.
     pub fn parse(input: &str) -> Result<Self, HostPatternError> {
-        // FIXME: Fail if user insert a trailing slash, e.g. `http:localhost:1234/`
         let (scheme, rest) = if let Some(rest) = input.strip_prefix("https://") {
             ("https", rest)
         } else if let Some(rest) = input.strip_prefix("http://") {
@@ -61,6 +61,13 @@ impl HostPattern {
         } else {
             ("https", input)
         };
+
+        // Reject patterns that contain a path (e.g. "http://localhost:1234/")
+        if rest.contains('/') {
+            return Err(HostPatternError::ContainsPath {
+                input: input.to_string(),
+            });
+        }
 
         let (host, port) = if let Some((h, p)) = rest.rsplit_once(':') {
             if let Ok(port) = p.parse::<u16>() {
@@ -363,6 +370,13 @@ mod tests {
     #[test]
     fn parse_host_pattern_wildcard_middle_rejected() {
         assert!(HostPattern::parse("foo.*.com").is_err());
+    }
+
+    #[test]
+    fn parse_host_pattern_trailing_slash_rejected() {
+        assert!(HostPattern::parse("http://localhost:8080/").is_err());
+        assert!(HostPattern::parse("https://api.example.com/v1").is_err());
+        assert!(HostPattern::parse("example.com/path").is_err());
     }
 
     #[test]
