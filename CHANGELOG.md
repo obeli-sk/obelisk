@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add outbound HTTP host allowlists for activities and webhooks via `allowed_hosts` config field — requests to non-allowed hosts return `HttpRequestDenied` ([#254](https://github.com/obeli-sk/obelisk/pull/254))
+
+- Add secret placeholder injection via `[[*.secrets]]` config — WASM components receive opaque placeholders instead of real secret values; the runtime replaces placeholders with real values only in requests to approved hosts ([#254](https://github.com/obeli-sk/obelisk/pull/254))
+
+
 ### Notes for next breaking release
 
 - Remove deprecated `found_response` field (proto field 2) from `JoinNextTry` gRPC message, keeping only the `outcome` enum (field 3).
