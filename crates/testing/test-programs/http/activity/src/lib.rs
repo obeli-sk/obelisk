@@ -89,7 +89,7 @@ impl PostGuest for Component {
     fn secret_post(
         url: String,
         env_var: String,
-        header: Option<(String, String)>,
+        headers: Vec<(String, String)>,
         body: String,
     ) -> Result<ResponseStr, String> {
         let secret_placeholder =
@@ -98,15 +98,14 @@ impl PostGuest for Component {
         let url = url.replace(&env_var, &secret_placeholder);
         println!("Connecting to {url:?}");
         let resp = block_on(async {
-            let request = Request::builder().method(Method::POST).uri(url);
-            let request = if let Some((header_key, header_val)) = header {
-                request.header(
+            let mut request = Request::builder().method(Method::POST).uri(url);
+            for (header_key, header_val) in headers {
+                request = request.header(
                     header_key.replace(&env_var, &secret_placeholder),
                     header_val.replace(&env_var, &secret_placeholder),
-                )
-            } else {
-                request
-            };
+                );
+            }
+
             let body = body.replace(&env_var, &secret_placeholder);
             let request = request.body(Body::from(body))?;
             let response = Client::new().send(request).await?;
