@@ -67,18 +67,25 @@ fn interpolate_env_vars_inner(input: &str) -> Result<String, EnvVarMissing> {
         if c == '$' && chars.peek() == Some(&'{') {
             chars.next(); // skip '{'
             let mut key = String::new();
+            let mut closed = false;
 
             while let Some(&ch) = chars.peek() {
                 chars.next();
                 if ch == '}' {
+                    closed = true;
                     break;
                 }
                 key.push(ch);
             }
-            // FIXME: What if } never arrived - it should not be treated as an env var.
 
-            let val = std::env::var(&key).map_err(|_| EnvVarMissing(key))?;
-            out.push_str(&val);
+            if !closed {
+                // Unclosed `${` — treat as literal text
+                out.push_str("${");
+                out.push_str(&key);
+            } else {
+                let val = std::env::var(&key).map_err(|_| EnvVarMissing(key))?;
+                out.push_str(&val);
+            }
         } else {
             out.push(c);
         }
