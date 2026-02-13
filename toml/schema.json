@@ -191,11 +191,8 @@
       "properties": {
         "allowed_hosts": {
           "description": "Only these hosts can be reached by outgoing HTTP requests.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "default": null,
+          "type": "array",
+          "default": [],
           "items": {
             "type": "string"
           }
@@ -1116,11 +1113,8 @@
       "properties": {
         "allowed_hosts": {
           "description": "Only these hosts can be reached by outgoing HTTP requests.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "default": null,
+          "type": "array",
+          "default": [],
           "items": {
             "type": "string"
           }
