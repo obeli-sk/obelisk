@@ -1,5 +1,6 @@
 ---
 source: crates/utils/src/wit.rs
+assertion_line: 761
 expression: wit
 ---
 package root:component;
@@ -18,8 +19,11 @@ world root {
   import wasi:random/insecure-seed@0.2.9;
 
   export testing:http/http-get;
+  export testing:http/http-post;
   export testing:http-obelisk-ext/http-get;
+  export testing:http-obelisk-ext/http-post;
   export testing:http-obelisk-schedule/http-get;
+  export testing:http-obelisk-schedule/http-post;
 }
 package obelisk:types@4.1.0 {
   @since(version = 3.0.0)
@@ -421,6 +425,11 @@ package testing:http {
 
     secret-get: func(url: string, env-var: string, header: option<tuple<string, string>>) -> result<response-str, string>;
   }
+  interface http-post {
+    use http-get.{response-str};
+
+    secret-post: func(url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> result<response-str, string>;
+  }
 }
 
 
@@ -455,6 +464,18 @@ package testing:http-obelisk-ext {
 
     secret-get-get: func(execution-id: execution-id) -> result<result<response-str, string>, get-extension-error>;
   }
+  interface http-post {
+    use testing:http/http-get.{response-str};
+    use obelisk:types/execution@4.1.0.{execution-id};
+    use obelisk:types/join-set@4.1.0.{join-set};
+    use obelisk:types/execution@4.1.0.{await-next-extension-error, get-extension-error};
+
+    secret-post-submit: func(join-set: borrow<join-set>, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> execution-id;
+
+    secret-post-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<response-str, string>>, await-next-extension-error>;
+
+    secret-post-get: func(execution-id: execution-id) -> result<result<response-str, string>, get-extension-error>;
+  }
 }
 
 
@@ -471,5 +492,12 @@ package testing:http-obelisk-schedule {
     get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
     secret-get-schedule: func(schedule-at: schedule-at, url: string, env-var: string, header: option<tuple<string, string>>) -> execution-id;
+  }
+  interface http-post {
+    use testing:http/http-get.{response-str};
+    use obelisk:types/execution@4.1.0.{execution-id};
+    use obelisk:types/time@4.1.0.{schedule-at};
+
+    secret-post-schedule: func(schedule-at: schedule-at, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> execution-id;
   }
 }
