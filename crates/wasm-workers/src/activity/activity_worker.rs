@@ -1628,7 +1628,7 @@ pub(crate) mod tests {
             engine,
             sim_clock.clone_box(),
             TokioSleep,
-            |component_id| activity_config(component_id), // no allowed hosts
+            activity_config, // no allowed hosts
         )
         .await;
 
@@ -1785,12 +1785,9 @@ pub(crate) mod tests {
 
         // secret-get takes: url, env_var, header (optional)
         // The url contains the placeholder which gets replaced with the secret
-        let url_with_placeholder =
-            format!("{allowed_host}/?secret={SECRET_ENV_VAR}");
-        let header_with_placeholder = Some((
-            "X-API-Key".to_string(),
-            format!("Bearer {SECRET_ENV_VAR}"),
-        ));
+        let url_with_placeholder = format!("{allowed_host}/?secret={SECRET_ENV_VAR}");
+        let header_with_placeholder =
+            Some(("X-API-Key".to_string(), format!("Bearer {SECRET_ENV_VAR}")));
         let params = Params::from_json_values_test(vec![
             json!(url_with_placeholder),
             json!(SECRET_ENV_VAR),
