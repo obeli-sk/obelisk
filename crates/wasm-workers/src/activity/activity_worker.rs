@@ -1605,6 +1605,251 @@ pub(crate) mod tests {
 
     #[rstest]
     #[tokio::test]
+    async fn http_get_denied_host(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_address = listener.local_addr().unwrap();
+        let uri = format!("http://127.0.0.1:{port}", port = server_address.port());
+
+        // Create worker with NO allowed hosts - the request should be denied
+        let (worker, _) = new_activity_worker_with_config(
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+            |component_id| activity_config(component_id), // no allowed hosts
+        )
+        .await;
+
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            tick_sleep: Duration::ZERO,
+            component_id: ComponentId::dummy_activity(),
+            task_limiter: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
+            locking_strategy,
+        };
+        let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
+        let exec_task = ExecTask::new_test(
+            exec_config,
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            ffqns,
+        );
+
+        let params = Params::from_json_values_test(vec![json!(uri.clone())]);
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        let server = MockServer::builder().listener(listener).start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("should not reach"))
+            .expect(0) // Should NOT be called since host is denied
+            .mount(&server)
+            .await;
+
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .wait_for_tasks()
+                .await
+                .len()
+        );
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let res = assert_matches!(
+            exec_log.last_event().event.clone(),
+            ExecutionRequest::Finished { result, .. } => result
+        );
+        // The execution should fail with an ExecutionError when the WASM traps.
+        // The trap happens because the HTTP request is denied and the WASM unwraps the error.
+        assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(_));
+        // Verify the mock server was not called (request was blocked before reaching it)
+        server.verify().await;
+        drop(db_connection);
+        drop(exec_task);
+        db_close.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn http_get_with_secret(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        use crate::http_request_policy::{ReplacementLocation, SecretConfig};
+        use hashbrown::HashSet;
+        use secrecy::SecretString;
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{header, method, path, query_param},
+        };
+        const SECRET_VALUE: &str = "my-secret-api-key-12345";
+        const SECRET_ENV_VAR: &str = "TEST_API_KEY";
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_address = listener.local_addr().unwrap();
+        let allowed_host = format!("http://127.0.0.1:{port}", port = server_address.port());
+        let host_pattern = HostPattern::parse(&allowed_host).unwrap();
+
+        // Create worker with secret configuration
+        let (worker, component_id) = new_activity_worker_with_config(
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+            {
+                let host_pattern = host_pattern.clone();
+                move |component_id| ActivityConfig {
+                    component_id,
+                    forward_stdout: None,
+                    forward_stderr: None,
+                    env_vars: Arc::from([]),
+                    retry_on_err: true,
+                    directories_config: None,
+                    fuel: None,
+                    secrets: Arc::from(vec![SecretConfig {
+                        hosts: HashSet::from_iter([host_pattern.clone()]),
+                        env_mappings: vec![(
+                            SECRET_ENV_VAR.to_string(),
+                            SecretString::from(SECRET_VALUE.to_string()),
+                        )],
+                        replace_in: HashSet::from_iter([
+                            ReplacementLocation::Headers,
+                            ReplacementLocation::Params,
+                            ReplacementLocation::Body,
+                        ]),
+                    }]),
+                    allowed_hosts: Arc::from(vec![host_pattern]),
+                }
+            },
+        )
+        .await;
+
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            tick_sleep: Duration::ZERO,
+            component_id: component_id.clone(),
+            task_limiter: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
+            locking_strategy,
+        };
+        let secret_get_ffqn: FunctionFqn =
+            FunctionFqn::new_static("testing:http/http-get", "secret-get");
+        let ffqns = Arc::from([secret_get_ffqn.clone()]);
+        let exec_task = ExecTask::new_test(
+            exec_config,
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            ffqns,
+        );
+
+        // secret-get takes: url, env_var, header (optional)
+        // The url contains the placeholder which gets replaced with the secret
+        let url_with_placeholder =
+            format!("{allowed_host}/?secret={SECRET_ENV_VAR}");
+        let header_with_placeholder = Some((
+            "X-API-Key".to_string(),
+            format!("Bearer {SECRET_ENV_VAR}"),
+        ));
+        let params = Params::from_json_values_test(vec![
+            json!(url_with_placeholder),
+            json!(SECRET_ENV_VAR),
+            json!(header_with_placeholder),
+        ]);
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: secret_get_ffqn.clone(),
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        let server = MockServer::builder().listener(listener).start().await;
+        // Verify the secret was replaced in both query params and headers
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .and(query_param("secret", SECRET_VALUE))
+            .and(header("X-API-Key", format!("Bearer {SECRET_VALUE}")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("secret-received"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .wait_for_tasks()
+                .await
+                .len()
+        );
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let res = assert_matches!(
+            exec_log.last_event().event.clone(),
+            ExecutionRequest::Finished { result, .. } => result
+        );
+        // Should succeed with the secret replaced
+        assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
+        server.verify().await;
+        drop(db_connection);
+        drop(exec_task);
+        db_close.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
     async fn preopened_dir_sanity(
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,

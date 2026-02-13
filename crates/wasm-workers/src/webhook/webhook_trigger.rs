@@ -1786,6 +1786,139 @@ pub(crate) mod tests {
             drop(guard);
             db_close.close().await;
         }
+
+        #[rstest]
+        #[tokio::test]
+        async fn http_get_denied_host(
+            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+            locking_strategy: LockingStrategy,
+        ) {
+            use wiremock::{Mock, MockServer, ResponseTemplate, matchers::{method, path}};
+            test_utils::set_up();
+            let sim_clock = SimClock::default();
+            let (guard, db_pool, db_close) = Database::Memory.set_up().await;
+
+            // Set up mock HTTP server that the webhook will try to call
+            let mock_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let mock_address = mock_listener.local_addr().unwrap();
+            let mock_server = MockServer::builder().listener(mock_listener).start().await;
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("should-not-reach"))
+                .expect(0) // Should NOT be called since host is not allowed
+                .mount(&mock_server)
+                .await;
+
+            // Set up activity/workflow workers
+            let activity_exec = crate::activity::activity_worker::tests::new_activity_fibo(
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                TokioSleep,
+                locking_strategy,
+            )
+            .await;
+
+            let (workflow_runnable, workflow_component_id) =
+                crate::workflow::workflow_worker::tests::compile_workflow(
+                    test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+                )
+                .await;
+
+            let fn_registry =
+                crate::testing_fn_registry::TestingFnRegistry::new_from_components(vec![
+                    crate::activity::activity_worker::tests::compile_activity(
+                        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+                    )
+                    .await,
+                    (workflow_runnable, workflow_component_id),
+                ]);
+
+            let engine = crate::engines::Engines::get_webhook_engine(
+                crate::engines::EngineConfig::on_demand_testing(),
+            )
+            .unwrap();
+
+            // Build the HTTP GET webhook with NO allowed hosts
+            let (db_forwarder_sender, _) = mpsc::channel(1);
+            let wasm_file = test_programs_http_get_webhook_builder::TEST_PROGRAMS_HTTP_GET_WEBHOOK;
+            let router = {
+                let instance = WebhookEndpointCompiled::new(
+                    WebhookEndpointConfig {
+                        component_id: ComponentId::new(
+                            ComponentType::WebhookEndpoint,
+                            StrVariant::empty(),
+                            concepts::component_id::InputContentDigest(
+                                utils::sha256sum::calculate_sha256_file(wasm_file)
+                                    .await
+                                    .unwrap(),
+                            ),
+                        )
+                        .unwrap(),
+                        forward_stdout: None,
+                        forward_stderr: None,
+                        env_vars: Arc::from([]),
+                        fuel: None,
+                        backtrace_persist: false,
+                        subscription_interruption: None,
+                        logs_store_min_level: None,
+                        secrets: Arc::from([]),
+                        allowed_hosts: Arc::from([]), // NO allowed hosts - request should be denied
+                    },
+                    wasm_file,
+                    &engine,
+                )
+                .unwrap()
+                .link(&engine, fn_registry.as_ref())
+                .unwrap()
+                .build(&db_forwarder_sender);
+                let mut router = MethodAwareRouter::default();
+                router.add(Some(Method::GET), "/http-get/:PORT", instance);
+                router
+            };
+
+            let tcp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let server_addr = tcp_listener.local_addr().unwrap();
+            info!("Listening on port {}", server_addr.port());
+            let (_server_termination_sender, server_termination_watcher) = watch::channel(());
+            let server = AbortOnDrop(
+                tokio::spawn(webhook_trigger::server(
+                    DEPLOYMENT_ID_DUMMY,
+                    StrVariant::Static("test"),
+                    tcp_listener,
+                    engine,
+                    router,
+                    db_pool.clone(),
+                    sim_clock.clone_box(),
+                    TokioSleep,
+                    fn_registry,
+                    None,
+                    server_termination_watcher,
+                ))
+                .abort_handle(),
+            );
+
+            // Send request to webhook
+            let mock_port = mock_address.port();
+            let resp = reqwest::get(format!("http://{server_addr}/http-get/{mock_port}"))
+                .await
+                .unwrap();
+            // The webhook should return 500 because the HTTP request was denied
+            assert_eq!(resp.status().as_u16(), 500);
+            let body = resp.text().await.unwrap();
+            assert_eq!("Component Error", body);
+
+            // Verify mock was not called
+            mock_server.verify().await;
+
+            drop(activity_exec);
+            drop(server);
+            drop(guard);
+            db_close.close().await;
+        }
+
+        // Note: Secret replacement tests are in activity_worker.rs since the webhook
+        // test program doesn't construct URLs with placeholders. The underlying
+        // HttpRequestPolicy is the same for both webhooks and activities.
     }
 
     #[test]
