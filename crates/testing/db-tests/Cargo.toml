@@ -22,6 +22,7 @@ assert_matches.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 rand.workspace = true
+secrecy.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

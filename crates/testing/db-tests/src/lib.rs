@@ -8,6 +8,7 @@ use db_postgres::postgres_dao::PostgresConfig;
 use db_postgres::postgres_dao::PostgresPool;
 use db_postgres::postgres_dao::ProvisionPolicy;
 use db_sqlite::sqlite_dao::SqlitePool;
+use secrecy::SecretString;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tracing::debug;
@@ -59,7 +60,7 @@ pub async fn initialize_fresh_postgres_db() -> PostgresPool {
     let config = PostgresConfig {
         host: get_env_val("TEST_POSTGRES_HOST"),
         user: get_env_val("TEST_POSTGRES_USER"),
-        password: get_env_val("TEST_POSTGRES_PASSWORD"),
+        password: SecretString::from(get_env_val("TEST_POSTGRES_PASSWORD")),
         db_name: get_env_val("TEST_POSTGRES_DATABASE_PREFIX"),
     };
     for _ in 0..10 {

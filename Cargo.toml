@@ -49,6 +49,7 @@ rand.workspace = true
 reqwest.workspace = true
 schemars.workspace = true
 semver.workspace = true
+secrecy.workspace = true
 serde_json.workspace = true
 serde_with.workspace = true
 serde.workspace = true
@@ -293,6 +294,7 @@ schemars = "1.2.1"
 semver = "1.0.27"
 utoipa = { version = "5.4.0", features = ["chrono"] }
 utoipa-axum = "0.2.0"
+secrecy = "0.10.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_with = "3.16.1"
