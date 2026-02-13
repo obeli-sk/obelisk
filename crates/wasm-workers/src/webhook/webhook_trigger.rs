@@ -1057,10 +1057,11 @@ impl<S: Sleep> WasiHttpView for WebhookEndpointCtx<S> {
         let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
         self.http_client_traces.push((req, resp_trace_rx));
         let clock_fn = self.clock_fn.clone_box();
+        let http_policy = self.http_policy.clone();
         span.in_scope(|| debug!("Sending {request:?}"));
         let handle = wasmtime_wasi::runtime::spawn(
             async move {
-                // FIXME: Replace placeholders in body
+                http_policy.apply_body_replacement(&mut request).await;
                 let resp_result = default_send_request_handler(request, config).await;
                 debug!("Got response {resp_result:?}");
                 let resp_trace = ResponseTrace {

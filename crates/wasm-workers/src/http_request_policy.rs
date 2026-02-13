@@ -252,28 +252,14 @@ impl HttpRequestPolicy {
             }
         }
 
-        // 5. Body replacement is handled asynchronously via ... FIXME
+        // 5. Body replacement needs async buffering, collect applicable secrets
+        //    for the caller to apply via `apply_body_replacement`.
 
         Ok(())
     }
 
-    /// Check if there are any body secrets applicable for the request's target host.
-    #[must_use]
-    pub fn has_body_secrets_for(&self, uri: &hyper::Uri) -> bool {
-        let Some((scheme, host, port)) = extract_request_target(uri) else {
-            return false;
-        };
-        self.secrets.iter().any(|s| {
-            s.replace_in.contains(&ReplacementLocation::Body)
-                && s.allowed_hosts
-                    .iter()
-                    .any(|pattern| pattern.matches(&scheme, &host, port))
-        })
-    }
-
-    /// Get body secrets applicable for a given target.
-    #[must_use]
-    pub fn body_secrets_for(&self, uri: &hyper::Uri) -> Vec<&PlaceholderSecret> {
+    /// Get body secrets applicable for the request's target host.
+    fn body_secrets_for(&self, uri: &hyper::Uri) -> Vec<&PlaceholderSecret> {
         let Some((scheme, host, port)) = extract_request_target(uri) else {
             return Vec::new();
         };
@@ -286,6 +272,67 @@ impl HttpRequestPolicy {
                         .any(|pattern| pattern.matches(&scheme, &host, port))
             })
             .collect()
+    }
+
+    /// Perform async body replacement on a request.
+    /// Must be called after `apply()` (which handles headers and params synchronously).
+    /// Buffers the body, replaces placeholders in text content types, and re-wraps.
+    pub(crate) async fn apply_body_replacement(
+        &self,
+        request: &mut hyper::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
+    ) {
+        let body_secrets = self.body_secrets_for(request.uri());
+        if body_secrets.is_empty() {
+            return;
+        }
+
+        // Only replace in text-based content types
+        let should_replace = request
+            .headers()
+            .get(hyper::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(is_text_content_type)
+            .unwrap_or(false);
+        if !should_replace {
+            return;
+        }
+
+        // Buffer the body
+        let body = std::mem::replace(
+            request.body_mut(),
+            http_body_util::combinators::UnsyncBoxBody::new(
+                http_body_util::Empty::new()
+                    .map_err(|never| match never {}),
+            ),
+        );
+        let Ok(collected) = http_body_util::BodyExt::collect(body).await else {
+            return;
+        };
+        let body_bytes = collected.to_bytes();
+        let Ok(mut body_str) = String::from_utf8(body_bytes.to_vec()) else {
+            // Not valid UTF-8, put original bytes back
+            let restored = http_body_util::combinators::UnsyncBoxBody::new(
+                http_body_util::BodyExt::map_err(
+                    http_body_util::Full::new(body_bytes),
+                    |_| unreachable!(),
+                ),
+            );
+            *request.body_mut() = restored;
+            return;
+        };
+
+        // Perform replacements
+        for secret in &body_secrets {
+            body_str = body_str.replace(&secret.placeholder, secret.real_value.expose_secret());
+        }
+
+        let new_body = http_body_util::combinators::UnsyncBoxBody::new(
+            http_body_util::BodyExt::map_err(
+                http_body_util::Full::new(hyper::body::Bytes::from(body_str)),
+                |_| unreachable!(),
+            ),
+        );
+        *request.body_mut() = new_body;
     }
 }
 
