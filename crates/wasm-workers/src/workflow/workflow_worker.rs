@@ -928,8 +928,10 @@ impl Worker for WorkflowWorker {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::activity::activity_worker::tests::new_activity;
-    use crate::activity::activity_worker::tests::{compile_activity_stub, new_activity_worker};
+    use crate::activity::activity_worker::tests::{
+        activity_config_allowed_host, compile_activity_stub, new_activity_worker,
+    };
+    use crate::activity::activity_worker::tests::{new_activity, new_activity_with_config};
     use crate::activity::cancel_registry::CancelRegistry;
     use crate::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
     use crate::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
@@ -2187,6 +2189,19 @@ pub(crate) mod tests {
         let (_guard, db_pool, db_close) = db.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection().await.unwrap();
+
+        // Start mock server BEFORE creating activity worker to get the allowed host
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+            .expect(1)
+            .mount(&server)
+            .await;
+        debug!("started mock server on {}", server.address());
+        let allowed_host = format!("http://127.0.0.1:{}", server.address().port());
+        let url = format!("{allowed_host}/");
+
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -2197,11 +2212,12 @@ pub(crate) mod tests {
             )
             .await,
         ]);
-        let activity_exec = new_activity(
+        let activity_exec = new_activity_with_config(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone_box(),
             TokioSleep,
+            move |component_id| activity_config_allowed_host(component_id, &allowed_host),
             ComponentRetryConfig::ZERO,
             LockingStrategy::ByComponentDigest,
         )
@@ -2217,15 +2233,6 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
-            .expect(1)
-            .mount(&server)
-            .await;
-        debug!("started mock server on {}", server.address());
-        let url = format!("http://127.0.0.1:{}/", server.address().port());
         let params = Params::from_json_values_test(vec![json!(url)]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
@@ -2286,6 +2293,18 @@ pub(crate) mod tests {
         let created_at = sim_clock.now();
         let (_guard, db_pool, db_close) = db.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
+
+        // Start mock server BEFORE creating activity worker to get the allowed host
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+            .mount(&server)
+            .await;
+        debug!("started mock server on {}", server.address());
+        let allowed_host = format!("http://127.0.0.1:{}", server.address().port());
+        let url = format!("{allowed_host}/");
+
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -2297,11 +2316,12 @@ pub(crate) mod tests {
             .await,
         ]);
 
-        let activity_exec = new_activity(
+        let activity_exec = new_activity_with_config(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone_box(),
             TokioSleep,
+            move |component_id| activity_config_allowed_host(component_id, &allowed_host),
             ComponentRetryConfig::ZERO,
             LockingStrategy::ByComponentDigest,
         )
@@ -2316,14 +2336,6 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
-            .mount(&server)
-            .await;
-        debug!("started mock server on {}", server.address());
-        let url = format!("http://127.0.0.1:{}/", server.address().port());
         let params = Params::from_json_values_test(vec![json!(url), json!(concurrency)]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
