@@ -120,7 +120,7 @@ impl<S: Sleep + 'static> Worker for JsActivityWorker<S> {
             serde_json::to_string(list_of_strings).expect("serde_json::Value must be serializable");
 
         // Rewrite context to call
-        ctx.ffqn = FunctionFqn::new_static_tuple(js_activity_runtime_builder::exports::obelisk_activity::activity_js_runtime::execute::RUN);
+        ctx.ffqn = FunctionFqn::new_static_tuple(activity_js_runtime_builder::exports::obelisk_activity::activity_js_runtime::execute::RUN);
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(self.user_ffqn.function_name.to_string()),
             serde_json::Value::String(self.js_source.clone()),
@@ -305,7 +305,7 @@ mod tests {
 
         // Compile the Boa WASM component
         let (wasm_component, _boa_component_id) = compile_activity_with_engine(
-            js_activity_runtime_builder::JS_ACTIVITY_RUNTIME,
+            activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
             &engine,
             ComponentType::ActivityJs,
         )

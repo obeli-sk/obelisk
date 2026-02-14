@@ -1750,7 +1750,7 @@ fn prespawn_js_activity(
     assert!(component_id.component_type == ComponentType::ActivityJs);
     debug!("Instantiating JS activity");
     let engine = engines.activity_engine.clone();
-    let wasm_path = js_activity_runtime_builder::JS_ACTIVITY_RUNTIME;
+    let wasm_path = activity_js_runtime_builder::ACTIVITY_JS_RUNTIME;
     let runnable_component = RunnableComponent::new(wasm_path, &engine, ComponentType::ActivityJs)?;
 
     let inner = ActivityWorkerCompiled::new_with_config(

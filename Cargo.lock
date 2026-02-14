@@ -3,6 +3,24 @@
 version = 4
 
 [[package]]
+name = "activity-js-runtime"
+version = "0.35.4"
+dependencies = [
+ "anyhow",
+ "boa_engine",
+ "serde_json",
+ "wit-bindgen 0.52.0",
+ "wit-bindgen-rust",
+]
+
+[[package]]
+name = "activity-js-runtime-builder"
+version = "0.35.4"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2485,24 +2503,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "js-activity-runtime"
-version = "0.35.4"
-dependencies = [
- "anyhow",
- "boa_engine",
- "serde_json",
- "wit-bindgen 0.52.0",
- "wit-bindgen-rust",
-]
-
-[[package]]
-name = "js-activity-runtime-builder"
-version = "0.35.4"
-dependencies = [
- "obelisk-component-builder",
-]
-
-[[package]]
 name = "js-sys"
 version = "0.3.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3086,6 +3086,7 @@ dependencies = [
 name = "obeli-sk-wasm-workers"
 version = "0.35.4"
 dependencies = [
+ "activity-js-runtime-builder",
  "arbitrary",
  "assert_matches",
  "async-trait",
@@ -3101,7 +3102,6 @@ dependencies = [
  "indexmap 2.13.0",
  "insta",
  "itertools",
- "js-activity-runtime-builder",
  "libc",
  "obeli-db-tests",
  "obeli-sk-concepts",
@@ -3152,6 +3152,7 @@ dependencies = [
 name = "obelisk"
 version = "0.35.4"
 dependencies = [
+ "activity-js-runtime-builder",
  "anyhow",
  "async-trait",
  "axum",
@@ -3172,7 +3173,6 @@ dependencies = [
  "hashbrown 0.16.1",
  "http",
  "itertools",
- "js-activity-runtime-builder",
  "jsonwebtoken",
  "obeli-sk-concepts",
  "obeli-sk-db-postgres",

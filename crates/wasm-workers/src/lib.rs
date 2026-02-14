@@ -159,7 +159,7 @@ pub(crate) mod tests {
 
         #[cfg(feature = "activity-js")]
         #[rstest::rstest(wasm_path => [
-            js_activity_runtime_builder::JS_ACTIVITY_RUNTIME
+            activity_js_runtime_builder::ACTIVITY_JS_RUNTIME
             ])]
         #[tokio::test]
         async fn jd_activity(wasm_path: &str) {

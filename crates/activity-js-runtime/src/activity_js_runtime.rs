@@ -23,7 +23,7 @@ pub fn execute(
     js_code: &str,
     params_json: &str,
 ) -> Result<Result<String, String>, JsRuntimeError> {
-    // `fn_name` comes from trusted `js_activity_worker`, must be FFQN's fn name
+    // `fn_name` comes from trusted `activity_js_worker`, must be FFQN's fn name
     let fn_name = fn_name.replace('-', "_");
     let mut context = Context::default();
 
@@ -42,20 +42,18 @@ pub fn execute(
     let bare_fn_eval = context.eval(Source::from_bytes(&js_code));
     if let Err(err) = bare_fn_eval {
         host_fn_error("cannot evaluate - {err:?}"); // Send additional info via obelisk:log
-        return Err(JsRuntimeError::PermanentCannotDeclareFunction(
-            err.to_string(),
-        ));
+        return Err(JsRuntimeError::CannotDeclareFunction(err.to_string()));
     }
 
     let typeof_fn = context.eval(Source::from_bytes(&format!("typeof {fn_name}")));
     let Ok(typeof_fn) = typeof_fn else {
-        return Err(JsRuntimeError::PermanentFunctionNotFound);
+        return Err(JsRuntimeError::FunctionNotFound);
     };
     let Some(typeof_fn) = typeof_fn.as_string() else {
-        return Err(JsRuntimeError::PermanentFunctionNotFound);
+        return Err(JsRuntimeError::FunctionNotFound);
     };
     if typeof_fn.as_str() != "function" {
-        return Err(JsRuntimeError::PermanentFunctionNotFound);
+        return Err(JsRuntimeError::FunctionNotFound);
     }
 
     let call_fn = format!("{fn_name}(__params__);");

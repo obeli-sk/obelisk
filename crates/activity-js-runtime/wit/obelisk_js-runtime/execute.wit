@@ -5,9 +5,9 @@ interface execute {
     variant js-runtime-error {
         execution-failed, // Must exist to satisfy Obelisk contract
         /// error when `js-code` could not be evaluated, before actually running the function with supplied parameters.
-        permanent-cannot-declare-function(string),
+        cannot-declare-function(string),
         /// `js-code` was evaluated, but type of `fn-name` not a function.
-        permanent-function-not-found,
+        function-not-found,
         // function was executed and succeeded, but did not type check.
         wrong-return-type(string),
         // function was executed and thrown an error, but it did not type check.

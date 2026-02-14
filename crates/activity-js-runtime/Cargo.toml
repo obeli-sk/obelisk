@@ -1,5 +1,5 @@
 [package]
-name = "js-activity-runtime"
+name = "activity-js-runtime"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
