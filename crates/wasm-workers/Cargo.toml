@@ -49,6 +49,7 @@ wasmtime.workspace = true
 [features]
 test = []
 boa-unstable = []
+boa-unstable-workflow = []
 
 [dev-dependencies]
 concepts = { workspace = true, features = ["test"] }

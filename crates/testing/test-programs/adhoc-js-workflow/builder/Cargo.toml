@@ -9,7 +9,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-boa-unstable = []
+boa-unstable-workflow = []
 
 [build-dependencies]
 obelisk-component-builder.workspace = true

@@ -1,4 +1,4 @@
-#[cfg(feature = "boa-unstable")]
+#[cfg(feature = "boa-unstable-workflow")]
 fn main() {
     use obelisk_component_builder::BuildConfig;
     obelisk_component_builder::build_workflow(
@@ -7,5 +7,5 @@ fn main() {
     );
 }
 
-#[cfg(not(feature = "boa-unstable"))]
+#[cfg(not(feature = "boa-unstable-workflow"))]
 fn main() {}

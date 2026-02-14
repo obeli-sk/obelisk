@@ -148,7 +148,7 @@ pub(crate) mod tests {
             compile_workflow(wasm_path).await;
         }
 
-        #[cfg(feature = "boa-unstable")]
+        #[cfg(feature = "boa-unstable-workflow")]
         #[rstest::rstest(wasm_path => [
             test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW
             ])]

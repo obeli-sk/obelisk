@@ -3373,7 +3373,7 @@ pub(crate) mod tests {
         assert_matches!(result.kind, ExecutionFailureKind::Cancelled);
     }
 
-    #[cfg(feature = "boa-unstable")]
+    #[cfg(feature = "boa-unstable-workflow")]
     mod boa {
         use super::*;
         use concepts::prefixed_ulid::DelayId;
