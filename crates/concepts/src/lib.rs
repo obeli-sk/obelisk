@@ -1144,11 +1144,12 @@ impl Params {
         self.len() == 0
     }
 
+    #[must_use]
     pub fn as_json_values(&self) -> Option<&[serde_json::Value]> {
         match &self.0 {
             ParamsInternal::Vals { .. } => None,
             ParamsInternal::Empty => Some(&[]),
-            ParamsInternal::JsonValues(vec) => Some(&vec),
+            ParamsInternal::JsonValues(vec) => Some(vec),
         }
     }
 }

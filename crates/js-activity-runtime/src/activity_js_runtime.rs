@@ -52,7 +52,7 @@ pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String
     match result {
         Ok(js_value) => {
             if let Some(string) = js_value.as_string() {
-                return Ok(string.to_std_string_escaped());
+                Ok(string.to_std_string_escaped())
             } else {
                 todo!("type check error: returned value must be string, got..");
             }
@@ -61,7 +61,7 @@ pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String
             if let Some(js_value) = js_err.as_opaque()
                 && let Some(string) = js_value.as_string()
             {
-                return Err(string.to_std_string_escaped());
+                Err(string.to_std_string_escaped())
             } else {
                 todo!("type check error: thrown value must be string, got..");
             }
