@@ -1143,6 +1143,14 @@ impl Params {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    pub fn as_json_values(&self) -> Option<&[serde_json::Value]> {
+        match &self.0 {
+            ParamsInternal::Vals { .. } => None,
+            ParamsInternal::Empty => Some(&[]),
+            ParamsInternal::JsonValues(vec) => Some(&vec),
+        }
+    }
 }
 
 impl PartialEq for Params {

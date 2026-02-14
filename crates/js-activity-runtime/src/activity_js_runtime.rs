@@ -14,8 +14,8 @@ use crate::generated::obelisk::log::log as obelisk_log;
 
 /// Execute JavaScript code with the given parameters.
 ///
-/// `params_json` is expected to be a JSON array string. The elements
-/// are spread as positional arguments to the `fn_name` function.
+/// `params_json` is expected to be a JSON array string. The array is passed
+/// as the first and only argument to `fn_name`.
 pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String, String> {
     // `fn_name` comes from trusted `js_activity_worker`, must be FFQN's fn name
     let fn_name = fn_name.replace('-', "_");
@@ -24,21 +24,15 @@ pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String
     // Set up console
     setup_console(&mut context).map_err(|e| format!("Failed to setup console: {e}"))?;
 
-    // Verify that params is a valid JSON array
-    let parsed: serde_json::Value = serde_json::from_str(params_json)
-        .map_err(|err| format!("params '{params_json}' must be valid JSON: {err}"))?;
-    if !parsed.is_array() {
-        return Err(format!("params must be a JSON array, got: {parsed}"));
-    }
-
-    // Parse params and store as global __params__ array
-    let escaped_params = params_json.replace('\\', "\\\\").replace('\'', "\\'");
-    let params_code = format!("var __params__ = JSON.parse('{escaped_params}');");
+    // `params_json` is sent by trusted `activity_js_worker`, params were typechecked.
+    // Store as global `__params__` array.
+    // Direct interpolation,  JSON array/object literals are valid JavaScript syntax.
+    let params_code = format!("const __params__ = {params_json};");
     context
         .eval(Source::from_bytes(&params_code))
-        .map_err(|e| format!("Failed to parse params '{params_json}': {e}"))?;
+        .expect("already verified that params_json is parseable");
 
-    // Build full code: stringify helper + user code + main invocation with spread
+    // Build full code: stringify helper + user code + `fn_name` invocation
     const JS_PRE: &str = r#"
     function __stringify__(e) {
         if (e === null) return "null";
@@ -72,7 +66,7 @@ pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String
         throw 'function `{fn_name}` not defined';
     }}
     try {{
-        const __result__ = {fn_name}.apply(null, __params__);
+        const __result__ = {fn_name}(__params__);
         __stringify__(__result__);
     }} catch (e) {{
         throw __stringify__(e);

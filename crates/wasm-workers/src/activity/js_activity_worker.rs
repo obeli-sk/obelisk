@@ -98,21 +98,27 @@ impl<S: Sleep + 'static> Worker for JsActivityWorker<S> {
     }
 
     async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
-        // Serialize user params to JSON to extract the list<string> argument.
-        // The user function signature is: func(params: list<string>) -> result<string, string>
-        // So the stored params JSON is: [ ["str1", "str2", ...] ]
-        let user_params_array: Vec<serde_json::Value> = serde_json::to_value(&ctx.params)
-            .and_then(serde_json::from_value)
-            .unwrap_or_default();
+        // Expecting a single parameter of type `list<string>`.
+        assert_eq!(
+            1,
+            ctx.params.len(),
+            "type checked in Params::from_json_values"
+        );
+        let json_params = ctx
+            .params
+            .as_json_values()
+            .expect("params come from database, not wasmtime"); // TODO: Extract ParamsInternal
+        let list_of_strings = json_params.first().expect("checked above");
+        assert!(
+            list_of_strings.is_array(),
+            "params must have been type checked to adhere to `list<string>` when `Params` was constructed"
+        );
 
-        let params_json_str = if user_params_array.is_empty() {
-            "[]".to_string()
-        } else {
-            // First element is the list<string>
-            serde_json::to_string(&user_params_array[0]).unwrap_or_else(|_| "[]".to_string())
-        };
+        let params_json_str =
+            serde_json::to_string(list_of_strings).expect("serde_json::Value must be serializable");
 
-        // Rewrite context to call the Boa component's run(js-code, params-json)
+        // Rewrite context to call
+        // run: func(fn-name: string, js-code: string, params-json: string) -> result<string, string>;
         ctx.ffqn = FunctionFqn::new_static(BOA_IFC_FQN, BOA_FN_NAME);
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(self.user_ffqn.function_name.to_string()),
@@ -315,7 +321,9 @@ mod tests {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet");
         let js_source = r#"
-            function greet(name, greeting) {
+            function greet(params) {
+                let name = params[0];
+                let greeting = params[1];
                 return greeting + ", " + name + "!";
             }
         "#;
@@ -356,8 +364,8 @@ mod tests {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "logging");
         let js_source = r#"
-            function logging(msg) {
-                console.log("Log message:", msg);
+            function logging(params) {
+                console.log("Log message:", params[0]);
                 console.info("Info message");
                 console.warn("Warning message");
                 console.error("Error message");
@@ -380,8 +388,8 @@ mod tests {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "object");
         let js_source = r"
-            function object(name) {
-                return { name: name, count: 42 };
+            function object(params) {
+                return { name: params[0], count: 42 };
             }
         ";
 
