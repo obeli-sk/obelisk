@@ -100,9 +100,9 @@ use tracing::{debug, info, trace};
 use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use wasm_workers::RunnableComponent;
+use wasm_workers::activity::activity_js_worker::ActivityJsWorkerCompiled;
 use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
-use wasm_workers::activity::js_activity_worker::JsActivityWorkerCompiled;
 use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
@@ -1762,7 +1762,7 @@ fn prespawn_js_activity(
     )
     .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?;
 
-    let worker = JsActivityWorkerCompiled::new(inner, activity_js.js_source, activity_js.ffqn);
+    let worker = ActivityJsWorkerCompiled::new(inner, activity_js.js_source, activity_js.ffqn);
     Ok(WorkerCompiled::new_js_activity(
         worker,
         activity_js.exec_config,
@@ -1817,8 +1817,8 @@ struct WorkflowWorkerCompiledWithConfig {
 }
 
 enum CompiledWorkerKind {
-    Activity(ActivityWorkerCompiled<TokioSleep>),
-    JsActivity(JsActivityWorkerCompiled<TokioSleep>),
+    ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
+    ActivityJs(ActivityJsWorkerCompiled<TokioSleep>),
     Workflow(WorkflowWorkerCompiledWithConfig),
 }
 
@@ -1847,7 +1847,7 @@ impl WorkerCompiled {
         };
         (
             WorkerCompiled {
-                worker: CompiledWorkerKind::Activity(worker),
+                worker: CompiledWorkerKind::ActivityWasm(worker),
                 exec_config,
                 logs_store_min_level,
             },
@@ -1856,7 +1856,7 @@ impl WorkerCompiled {
     }
 
     fn new_js_activity(
-        worker: JsActivityWorkerCompiled<TokioSleep>,
+        worker: ActivityJsWorkerCompiled<TokioSleep>,
         exec_config: ExecConfig,
         logs_store_min_level: Option<LogLevel>,
     ) -> (WorkerCompiled, ComponentConfig) {
@@ -1872,7 +1872,7 @@ impl WorkerCompiled {
         };
         (
             WorkerCompiled {
-                worker: CompiledWorkerKind::JsActivity(worker),
+                worker: CompiledWorkerKind::ActivityJs(worker),
                 exec_config,
                 logs_store_min_level,
             },
@@ -1923,9 +1923,11 @@ impl WorkerCompiled {
     fn link(self, fn_registry: &Arc<dyn FunctionRegistry>) -> Result<WorkerLinked, anyhow::Error> {
         Ok(WorkerLinked {
             worker: match self.worker {
-                CompiledWorkerKind::Activity(activity) => LinkedWorkerKind::Activity(activity),
-                CompiledWorkerKind::JsActivity(js_activity) => {
-                    LinkedWorkerKind::JsActivity(js_activity)
+                CompiledWorkerKind::ActivityWasm(activity) => {
+                    LinkedWorkerKind::ActivityWasm(activity)
+                }
+                CompiledWorkerKind::ActivityJs(js_activity) => {
+                    LinkedWorkerKind::ActivityJs(js_activity)
                 }
                 CompiledWorkerKind::Workflow(workflow_compiled) => {
                     LinkedWorkerKind::Workflow(WorkflowWorkerLinkedWithConfig {
@@ -1947,8 +1949,8 @@ struct WorkflowWorkerLinkedWithConfig {
 }
 
 enum LinkedWorkerKind {
-    Activity(ActivityWorkerCompiled<TokioSleep>),
-    JsActivity(JsActivityWorkerCompiled<TokioSleep>),
+    ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
+    ActivityJs(ActivityJsWorkerCompiled<TokioSleep>),
     Workflow(WorkflowWorkerLinkedWithConfig),
 }
 
@@ -1970,14 +1972,14 @@ impl WorkerLinked {
             log_sender: log_forwarder_sender.clone(),
         });
         let worker: Arc<dyn Worker> = match self.worker {
-            LinkedWorkerKind::Activity(activity_compiled) => {
+            LinkedWorkerKind::ActivityWasm(activity_compiled) => {
                 Arc::from(activity_compiled.into_worker(
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
                 ))
             }
-            LinkedWorkerKind::JsActivity(js_activity_compiled) => {
+            LinkedWorkerKind::ActivityJs(js_activity_compiled) => {
                 Arc::from(js_activity_compiled.into_worker(
                     cancel_registry,
                     log_forwarder_sender,

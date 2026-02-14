@@ -26,7 +26,7 @@ use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
 /// Compiled JS activity. Holds the compiled Boa WASM component + JS source + user FFQN.
-pub struct JsActivityWorkerCompiled<S: Sleep> {
+pub struct ActivityJsWorkerCompiled<S: Sleep> {
     inner: ActivityWorkerCompiled<S>,
     js_source: String,
     user_ffqn: FunctionFqn,
@@ -35,7 +35,7 @@ pub struct JsActivityWorkerCompiled<S: Sleep> {
     user_exports_hierarchy_ext: Vec<PackageIfcFns>,
 }
 
-impl<S: Sleep> JsActivityWorkerCompiled<S> {
+impl<S: Sleep> ActivityJsWorkerCompiled<S> {
     pub fn new(
         inner: ActivityWorkerCompiled<S>,
         js_source: String,
@@ -71,11 +71,11 @@ impl<S: Sleep> JsActivityWorkerCompiled<S> {
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
-    ) -> JsActivityWorker<S> {
+    ) -> ActivityJsWorker<S> {
         let inner =
             self.inner
                 .into_worker(cancel_registry, log_forwarder_sender, logs_storage_config);
-        JsActivityWorker {
+        ActivityJsWorker {
             inner,
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
@@ -84,7 +84,7 @@ impl<S: Sleep> JsActivityWorkerCompiled<S> {
     }
 }
 
-pub struct JsActivityWorker<S: Sleep> {
+pub struct ActivityJsWorker<S: Sleep> {
     inner: ActivityWorker<S>,
     js_source: String,
     #[allow(dead_code)] // Will be used for error context in future
@@ -93,7 +93,7 @@ pub struct JsActivityWorker<S: Sleep> {
 }
 
 #[async_trait]
-impl<S: Sleep + 'static> Worker for JsActivityWorker<S> {
+impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
     fn exported_functions_noext(&self) -> &[FunctionMetadata] {
         &self.user_exports_noext
     }
@@ -360,7 +360,7 @@ mod tests {
         )
         .unwrap();
 
-        let js_compiled = JsActivityWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn);
+        let js_compiled = ActivityJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn);
 
         Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
     }
