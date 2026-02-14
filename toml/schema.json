@@ -12,6 +12,12 @@
         "$ref": "#/$defs/ActivityStubExtComponentConfigToml"
       }
     },
+    "activity_js": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActivityJsComponentConfigToml"
+      }
+    },
     "activity_stub": {
       "type": "array",
       "items": {
@@ -160,6 +166,51 @@
       "enum": [
         "none",
         "native"
+      ]
+    },
+    "ActivityJsComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml"
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml"
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml"
+        },
+        "max_retries": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig"
+        },
+        "retry_on_err": {
+          "type": "boolean",
+          "default": true
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "source",
+        "ffqn"
       ]
     },
     "ActivityStubExtComponentConfigToml": {
