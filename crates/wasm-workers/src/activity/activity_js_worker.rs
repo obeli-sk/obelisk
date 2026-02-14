@@ -688,9 +688,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api"))
             .and(body_json(serde_json::json!({"key": "value"})))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_string(r#"{"status":"ok"}"#),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"status":"ok"}"#))
             .expect(1)
             .mount(&server)
             .await;
@@ -775,14 +773,17 @@ mod tests {
         let ctx = make_worker_context(ffqn, &[]);
 
         // The fetch should fail because no hosts are allowed
-        let result = worker.run(ctx).await.expect("worker should return a result");
+        let result = worker
+            .run(ctx)
+            .await
+            .expect("worker should return a result");
         let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
         // The JS runtime wraps the error - it should come back as a WrongReturnType
         // or WrongThrownType since the promise rejection isn't a plain string throw.
         assert_matches!(
             retval,
             SupportedFunctionReturnValue::Err { .. }
-            | SupportedFunctionReturnValue::ExecutionError(_)
+                | SupportedFunctionReturnValue::ExecutionError(_)
         );
     }
 

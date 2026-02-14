@@ -117,11 +117,7 @@ fn resolve_if_promise(value: &JsValue, context: &mut Context) -> JsResult<JsValu
 
 /// Register the `fetch` API backed by WASIp2 HTTP.
 fn setup_fetch(context: &mut Context) -> JsResult<()> {
-    boa_runtime::register(
-        FetchExtension(WasiFetcher),
-        None,
-        context,
-    )
+    boa_runtime::register(FetchExtension(WasiFetcher), None, context)
 }
 
 /// Set up the global `console` object routing to obelisk:log.

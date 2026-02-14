@@ -6,9 +6,7 @@
 //! `wasi:io/poll.poll()` call, enabling true I/O concurrency.
 
 use boa_engine::context::time::JsInstant;
-use boa_engine::job::{
-    GenericJob, Job, JobExecutor, NativeAsyncJob, PromiseJob, TimeoutJob,
-};
+use boa_engine::job::{GenericJob, Job, JobExecutor, NativeAsyncJob, PromiseJob, TimeoutJob};
 use boa_engine::{Context, JsResult};
 use futures_concurrency::future::FutureGroup;
 use futures_lite::StreamExt;
@@ -82,7 +80,10 @@ impl JobExecutor for WasiJobExecutor {
                 break;
             }
 
-            if let Some(Err(err)) = futures_lite::future::poll_once(group.next()).await.flatten() {
+            if let Some(Err(err)) = futures_lite::future::poll_once(group.next())
+                .await
+                .flatten()
+            {
                 self.clear();
                 return Err(err);
             }
