@@ -177,7 +177,7 @@ fn make_exports_hierarchy(
     }]
 }
 
-#[cfg(all(test, feature = "boa-unstable"))]
+#[cfg(all(test, feature = "activity-js"))]
 mod tests {
     use super::*;
     use crate::activity::activity_worker::tests::compile_activity_with_engine;

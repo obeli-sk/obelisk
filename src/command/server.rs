@@ -1738,7 +1738,7 @@ fn prespawn_activity(
     ))
 }
 
-#[cfg(feature = "boa-unstable")]
+#[cfg(feature = "activity-js")]
 #[instrument(level = "debug", skip_all, fields(
     component_id = %activity_js.exec_config.component_id,
 ))]
@@ -1751,8 +1751,7 @@ fn prespawn_js_activity(
     debug!("Instantiating JS activity");
     let engine = engines.activity_engine.clone();
     let wasm_path = js_activity_runtime_builder::JS_ACTIVITY_RUNTIME;
-    let runnable_component =
-        RunnableComponent::new(wasm_path, &engine, ComponentType::ActivityWasm)?;
+    let runnable_component = RunnableComponent::new(wasm_path, &engine, ComponentType::ActivityJs)?;
 
     let inner = ActivityWorkerCompiled::new_with_config(
         runnable_component,
@@ -1771,12 +1770,12 @@ fn prespawn_js_activity(
     ))
 }
 
-#[cfg(not(feature = "boa-unstable"))]
+#[cfg(not(feature = "activity-js"))]
 fn prespawn_js_activity(
     _activity_js: ActivityJsConfigVerified,
     _engines: &Engines,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
-    anyhow::bail!("activity_js requires the `boa-unstable` feature to be enabled")
+    anyhow::bail!("activity_js requires the `activity-js` feature to be enabled")
 }
 
 #[instrument(level = "debug", skip_all, fields(

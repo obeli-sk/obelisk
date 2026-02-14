@@ -48,8 +48,9 @@ wasmtime.workspace = true
 
 [features]
 test = []
-boa-unstable = []
+activity-js = []
 boa-unstable-workflow = []
+default = ["activity-js"]
 
 [dev-dependencies]
 concepts = { workspace = true, features = ["test"] }

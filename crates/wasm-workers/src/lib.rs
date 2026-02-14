@@ -157,7 +157,7 @@ pub(crate) mod tests {
             compile_workflow(wasm_path).await;
         }
 
-        #[cfg(feature = "boa-unstable")]
+        #[cfg(feature = "activity-js")]
         #[rstest::rstest(wasm_path => [
             js_activity_runtime_builder::JS_ACTIVITY_RUNTIME
             ])]
