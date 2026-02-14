@@ -7,6 +7,8 @@ use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
 use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
+use crate::config::toml::ActivityJsComponentConfigToml;
+use crate::config::toml::ActivityJsConfigVerified;
 use crate::config::toml::ActivityStubExtComponentConfigToml;
 use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigToml;
@@ -74,7 +76,6 @@ use futures_util::future::OptionFuture;
 use grpc::extractor::accept_trace;
 use grpc::grpc_gen;
 use hashbrown::HashMap;
-use itertools::Either;
 use serde_json::json;
 use std::fmt::Debug;
 use std::path::Path;
@@ -99,6 +100,7 @@ use tracing::{debug, info, trace};
 use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use wasm_workers::RunnableComponent;
+use wasm_workers::activity::activity_js_worker::ActivityJsWorkerCompiled;
 use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::component_logger::LogStrageConfig;
@@ -857,6 +859,7 @@ impl ServerVerified {
 
         let mut config = ConfigVerified::fetch_and_verify_all(
             config.activities_wasm,
+            config.activities_js,
             config.activities_stub,
             config.activities_external,
             config.workflows,
@@ -934,6 +937,7 @@ impl ServerCompiledLinked {
         let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
             &server_verified.engines,
             server_verified.config.activities_wasm,
+            server_verified.config.activities_js,
             server_verified.config.activities_stub_ext,
             server_verified.config.workflows,
             server_verified.config.webhooks_by_names,
@@ -1215,6 +1219,7 @@ async fn start_http_servers(
 #[derive(Debug)]
 struct ConfigVerified {
     activities_wasm: Vec<ActivityWasmConfigVerified>,
+    activities_js: Vec<ActivityJsConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
@@ -1228,6 +1233,7 @@ impl ConfigVerified {
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
         activities_wasm: Vec<ActivityWasmComponentConfigToml>,
+        activities_js: Vec<ActivityJsComponentConfigToml>,
         activities_stub: Vec<ActivityStubExtComponentConfigToml>,
         activities_external: Vec<ActivityStubExtComponentConfigToml>,
         workflows: Vec<WorkflowComponentConfigToml>,
@@ -1401,8 +1407,14 @@ impl ConfigVerified {
                     let (k, v) = webhook??;
                     webhooks_by_names.insert(k, v);
                 }
+                // Verify JS activities (no async fetch needed)
+                let activities_js = activities_js
+                    .into_iter()
+                    .map(|js| js.verify(global_executor_instance_limiter.clone(), fuel))
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok(ConfigVerified {
                     activities_wasm,
+                    activities_js,
                     activities_stub_ext,
                     workflows,
                     webhooks_by_names,
@@ -1446,6 +1458,7 @@ enum CompiledComponent {
 async fn compile_and_verify(
     engines: &Engines,
     activities_wasm: Vec<ActivityWasmConfigVerified>,
+    activities_js: Vec<ActivityJsConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
@@ -1485,6 +1498,23 @@ async fn compile_and_verify(
                 })
             })
         })
+        .chain(activities_js.into_iter().map(|activity_js| {
+            let engines = engines.clone();
+            let build_semaphore = build_semaphore.clone();
+            let parent_span = parent_span.clone();
+            tokio::task::spawn_blocking(move || {
+                let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+                let span = info_span!(parent: parent_span, "activity_js_compile", component_id = %activity_js.component_id());
+                span.in_scope(|| {
+                    prespawn_js_activity(activity_js, &engines).map(|(worker, component_config)| {
+                        CompiledComponent::ActivityOrWorkflow {
+                            worker,
+                            component_config,
+                        }
+                    })
+                })
+            })
+        }))
         .chain(activities_stub_ext.into_iter().map(|activity_stub_ext| {
             // No build_semaphore as there is no WASM compilation.
             let span = info_span!("activity_stub_ext_init", component_id = %activity_stub_ext.component_id); // automatically associated with parent
@@ -1708,6 +1738,46 @@ fn prespawn_activity(
     ))
 }
 
+#[cfg(feature = "activity-js")]
+#[instrument(level = "debug", skip_all, fields(
+    component_id = %activity_js.exec_config.component_id,
+))]
+fn prespawn_js_activity(
+    activity_js: ActivityJsConfigVerified,
+    engines: &Engines,
+) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+    let component_id = activity_js.component_id().clone();
+    assert!(component_id.component_type == ComponentType::ActivityJs);
+    debug!("Instantiating JS activity");
+    let engine = engines.activity_engine.clone();
+    let wasm_path = activity_js_runtime_builder::ACTIVITY_JS_RUNTIME;
+    let runnable_component = RunnableComponent::new(wasm_path, &engine, ComponentType::ActivityJs)?;
+
+    let inner = ActivityWorkerCompiled::new_with_config(
+        runnable_component,
+        activity_js.activity_config,
+        engine,
+        Now.clone_box(),
+        TokioSleep,
+    )
+    .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?;
+
+    let worker = ActivityJsWorkerCompiled::new(inner, activity_js.js_source, activity_js.ffqn);
+    Ok(WorkerCompiled::new_js_activity(
+        worker,
+        activity_js.exec_config,
+        activity_js.logs_store_min_level,
+    ))
+}
+
+#[cfg(not(feature = "activity-js"))]
+fn prespawn_js_activity(
+    _activity_js: ActivityJsConfigVerified,
+    _engines: &Engines,
+) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+    anyhow::bail!("activity_js requires the `activity-js` feature to be enabled")
+}
+
 #[instrument(level = "debug", skip_all, fields(
     executor_id = %workflow.exec_config.executor_id,
     component_id = %workflow.exec_config.component_id,
@@ -1746,8 +1816,14 @@ struct WorkflowWorkerCompiledWithConfig {
     workflows_lock_extension_leeway: Duration,
 }
 
+enum CompiledWorkerKind {
+    ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
+    ActivityJs(ActivityJsWorkerCompiled<TokioSleep>),
+    Workflow(WorkflowWorkerCompiledWithConfig),
+}
+
 struct WorkerCompiled {
-    worker: Either<ActivityWorkerCompiled<TokioSleep>, WorkflowWorkerCompiledWithConfig>,
+    worker: CompiledWorkerKind,
     exec_config: ExecConfig,
     logs_store_min_level: Option<LogLevel>,
 }
@@ -1771,7 +1847,32 @@ impl WorkerCompiled {
         };
         (
             WorkerCompiled {
-                worker: Either::Left(worker),
+                worker: CompiledWorkerKind::ActivityWasm(worker),
+                exec_config,
+                logs_store_min_level,
+            },
+            component,
+        )
+    }
+
+    fn new_js_activity(
+        worker: ActivityJsWorkerCompiled<TokioSleep>,
+        exec_config: ExecConfig,
+        logs_store_min_level: Option<LogLevel>,
+    ) -> (WorkerCompiled, ComponentConfig) {
+        let component = ComponentConfig {
+            component_id: exec_config.component_id.clone(),
+            workflow_or_activity_config: Some(ComponentConfigImportable {
+                exports_ext: worker.exported_functions_ext().to_vec(),
+                exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
+            }),
+            imports: worker.imported_functions().to_vec(),
+            wit: None,
+            workflow_replay_info: None,
+        };
+        (
+            WorkerCompiled {
+                worker: CompiledWorkerKind::ActivityJs(worker),
                 exec_config,
                 logs_store_min_level,
             },
@@ -1807,7 +1908,7 @@ impl WorkerCompiled {
         };
         Ok((
             WorkerCompiled {
-                worker: Either::Right(WorkflowWorkerCompiledWithConfig {
+                worker: CompiledWorkerKind::Workflow(WorkflowWorkerCompiledWithConfig {
                     worker,
                     workflows_lock_extension_leeway,
                 }),
@@ -1822,12 +1923,19 @@ impl WorkerCompiled {
     fn link(self, fn_registry: &Arc<dyn FunctionRegistry>) -> Result<WorkerLinked, anyhow::Error> {
         Ok(WorkerLinked {
             worker: match self.worker {
-                Either::Left(activity) => Either::Left(activity),
-                Either::Right(workflow_compiled) => Either::Right(WorkflowWorkerLinkedWithConfig {
-                    worker: workflow_compiled.worker.link(fn_registry.clone())?,
-                    workflows_lock_extension_leeway: workflow_compiled
-                        .workflows_lock_extension_leeway,
-                }),
+                CompiledWorkerKind::ActivityWasm(activity) => {
+                    LinkedWorkerKind::ActivityWasm(activity)
+                }
+                CompiledWorkerKind::ActivityJs(js_activity) => {
+                    LinkedWorkerKind::ActivityJs(js_activity)
+                }
+                CompiledWorkerKind::Workflow(workflow_compiled) => {
+                    LinkedWorkerKind::Workflow(WorkflowWorkerLinkedWithConfig {
+                        worker: workflow_compiled.worker.link(fn_registry.clone())?,
+                        workflows_lock_extension_leeway: workflow_compiled
+                            .workflows_lock_extension_leeway,
+                    })
+                }
             },
             exec_config: self.exec_config,
             logs_store_min_level: self.logs_store_min_level,
@@ -1840,8 +1948,14 @@ struct WorkflowWorkerLinkedWithConfig {
     workflows_lock_extension_leeway: Duration,
 }
 
+enum LinkedWorkerKind {
+    ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
+    ActivityJs(ActivityJsWorkerCompiled<TokioSleep>),
+    Workflow(WorkflowWorkerLinkedWithConfig),
+}
+
 struct WorkerLinked {
-    worker: Either<ActivityWorkerCompiled<TokioSleep>, WorkflowWorkerLinkedWithConfig>,
+    worker: LinkedWorkerKind,
     exec_config: ExecConfig,
     logs_store_min_level: Option<LogLevel>,
 }
@@ -1853,28 +1967,37 @@ impl WorkerLinked {
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
     ) -> ExecutorTaskHandle {
+        let logs_storage_config = self.logs_store_min_level.map(|min_level| LogStrageConfig {
+            min_level,
+            log_sender: log_forwarder_sender.clone(),
+        });
         let worker: Arc<dyn Worker> = match self.worker {
-            Either::Left(activity_compiled) => Arc::from(activity_compiled.into_worker(
-                cancel_registry,
-                log_forwarder_sender,
-                self.logs_store_min_level.map(|min_level| LogStrageConfig {
-                    min_level,
-                    log_sender: log_forwarder_sender.clone(),
-                }),
-            )),
-            Either::Right(workflow_linked) => Arc::from(workflow_linked.worker.into_worker(
-                deployment_id,
-                db_pool.clone(),
-                Arc::new(DeadlineTrackerFactoryTokio {
-                    leeway: workflow_linked.workflows_lock_extension_leeway,
-                    clock_fn: Now.clone_box(),
-                }),
-                cancel_registry,
-                self.logs_store_min_level.map(|min_level| LogStrageConfig {
-                    min_level,
-                    log_sender: log_forwarder_sender.clone(),
-                }),
-            )),
+            LinkedWorkerKind::ActivityWasm(activity_compiled) => {
+                Arc::from(activity_compiled.into_worker(
+                    cancel_registry,
+                    log_forwarder_sender,
+                    logs_storage_config,
+                ))
+            }
+            LinkedWorkerKind::ActivityJs(js_activity_compiled) => {
+                Arc::from(js_activity_compiled.into_worker(
+                    cancel_registry,
+                    log_forwarder_sender,
+                    logs_storage_config,
+                ))
+            }
+            LinkedWorkerKind::Workflow(workflow_linked) => {
+                Arc::from(workflow_linked.worker.into_worker(
+                    deployment_id,
+                    db_pool.clone(),
+                    Arc::new(DeadlineTrackerFactoryTokio {
+                        leeway: workflow_linked.workflows_lock_extension_leeway,
+                        clock_fn: Now.clone_box(),
+                    }),
+                    cancel_registry,
+                    logs_storage_config,
+                ))
+            }
         };
         ExecTask::spawn_new(
             deployment_id,

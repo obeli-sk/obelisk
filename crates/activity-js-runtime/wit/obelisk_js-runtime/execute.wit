@@ -1,0 +1,25 @@
+package obelisk-activity:activity-js-runtime;
+
+interface execute {
+
+    variant js-runtime-error {
+        execution-failed, // Must exist to satisfy Obelisk contract
+        /// error when `js-code` could not be evaluated, before actually running the function with supplied parameters.
+        cannot-declare-function(string),
+        /// `js-code` was evaluated, but type of `fn-name` not a function.
+        function-not-found,
+        // function was executed and succeeded, but did not type check.
+        wrong-return-type(string),
+        // function was executed and thrown an error, but it did not type check.
+        wrong-thrown-type(string),
+    }
+
+    /// Execute JavaScript code as an activity.
+    ///
+    /// The JS code should define a function named as declared in `fn-name` that receives
+    /// the params as positional arguments (spread from the JSON array)
+    /// and returns a JSON-serializable value.
+    ///
+    /// Returns Ok(json_result) on success, Err(error_message) on failure.
+    run: func(fn-name: string, js-code: string, params-json: string) -> result<result<string, string>, js-runtime-error>;
+}

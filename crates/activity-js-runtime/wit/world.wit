@@ -1,0 +1,7 @@
+package any:any;
+
+world any {
+    export obelisk-activity:activity-js-runtime/execute;
+
+    import obelisk:log/log@1.0.0;
+}

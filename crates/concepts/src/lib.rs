@@ -656,8 +656,8 @@ pub enum ResultParsingErrorFromVal {
     WastValConversionError(val_json::wast_val::WastValConversionError),
     #[error("top level type must be a result")]
     TopLevelTypeMustBeAResult,
-    #[error("value does not type check")]
-    TypeCheckError,
+    #[error("value does not type check - {0}")]
+    TypeCheckError(String),
 }
 
 impl SupportedFunctionReturnValue {
@@ -768,7 +768,9 @@ impl SupportedFunctionReturnValue {
                         .map_err(ResultParsingErrorFromVal::WastValConversionError)?,
                 }),
             }),
-            _other => Err(ResultParsingErrorFromVal::TypeCheckError),
+            (ok_type, err_type, value) => Err(ResultParsingErrorFromVal::TypeCheckError(format!(
+                "invalid combination - ok type: {ok_type:?}, err type: {err_type:?}, value: {value:?}"
+            ))),
         }
     }
 
@@ -1142,6 +1144,15 @@ impl Params {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    #[must_use]
+    pub fn as_json_values(&self) -> Option<&[serde_json::Value]> {
+        match &self.0 {
+            ParamsInternal::Vals { .. } => None,
+            ParamsInternal::Empty => Some(&[]),
+            ParamsInternal::JsonValues(vec) => Some(vec),
+        }
     }
 }
 

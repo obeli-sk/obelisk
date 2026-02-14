@@ -11,8 +11,8 @@ use crate::{
 use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, InvalidNameError, StrVariant, check_name,
-    component_id::InputContentDigest, prefixed_ulid::ExecutorId, storage::LogLevel,
+    ComponentId, ComponentRetryConfig, ComponentType, FunctionFqn, InvalidNameError, StrVariant,
+    check_name, component_id::InputContentDigest, prefixed_ulid::ExecutorId, storage::LogLevel,
 };
 use concepts::{ContentDigest, prefixed_ulid::DeploymentId};
 use db_postgres::postgres_dao::{self, PostgresConfig};
@@ -84,6 +84,8 @@ pub(crate) struct ConfigToml {
     pub(crate) activities_stub: Vec<ActivityStubExtComponentConfigToml>,
     #[serde(default, rename = "activity_external")]
     pub(crate) activities_external: Vec<ActivityStubExtComponentConfigToml>,
+    #[serde(default, rename = "activity_js")]
+    pub(crate) activities_js: Vec<ActivityJsComponentConfigToml>,
     #[serde(default, rename = "workflow")]
     pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
     #[cfg(feature = "otlp")]
@@ -952,6 +954,98 @@ impl ActivityWasmComponentConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct ActivityJsComponentConfigToml {
+    pub(crate) name: ConfigName,
+    pub(crate) source: String,
+    pub(crate) ffqn: String,
+    #[serde(default)]
+    pub(crate) exec: ExecConfigToml,
+    #[serde(default = "default_max_retries")]
+    pub(crate) max_retries: u32,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) retry_exp_backoff: DurationConfig,
+    #[serde(default)]
+    pub(crate) forward_stdout: ComponentStdOutputToml,
+    #[serde(default)]
+    pub(crate) forward_stderr: ComponentStdOutputToml,
+    #[serde(default = "default_retry_on_err")]
+    pub(crate) retry_on_err: bool,
+    #[serde(default)]
+    pub(crate) logs_store_min_level: LogLevelToml,
+}
+
+#[derive(Debug)]
+pub(crate) struct ActivityJsConfigVerified {
+    pub(crate) js_source: String,
+    pub(crate) ffqn: FunctionFqn,
+    pub(crate) activity_config: ActivityConfig,
+    pub(crate) exec_config: executor::executor::ExecConfig,
+    pub(crate) logs_store_min_level: Option<LogLevel>,
+}
+
+impl ActivityJsConfigVerified {
+    pub fn component_id(&self) -> &ComponentId {
+        &self.activity_config.component_id
+    }
+}
+
+impl ActivityJsComponentConfigToml {
+    pub(crate) fn verify(
+        self,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
+    ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
+        let ffqn = FunctionFqn::from_str(&self.ffqn)
+            .map_err(|e| anyhow!("invalid ffqn `{}`: {e}", self.ffqn))?;
+
+        // Compute content digest from source + ffqn
+        use sha2::{Digest as _, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"activity_js:");
+        hasher.update(self.source.as_bytes());
+        hasher.update(self.ffqn.as_bytes());
+        let hash: [u8; 32] = hasher.finalize().into();
+        let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
+
+        let component_id = ComponentId::new(
+            ComponentType::ActivityJs,
+            StrVariant::from(self.name),
+            InputContentDigest(content_digest),
+        )?;
+
+        let activity_config = ActivityConfig {
+            component_id: component_id.clone(),
+            forward_stdout: self.forward_stdout.into(),
+            forward_stderr: self.forward_stderr.into(),
+            env_vars: Arc::from([]),
+            retry_on_err: self.retry_on_err,
+            directories_config: None,
+            fuel,
+            secrets: Arc::from([]),
+            allowed_hosts: Arc::from([]),
+        };
+
+        let retry_config = ComponentRetryConfig {
+            max_retries: Some(self.max_retries),
+            retry_exp_backoff: self.retry_exp_backoff.into(),
+        };
+
+        Ok(ActivityJsConfigVerified {
+            js_source: self.source,
+            ffqn,
+            activity_config,
+            exec_config: self.exec.into_exec_exec_config(
+                component_id,
+                global_executor_instance_limiter,
+                retry_config,
+            ),
+            logs_store_min_level: self.logs_store_min_level.into(),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
@@ -1765,7 +1859,7 @@ fn resolve_secrets(
                 .map(|host| {
                     let pattern = HostPattern::parse(&host)?;
                     if pattern.scheme == "http" {
-                        warn!("unencrypted HTTP allowed for host `{pattern}`");
+                        warn!("secrets allowed for unencrypted host `{pattern}`");
                     }
                     Ok(pattern)
                 })
@@ -1829,7 +1923,7 @@ fn merge_allowed_hosts(
     allowed_hosts: Vec<String>,
     secrets: &[SecretConfig],
 ) -> Result<Arc<[HostPattern]>, anyhow::Error> {
-    let mut secret_hosts: Vec<HostPattern> = secrets
+    let mut all_allowed_hosts: Vec<HostPattern> = secrets
         .iter()
         .flat_map(|s| s.hosts.iter().cloned())
         .collect();
@@ -1837,12 +1931,9 @@ fn merge_allowed_hosts(
     for h in allowed_hosts {
         let pattern = HostPattern::parse(&h)
             .map_err(|e| anyhow!("invalid allowed_hosts pattern `{h}`: {e}"))?;
-        if pattern.scheme == "http" {
-            warn!("unencrypted HTTP allowed for host `{pattern}`");
-        }
-        secret_hosts.push(pattern);
+        all_allowed_hosts.push(pattern);
     }
-    Ok(Arc::from(secret_hosts))
+    Ok(Arc::from(all_allowed_hosts))
 }
 
 const fn default_parallel_compilation() -> bool {
