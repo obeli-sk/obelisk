@@ -105,13 +105,13 @@ location = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-unknown-unkno
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/stub/workflow/src/lib.rs" }
 backtrace.ignore_component_digest = true
 
-[[activity_js]]
-name = "activity_js_greet"
-ffqn = "test:pkg/ifc.greet"
-source = """
-function greet(params) {
-    let name = params[0];
-    let greeting = params[1];
-    return greeting + ", " + name + "!";
-}
-"""
+# [[activity_js]]
+# name = "activity_js_greet"
+# ffqn = "test:pkg/ifc.greet"
+# source = """
+# function greet(params) {
+#     let name = params[0];
+#     let greeting = params[1];
+#     return greeting + ", " + name + "!";
+# }
+# """
