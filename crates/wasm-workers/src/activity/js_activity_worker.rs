@@ -71,11 +71,9 @@ impl<S: Sleep> JsActivityWorkerCompiled<S> {
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> JsActivityWorker<S> {
-        let inner = self.inner.into_worker(
-            cancel_registry,
-            log_forwarder_sender,
-            logs_storage_config,
-        );
+        let inner =
+            self.inner
+                .into_worker(cancel_registry, log_forwarder_sender, logs_storage_config);
         JsActivityWorker {
             inner,
             js_source: self.js_source,
@@ -103,10 +101,9 @@ impl<S: Sleep + 'static> Worker for JsActivityWorker<S> {
         // Serialize user params to JSON to extract the list<string> argument.
         // The user function signature is: func(params: list<string>) -> result<string, string>
         // So the stored params JSON is: [ ["str1", "str2", ...] ]
-        let user_params_array: Vec<serde_json::Value> =
-            serde_json::to_value(&ctx.params)
-                .and_then(serde_json::from_value)
-                .unwrap_or_default();
+        let user_params_array: Vec<serde_json::Value> = serde_json::to_value(&ctx.params)
+            .and_then(serde_json::from_value)
+            .unwrap_or_default();
 
         let params_json_str = if user_params_array.is_empty() {
             "[]".to_string()
@@ -172,10 +169,7 @@ fn make_exports_hierarchy(
     _ext: &[FunctionMetadata],
 ) -> Vec<PackageIfcFns> {
     let mut fns = IndexMap::new();
-    fns.insert(
-        primary.ffqn.function_name.clone(),
-        primary.clone(),
-    );
+    fns.insert(primary.ffqn.function_name.clone(), primary.clone());
     vec![PackageIfcFns {
         ifc_fqn: primary.ffqn.ifc_fqn.clone(),
         extension: false,
@@ -189,18 +183,18 @@ mod tests {
     use crate::activity::activity_worker::tests::compile_activity_with_engine;
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
-    use concepts::component_id::{InputContentDigest, CONTENT_DIGEST_DUMMY};
-    use concepts::prefixed_ulid::{ExecutorId, RunId, DEPLOYMENT_ID_DUMMY};
+    use concepts::SupportedFunctionReturnValue;
+    use concepts::component_id::{CONTENT_DIGEST_DUMMY, InputContentDigest};
+    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
     use concepts::storage::{Locked, Version};
+    use concepts::time::TokioSleep;
     use concepts::time::{ClockFn, Now};
     use concepts::{
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
     };
-    use concepts::SupportedFunctionReturnValue;
     use executor::worker::{WorkerContext, WorkerResultOk};
     use serde_json::json;
     use tokio::sync::mpsc;
-    use tokio_util::time::TokioSleep;
     use tracing::info_span;
     use val_json::wast_val::WastVal;
 
@@ -212,7 +206,7 @@ mod tests {
 
         let component_id = concepts::ComponentId::new(
             ComponentType::ActivityJs,
-            StrVariant::Static("test-js"),
+            StrVariant::Static("test_js"),
             InputContentDigest(CONTENT_DIGEST_DUMMY),
         )
         .unwrap();
@@ -258,7 +252,7 @@ mod tests {
         let params_json: Vec<serde_json::Value> = vec![json!(params)];
         let component_id = concepts::ComponentId::new(
             ComponentType::ActivityJs,
-            StrVariant::Static("test-js"),
+            StrVariant::Static("test_js"),
             InputContentDigest(CONTENT_DIGEST_DUMMY),
         )
         .unwrap();
@@ -271,7 +265,7 @@ mod tests {
             responses: Vec::new(),
             version: Version::new(0),
             can_be_retried: false,
-            worker_span: info_span!("js-test"),
+            worker_span: info_span!("js_test"),
             locked_event: Locked {
                 component_id,
                 executor_id: ExecutorId::generate(),

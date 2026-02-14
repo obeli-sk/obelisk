@@ -130,7 +130,7 @@ fn setup_console(context: &mut Context) -> JsResult<()> {
     macro_rules! console_method {
         ($name:expr, $log_fn:path) => {{
             let func = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-                let msg = args_to_string(args, ctx)?;
+                let msg = console_args_to_string(args, ctx)?;
                 $log_fn(&msg);
                 Ok(JsValue::undefined())
             });
@@ -155,7 +155,7 @@ fn setup_console(context: &mut Context) -> JsResult<()> {
 }
 
 /// Convert function arguments to a space-separated string.
-fn args_to_string(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
+fn console_args_to_string(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
     let parts: Result<Vec<String>, _> = args
         .iter()
         .map(|v| {
