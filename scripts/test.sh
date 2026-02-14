@@ -5,7 +5,7 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
-cargo nextest run  --no-output-indent --workspace -P ci-test-populate-codegen-cache populate_codegen_cache
+cargo nextest run  --no-output-indent --workspace -P ci-test-populate-codegen-cache populate_codegen_cache -F boa-unstable
 
 RUST_BACKTRACE=1 \
 RUST_LOG="${RUST_LOG:-info,obeli=debug,app=trace}" \

@@ -157,6 +157,15 @@ pub(crate) mod tests {
             compile_workflow(wasm_path).await;
         }
 
+        #[cfg(feature = "boa-unstable")]
+        #[rstest::rstest(wasm_path => [
+            js_activity_runtime_builder::JS_ACTIVITY_RUNTIME
+            ])]
+        #[tokio::test]
+        async fn jd_activity(wasm_path: &str) {
+            compile_activity(wasm_path).await;
+        }
+
         #[rstest::rstest(wasm_path => [
             test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
             ])]
