@@ -1859,7 +1859,7 @@ fn resolve_secrets(
                 .map(|host| {
                     let pattern = HostPattern::parse(&host)?;
                     if pattern.scheme == "http" {
-                        warn!("unencrypted HTTP allowed for host `{pattern}`");
+                        warn!("secrets allowed for unencrypted host `{pattern}`");
                     }
                     Ok(pattern)
                 })
@@ -1923,7 +1923,7 @@ fn merge_allowed_hosts(
     allowed_hosts: Vec<String>,
     secrets: &[SecretConfig],
 ) -> Result<Arc<[HostPattern]>, anyhow::Error> {
-    let mut secret_hosts: Vec<HostPattern> = secrets
+    let mut all_allowed_hosts: Vec<HostPattern> = secrets
         .iter()
         .flat_map(|s| s.hosts.iter().cloned())
         .collect();
@@ -1931,12 +1931,9 @@ fn merge_allowed_hosts(
     for h in allowed_hosts {
         let pattern = HostPattern::parse(&h)
             .map_err(|e| anyhow!("invalid allowed_hosts pattern `{h}`: {e}"))?;
-        if pattern.scheme == "http" {
-            warn!("unencrypted HTTP allowed for host `{pattern}`");
-        }
-        secret_hosts.push(pattern);
+        all_allowed_hosts.push(pattern);
     }
-    Ok(Arc::from(secret_hosts))
+    Ok(Arc::from(all_allowed_hosts))
 }
 
 const fn default_parallel_compilation() -> bool {
