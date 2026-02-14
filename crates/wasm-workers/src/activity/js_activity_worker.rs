@@ -204,7 +204,7 @@ mod tests {
     use concepts::{
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
     };
-    use executor::worker::{WorkerContext, WorkerResultOk};
+    use executor::worker::{WorkerContext, WorkerError, WorkerResultOk};
     use serde_json::json;
     use tokio::sync::mpsc;
     use tracing::info_span;
@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_json_object() {
+    async fn js_activity_returning_object_should_fail_to_typecheck() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "object");
         let js_source = r"
@@ -396,14 +396,7 @@ mod tests {
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
         let ctx = make_worker_context(ffqn, &["test".to_string()]);
 
-        let result = worker.run(ctx).await.expect("worker should succeed");
-        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
-        let ok_val = output.expect("should have ok value");
-        let json_str = extract_string(&ok_val.value);
-        // Parse and verify the JSON structure
-        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        assert_eq!(parsed["name"], "test");
-        assert_eq!(parsed["count"], 42);
+        let err = worker.run(ctx).await.unwrap_err();
+        assert_matches!(err, WorkerError::ActivityTrap { .. });
     }
 }

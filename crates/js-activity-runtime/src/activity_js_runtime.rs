@@ -1,9 +1,8 @@
 //! JavaScript runtime using Boa engine for Obelisk JS activities.
 //!
 //! This is a simplified runtime without workflow-specific APIs
-//! (no join sets, submit, sleep, etc.). It provides:
+//! It provides:
 //! - `console.*` → `obelisk:log` routing
-//! - `main(arg0, arg1, ...)` invocation with spread params
 
 use boa_engine::{
     Context, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source, js_string,
@@ -32,98 +31,47 @@ pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String
         .eval(Source::from_bytes(&params_code))
         .expect("already verified that params_json is parseable");
 
-    // Build full code: stringify helper + user code + `fn_name` invocation
-    const JS_PRE: &str = r#"
-    function __stringify__(e) {
-        if (e === null) return "null";
-        if (e === undefined) return "undefined";
-        if (typeof e === "string") return e;
-        if (typeof e === "number" || typeof e === "boolean") return JSON.stringify(e);
+    // Add the function to the context, without running it.
+    context
+        .eval(Source::from_bytes(&js_code))
+        .expect("TODO: permanent error - cannot evaluate the function");
 
-        if (e instanceof Error) {
-            return JSON.stringify({
-                type: "Error",
-                name: e.name,
-                message: e.message,
-                stack: e.stack
-            });
+    let typeof_fn = context.eval(Source::from_bytes(&format!("typeof {fn_name}")));
+    let Ok(typeof_fn) = typeof_fn else { todo!() }; // permanent: function not defined
+    let Some(typeof_fn) = typeof_fn.as_string() else {
+        todo!() // permanent: typeof failed
+    };
+    if typeof_fn.as_str() != "function" {
+        todo!("must be a function: {typeof_fn:?}") // // permanent: must be a function
+    }
+
+    let call_fn = format!("{fn_name}(__params__);");
+
+    let result = context.eval(Source::from_bytes(&call_fn));
+
+    match result {
+        Ok(js_value) => {
+            if let Some(string) = js_value.as_string() {
+                return Ok(string.to_std_string_escaped());
+            } else {
+                todo!("type check error: returned value must be string, got..");
+            }
         }
-
-        try {
-            return JSON.stringify(e);
-        } catch {
-            return JSON.stringify({
-                type: typeof e,
-                value: String(e),
-                note: "Unserializable (circular)"
-            });
+        Err(js_err) => {
+            if let Some(js_value) = js_err.as_opaque()
+                && let Some(string) = js_value.as_string()
+            {
+                return Err(string.to_std_string_escaped());
+            } else {
+                todo!("type check error: thrown value must be string, got..");
+            }
         }
     }
-    "#;
-    let js_post = format!(
-        r#"
-    if (typeof {fn_name} !== 'function') {{
-        throw 'function `{fn_name}` not defined';
-    }}
-    try {{
-        const __result__ = {fn_name}(__params__);
-        __stringify__(__result__);
-    }} catch (e) {{
-        throw __stringify__(e);
-    }}
-    "#
-    );
-
-    let full_code = format!("{JS_PRE}\n{js_code}\n{js_post}");
-
-    let result = context.eval(Source::from_bytes(&full_code)).map_err(|e| {
-        if let Some(js_value) = e.as_opaque() {
-            js_value
-                .as_string()
-                .map(|s| s.to_std_string_escaped())
-                .unwrap_or_else(|| "Error is not a string".to_string())
-        } else {
-            e.to_string()
-        }
-    })?;
-
-    result
-        .as_string()
-        .map(|s| s.to_std_string_escaped())
-        .ok_or_else(|| format!("result is not a string: {result:?}"))
-}
-
-/// Helper to create a new JS object with the default prototype.
-fn new_object(ctx: &mut Context) -> JsObject {
-    JsObject::default(ctx.intrinsics())
-}
-
-/// Convert JS value to JSON string using the built-in JSON.stringify.
-fn json_stringify(value: &JsValue, ctx: &mut Context) -> JsResult<String> {
-    let json = ctx.global_object().get(js_string!("JSON"), ctx)?;
-    let json_obj = json
-        .as_object()
-        .ok_or_else(|| JsNativeError::error().with_message("JSON global not found"))?;
-    let stringify = json_obj.get(js_string!("stringify"), ctx)?;
-    let stringify_fn = stringify
-        .as_callable()
-        .ok_or_else(|| JsNativeError::error().with_message("JSON.stringify not callable"))?;
-
-    let result = stringify_fn.call(&json, std::slice::from_ref(value), ctx)?;
-
-    result
-        .as_string()
-        .map(|s| s.to_std_string_escaped())
-        .ok_or_else(|| {
-            JsNativeError::error()
-                .with_message("JSON.stringify returned non-string")
-                .into()
-        })
 }
 
 /// Set up the global `console` object routing to obelisk:log.
 fn setup_console(context: &mut Context) -> JsResult<()> {
-    let console = new_object(context);
+    let console = JsObject::default(context.intrinsics());
 
     macro_rules! console_method {
         ($name:expr, $log_fn:path) => {{
@@ -161,11 +109,34 @@ fn console_args_to_string(args: &[JsValue], ctx: &mut Context) -> JsResult<Strin
                 Ok(s.to_std_string_escaped())
             } else {
                 // Try to stringify objects
-                json_stringify(v, ctx)
+                console_json_stringify(v, ctx)
                     .or_else(|_| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
             }
         })
         .collect();
 
     Ok(parts?.join(" "))
+}
+
+/// Convert JS value to JSON string using the built-in JSON.stringify.
+fn console_json_stringify(value: &JsValue, ctx: &mut Context) -> JsResult<String> {
+    let json = ctx.global_object().get(js_string!("JSON"), ctx)?;
+    let json_obj = json
+        .as_object()
+        .ok_or_else(|| JsNativeError::error().with_message("JSON global not found"))?;
+    let stringify = json_obj.get(js_string!("stringify"), ctx)?;
+    let stringify_fn = stringify
+        .as_callable()
+        .ok_or_else(|| JsNativeError::error().with_message("JSON.stringify not callable"))?;
+
+    let result = stringify_fn.call(&json, std::slice::from_ref(value), ctx)?;
+
+    result
+        .as_string()
+        .map(|s| s.to_std_string_escaped())
+        .ok_or_else(|| {
+            JsNativeError::error()
+                .with_message("JSON.stringify returned non-string")
+                .into()
+        })
 }
