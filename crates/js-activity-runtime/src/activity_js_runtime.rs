@@ -4,24 +4,31 @@
 //! It provides:
 //! - `console.*` → `obelisk:log` routing
 
+use crate::generated::obelisk::log::log as obelisk_log;
+use crate::generated::{
+    exports::obelisk_activity::activity_js_runtime::execute::JsRuntimeError,
+    obelisk::log::log::error as host_fn_error,
+};
 use boa_engine::{
     Context, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source, js_string,
     property::Attribute,
 };
 
-use crate::generated::obelisk::log::log as obelisk_log;
-
 /// Execute JavaScript code with the given parameters.
 ///
 /// `params_json` is expected to be a JSON array string. The array is passed
 /// as the first and only argument to `fn_name`.
-pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String, String> {
+pub fn execute(
+    fn_name: &str,
+    js_code: &str,
+    params_json: &str,
+) -> Result<Result<String, String>, JsRuntimeError> {
     // `fn_name` comes from trusted `js_activity_worker`, must be FFQN's fn name
     let fn_name = fn_name.replace('-', "_");
     let mut context = Context::default();
 
     // Set up console
-    setup_console(&mut context).map_err(|e| format!("Failed to setup console: {e}"))?;
+    setup_console(&mut context).expect("console setup must work");
 
     // `params_json` is sent by trusted `activity_js_worker`, params were typechecked.
     // Store as global `__params__` array.
@@ -32,17 +39,23 @@ pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String
         .expect("already verified that params_json is parseable");
 
     // Add the function to the context, without running it.
-    context
-        .eval(Source::from_bytes(&js_code))
-        .expect("TODO: permanent error - cannot evaluate the function");
+    let bare_fn_eval = context.eval(Source::from_bytes(&js_code));
+    if let Err(err) = bare_fn_eval {
+        host_fn_error("cannot evaluate - {err:?}"); // Send additional info via obelisk:log
+        return Err(JsRuntimeError::PermanentCannotDeclareFunction(
+            err.to_string(),
+        ));
+    }
 
     let typeof_fn = context.eval(Source::from_bytes(&format!("typeof {fn_name}")));
-    let Ok(typeof_fn) = typeof_fn else { todo!() }; // permanent: function not defined
+    let Ok(typeof_fn) = typeof_fn else {
+        return Err(JsRuntimeError::PermanentFunctionNotFound);
+    };
     let Some(typeof_fn) = typeof_fn.as_string() else {
-        todo!() // permanent: typeof failed
+        return Err(JsRuntimeError::PermanentFunctionNotFound);
     };
     if typeof_fn.as_str() != "function" {
-        todo!("must be a function: {typeof_fn:?}") // // permanent: must be a function
+        return Err(JsRuntimeError::PermanentFunctionNotFound);
     }
 
     let call_fn = format!("{fn_name}(__params__);");
@@ -52,18 +65,22 @@ pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String
     match result {
         Ok(js_value) => {
             if let Some(string) = js_value.as_string() {
-                Ok(string.to_std_string_escaped())
+                Ok(Ok(string.to_std_string_escaped()))
             } else {
-                todo!("type check error: returned value must be string, got..");
+                Err(JsRuntimeError::WrongReturnType(format!(
+                    "expected string, got {js_value:?}"
+                )))
             }
         }
         Err(js_err) => {
             if let Some(js_value) = js_err.as_opaque()
                 && let Some(string) = js_value.as_string()
             {
-                Err(string.to_std_string_escaped())
+                Ok(Err(string.to_std_string_escaped()))
             } else {
-                todo!("type check error: thrown value must be string, got..");
+                Err(JsRuntimeError::WrongReturnType(format!(
+                    "expected string, got {js_err:?}"
+                )))
             }
         }
     }

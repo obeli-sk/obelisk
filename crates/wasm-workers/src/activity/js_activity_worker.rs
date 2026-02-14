@@ -7,22 +7,23 @@
 use super::activity_worker::{ActivityWorker, ActivityWorkerCompiled};
 use super::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
+use assert_matches::assert_matches;
 use async_trait::async_trait;
 use concepts::storage::LogInfoAppendRow;
 use concepts::time::Sleep;
 use concepts::{
     FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterType, ParameterTypes, Params,
-    ReturnType, StrVariant,
+    ResultParsingError, ResultParsingErrorFromVal, ReturnType, StrVariant,
+    SupportedFunctionReturnValue,
 };
-use executor::worker::{Worker, WorkerContext, WorkerResult};
+use executor::worker::{
+    FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
+};
 use indexmap::IndexMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use val_json::type_wrapper::TypeWrapper;
-
-/// The FFQN of the Boa component's `run` function.
-const BOA_IFC_FQN: &str = "obelisk:js-runtime/execute";
-const BOA_FN_NAME: &str = "run";
+use val_json::wast_val::{WastVal, WastValWithType};
 
 /// Compiled JS activity. Holds the compiled Boa WASM component + JS source + user FFQN.
 pub struct JsActivityWorkerCompiled<S: Sleep> {
@@ -97,6 +98,7 @@ impl<S: Sleep + 'static> Worker for JsActivityWorker<S> {
         &self.user_exports_noext
     }
 
+    // Return result<string, string> or a WorkerError mapped from `JsRuntimeError`
     async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
         // Expecting a single parameter of type `list<string>`.
         assert_eq!(
@@ -118,8 +120,7 @@ impl<S: Sleep + 'static> Worker for JsActivityWorker<S> {
             serde_json::to_string(list_of_strings).expect("serde_json::Value must be serializable");
 
         // Rewrite context to call
-        // run: func(fn-name: string, js-code: string, params-json: string) -> result<string, string>;
-        ctx.ffqn = FunctionFqn::new_static(BOA_IFC_FQN, BOA_FN_NAME);
+        ctx.ffqn = FunctionFqn::new_static_tuple(js_activity_runtime_builder::exports::obelisk_activity::activity_js_runtime::execute::RUN);
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(self.user_ffqn.function_name.to_string()),
             serde_json::Value::String(self.js_source.clone()),
@@ -134,9 +135,88 @@ impl<S: Sleep + 'static> Worker for JsActivityWorker<S> {
             ]
             .into_iter(),
         )
-        .expect("boa params are always valid");
+        .expect("types checked at compile time");
 
-        self.inner.run(ctx).await
+        let inner_worker_ok = self.inner.run(ctx).await?;
+
+        let (retval, version, http_client_traces) = assert_matches!(inner_worker_ok, WorkerResultOk::Finished { retval, version,  http_client_traces }
+            => (retval, version,  http_client_traces), "activity_js_runtime runs in ActivityWorker");
+        match retval {
+            SupportedFunctionReturnValue::Ok {
+                ok:
+                    Some(WastValWithType {
+                        r#type:
+                            TypeWrapper::Result {
+                                ok: Some(ok_type),
+                                err: Some(_),
+                            },
+                        value: WastVal::Result(Ok(Some(ok_val))),
+                    }),
+            } => {
+                // js runtime returned {"ok": {"ok":"some string"}}
+                assert_eq!(TypeWrapper::String, *ok_type);
+                Ok(WorkerResultOk::Finished {
+                    retval: SupportedFunctionReturnValue::Ok {
+                        ok: Some(WastValWithType {
+                            r#type: *ok_type,
+                            value: *ok_val,
+                        }),
+                    },
+                    version,
+                    http_client_traces,
+                })
+            }
+
+            SupportedFunctionReturnValue::Ok {
+                ok:
+                    Some(WastValWithType {
+                        r#type:
+                            TypeWrapper::Result {
+                                ok: Some(_),
+                                err: Some(err_type),
+                            },
+                        value: WastVal::Result(Err(Some(err_val))),
+                    }),
+            } => {
+                // js runtime returned {"ok":{"err":"some string"}}
+                assert_eq!(TypeWrapper::String, *err_type);
+                Ok(WorkerResultOk::Finished {
+                    retval: SupportedFunctionReturnValue::Err {
+                        err: Some(WastValWithType {
+                            r#type: *err_type,
+                            value: *err_val,
+                        }),
+                    },
+                    version,
+                    http_client_traces,
+                })
+            }
+
+            SupportedFunctionReturnValue::Err {
+                err: Some(js_runtime_err),
+            } => {
+                // FIXME: map JsRuntimeError into FinishedExecutionError:
+                // wrong-return-type, wrong-thrown-type -> ResultParsingErrorFromVal::TypeCheckError
+                // permanent-cannot-declare-function, permanent-function-not-found -> CannotInstantiate
+                // execution-failed -> unreachable - injected by a workflow worker
+                Err(WorkerError::FatalError(
+                    FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                        ResultParsingErrorFromVal::TypeCheckError,
+                    )),
+                    version,
+                ))
+            }
+
+            retval @ SupportedFunctionReturnValue::ExecutionError(_) => {
+                Ok(WorkerResultOk::Finished {
+                    retval,
+                    version,
+                    http_client_traces,
+                })
+            }
+
+            other => unreachable!("unexpected SupportedFunctionReturnValue: {other:?}"),
+        }
     }
 }
 
@@ -397,6 +477,14 @@ mod tests {
         let ctx = make_worker_context(ffqn, &["test".to_string()]);
 
         let err = worker.run(ctx).await.unwrap_err();
-        assert_matches!(err, WorkerError::ActivityTrap { .. });
+        assert_matches!(
+            err,
+            WorkerError::FatalError(
+                FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                    ResultParsingErrorFromVal::TypeCheckError,
+                )),
+                _version,
+            )
+        );
     }
 }
