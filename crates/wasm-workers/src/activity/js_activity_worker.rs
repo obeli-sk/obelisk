@@ -246,7 +246,7 @@ mod tests {
         Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
     }
 
-    fn make_worker_context(ffqn: FunctionFqn, params: Vec<String>) -> WorkerContext {
+    fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
         // The user function signature is: func(params: list<string>) -> result<string, string>
         // So we wrap the params in a list
         let params_json: Vec<serde_json::Value> = vec![json!(params)];
@@ -295,7 +295,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, vec![]);
+        let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
@@ -315,7 +315,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, vec!["World".to_string(), "Hello".to_string()]);
+        let ctx = make_worker_context(ffqn, &["World".to_string(), "Hello".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
@@ -335,7 +335,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, vec![]);
+        let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
@@ -360,7 +360,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, vec!["test".to_string()]);
+        let ctx = make_worker_context(ffqn, &["test".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
@@ -373,14 +373,14 @@ mod tests {
     async fn js_activity_json_object() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "object");
-        let js_source = r#"
+        let js_source = r"
             function main(name) {
                 return { name: name, count: 42 };
             }
-        "#;
+        ";
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, vec!["test".to_string()]);
+        let ctx = make_worker_context(ffqn, &["test".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
