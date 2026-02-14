@@ -656,8 +656,8 @@ pub enum ResultParsingErrorFromVal {
     WastValConversionError(val_json::wast_val::WastValConversionError),
     #[error("top level type must be a result")]
     TopLevelTypeMustBeAResult,
-    #[error("value does not type check")]
-    TypeCheckError,
+    #[error("value does not type check - {0}")]
+    TypeCheckError(String),
 }
 
 impl SupportedFunctionReturnValue {
@@ -768,7 +768,9 @@ impl SupportedFunctionReturnValue {
                         .map_err(ResultParsingErrorFromVal::WastValConversionError)?,
                 }),
             }),
-            _other => Err(ResultParsingErrorFromVal::TypeCheckError),
+            (ok_type, err_type, value) => Err(ResultParsingErrorFromVal::TypeCheckError(format!(
+                "invalid combination - ok type: {ok_type:?}, err type: {err_type:?}, value: {value:?}"
+            ))),
         }
     }
 

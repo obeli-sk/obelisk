@@ -201,14 +201,24 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
                 };
                 let name = variant_name.as_snake_str();
                 match name {
-                    "wrong_return_type" | "wrong_thrown_type" => Err(WorkerError::FatalError(
-                        FatalError::ResultParsingError(
-                            ResultParsingError::ResultParsingErrorFromVal(
-                                ResultParsingErrorFromVal::TypeCheckError,
+                    "wrong_return_type" | "wrong_thrown_type" => {
+                        let reason = if let Some(payload) = payload
+                            && let WastVal::String(s) = payload.as_ref()
+                        {
+                            s.clone()
+                        } else {
+                            unreachable!("both variants have string payload")
+                        };
+
+                        Err(WorkerError::FatalError(
+                            FatalError::ResultParsingError(
+                                ResultParsingError::ResultParsingErrorFromVal(
+                                    ResultParsingErrorFromVal::TypeCheckError(reason),
+                                ),
                             ),
-                        ),
-                        version,
-                    )),
+                            version,
+                        ))
+                    }
                     "cannot_declare_function" | "function_not_found" => {
                         let detail = payload.as_ref().and_then(|p| {
                             if let WastVal::String(s) = p.as_ref() {
@@ -508,10 +518,13 @@ mod tests {
             err,
             WorkerError::FatalError(
                 FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                    ResultParsingErrorFromVal::TypeCheckError,
+                    ResultParsingErrorFromVal::TypeCheckError(reason),
                 )),
                 _version,
             )
+            => {
+                assert!(reason.starts_with("expected string, got JsValue"), "{reason} should start with: `expexpected string, got JsValue`");
+            }
         );
     }
 
@@ -533,10 +546,13 @@ mod tests {
             err,
             WorkerError::FatalError(
                 FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                    ResultParsingErrorFromVal::TypeCheckError,
+                    ResultParsingErrorFromVal::TypeCheckError(reason),
                 )),
                 _version,
             )
+            => {
+                assert!(reason.starts_with("expected string, got JsError"), "{reason} should start with: `expected string, got JsError`");
+            }
         );
     }
 
