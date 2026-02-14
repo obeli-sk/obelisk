@@ -15,8 +15,10 @@ use crate::generated::obelisk::log::log as obelisk_log;
 /// Execute JavaScript code with the given parameters.
 ///
 /// `params_json` is expected to be a JSON array string. The elements
-/// are spread as positional arguments to the `main` function.
-pub fn execute(js_code: &str, params_json: &str) -> Result<String, String> {
+/// are spread as positional arguments to the `fn_name` function.
+pub fn execute(fn_name: &str, js_code: &str, params_json: &str) -> Result<String, String> {
+    // `fn_name` comes from trusted `js_activity_worker`, must be FFQN's fn name
+    let fn_name = fn_name.replace('-', "_");
     let mut context = Context::default();
 
     // Set up console
@@ -64,19 +66,21 @@ pub fn execute(js_code: &str, params_json: &str) -> Result<String, String> {
         }
     }
     "#;
-    const JS_POST: &str = r#"
-    if (typeof main !== 'function') {
-        throw 'main function not defined';
-    }
-    try {
-        const __result__ = main.apply(null, __params__);
+    let js_post = format!(
+        r#"
+    if (typeof {fn_name} !== 'function') {{
+        throw 'function `{fn_name}` not defined';
+    }}
+    try {{
+        const __result__ = {fn_name}.apply(null, __params__);
         __stringify__(__result__);
-    } catch (e) {
+    }} catch (e) {{
         throw __stringify__(e);
-    }
-    "#;
+    }}
+    "#
+    );
 
-    let full_code = format!("{JS_PRE}\n{js_code}\n{JS_POST}");
+    let full_code = format!("{JS_PRE}\n{js_code}\n{js_post}");
 
     let result = context.eval(Source::from_bytes(&full_code)).map_err(|e| {
         if let Some(js_value) = e.as_opaque() {

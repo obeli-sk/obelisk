@@ -115,12 +115,18 @@ impl<S: Sleep + 'static> Worker for JsActivityWorker<S> {
         // Rewrite context to call the Boa component's run(js-code, params-json)
         ctx.ffqn = FunctionFqn::new_static(BOA_IFC_FQN, BOA_FN_NAME);
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
+            serde_json::Value::String(self.user_ffqn.function_name.to_string()),
             serde_json::Value::String(self.js_source.clone()),
             serde_json::Value::String(params_json_str),
         ]);
         ctx.params = Params::from_json_values(
             boa_params,
-            [&TypeWrapper::String, &TypeWrapper::String].into_iter(),
+            [
+                &TypeWrapper::String,
+                &TypeWrapper::String,
+                &TypeWrapper::String,
+            ]
+            .into_iter(),
         )
         .expect("boa params are always valid");
 
@@ -289,7 +295,7 @@ mod tests {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hello");
         let js_source = r#"
-            function main() {
+            function hello() {
                 return "hello world";
             }
         "#;
@@ -309,7 +315,7 @@ mod tests {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet");
         let js_source = r#"
-            function main(name, greeting) {
+            function greet(name, greeting) {
                 return greeting + ", " + name + "!";
             }
         "#;
@@ -329,7 +335,7 @@ mod tests {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
         let js_source = r#"
-            function main() {
+            function fail() {
                 throw "something went wrong";
             }
         "#;
@@ -350,7 +356,7 @@ mod tests {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "logging");
         let js_source = r#"
-            function main(msg) {
+            function logging(msg) {
                 console.log("Log message:", msg);
                 console.info("Info message");
                 console.warn("Warning message");
@@ -374,7 +380,7 @@ mod tests {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "object");
         let js_source = r"
-            function main(name) {
+            function object(name) {
                 return { name: name, count: 42 };
             }
         ";

@@ -12,7 +12,7 @@ pub struct Component;
 export!(Component with_types_in generated);
 
 impl Guest for Component {
-    fn run(js_code: String, params_json: String) -> Result<String, String> {
-        activity_js_runtime::execute(&js_code, &params_json)
+    fn run(fn_name: String, js_code: String, params_json: String) -> Result<String, String> {
+        activity_js_runtime::execute(&fn_name, &js_code, &params_json)
     }
 }
