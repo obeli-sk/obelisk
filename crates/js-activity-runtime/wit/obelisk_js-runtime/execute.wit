@@ -1,0 +1,12 @@
+package obelisk:js-runtime;
+
+interface execute {
+    /// Execute JavaScript code as an activity.
+    ///
+    /// The JS code should define a `main` function that receives
+    /// the params as positional arguments (spread from the JSON array)
+    /// and returns a JSON-serializable value.
+    ///
+    /// Returns Ok(json_result) on success, Err(error_message) on failure.
+    run: func(js-code: string, params-json: string) -> result<string, string>;
+}

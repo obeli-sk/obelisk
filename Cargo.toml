@@ -20,6 +20,8 @@ utils.workspace = true
 val-json.workspace = true
 wasm-workers.workspace = true
 
+js-activity-runtime-builder = { workspace = true, optional = true }
+
 anyhow.workspace = true
 async-trait.workspace = true
 axum-accept.workspace = true
@@ -112,6 +114,7 @@ otlp = [
     "dep:opentelemetry-otlp",
     "dep:opentelemetry-semantic-conventions",
 ]
+boa-unstable = ["dep:js-activity-runtime-builder"]
 default = ["otlp"]
 
 [lints]
@@ -164,10 +167,14 @@ members = [
     "crates/testing/test-programs/stub/workflow",
     "crates/testing/test-programs/stub/workflow/builder",
     "crates/testing/test-programs/adhoc-js-workflow/builder",
+    "crates/js-activity-runtime",
+    "crates/js-activity-runtime/builder",
     "crates/testing/test-utils",
     "crates/utils",
     "crates/val-json",
     "crates/wasm-workers",
+    "crates/js-activity-runtime",
+    "crates/js-activity-runtime/builder",
 ]
 
 [workspace.package]
@@ -187,6 +194,7 @@ db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version
 db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }
 executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.35.4" }
 grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.35.4" }
+js-activity-runtime-builder = { path = "crates/js-activity-runtime/builder", features = ["boa-unstable"] }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
     "genrs",
 ] }

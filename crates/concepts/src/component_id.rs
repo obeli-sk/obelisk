@@ -24,6 +24,7 @@ pub enum ComponentType {
     ActivityWasm,
     ActivityStub,
     ActivityExternal,
+    ActivityJs,
     Workflow,
     WebhookEndpoint,
 }
@@ -35,6 +36,7 @@ impl ComponentType {
             ComponentType::ActivityWasm
                 | ComponentType::ActivityStub
                 | ComponentType::ActivityExternal
+                | ComponentType::ActivityJs
         )
     }
 }

@@ -273,7 +273,7 @@ impl<T: Borrow<FunctionFqn>> From<T> for grpc_gen::FunctionName {
 impl From<ComponentType> for grpc_gen::ComponentType {
     fn from(value: ComponentType) -> Self {
         match value {
-            ComponentType::ActivityWasm => grpc_gen::ComponentType::ActivityWasm,
+            ComponentType::ActivityWasm | ComponentType::ActivityJs => grpc_gen::ComponentType::ActivityWasm,
             ComponentType::ActivityStub => grpc_gen::ComponentType::ActivityStub,
             ComponentType::ActivityExternal => grpc_gen::ComponentType::ActivityExternal,
             ComponentType::Workflow => grpc_gen::ComponentType::Workflow,
