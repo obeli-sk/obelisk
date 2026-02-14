@@ -1005,8 +1005,7 @@ impl ActivityJsComponentConfigToml {
         hasher.update(self.source.as_bytes());
         hasher.update(self.ffqn.as_bytes());
         let hash: [u8; 32] = hasher.finalize().into();
-        let content_digest =
-            concepts::ContentDigest(concepts::component_id::Digest(hash));
+        let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
 
         let component_id = ComponentId::new(
             ComponentType::ActivityJs,

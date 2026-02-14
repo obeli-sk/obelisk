@@ -111,7 +111,7 @@ fn json_stringify(value: &JsValue, ctx: &mut Context) -> JsResult<String> {
         .as_callable()
         .ok_or_else(|| JsNativeError::error().with_message("JSON.stringify not callable"))?;
 
-    let result = stringify_fn.call(&json, &[value.clone()], ctx)?;
+    let result = stringify_fn.call(&json, std::slice::from_ref(value), ctx)?;
 
     result
         .as_string()
