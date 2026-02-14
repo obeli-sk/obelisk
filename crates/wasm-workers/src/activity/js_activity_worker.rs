@@ -195,16 +195,43 @@ impl<S: Sleep + 'static> Worker for JsActivityWorker<S> {
             SupportedFunctionReturnValue::Err {
                 err: Some(js_runtime_err),
             } => {
-                // FIXME: map JsRuntimeError into FinishedExecutionError:
-                // wrong-return-type, wrong-thrown-type -> ResultParsingErrorFromVal::TypeCheckError
-                // permanent-cannot-declare-function, permanent-function-not-found -> CannotInstantiate
-                // execution-failed -> unreachable - injected by a workflow worker
-                Err(WorkerError::FatalError(
-                    FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                        ResultParsingErrorFromVal::TypeCheckError,
+                // Map JsRuntimeError variants to appropriate WorkerError
+                let WastVal::Variant(variant_name, payload) = &js_runtime_err.value else {
+                    unreachable!("expected Variant for js-runtime-error")
+                };
+                let name = variant_name.as_snake_str();
+                match name {
+                    "wrong_return_type" | "wrong_thrown_type" => Err(WorkerError::FatalError(
+                        FatalError::ResultParsingError(
+                            ResultParsingError::ResultParsingErrorFromVal(
+                                ResultParsingErrorFromVal::TypeCheckError,
+                            ),
+                        ),
+                        version,
                     )),
-                    version,
-                ))
+                    "cannot_declare_function" | "function_not_found" => {
+                        let detail = payload.as_ref().and_then(|p| {
+                            if let WastVal::String(s) = p.as_ref() {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        });
+                        Err(WorkerError::FatalError(
+                            FatalError::CannotInstantiate {
+                                reason: format!("js-runtime-error: {name}"),
+                                detail,
+                            },
+                            version,
+                        ))
+                    }
+                    "execution_failed" => {
+                        unreachable!(
+                            "execution-failed is injected by a workflow worker, not by activity-js-runtime"
+                        )
+                    }
+                    _ => unreachable!("unexpected js-runtime-error variant: {name}"),
+                }
             }
 
             retval @ SupportedFunctionReturnValue::ExecutionError(_) => {
@@ -485,6 +512,81 @@ mod tests {
                 )),
                 _version,
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn js_activity_throwing_object_should_fail_to_typecheck() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "throw_object");
+        let js_source = r"
+            function throw_object() {
+                throw { code: 42, message: 'error' };
+            }
+        ";
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let err = worker.run(ctx).await.unwrap_err();
+        assert_matches!(
+            err,
+            WorkerError::FatalError(
+                FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                    ResultParsingErrorFromVal::TypeCheckError,
+                )),
+                _version,
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn js_activity_syntax_error_should_fail_to_instantiate() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "broken");
+        let js_source = r"
+            function broken( {
+                return 'this has a syntax error';
+            }
+        ";
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let err = worker.run(ctx).await.unwrap_err();
+        assert_matches!(
+            err,
+            WorkerError::FatalError(
+                FatalError::CannotInstantiate { reason, detail: _ },
+                _version,
+            ) => {
+                assert!(reason.contains("cannot_declare_function"), "reason: {reason}");
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn js_activity_function_not_found_should_fail_to_instantiate() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "missing");
+        let js_source = r"
+            function some_other_function() {
+                return 'hello';
+            }
+        ";
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let err = worker.run(ctx).await.unwrap_err();
+        assert_matches!(
+            err,
+            WorkerError::FatalError(
+                FatalError::CannotInstantiate { reason, detail: _ },
+                _version,
+            ) => {
+                assert!(reason.contains("function_not_found"), "reason: {reason}");
+            }
         );
     }
 }
