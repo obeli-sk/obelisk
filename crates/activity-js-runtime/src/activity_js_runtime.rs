@@ -1,18 +1,22 @@
 //! JavaScript runtime using Boa engine for Obelisk JS activities.
 //!
-//! This is a simplified runtime without workflow-specific APIs
-//! It provides:
+//! This runtime provides:
 //! - `console.*` → `obelisk:log` routing
+//! - `fetch()` → WASIp2 HTTP outgoing requests
 
 use crate::generated::obelisk::log::log as obelisk_log;
 use crate::generated::{
     exports::obelisk_activity::activity_js_runtime::execute::JsRuntimeError,
     obelisk::log::log::error as host_fn_error,
 };
+use crate::wasi_fetcher::WasiFetcher;
+use crate::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{
     Context, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source, js_string,
-    property::Attribute,
+    object::builtins::JsPromise, property::Attribute,
 };
+use boa_runtime::extensions::FetchExtension;
+use std::rc::Rc;
 
 /// Execute JavaScript code with the given parameters.
 ///
@@ -25,10 +29,18 @@ pub fn execute(
 ) -> Result<Result<String, String>, JsRuntimeError> {
     // `fn_name` comes from trusted `activity_js_worker`, must be FFQN's fn name
     let fn_name = fn_name.replace('-', "_");
-    let mut context = Context::default();
+
+    let executor = Rc::new(WasiJobExecutor::default());
+    let mut context = Context::builder()
+        .job_executor(executor)
+        .build()
+        .expect("building context must work");
 
     // Set up console
     setup_console(&mut context).expect("console setup must work");
+
+    // Set up fetch
+    setup_fetch(&mut context).expect("fetch setup must work");
 
     // `params_json` is sent by trusted `activity_js_worker`, params were typechecked.
     // Store as global `__params__` array.
@@ -39,7 +51,7 @@ pub fn execute(
         .expect("already verified that params_json is parseable");
 
     // Add the function to the context, without running it.
-    let bare_fn_eval = context.eval(Source::from_bytes(&js_code));
+    let bare_fn_eval = context.eval(Source::from_bytes(js_code));
     if let Err(err) = bare_fn_eval {
         host_fn_error("cannot evaluate - {err:?}"); // Send additional info via obelisk:log
         return Err(JsRuntimeError::CannotDeclareFunction(err.to_string()));
@@ -59,6 +71,12 @@ pub fn execute(
     let call_fn = format!("{fn_name}(__params__);");
 
     let result = context.eval(Source::from_bytes(&call_fn));
+
+    // If the result is a Promise, drive it to completion.
+    let result = match result {
+        Ok(ref js_value) => resolve_if_promise(js_value, &mut context),
+        err => err,
+    };
 
     match result {
         Ok(js_value) => {
@@ -82,6 +100,28 @@ pub fn execute(
             }
         }
     }
+}
+
+/// If `value` is a Promise, drive it to completion and return the resolved value.
+fn resolve_if_promise(value: &JsValue, context: &mut Context) -> JsResult<JsValue> {
+    let Some(object) = value.as_object() else {
+        return Ok(value.clone());
+    };
+    let Ok(promise) = JsPromise::from_object(object) else {
+        return Ok(value.clone());
+    };
+    // await_blocking runs the job queue (which uses our WasiJobExecutor
+    // to drive WASIp2 pollables) until the promise settles.
+    promise.await_blocking(context)
+}
+
+/// Register the `fetch` API backed by WASIp2 HTTP.
+fn setup_fetch(context: &mut Context) -> JsResult<()> {
+    boa_runtime::register(
+        FetchExtension(WasiFetcher),
+        None,
+        context,
+    )
 }
 
 /// Set up the global `console` object routing to obelisk:log.

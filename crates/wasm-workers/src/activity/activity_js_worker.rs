@@ -327,7 +327,11 @@ mod tests {
     use tracing::info_span;
     use val_json::wast_val::WastVal;
 
-    async fn new_js_activity_worker(js_source: &str, user_ffqn: FunctionFqn) -> Arc<dyn Worker> {
+    async fn new_js_activity_worker_with_config(
+        js_source: &str,
+        user_ffqn: FunctionFqn,
+        config_fn: impl FnOnce(concepts::ComponentId) -> super::super::activity_worker::ActivityConfig,
+    ) -> Arc<dyn Worker> {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let cancel_registry = CancelRegistry::new();
         let (db_forwarder_sender, _) = mpsc::channel(1);
@@ -348,18 +352,7 @@ mod tests {
         )
         .await;
 
-        // Create an ActivityConfig for the JS activity
-        let config = super::super::activity_worker::ActivityConfig {
-            component_id,
-            forward_stdout: None,
-            forward_stderr: None,
-            env_vars: Arc::from([]),
-            retry_on_err: false,
-            directories_config: None,
-            fuel: None,
-            secrets: Arc::from([]),
-            allowed_hosts: Arc::from([]),
-        };
+        let config = config_fn(component_id);
 
         let compiled = super::super::activity_worker::ActivityWorkerCompiled::new_with_config(
             wasm_component,
@@ -373,6 +366,23 @@ mod tests {
         let js_compiled = ActivityJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn);
 
         Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
+    }
+
+    async fn new_js_activity_worker(js_source: &str, user_ffqn: FunctionFqn) -> Arc<dyn Worker> {
+        new_js_activity_worker_with_config(js_source, user_ffqn, |component_id| {
+            super::super::activity_worker::ActivityConfig {
+                component_id,
+                forward_stdout: None,
+                forward_stderr: None,
+                env_vars: Arc::from([]),
+                retry_on_err: false,
+                directories_config: None,
+                fuel: None,
+                secrets: Arc::from([]),
+                allowed_hosts: Arc::from([]),
+            }
+        })
+        .await
     }
 
     fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
@@ -604,5 +614,195 @@ mod tests {
                 assert!(reason.contains("function_not_found"), "reason: {reason}");
             }
         );
+    }
+
+    async fn new_js_activity_worker_with_http(
+        js_source: &str,
+        user_ffqn: FunctionFqn,
+        allowed_host: &str,
+    ) -> Arc<dyn Worker> {
+        use crate::http_request_policy::HostPattern;
+        let host_pattern = HostPattern::parse(allowed_host).unwrap();
+        new_js_activity_worker_with_config(js_source, user_ffqn, move |component_id| {
+            super::super::activity_worker::ActivityConfig {
+                component_id,
+                forward_stdout: None,
+                forward_stderr: None,
+                env_vars: Arc::from([]),
+                retry_on_err: false,
+                directories_config: None,
+                fuel: None,
+                secrets: Arc::from([]),
+                allowed_hosts: Arc::from(vec![host_pattern]),
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn js_activity_fetch_get() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        test_utils::set_up();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/hello"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("fetch works"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let url = server.uri();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
+        let js_source = format!(
+            r#"
+            async function do_fetch(params) {{
+                const resp = await fetch("{url}/hello");
+                const text = await resp.text();
+                return text;
+            }}
+            "#
+        );
+
+        let allowed = format!("127.0.0.1:{}", server.address().port());
+        let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "fetch works");
+    }
+
+    #[tokio::test]
+    async fn js_activity_fetch_post_json() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{body_json, method, path},
+        };
+        test_utils::set_up();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api"))
+            .and(body_json(serde_json::json!({"key": "value"})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"status":"ok"}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let url = server.uri();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "post-json");
+        let js_source = format!(
+            r#"
+            async function post_json(params) {{
+                const resp = await fetch("{url}/api", {{
+                    method: "POST",
+                    headers: {{ "Content-Type": "application/json" }},
+                    body: JSON.stringify({{ key: "value" }})
+                }});
+                const data = await resp.json();
+                return data.status;
+            }}
+            "#
+        );
+
+        let allowed = format!("127.0.0.1:{}", server.address().port());
+        let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "ok");
+    }
+
+    #[tokio::test]
+    async fn js_activity_fetch_response_status() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        test_utils::set_up();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/not-found"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("nope"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let url = server.uri();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "check-status");
+        let js_source = format!(
+            r#"
+            async function check_status(params) {{
+                const resp = await fetch("{url}/not-found");
+                return resp.status.toString();
+            }}
+            "#
+        );
+
+        let allowed = format!("127.0.0.1:{}", server.address().port());
+        let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "404");
+    }
+
+    #[tokio::test]
+    async fn js_activity_fetch_disallowed_host() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "bad-fetch");
+        // No hosts are allowed (using default new_js_activity_worker)
+        let js_source = r#"
+            async function bad_fetch(params) {
+                const resp = await fetch("http://example.com/");
+                return await resp.text();
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        // The fetch should fail because no hosts are allowed
+        let result = worker.run(ctx).await.expect("worker should return a result");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        // The JS runtime wraps the error - it should come back as a WrongReturnType
+        // or WrongThrownType since the promise rejection isn't a plain string throw.
+        assert_matches!(
+            retval,
+            SupportedFunctionReturnValue::Err { .. }
+            | SupportedFunctionReturnValue::ExecutionError(_)
+        );
+    }
+
+    #[tokio::test]
+    async fn js_activity_sync_function_still_works_with_fetch_runtime() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "sync-fn");
+        let js_source = r#"
+            function sync_fn(params) {
+                return "sync result: " + params[0];
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &["hello".to_string()]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "sync result: hello");
     }
 }
