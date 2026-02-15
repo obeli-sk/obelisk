@@ -111,7 +111,6 @@ impl JobExecutor for WasiJobExecutor {
 
         Ok(())
     }
-
 }
 
 impl WasiJobExecutor {

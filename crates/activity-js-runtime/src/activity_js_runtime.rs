@@ -13,8 +13,7 @@ use crate::wasi_fetcher::WasiFetcher;
 use crate::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{
     Context, JsError, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source,
-    builtins::promise::PromiseState, js_string, object::builtins::JsPromise,
-    property::Attribute,
+    builtins::promise::PromiseState, js_string, object::builtins::JsPromise, property::Attribute,
 };
 use boa_runtime::extensions::FetchExtension;
 use std::cell::RefCell;
@@ -111,10 +110,10 @@ pub fn execute(
 /// 3. Otherwise → `None`
 fn extract_error_string(err: &boa_engine::JsError) -> Option<String> {
     // 1. Opaque string (user threw a string: `throw "some error"`)
-    if let Some(js_value) = err.as_opaque() {
-        if let Some(string) = js_value.as_string() {
-            return Some(string.to_std_string_escaped());
-        }
+    if let Some(js_value) = err.as_opaque()
+        && let Some(string) = js_value.as_string()
+    {
+        return Some(string.to_std_string_escaped());
     }
     // 2. Native error (from JsNativeError, our WasiFetcher errors, etc.)
     if let Some(native) = err.as_native() {
