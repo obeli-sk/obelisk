@@ -1,0 +1,97 @@
+name: push-activity-js
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag to be used when pushing the activity-js runtime to Docker Hub."
+        required: true
+        type: string
+      ref:
+        description: "The ref (branch or SHA) to process"
+        required: false
+        type: string
+      push_to_main:
+        description: "Push directly to main instead of creating a PR"
+        required: false
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  push-activity-js:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - uses: nixbuild/nix-quick-install-action@v34
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          nix_conf: |
+            extra-substituters = https://cache.garnix.io
+            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
+
+      - name: Populate the nix store
+        run: nix develop --command echo
+
+      - name: Log in to Docker Hub
+        run: |
+          echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Push activity-js runtime
+        run: |
+          nix develop --command ./scripts/push-activity-js.sh $TAG assets/activity-js-version.txt
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+
+      - name: Configure git before push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Generate Unique Branch Name
+        id: branch-name
+        run: echo "branch_name=bump-activity-js-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Push directly to main
+        if: ${{ github.event.inputs.push_to_main == 'true' }}
+        run: |
+          git add assets/activity-js-version.txt
+          git commit -m "chore: Bump activity-js runtime to $TAG"
+          git push origin main
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+
+      - name: Create a PR
+        if: ${{ github.event.inputs.push_to_main != 'true' }}
+        run: |
+          git checkout -b ${{ steps.branch-name.outputs.branch_name }}
+          git add assets/activity-js-version.txt
+          git commit -m "chore: Bump activity-js runtime to $TAG"
+          git push origin ${{ steps.branch-name.outputs.branch_name }}
+          OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
+          REPO=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          curl -v --fail -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.github.com/repos/$OWNER/$REPO/pulls \
+            -d '{
+              "title": "chore: Bump activity-js runtime",
+              "head": "'${{ steps.branch-name.outputs.branch_name }}'",
+              "base": "main",
+              "body": ""
+            }'
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN_PR_RW }}
