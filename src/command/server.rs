@@ -1410,7 +1410,7 @@ impl ConfigVerified {
                 // Verify JS activities (no async fetch needed)
                 let activities_js = activities_js
                     .into_iter()
-                    .map(|js| js.verify(global_executor_instance_limiter.clone(), fuel))
+                    .map(|js| js.verify(ignore_missing_env_vars, global_executor_instance_limiter.clone(), fuel))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(ConfigVerified {
                     activities_wasm,

@@ -171,6 +171,14 @@
     "ActivityJsComponentConfigToml": {
       "type": "object",
       "properties": {
+        "allowed_hosts": {
+          "description": "Only these hosts can be reached by outgoing HTTP requests.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml"
         },
@@ -201,6 +209,13 @@
         "retry_on_err": {
           "type": "boolean",
           "default": true
+        },
+        "secrets": {
+          "description": "Secrets injected via placeholder replacement in outgoing HTTP requests.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SecretConfigToml"
+          }
         },
         "source": {
           "type": "string"

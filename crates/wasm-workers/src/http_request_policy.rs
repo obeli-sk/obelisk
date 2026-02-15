@@ -3,6 +3,7 @@ use hyper::Uri;
 use rand::RngCore;
 use secrecy::{ExposeSecret, SecretString};
 use std::{fmt, sync::Arc};
+use tracing::debug;
 use wasmtime_wasi_http::bindings::http::types::ErrorCode;
 
 /// Where in the outgoing request placeholders are replaced.
@@ -283,6 +284,7 @@ impl HttpRequestPolicy {
     ) {
         let body_secrets = self.body_secrets_for(request.uri());
         if body_secrets.is_empty() {
+            debug!("No secrets, no modifications to HTTP body");
             return;
         }
 
@@ -312,6 +314,7 @@ impl HttpRequestPolicy {
                     |_| unreachable!(),
                 ));
             *request.body_mut() = restored;
+            debug!("Not valid UTF-8, sending original HTTP body");
             return;
         };
 
@@ -326,6 +329,7 @@ impl HttpRequestPolicy {
                 |_| unreachable!(),
             ));
         *request.body_mut() = new_body;
+        debug!("Applied secrets to HTTP body");
     }
 }
 
@@ -402,9 +406,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_host_pattern_wildcard_all() {
+    fn parse_host_pattern_wildcard_all_https() {
         let p = HostPattern::parse("*").unwrap();
         assert!(p.matches("https", "anything.com", 443));
+        assert!(!p.matches("http", "anything.com", 80));
+    }
+
+    #[test]
+    fn parse_host_pattern_wildcard_http() {
+        let p = HostPattern::parse("http://*").unwrap();
+        assert!(!p.matches("https", "anything.com", 443));
+        assert!(p.matches("http", "anything.com", 80));
     }
 
     #[test]

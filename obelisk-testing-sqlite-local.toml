@@ -43,6 +43,7 @@ name = "test_programs_http_get_activity"
 location = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_http_get_activity.wasm"
 max_retries = 0
 exec.lock_expiry.seconds = 5
+allowed_hosts = ["*"] # only https allowed
 
 [[activity_wasm.secrets]]
 hosts = ["httpbin.org"]
@@ -106,12 +107,14 @@ backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/tes
 backtrace.ignore_component_digest = true
 
 # [[activity_js]]
-# name = "activity_js_greet"
-# ffqn = "test:pkg/ifc.greet"
+# name = "activity_js_fetch_get"
+# ffqn = "test:pkg/ifc.fetch-get"
+# max_retries = 0
 # source = """
-# function greet(params) {
-#     let name = params[0];
-#     let greeting = params[1];
-#     return greeting + ", " + name + "!";
+# async function fetch_get(params) {
+#     console.info("Fetching " + params[0]);
+#     const resp = await fetch(params[0]);
+#     const text = await resp.text();
+#     return text;
 # }
 # """
