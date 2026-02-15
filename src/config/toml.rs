@@ -982,6 +982,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
 
 #[derive(Debug)]
 pub(crate) struct ActivityJsConfigVerified {
+    pub(crate) wasm_path: PathBuf,
     pub(crate) js_source: String,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) activity_config: ActivityConfig,
@@ -998,6 +999,7 @@ impl ActivityJsConfigVerified {
 impl ActivityJsComponentConfigToml {
     pub(crate) fn verify(
         self,
+        wasm_path: PathBuf,
         ignore_missing_env_vars: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
@@ -1041,6 +1043,7 @@ impl ActivityJsComponentConfigToml {
         };
 
         Ok(ActivityJsConfigVerified {
+            wasm_path,
             js_source: self.source,
             ffqn,
             activity_config,

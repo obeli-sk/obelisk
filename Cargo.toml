@@ -114,8 +114,8 @@ otlp = [
     "dep:opentelemetry-otlp",
     "dep:opentelemetry-semantic-conventions",
 ]
-"activity-js" = ["dep:activity-js-runtime-builder"]
-default = ["otlp", "activity-js"]
+"activity-js-local" = ["dep:activity-js-runtime-builder"]
+default = ["otlp"]
 
 [lints]
 workspace = true
