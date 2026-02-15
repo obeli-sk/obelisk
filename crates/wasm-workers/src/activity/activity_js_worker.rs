@@ -780,12 +780,11 @@ mod tests {
         assert_eq!(extract_string(&ok_val.value), "status:404");
     }
 
-    #[ignore = "not working as wstd client does not handle ErrorCode::HttpRequestDenied"]
     #[tokio::test]
     async fn js_activity_fetch_disallowed_host() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "bad-fetch");
-        // No hosts are allowed (using default new_js_activity_worker)
+        // No hosts are allowed
         let js_source = r#"
             async function bad_fetch(params) {
                 const resp = await fetch("http://example.com/");
@@ -795,19 +794,12 @@ mod tests {
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
         let ctx = make_worker_context(ffqn, &[]);
 
-        // The fetch should fail because no hosts are allowed.
-        // The host returns ErrorCode::HttpRequestDenied, which our WasiFetcher
-        // converts to a JsNativeError. The JS runtime extracts the error message
-        // and returns it as Ok(Err(message)).
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
         let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err { err } => err);
         let err_str = err_val.expect("should have error value");
         let msg = extract_string(&err_str.value);
-        assert!(
-            msg.contains("denied") || msg.contains("HTTP") || msg.contains("error"),
-            "error message should mention denied/HTTP/error, got: {msg}"
-        );
+        assert_eq!("ErrorCode::HttpRequestDenied", msg);
     }
 
     #[tokio::test]

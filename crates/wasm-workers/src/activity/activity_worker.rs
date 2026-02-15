@@ -1696,7 +1696,9 @@ pub(crate) mod tests {
         );
         // The execution should fail with an ExecutionError when the WASM traps.
         // The trap happens because the HTTP request is denied and the WASM unwraps the error.
-        assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(_));
+        let err = assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(err)} => err);
+        let err = assert_matches!(err.value, WastVal::String(err) => err);
+        assert_eq!("ErrorCode::HttpRequestDenied", err);
         // Verify the mock server was not called (request was blocked before reaching it)
         server.verify().await;
         drop(db_connection);
