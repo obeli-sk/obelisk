@@ -9,7 +9,7 @@ use boa_engine::context::time::JsInstant;
 use boa_engine::job::{GenericJob, Job, JobExecutor, NativeAsyncJob, PromiseJob, TimeoutJob};
 use boa_engine::{Context, JsResult};
 use futures_concurrency::future::FutureGroup;
-use futures_lite::StreamExt;
+use futures_lite::StreamExt as _;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::mem;
@@ -74,67 +74,85 @@ impl JobExecutor for WasiJobExecutor {
     async fn run_jobs_async(self: Rc<Self>, context: &RefCell<&mut Context>) -> JsResult<()> {
         let mut group = FutureGroup::new();
         loop {
+            // 1. Move newly enqueued async jobs into the concurrent FutureGroup.
             for job in mem::take(&mut *self.async_jobs.borrow_mut()) {
                 group.insert(job.call(context));
             }
 
-            let no_timeout_jobs_to_run = {
-                let now = context.borrow().clock().now();
-                !self.timeout_jobs.borrow().iter().any(|(t, _)| &now >= t)
-            };
+            // 2. Run all ready synchronous jobs (promise microtasks, timeouts, generic).
+            self.run_sync_jobs(context)?;
 
-            if self.promise_jobs.borrow().is_empty()
+            // 3. Check if there's any work left.
+            if group.is_empty()
+                && self.promise_jobs.borrow().is_empty()
                 && self.async_jobs.borrow().is_empty()
                 && self.generic_jobs.borrow().is_empty()
-                && no_timeout_jobs_to_run
-                && group.is_empty()
             {
                 break;
             }
 
-            if let Some(Err(err)) = futures_lite::future::poll_once(group.next())
-                .await
-                .flatten()
-            {
-                self.clear();
-                return Err(err);
-            }
-
-            {
-                let now = context.borrow().clock().now();
-                let mut timeouts_borrow = self.timeout_jobs.borrow_mut();
-                let mut jobs_to_keep = timeouts_borrow.split_off(&now);
-                jobs_to_keep.retain(|_, job| !job.is_cancelled());
-                let jobs_to_run = mem::replace(&mut *timeouts_borrow, jobs_to_keep);
-                drop(timeouts_borrow);
-
-                for job in jobs_to_run.into_values() {
-                    if let Err(err) = job.call(&mut context.borrow_mut()) {
+            // 4. If there are async futures in flight, await the next one.
+            //    This is a proper `.await` — when inner futures are Pending on
+            //    WASIp2 pollables, the task yields to wstd's reactor WITHOUT
+            //    re-scheduling. The reactor then calls `block_on_pollables()`
+            //    → `wasi:io/poll::poll` → wasmtime fiber suspends → tokio can
+            //    run other tasks (e.g. the HTTP client spawned by activity_ctx).
+            if !group.is_empty() {
+                match group.next().await {
+                    Some(Ok(_)) => {} // async job completed successfully
+                    Some(Err(err)) => {
                         self.clear();
                         return Err(err);
                     }
+                    None => {} // group drained
                 }
             }
-
-            let jobs = mem::take(&mut *self.promise_jobs.borrow_mut());
-            for job in jobs {
-                if let Err(err) = job.call(&mut context.borrow_mut()) {
-                    self.clear();
-                    return Err(err);
-                }
-            }
-
-            let jobs = mem::take(&mut *self.generic_jobs.borrow_mut());
-            for job in jobs {
-                if let Err(err) = job.call(&mut context.borrow_mut()) {
-                    self.clear();
-                    return Err(err);
-                }
-            }
-            context.borrow_mut().clear_kept_objects();
-            futures_lite::future::yield_now().await;
         }
 
+        Ok(())
+    }
+
+}
+
+impl WasiJobExecutor {
+    /// Run all ready synchronous jobs: promise microtasks, timeout jobs, generic jobs.
+    fn run_sync_jobs(&self, context: &RefCell<&mut Context>) -> JsResult<()> {
+        // Timeout jobs
+        {
+            let now = context.borrow().clock().now();
+            let mut timeouts_borrow = self.timeout_jobs.borrow_mut();
+            let mut jobs_to_keep = timeouts_borrow.split_off(&now);
+            jobs_to_keep.retain(|_, job| !job.is_cancelled());
+            let jobs_to_run = mem::replace(&mut *timeouts_borrow, jobs_to_keep);
+            drop(timeouts_borrow);
+
+            for job in jobs_to_run.into_values() {
+                if let Err(err) = job.call(&mut context.borrow_mut()) {
+                    self.clear();
+                    return Err(err);
+                }
+            }
+        }
+
+        // Promise microtasks
+        let jobs = mem::take(&mut *self.promise_jobs.borrow_mut());
+        for job in jobs {
+            if let Err(err) = job.call(&mut context.borrow_mut()) {
+                self.clear();
+                return Err(err);
+            }
+        }
+
+        // Generic jobs
+        let jobs = mem::take(&mut *self.generic_jobs.borrow_mut());
+        for job in jobs {
+            if let Err(err) = job.call(&mut context.borrow_mut()) {
+                self.clear();
+                return Err(err);
+            }
+        }
+
+        context.borrow_mut().clear_kept_objects();
         Ok(())
     }
 }
