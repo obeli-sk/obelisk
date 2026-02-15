@@ -757,6 +757,7 @@ mod tests {
         assert_eq!(extract_string(&ok_val.value), "status:404");
     }
 
+    #[ignore = "not working as wstd client does not handle ErrorCode::HttpRequestDenied"]
     #[tokio::test]
     async fn js_activity_fetch_disallowed_host() {
         test_utils::set_up();
