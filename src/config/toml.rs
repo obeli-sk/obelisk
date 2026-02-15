@@ -972,6 +972,12 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) retry_on_err: bool,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
+    /// Only these hosts can be reached by outgoing HTTP requests.
+    #[serde(default)]
+    pub(crate) allowed_hosts: Vec<String>,
+    /// Secrets injected via placeholder replacement in outgoing HTTP requests.
+    #[serde(default)]
+    pub(crate) secrets: Vec<SecretConfigToml>,
 }
 
 #[derive(Debug)]
@@ -992,6 +998,7 @@ impl ActivityJsConfigVerified {
 impl ActivityJsComponentConfigToml {
     pub(crate) fn verify(
         self,
+        ignore_missing_env_vars: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
@@ -1013,6 +1020,9 @@ impl ActivityJsComponentConfigToml {
             InputContentDigest(content_digest),
         )?;
 
+        let secrets = resolve_secrets(self.secrets, ignore_missing_env_vars)?;
+        let allowed_hosts = merge_allowed_hosts(self.allowed_hosts, &secrets)?;
+
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
             forward_stdout: self.forward_stdout.into(),
@@ -1021,8 +1031,8 @@ impl ActivityJsComponentConfigToml {
             retry_on_err: self.retry_on_err,
             directories_config: None,
             fuel,
-            secrets: Arc::from([]), // FIXME implement
-            allowed_hosts: Arc::from([HostPattern::parse("*").unwrap()]), // FIXME implement
+            secrets,
+            allowed_hosts,
         };
 
         let retry_config = ComponentRetryConfig {
