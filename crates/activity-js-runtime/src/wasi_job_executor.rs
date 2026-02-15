@@ -33,6 +33,17 @@ impl WasiJobExecutor {
     }
 }
 
+impl WasiJobExecutor {
+    /// Drive all enqueued jobs to completion (async).
+    ///
+    /// Called by [`crate::activity_js_runtime::resolve_if_promise`] directly inside a
+    /// single `wstd::runtime::block_on`, avoiding the repeated `block_on` calls that
+    /// `JsPromise::await_blocking` → `run_jobs` would create.
+    pub async fn drive_jobs(self: Rc<Self>, context: &RefCell<&mut Context>) -> JsResult<()> {
+        JobExecutor::run_jobs_async(self, context).await
+    }
+}
+
 impl std::fmt::Debug for WasiJobExecutor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WasiJobExecutor").finish_non_exhaustive()
@@ -54,8 +65,9 @@ impl JobExecutor for WasiJobExecutor {
     }
 
     fn run_jobs(self: Rc<Self>, context: &mut Context) -> JsResult<()> {
-        // Use wstd's reactor instead of futures_lite::future::block_on.
-        // This allows WASIp2 pollables (from wstd::http) to be driven properly.
+        // This is called by Boa internally (e.g. from await_blocking).
+        // We use wstd::runtime::block_on to drive WASIp2 pollables.
+        // Note: resolve_if_promise avoids this path by calling run_jobs_async directly.
         wstd::runtime::block_on(self.run_jobs_async(&RefCell::new(context)))
     }
 

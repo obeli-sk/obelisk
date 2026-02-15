@@ -12,10 +12,12 @@ use crate::generated::{
 use crate::wasi_fetcher::WasiFetcher;
 use crate::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{
-    Context, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source, js_string,
-    object::builtins::JsPromise, property::Attribute,
+    Context, JsError, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source,
+    builtins::promise::PromiseState, js_string, object::builtins::JsPromise,
+    property::Attribute,
 };
 use boa_runtime::extensions::FetchExtension;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Execute JavaScript code with the given parameters.
@@ -32,7 +34,7 @@ pub fn execute(
 
     let executor = Rc::new(WasiJobExecutor::default());
     let mut context = Context::builder()
-        .job_executor(executor)
+        .job_executor(executor.clone())
         .build()
         .expect("building context must work");
 
@@ -74,7 +76,7 @@ pub fn execute(
 
     // If the result is a Promise, drive it to completion.
     let result = match result {
-        Ok(ref js_value) => resolve_if_promise(js_value, &mut context),
+        Ok(ref js_value) => resolve_if_promise(js_value, &mut context, &executor),
         err => err,
     };
 
@@ -125,16 +127,44 @@ fn extract_error_string(err: &boa_engine::JsError) -> Option<String> {
 }
 
 /// If `value` is a Promise, drive it to completion and return the resolved value.
-fn resolve_if_promise(value: &JsValue, context: &mut Context) -> JsResult<JsValue> {
+///
+/// We avoid [`JsPromise::await_blocking`] because it creates a tight loop calling
+/// `run_jobs()` → `wstd::runtime::block_on()` repeatedly. Each `block_on` creates a
+/// new wstd reactor that exits immediately when no pollables are pending (e.g. when
+/// only synchronous promise microtasks remain). This busy-loop starves the tokio
+/// runtime, preventing wiremock (or any other async task) from running on
+/// single-threaded tokio.
+///
+/// Instead, we drive the entire promise resolution inside a **single**
+/// `wstd::runtime::block_on` call. The wstd reactor persists across all job iterations,
+/// so WASIp2 pollables registered by `fetch()` are properly tracked and the reactor
+/// blocks on them via `wasi:io/poll::poll`, yielding the wasmtime fiber to tokio.
+fn resolve_if_promise(
+    value: &JsValue,
+    context: &mut Context,
+    executor: &Rc<WasiJobExecutor>,
+) -> JsResult<JsValue> {
     let Some(object) = value.as_object() else {
         return Ok(value.clone());
     };
     let Ok(promise) = JsPromise::from_object(object) else {
         return Ok(value.clone());
     };
-    // await_blocking runs the job queue (which uses our WasiJobExecutor
-    // to drive WASIp2 pollables) until the promise settles.
-    promise.await_blocking(context)
+
+    // Drive promise resolution inside a single wstd reactor.
+    let executor = executor.clone();
+    wstd::runtime::block_on(async {
+        let context = RefCell::new(context);
+        loop {
+            match promise.state() {
+                PromiseState::Pending => {
+                    executor.clone().drive_jobs(&context).await?;
+                }
+                PromiseState::Fulfilled(v) => return Ok(v),
+                PromiseState::Rejected(e) => return Err(JsError::from_opaque(e)),
+            }
+        }
+    })
 }
 
 /// Register the `fetch` API backed by WASIp2 HTTP.
