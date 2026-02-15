@@ -1021,8 +1021,8 @@ impl ActivityJsComponentConfigToml {
             retry_on_err: self.retry_on_err,
             directories_config: None,
             fuel,
-            secrets: Arc::from([]),
-            allowed_hosts: Arc::from([]),
+            secrets: Arc::from([]), // FIXME implement
+            allowed_hosts: Arc::from([HostPattern::parse("*").unwrap()]), // FIXME implement
         };
 
         let retry_config = ComponentRetryConfig {

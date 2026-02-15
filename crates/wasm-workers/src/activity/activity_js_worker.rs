@@ -639,7 +639,7 @@ mod tests {
         .await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")] // FIXME: multi_thread
     async fn js_activity_fetch_get() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
@@ -666,7 +666,7 @@ mod tests {
             "#
         );
 
-        let allowed = format!("127.0.0.1:{}", server.address().port());
+        let allowed = format!("http://127.0.0.1:{}", server.address().port());
         let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
         let ctx = make_worker_context(ffqn, &[]);
 
@@ -677,7 +677,7 @@ mod tests {
         assert_eq!(extract_string(&ok_val.value), "fetch works");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")] // FIXME: multi_thread
     async fn js_activity_fetch_post_json() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
@@ -709,7 +709,7 @@ mod tests {
             "#
         );
 
-        let allowed = format!("127.0.0.1:{}", server.address().port());
+        let allowed = format!("http://127.0.0.1:{}", server.address().port());
         let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
         let ctx = make_worker_context(ffqn, &[]);
 
@@ -720,7 +720,7 @@ mod tests {
         assert_eq!(extract_string(&ok_val.value), "ok");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")] // FIXME: multi_thread
     async fn js_activity_fetch_response_status() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
@@ -746,7 +746,7 @@ mod tests {
             "#
         );
 
-        let allowed = format!("127.0.0.1:{}", server.address().port());
+        let allowed = format!("http://127.0.0.1:{}", server.address().port());
         let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
         let ctx = make_worker_context(ffqn, &[]);
 
@@ -757,7 +757,7 @@ mod tests {
         assert_eq!(extract_string(&ok_val.value), "404");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")] // FIXME: multi_thread
     async fn js_activity_fetch_disallowed_host() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "bad-fetch");
@@ -768,7 +768,6 @@ mod tests {
                 return await resp.text();
             }
         "#;
-
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
         let ctx = make_worker_context(ffqn, &[]);
 
@@ -778,6 +777,7 @@ mod tests {
             .await
             .expect("worker should return a result");
         let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        // FIXME blocked by allow_hosts should return ErrorCode::HttpRequestDenied, currently traps
         // The JS runtime wraps the error - it should come back as a WrongReturnType
         // or WrongThrownType since the promise rejection isn't a plain string throw.
         assert_matches!(
