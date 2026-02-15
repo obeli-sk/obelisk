@@ -55,7 +55,6 @@ mod bench {
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
-            retry_on_err: true,
             directories_config: None,
             fuel: None,
             secrets: Arc::from([]),

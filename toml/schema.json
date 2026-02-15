@@ -206,10 +206,6 @@
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"
         },
-        "retry_on_err": {
-          "type": "boolean",
-          "default": true
-        },
         "secrets": {
           "description": "Secrets injected via placeholder replacement in outgoing HTTP requests.",
           "type": "array",
@@ -306,10 +302,6 @@
         },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"
-        },
-        "retry_on_err": {
-          "type": "boolean",
-          "default": true
         },
         "secrets": {
           "description": "Secrets injected via placeholder replacement in outgoing HTTP requests.",

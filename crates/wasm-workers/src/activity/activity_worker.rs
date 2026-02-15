@@ -35,7 +35,6 @@ pub struct ActivityConfig {
     pub forward_stdout: Option<StdOutputConfig>,
     pub forward_stderr: Option<StdOutputConfig>,
     pub env_vars: Arc<[EnvVar]>,
-    pub retry_on_err: bool,
     pub directories_config: Option<ActivityDirectoriesConfig>,
     pub fuel: Option<u64>,
     pub secrets: Arc<[crate::http_request_policy::SecretConfig]>,
@@ -498,29 +497,26 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
         );
         match res {
             Ok(Ok(result)) => {
-                if self.config.retry_on_err {
-                    // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
-                    if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
-                        let permanent = is_permanent_variant(result_err.as_ref());
-                        if ctx.can_be_retried && !permanent {
-                            let detail = serde_json::to_string(result_err).expect(
-                                "SupportedFunctionReturnValue should be serializable to JSON",
-                            );
-                            return WorkerResult::Err(WorkerError::ActivityReturnedError {
-                                detail: Some(detail),
-                                version: ctx.version.clone(),
-                                http_client_traces,
-                            });
-                        }
-                        // else: log and pass the retval as is to be stored.
-                        ctx.worker_span.in_scope(|| {
-                            if permanent {
-                                info!("Execution returned a permanent error variant, not retrying");
-                            } else {
-                                info!("Execution returned an error variant, not retrying");
-                            }
+                // Interpret any `SupportedFunctionResult::Fallible` Err variant as a retry request (TemporaryError)
+                if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
+                    let permanent = is_permanent_variant(result_err.as_ref());
+                    if ctx.can_be_retried && !permanent {
+                        let detail = serde_json::to_string(result_err)
+                            .expect("SupportedFunctionReturnValue should be serializable to JSON");
+                        return WorkerResult::Err(WorkerError::ActivityReturnedError {
+                            detail: Some(detail),
+                            version: ctx.version.clone(),
+                            http_client_traces,
                         });
                     }
+                    // else: log and pass the retval as is to be stored.
+                    ctx.worker_span.in_scope(|| {
+                        if permanent {
+                            info!("Execution returned a permanent error variant, not retrying");
+                        } else {
+                            info!("Execution returned an error variant, not retrying");
+                        }
+                    });
                 }
                 WorkerResult::Ok(WorkerResultOk::Finished {
                     retval: result,
@@ -640,7 +636,6 @@ pub(crate) mod tests {
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
-            retry_on_err: true,
             directories_config: None,
             fuel: None,
             secrets: Arc::from([]),
@@ -657,7 +652,6 @@ pub(crate) mod tests {
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
-            retry_on_err: true,
             directories_config: None,
             fuel: None,
             secrets: Arc::from([]),
@@ -1744,7 +1738,6 @@ pub(crate) mod tests {
                     forward_stdout: None,
                     forward_stderr: None,
                     env_vars: Arc::from([]),
-                    retry_on_err: true,
                     directories_config: None,
                     fuel: None,
                     secrets: Arc::from(vec![SecretConfig {
@@ -1874,7 +1867,6 @@ pub(crate) mod tests {
                 forward_stdout: None,
                 forward_stderr: None,
                 env_vars: Arc::default(),
-                retry_on_err: true, // needed
                 directories_config: Some(ActivityDirectoriesConfig {
                     parent_preopen_dir,
                     reuse_on_retry: true, // relies on continuing in the same folder
@@ -1978,7 +1970,6 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
-                retry_on_err: true,
                 directories_config: Some(ActivityDirectoriesConfig {
                     parent_preopen_dir,
                     reuse_on_retry: false,
@@ -2048,7 +2039,6 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
-                retry_on_err: true,
                 directories_config: None,
                 fuel: None,
                 secrets: Arc::from([]),
@@ -2107,7 +2097,6 @@ pub(crate) mod tests {
                     key: "PATH".to_string(),
                     val: std::env::var("PATH").unwrap(),
                 }]),
-                retry_on_err: true,
                 directories_config: Some(ActivityDirectoriesConfig {
                     parent_preopen_dir,
                     reuse_on_retry: false,
@@ -2196,7 +2185,6 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
-                retry_on_err: false,
                 directories_config: None,
                 fuel: None,
                 secrets: Arc::from([]),
@@ -2265,7 +2253,6 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
-                retry_on_err: false,
                 directories_config: None,
                 fuel: None,
                 secrets: Arc::from([]),
@@ -2325,7 +2312,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
-        // retry_on_err is true and max_retries > 0, so it would retry if error wasn't permanent
+        // max_retries > 0, so it would retry if error wasn't permanent
         let retry_config = ComponentRetryConfig {
             max_retries: Some(1),
             retry_exp_backoff: Duration::from_millis(10),
@@ -2340,7 +2327,6 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
-                retry_on_err: true, // Would retry on error, but permanent variant prevents it
                 directories_config: None,
                 fuel: None,
                 secrets: Arc::from([]),

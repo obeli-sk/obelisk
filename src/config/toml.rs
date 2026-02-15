@@ -729,8 +729,6 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     pub(crate) forward_stderr: ComponentStdOutputToml,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
-    #[serde(default = "default_retry_on_err")]
-    pub(crate) retry_on_err: bool,
     #[serde(default)]
     pub(crate) directories: ActivityDirectoriesConfigToml,
     #[serde(default)]
@@ -929,7 +927,6 @@ impl ActivityWasmComponentConfigToml {
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
             env_vars,
-            retry_on_err: self.retry_on_err,
             directories_config,
             fuel,
             secrets,
@@ -968,8 +965,6 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) forward_stdout: ComponentStdOutputToml,
     #[serde(default)]
     pub(crate) forward_stderr: ComponentStdOutputToml,
-    #[serde(default = "default_retry_on_err")]
-    pub(crate) retry_on_err: bool,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
     /// Only these hosts can be reached by outgoing HTTP requests.
@@ -1030,7 +1025,6 @@ impl ActivityJsComponentConfigToml {
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
             env_vars: Arc::from([]),
-            retry_on_err: self.retry_on_err,
             directories_config: None,
             fuel,
             secrets,
@@ -1960,10 +1954,6 @@ const fn default_global_backtrace_persist() -> bool {
 }
 
 const fn default_codegen_enabled() -> bool {
-    true
-}
-
-const fn default_retry_on_err() -> bool {
     true
 }
 
