@@ -90,9 +90,11 @@ pub fn execute(
             }
         }
         Err(js_err) => {
-            // Extract error message: try opaque string, then native error message.
-            if let Some(msg) = extract_error_string(&js_err) {
-                Ok(Err(msg))
+            if let Ok(native_err) = js_err.try_native(&mut context) {
+                // `throw new Error('foo')` goes here
+                Ok(Err(native_err.message().to_string()))
+            } else if let Some(err_str) = extract_error_string(&js_err) {
+                Ok(Err(err_str))
             } else {
                 Err(JsRuntimeError::WrongThrownType(format!(
                     "expected string, got {js_err:?}"
@@ -103,24 +105,13 @@ pub fn execute(
 }
 
 /// Extract a string message from a `JsError`.
-///
-/// Tries in order:
-/// 1. Opaque error that is a JS string → use the string directly
-/// 2. Native error (e.g. from `JsNativeError::error().with_message(...)`) → use `.message()`
-/// 3. Otherwise → `None`
 fn extract_error_string(err: &boa_engine::JsError) -> Option<String> {
-    // 1. Opaque string (user threw a string: `throw "some error"`)
     if let Some(js_value) = err.as_opaque()
         && let Some(string) = js_value.as_string()
     {
-        return Some(string.to_std_string_escaped());
-    }
-    // 2. Native error (from JsNativeError, our WasiFetcher errors, etc.)
-    if let Some(native) = err.as_native() {
-        let msg = native.message().to_string();
-        if !msg.is_empty() {
-            return Some(msg);
-        }
+        // `throw 'string'` goes here
+        let string = string.to_std_string_escaped();
+        return Some(string);
     }
     None
 }

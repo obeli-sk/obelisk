@@ -468,12 +468,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_with_throw() {
+    async fn js_activity_with_throw_string() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
         let js_source = r#"
             function fail() {
                 throw "something went wrong";
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        // For result<string, string>, a throw becomes Err
+        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err { err } => err);
+        let err_val = err_val.expect("should have err value");
+        assert_eq!(extract_string(&err_val.value), "something went wrong");
+    }
+
+    #[tokio::test]
+    async fn js_activity_with_throw_error_object() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
+        let js_source = r#"
+            function fail() {
+                throw new Error("something went wrong");
             }
         "#;
 

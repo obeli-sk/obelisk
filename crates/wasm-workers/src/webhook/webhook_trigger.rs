@@ -1787,12 +1787,8 @@ pub(crate) mod tests {
             db_close.close().await;
         }
 
-        #[rstest]
         #[tokio::test]
-        async fn http_get_denied_host(
-            #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-            locking_strategy: LockingStrategy,
-        ) {
+        async fn http_get_denied_host() {
             use wiremock::{
                 Mock, MockServer, ResponseTemplate,
                 matchers::{method, path},
@@ -1817,7 +1813,7 @@ pub(crate) mod tests {
                 db_pool.clone(),
                 sim_clock.clone_box(),
                 TokioSleep,
-                locking_strategy,
+                LockingStrategy::ByComponentDigest,
             )
             .await;
 

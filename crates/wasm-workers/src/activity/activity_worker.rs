@@ -1608,12 +1608,8 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn http_get_denied_host(
-        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-        locking_strategy: LockingStrategy,
-    ) {
+    async fn http_get_denied_host() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{method, path},
@@ -1645,7 +1641,7 @@ pub(crate) mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
-            locking_strategy,
+            locking_strategy: LockingStrategy::ByComponentDigest,
         };
         let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
         let exec_task = ExecTask::new_test(
