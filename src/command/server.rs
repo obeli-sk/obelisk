@@ -531,7 +531,7 @@ pub(crate) async fn verify_config_compile_link(
         .await
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
 
-    let (server_verified, component_source_map) = ServerVerified::new(
+    let (server_verified, component_source_map) = Box::pin(ServerVerified::new(
         config,
         codegen_cache,
         Arc::from(wasm_cache_dir),
@@ -539,7 +539,7 @@ pub(crate) async fn verify_config_compile_link(
         params.ignore_missing_env_vars,
         path_prefixes,
         termination_watcher,
-    )
+    ))
     .await?;
     let compiled_and_linked = ServerCompiledLinked::new(
         server_verified,
@@ -2163,7 +2163,7 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
 
-        let (server_verified, _component_source_map) = ServerVerified::new(
+        let (server_verified, _component_source_map) = Box::pin(ServerVerified::new(
             config,
             codegen_cache,
             Arc::from(wasm_cache_dir),
@@ -2171,7 +2171,7 @@ mod tests {
             VerifyParams::default().ignore_missing_env_vars,
             Arc::new(config_holder.path_prefixes),
             &mut termination_watcher,
-        )
+        ))
         .await?;
         ServerCompiledLinked::new(server_verified, &mut termination_watcher, false).await?;
         Ok(())
