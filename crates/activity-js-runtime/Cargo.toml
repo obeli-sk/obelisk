@@ -15,6 +15,7 @@ boa_engine = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", defa
 boa_runtime = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false, features = ["fetch"] }
 boa_gc = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0" }
 wstd.workspace = true
+wasip2 = "1.0"
 futures-concurrency.workspace = true
 futures-lite = "2.6.1"
 http.workspace = true
