@@ -1391,39 +1391,12 @@ impl ConfigVerified {
             })
             .collect::<Vec<_>>();
 
-        // Fetch activity-js runtime from OCI if there are JS activities
-        // (skipped when using local build via activity-js-local feature)
-        let activity_js_runtime_fetch = {
-            let has_js_activities = !activities_js.is_empty();
-            #[cfg(not(feature = "activity-js-local"))]
-            let wasm_cache_dir_clone = wasm_cache_dir.clone();
-            #[cfg(not(feature = "activity-js-local"))]
-            let metadata_dir_clone = metadata_dir.clone();
-            #[cfg(not(feature = "activity-js-local"))]
-            let path_prefixes_clone = path_prefixes.clone();
-            async move {
-                if !has_js_activities {
-                    return Ok(None);
-                }
-                #[cfg(feature = "activity-js-local")]
-                {
-                    Ok::<_, anyhow::Error>(Some(PathBuf::from(
-                        activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
-                    )))
-                }
-                #[cfg(not(feature = "activity-js-local"))]
-                {
-                    let location: ComponentLocationToml = ACTIVITY_JS_LOCATION
-                        .parse()
-                        .context("cannot parse built-in activity-js runtime location")?;
-                    let (_content_digest, wasm_path) = location
-                        .fetch(&wasm_cache_dir_clone, &metadata_dir_clone, &path_prefixes_clone, None)
-                        .await
-                        .context("cannot fetch activity-js runtime")?;
-                    Ok::<_, anyhow::Error>(Some(wasm_path))
-                }
-            }
-        };
+        let activity_js_runtime_fetch = fetch_activity_js_runtime(
+            !activities_js.is_empty(),
+            wasm_cache_dir.clone(),
+            metadata_dir.clone(),
+            path_prefixes.clone(),
+        );
 
         // Abort/cancel safety:
         // If an error happens or Ctrl-C is pressed the whole process will shut down.
@@ -1450,9 +1423,7 @@ impl ConfigVerified {
                 let activities_js = activities_js
                     .into_iter()
                     .map(|js| {
-                        let wasm_path = activity_js_wasm_path.clone()
-                            .expect("activity-js runtime wasm_path must be set when JS activities are configured");
-                        js.verify(wasm_path, ignore_missing_env_vars, global_executor_instance_limiter.clone(), fuel)
+                        js.verify(activity_js_wasm_path.clone(), ignore_missing_env_vars, global_executor_instance_limiter.clone(), fuel)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(ConfigVerified {
@@ -1810,6 +1781,43 @@ fn prespawn_js_activity(
         activity_js.exec_config,
         activity_js.logs_store_min_level,
     ))
+}
+
+/// Resolve the activity-js runtime WASM path from the local build.
+#[cfg(feature = "activity-js-local")]
+async fn fetch_activity_js_runtime(
+    has_js_activities: bool,
+    _wasm_cache_dir: Arc<Path>,
+    _metadata_dir: Arc<Path>,
+    _path_prefixes: Arc<PathPrefixes>,
+) -> Result<PathBuf, anyhow::Error> {
+    if !has_js_activities {
+        return Ok(PathBuf::new());
+    }
+    Ok(PathBuf::from(
+        activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
+    ))
+}
+
+/// Fetch the activity-js runtime WASM from OCI.
+#[cfg(not(feature = "activity-js-local"))]
+async fn fetch_activity_js_runtime(
+    has_js_activities: bool,
+    wasm_cache_dir: Arc<Path>,
+    metadata_dir: Arc<Path>,
+    path_prefixes: Arc<PathPrefixes>,
+) -> Result<PathBuf, anyhow::Error> {
+    if !has_js_activities {
+        return Ok(PathBuf::new());
+    }
+    let location: ComponentLocationToml = ACTIVITY_JS_LOCATION
+        .parse()
+        .context("cannot parse built-in activity-js runtime location")?;
+    let (_content_digest, wasm_path) = location
+        .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes, None)
+        .await
+        .context("cannot fetch activity-js runtime")?;
+    Ok(wasm_path)
 }
 
 #[instrument(level = "debug", skip_all, fields(
