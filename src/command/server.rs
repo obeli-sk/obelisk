@@ -16,6 +16,8 @@ use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
+#[cfg(not(feature = "activity-js-local"))]
+use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
@@ -128,6 +130,8 @@ use wasmtime::Engine;
 
 const EPOCH_MILLIS: u64 = 10;
 const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
+#[cfg(not(feature = "activity-js-local"))]
+const ACTIVITY_JS_LOCATION: &str = include_str!("../../assets/activity-js-version.txt");
 
 pub(crate) type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 
@@ -1387,18 +1391,53 @@ impl ConfigVerified {
             })
             .collect::<Vec<_>>();
 
+        // Fetch activity-js runtime from OCI if there are JS activities
+        // (skipped when using local build via activity-js-local feature)
+        let activity_js_runtime_fetch = {
+            let has_js_activities = !activities_js.is_empty();
+            #[cfg(not(feature = "activity-js-local"))]
+            let wasm_cache_dir_clone = wasm_cache_dir.clone();
+            #[cfg(not(feature = "activity-js-local"))]
+            let metadata_dir_clone = metadata_dir.clone();
+            #[cfg(not(feature = "activity-js-local"))]
+            let path_prefixes_clone = path_prefixes.clone();
+            async move {
+                if !has_js_activities {
+                    return Ok(None);
+                }
+                #[cfg(feature = "activity-js-local")]
+                {
+                    Ok::<_, anyhow::Error>(Some(PathBuf::from(
+                        activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
+                    )))
+                }
+                #[cfg(not(feature = "activity-js-local"))]
+                {
+                    let location: ComponentLocationToml = ACTIVITY_JS_LOCATION
+                        .parse()
+                        .context("cannot parse built-in activity-js runtime location")?;
+                    let (_content_digest, wasm_path) = location
+                        .fetch(&wasm_cache_dir_clone, &metadata_dir_clone, &path_prefixes_clone, None)
+                        .await
+                        .context("cannot fetch activity-js runtime")?;
+                    Ok::<_, anyhow::Error>(Some(wasm_path))
+                }
+            }
+        };
+
         // Abort/cancel safety:
         // If an error happens or Ctrl-C is pressed the whole process will shut down.
         // Downloading metadata and content must be robust enough to handle it.
         // We do not need to abort the tasks here.
-        let all = futures_util::future::join4(
+        let all = futures_util::future::join5(
             futures_util::future::join_all(activities_wasm),
             futures_util::future::join_all(activities_stub_ext),
             futures_util::future::join_all(workflows),
             futures_util::future::join_all(webhooks_by_names),
+            activity_js_runtime_fetch,
         );
         tokio::select! {
-            (activity_wasm_results, activity_stub_ext_results, workflow_results, webhook_results) = all => {
+            (activity_wasm_results, activity_stub_ext_results, workflow_results, webhook_results, activity_js_runtime_result) = all => {
                 let activities_wasm = activity_wasm_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let activities_stub_ext = activity_stub_ext_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
@@ -1407,10 +1446,14 @@ impl ConfigVerified {
                     let (k, v) = webhook??;
                     webhooks_by_names.insert(k, v);
                 }
-                // Verify JS activities (no async fetch needed)
+                let activity_js_wasm_path = activity_js_runtime_result?;
                 let activities_js = activities_js
                     .into_iter()
-                    .map(|js| js.verify(ignore_missing_env_vars, global_executor_instance_limiter.clone(), fuel))
+                    .map(|js| {
+                        let wasm_path = activity_js_wasm_path.clone()
+                            .expect("activity-js runtime wasm_path must be set when JS activities are configured");
+                        js.verify(wasm_path, ignore_missing_env_vars, global_executor_instance_limiter.clone(), fuel)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(ConfigVerified {
                     activities_wasm,
@@ -1738,7 +1781,6 @@ fn prespawn_activity(
     ))
 }
 
-#[cfg(feature = "activity-js")]
 #[instrument(level = "debug", skip_all, fields(
     component_id = %activity_js.exec_config.component_id,
 ))]
@@ -1750,8 +1792,8 @@ fn prespawn_js_activity(
     assert!(component_id.component_type == ComponentType::ActivityJs);
     debug!("Instantiating JS activity");
     let engine = engines.activity_engine.clone();
-    let wasm_path = activity_js_runtime_builder::ACTIVITY_JS_RUNTIME;
-    let runnable_component = RunnableComponent::new(wasm_path, &engine, ComponentType::ActivityJs)?;
+    let runnable_component =
+        RunnableComponent::new(&activity_js.wasm_path, &engine, ComponentType::ActivityJs)?;
 
     let inner = ActivityWorkerCompiled::new_with_config(
         runnable_component,
@@ -1768,14 +1810,6 @@ fn prespawn_js_activity(
         activity_js.exec_config,
         activity_js.logs_store_min_level,
     ))
-}
-
-#[cfg(not(feature = "activity-js"))]
-fn prespawn_js_activity(
-    _activity_js: ActivityJsConfigVerified,
-    _engines: &Engines,
-) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
-    anyhow::bail!("activity_js requires the `activity-js` feature to be enabled")
 }
 
 #[instrument(level = "debug", skip_all, fields(
