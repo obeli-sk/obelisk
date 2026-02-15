@@ -1,10 +1,12 @@
 use hashbrown::HashSet;
+use http_body_util::BodyExt as _;
 use hyper::Uri;
 use rand::RngCore;
 use secrecy::{ExposeSecret, SecretString};
 use std::{fmt, sync::Arc};
 use tracing::debug;
-use wasmtime_wasi_http::bindings::http::types::ErrorCode;
+use wasmtime_wasi_http::body::HyperIncomingBody;
+use wasmtime_wasi_http::types::IncomingResponse;
 
 /// Where in the outgoing request placeholders are replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -167,9 +169,32 @@ pub(crate) enum PolicyError {
         port: u16,
     },
 }
-impl From<PolicyError> for ErrorCode {
-    fn from(_value: PolicyError) -> Self {
-        ErrorCode::HttpRequestDenied
+
+/// HTTP status code returned to the WASM guest when a request is denied by policy.
+pub(crate) const DENIED_REQUEST_STATUS: u16 = 403;
+
+/// Build a synthetic HTTP 403 response for a denied outgoing request.
+///
+/// Instead of returning `ErrorCode::HttpRequestDenied` (which traps in guest
+/// libraries that don't handle it, e.g. `wstd`), we hand back a normal HTTP
+/// response. This is visible in `http_client_traces` and handled uniformly by
+/// every client library.
+pub(crate) fn denied_response(
+    err: &PolicyError,
+    between_bytes_timeout: std::time::Duration,
+) -> IncomingResponse {
+    let body_bytes = hyper::body::Bytes::from(err.to_string());
+    let body: HyperIncomingBody = http_body_util::Full::new(body_bytes)
+        .map_err(|_| unreachable!())
+        .boxed_unsync();
+    let resp = hyper::Response::builder()
+        .status(DENIED_REQUEST_STATUS)
+        .body(body)
+        .expect("building a simple response should not fail");
+    IncomingResponse {
+        resp,
+        worker: None,
+        between_bytes_timeout,
     }
 }
 

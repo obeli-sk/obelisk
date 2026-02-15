@@ -1,7 +1,9 @@
 use super::activity_worker::{ActivityConfig, ProcessProvider};
 use crate::component_logger::log_activities::obelisk::log::log::Host;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
-use crate::http_request_policy::{HttpRequestPolicy, PlaceholderSecret, generate_placeholder};
+use crate::http_request_policy::{
+    HttpRequestPolicy, PlaceholderSecret, denied_response, generate_placeholder,
+};
 use crate::std_output_stream::{LogStream, StdOutput};
 use bytes::Bytes;
 use concepts::ExecutionId;
@@ -89,11 +91,9 @@ impl WasiHttpView for ActivityCtx {
         config: OutgoingRequestConfig,
     ) -> HttpResult<HostFutureIncomingResponse> {
         // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
-        let http_policy_res = self.http_policy.apply(&mut request);
-        if let Err(err) = http_policy_res {
+        let policy_err = self.http_policy.apply(&mut request).err();
+        if let Some(err) = &policy_err {
             self.warn(format!("{err}"));
-            let err = wasmtime_wasi_http::bindings::http::types::ErrorCode::from(err);
-            return Err(err.into());
         }
 
         let span = info_span!(parent: &self.component_logger.span, "send_request",
@@ -113,8 +113,14 @@ impl WasiHttpView for ActivityCtx {
         span.in_scope(|| debug!("Sending {request:?}"));
         let handle = wasmtime_wasi::runtime::spawn(
             async move {
-                http_policy.apply_body_replacement(&mut request).await;
-                let resp_result = default_send_request_handler(request, config).await;
+                let resp_result = if let Some(err) = policy_err {
+                    // Return a synthetic 403 instead of ErrorCode::HttpRequestDenied
+                    // so guest libraries that don't handle the error code won't trap.
+                    Ok(denied_response(&err, config.between_bytes_timeout))
+                } else {
+                    http_policy.apply_body_replacement(&mut request).await;
+                    default_send_request_handler(request, config).await
+                };
                 debug!("Got response {resp_result:?}");
                 let resp_trace = ResponseTrace {
                     finished_at: clock_fn.now(),

@@ -1609,6 +1609,7 @@ pub(crate) mod tests {
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,
     ) {
+        use std::ops::Deref;
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{method, path},
@@ -1693,9 +1694,11 @@ pub(crate) mod tests {
             exec_log.last_event().event.clone(),
             ExecutionRequest::Finished { result, .. } => result
         );
-        // The execution should fail with an ExecutionError when the WASM traps.
-        // The trap happens because the HTTP request is denied and the WASM unwraps the error.
-        assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(_));
+        // The host returns a synthetic 403 instead of trapping.
+        // The `get_successful` function sees a non-2xx status and returns Err("wrong status code: 403").
+        let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(wast_val_with_type) } => wast_val_with_type);
+        let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
+        assert_eq!("wrong status code: 403", val.deref());
         // Verify the mock server was not called (request was blocked before reaching it)
         server.verify().await;
         drop(db_connection);
