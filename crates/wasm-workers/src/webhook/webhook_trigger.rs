@@ -2,7 +2,9 @@ use crate::activity::activity_ctx::HttpClientTracesContainer;
 use crate::component_logger::log_activities::obelisk::log::log::Host;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
-use crate::http_request_policy::{HttpRequestPolicy, PlaceholderSecret, generate_placeholder};
+use crate::http_request_policy::{
+    HttpRequestPolicy, PlaceholderSecret, denied_response, generate_placeholder,
+};
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
 use crate::webhook::webhook_trigger::types_v4_1_0::obelisk::types::join_set::JoinNextError;
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
@@ -1037,11 +1039,9 @@ impl<S: Sleep> WasiHttpView for WebhookEndpointCtx<S> {
         config: OutgoingRequestConfig,
     ) -> HttpResult<HostFutureIncomingResponse> {
         // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
-        let http_policy_res = self.http_policy.apply(&mut request);
-        if let Err(err) = http_policy_res {
+        let policy_err = self.http_policy.apply(&mut request).err();
+        if let Some(err) = &policy_err {
             self.warn(format!("{err}"));
-            let err = wasmtime_wasi_http::bindings::http::types::ErrorCode::from(err);
-            return Err(err.into());
         }
 
         let span = info_span!(parent: &self.component_logger.span, "send_request",
@@ -1061,8 +1061,14 @@ impl<S: Sleep> WasiHttpView for WebhookEndpointCtx<S> {
         span.in_scope(|| debug!("Sending {request:?}"));
         let handle = wasmtime_wasi::runtime::spawn(
             async move {
-                http_policy.apply_body_replacement(&mut request).await;
-                let resp_result = default_send_request_handler(request, config).await;
+                let resp_result = if let Some(err) = policy_err {
+                    // Return a synthetic 403 instead of ErrorCode::HttpRequestDenied
+                    // so guest libraries that don't handle the error code won't trap.
+                    Ok(denied_response(&err, config.between_bytes_timeout))
+                } else {
+                    http_policy.apply_body_replacement(&mut request).await;
+                    default_send_request_handler(request, config).await
+                };
                 debug!("Got response {resp_result:?}");
                 let resp_trace = ResponseTrace {
                     finished_at: clock_fn.now(),
@@ -1905,10 +1911,14 @@ pub(crate) mod tests {
             let resp = reqwest::get(format!("http://{server_addr}/http-get/{mock_port}"))
                 .await
                 .unwrap();
-            // The webhook should return 500 because the HTTP request was denied
-            assert_eq!(resp.status().as_u16(), 500);
+            // The host returns a synthetic 403 instead of trapping, so the
+            // webhook forwards it as its own response status.
+            assert_eq!(resp.status().as_u16(), 403);
             let body = resp.text().await.unwrap();
-            assert_eq!("Component Error", body);
+            assert!(
+                body.contains("denied"),
+                "response body should contain denied message, got: {body}"
+            );
 
             // Verify mock was not called
             mock_server.verify().await;

@@ -766,25 +766,18 @@ mod tests {
         let js_source = r#"
             async function bad_fetch(params) {
                 const resp = await fetch("http://example.com/");
-                return await resp.text();
+                return `status:${resp.status}`;
             }
         "#;
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
         let ctx = make_worker_context(ffqn, &[]);
 
-        // The fetch should fail because no hosts are allowed.
-        // The host returns ErrorCode::HttpRequestDenied, which our WasiFetcher
-        // converts to a JsNativeError. The JS runtime extracts the error message
-        // and returns it as Ok(Err(message)).
+        // The fetch returns a synthetic 403 response instead of trapping.
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
-        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err { err } => err);
-        let err_str = err_val.expect("should have error value");
-        let msg = extract_string(&err_str.value);
-        assert!(
-            msg.contains("denied") || msg.contains("HTTP") || msg.contains("error"),
-            "error message should mention denied/HTTP/error, got: {msg}"
-        );
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "status:403");
     }
 
     #[tokio::test]
