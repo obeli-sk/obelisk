@@ -1036,10 +1036,23 @@ impl<S: Sleep> WasiHttpView for WebhookEndpointCtx<S> {
         mut request: hyper::Request<HyperOutgoingBody>,
         config: OutgoingRequestConfig,
     ) -> HttpResult<HostFutureIncomingResponse> {
+        // Prepare request trace & channel
+        let req = RequestTrace {
+            sent_at: self.clock_fn.now(),
+            uri: request.uri().to_string(),
+            method: request.method().to_string(),
+        };
+        let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
+        self.http_client_traces.push((req, resp_trace_rx));
+
         // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
         let http_policy_res = self.http_policy.apply(&mut request);
         if let Err(err) = http_policy_res {
-            self.warn(format!("{err}"));
+            self.warn(format!("{err}")); // Append to execution's logs table
+            let _ = resp_trace_tx.send(ResponseTrace {
+                finished_at: self.clock_fn.now(),
+                status: Err(err.to_string()),
+            });
             let err = wasmtime_wasi_http::bindings::http::types::ErrorCode::from(err);
             return Err(err.into());
         }
@@ -1049,13 +1062,6 @@ impl<S: Sleep> WasiHttpView for WebhookEndpointCtx<S> {
             method = %request.method(),
             uri = %request.uri(),
         );
-        let req = RequestTrace {
-            sent_at: self.clock_fn.now(),
-            uri: request.uri().to_string(),
-            method: request.method().to_string(),
-        };
-        let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
-        self.http_client_traces.push((req, resp_trace_rx));
         let clock_fn = self.clock_fn.clone_box();
         let http_policy = self.http_policy.clone();
         span.in_scope(|| debug!("Sending {request:?}"));
@@ -1064,14 +1070,13 @@ impl<S: Sleep> WasiHttpView for WebhookEndpointCtx<S> {
                 http_policy.apply_body_replacement(&mut request).await;
                 let resp_result = default_send_request_handler(request, config).await;
                 debug!("Got response {resp_result:?}");
-                let resp_trace = ResponseTrace {
+                let _ = resp_trace_tx.send(ResponseTrace {
                     finished_at: clock_fn.now(),
                     status: resp_result
                         .as_ref()
                         .map(|resp| resp.resp.status().as_u16())
                         .map_err(std::string::ToString::to_string),
-                };
-                let _ = resp_trace_tx.send(resp_trace);
+                });
                 Ok(resp_result)
             }
             .instrument(span),
