@@ -402,9 +402,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_host_pattern_wildcard_all() {
+    fn parse_host_pattern_wildcard_all_https() {
         let p = HostPattern::parse("*").unwrap();
         assert!(p.matches("https", "anything.com", 443));
+        assert!(!p.matches("http", "anything.com", 80));
+    }
+
+    #[test]
+    fn parse_host_pattern_wildcard_http() {
+        let p = HostPattern::parse("http://*").unwrap();
+        assert!(!p.matches("https", "anything.com", 443));
+        assert!(p.matches("http", "anything.com", 80));
     }
 
     #[test]

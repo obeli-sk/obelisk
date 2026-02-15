@@ -104,6 +104,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Bare hostname implies HTTPS port 443. Use "http://host" or "host:port" for non-defaults.
 ## If neither `allowed_hosts` nor `secrets` is set, all outbound HTTP connections are blocked.
 # allowed_hosts = ["api.github.com", "*.example.com", "http://localhost:8080"]
+## To allow all HTTPS on port 443, use ["*"]. To allow both HTTP and HTTPS use ["*", http://*"]
 ## Secrets: injected via placeholder replacement in outgoing HTTP requests.
 ## WASM receives an opaque placeholder instead of the real value.
 ## The runtime replaces placeholders with real values only for requests to the declared hosts.

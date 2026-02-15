@@ -43,6 +43,7 @@ name = "test_programs_http_get_activity"
 location = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_http_get_activity.wasm"
 max_retries = 0
 exec.lock_expiry.seconds = 5
+allowed_hosts = ["*"] # only https allowed
 
 [[activity_wasm.secrets]]
 hosts = ["httpbin.org"]
