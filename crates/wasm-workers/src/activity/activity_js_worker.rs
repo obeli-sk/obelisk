@@ -22,6 +22,7 @@ use executor::worker::{
 use indexmap::IndexMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::debug;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
@@ -138,6 +139,7 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
         .expect("types checked at compile time");
 
         let inner_worker_ok = self.inner.run(ctx).await?;
+        debug!("Activity worker returned {inner_worker_ok:?}");
 
         let (retval, version, http_client_traces) = assert_matches!(inner_worker_ok, WorkerResultOk::Finished { retval, version,  http_client_traces }
             => (retval, version,  http_client_traces), "activity_js_runtime runs in ActivityWorker");

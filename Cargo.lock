@@ -14,6 +14,7 @@ dependencies = [
  "futures-lite 2.6.1",
  "http",
  "serde_json",
+ "tracing",
  "wit-bindgen 0.52.0",
  "wit-bindgen-rust",
  "wstd",

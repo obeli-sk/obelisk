@@ -501,7 +501,8 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                 if self.config.retry_on_err {
                     // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (TemporaryError)
                     if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
-                        if ctx.can_be_retried && !is_permanent_variant(result_err.as_ref()) {
+                        let permanent = is_permanent_variant(result_err.as_ref());
+                        if ctx.can_be_retried && !permanent {
                             let detail = serde_json::to_string(result_err).expect(
                                 "SupportedFunctionReturnValue should be serializable to JSON",
                             );
@@ -513,7 +514,11 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                         }
                         // else: log and pass the retval as is to be stored.
                         ctx.worker_span.in_scope(|| {
-                            info!("Execution returned `error()`, not able to retry");
+                            if permanent {
+                                info!("Execution returned a permanent error variant, not retrying");
+                            } else {
+                                info!("Execution returned an error variant, not retrying");
+                            }
                         });
                     }
                 }
