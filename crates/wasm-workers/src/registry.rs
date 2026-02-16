@@ -140,7 +140,7 @@ impl ComponentConfigRegistry {
         component_type: ComponentType,
     ) -> bool {
         match component_type {
-            ComponentType::ActivityWasm | ComponentType::ActivityJs => {
+            ComponentType::ActivityWasm => {
                 // wasi + log
                 match import.ffqn.ifc_fqn.namespace() {
                     "wasi" => true,
@@ -148,6 +148,14 @@ impl ComponentConfigRegistry {
                         import.ffqn.ifc_fqn.deref() == "obelisk:log/log@1.0.0"
                             || import.ffqn.ifc_fqn.deref() == "obelisk:activity/process@1.0.0"
                     }
+                    _ => false,
+                }
+            }
+            ComponentType::ActivityJs => {
+                // just logging + wasi for http
+                match import.ffqn.ifc_fqn.namespace() {
+                    "wasi" => true,
+                    "obelisk" => import.ffqn.ifc_fqn.deref() == "obelisk:log/log@1.0.0",
                     _ => false,
                 }
             }
