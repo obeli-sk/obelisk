@@ -576,6 +576,95 @@ impl FromStr for ComponentLocationToml {
     }
 }
 
+/// Location of a JavaScript source file for JS activities.
+/// Supports local file paths and `gh://` GitHub release references.
+/// OCI references are not supported.
+#[derive(Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr)]
+#[schemars(with = "String")]
+pub(crate) enum JsLocationToml {
+    Path(String),
+    GitHub(GitHubReleaseReference),
+}
+
+impl std::fmt::Display for JsLocationToml {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JsLocationToml::Path(p) => write!(f, "{p}"),
+            JsLocationToml::GitHub(gh) => write!(f, "{GH_SCHEMA_PREFIX}{gh}"),
+        }
+    }
+}
+
+impl FromStr for JsLocationToml {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.starts_with(OCI_SCHEMA_PREFIX) {
+            bail!("OCI references are not supported for JS activities. Use a local file path or gh:// reference.");
+        } else if let Some(location) = s.strip_prefix(GH_SCHEMA_PREFIX) {
+            Ok(JsLocationToml::GitHub(
+                GitHubReleaseReference::from_str(location)?,
+            ))
+        } else {
+            Ok(JsLocationToml::Path(s.to_string()))
+        }
+    }
+}
+
+impl JsLocationToml {
+    /// Fetch the JS source file and return its content as a string.
+    ///
+    /// For local files, reads directly from the filesystem.
+    /// For GitHub releases, downloads to `wasm_cache_dir` (reusing the existing cache),
+    /// then reads the cached file.
+    pub(crate) async fn read_to_string(
+        &self,
+        wasm_cache_dir: &Path,
+        path_prefixes: &PathPrefixes,
+        expected_digest: Option<&ContentDigest>,
+    ) -> Result<String, anyhow::Error> {
+        let file_path = match self {
+            JsLocationToml::Path(path) => {
+                path_prefixes.replace_file_prefix_verify_exists(path)?
+            }
+            JsLocationToml::GitHub(github_ref) => {
+                // Happy path: if content_digest is known and file exists in cache, use it
+                if let Some(expected) = expected_digest {
+                    let cached = content_digest_to_wasm_file(wasm_cache_dir, expected);
+                    if cached.exists() {
+                        trace!("Using cached JS source for known content digest");
+                        return tokio::fs::read_to_string(&cached)
+                            .await
+                            .with_context(|| {
+                                format!("cannot read cached JS source file `{cached:?}`")
+                            });
+                    }
+                }
+                let (actual_digest, cached_path) =
+                    github::pull_to_cache_dir(github_ref, wasm_cache_dir)
+                        .await
+                        .context("cannot fetch JS source from GitHub release")?;
+                if let Some(expected) = expected_digest {
+                    ensure!(
+                        *expected == actual_digest,
+                        "content digest mismatch for JS source: expected {expected}, got {actual_digest}"
+                    );
+                } else {
+                    info!(
+                        r#"No content_digest specified for GitHub release JS source. Consider adding content_digest = "{}" to avoid refetching"#,
+                        actual_digest.with_infix(":")
+                    );
+                }
+                cached_path
+            }
+        };
+        let content = tokio::fs::read_to_string(&file_path)
+            .await
+            .with_context(|| format!("cannot read JS source file `{file_path:?}`"))?;
+        Ok(content)
+    }
+}
+
 /// Activity, Webhook, Workflow or a Http server
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, derive_more::Display, derive_more::Into, JsonSchema,
@@ -949,7 +1038,15 @@ impl ActivityWasmComponentConfigToml {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) name: ConfigName,
-    pub(crate) source: String,
+    /// Location of the JavaScript source file.
+    /// Supports local file paths and `gh://` GitHub release references.
+    /// OCI references are not supported for JS activities.
+    pub(crate) location: JsLocationToml,
+    /// Content digest of the JS source file.
+    /// Recommended for GitHub releases to enable caching and reproducible builds.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) content_digest: Option<ContentDigest>,
     pub(crate) ffqn: String,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
@@ -985,9 +1082,12 @@ impl ActivityJsConfigVerified {
 }
 
 impl ActivityJsComponentConfigToml {
-    pub(crate) fn verify(
+    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
+    pub(crate) async fn fetch_and_verify(
         self,
         wasm_path: PathBuf,
+        wasm_cache_dir: Arc<Path>,
+        path_prefixes: Arc<PathPrefixes>,
         ignore_missing_env_vars: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
@@ -995,11 +1095,16 @@ impl ActivityJsComponentConfigToml {
         let ffqn = FunctionFqn::from_str(&self.ffqn)
             .map_err(|e| anyhow!("invalid ffqn `{}`: {e}", self.ffqn))?;
 
+        let js_source = self
+            .location
+            .read_to_string(&wasm_cache_dir, &path_prefixes, self.content_digest.as_ref())
+            .await?;
+
         // Compute content digest from source + ffqn
         use sha2::{Digest as _, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"activity_js:");
-        hasher.update(self.source.as_bytes());
+        hasher.update(js_source.as_bytes());
         hasher.update(self.ffqn.as_bytes());
         let hash: [u8; 32] = hasher.finalize().into();
         let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
@@ -1029,7 +1134,7 @@ impl ActivityJsComponentConfigToml {
 
         Ok(ActivityJsConfigVerified {
             wasm_path,
-            js_source: self.source,
+            js_source,
             ffqn,
             activity_config,
             exec_config: self.exec.into_exec_exec_config(

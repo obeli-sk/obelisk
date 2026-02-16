@@ -1432,17 +1432,24 @@ impl ConfigVerified {
                     webhooks_by_names.insert(k, v);
                 }
                 let activity_js_wasm_path = activity_js_runtime_result.transpose()?;
-                let activities_js = activities_js
-                    .into_iter()
-                    .map(|js| {
-                        let wasm_path = activity_js_wasm_path.clone()
-                            .expect("activity-js runtime must be fetched when JS activities are configured");
-                        js.verify(wasm_path, ignore_missing_env_vars, global_executor_instance_limiter.clone(), fuel)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let mut activities_js_verified = Vec::with_capacity(activities_js.len());
+                for js in activities_js {
+                    let wasm_path = activity_js_wasm_path.clone()
+                        .expect("activity-js runtime must be fetched when JS activities are configured");
+                    activities_js_verified.push(
+                        js.fetch_and_verify(
+                            wasm_path,
+                            wasm_cache_dir.clone(),
+                            path_prefixes.clone(),
+                            ignore_missing_env_vars,
+                            global_executor_instance_limiter.clone(),
+                            fuel,
+                        ).await?
+                    );
+                }
                 Ok(ConfigVerified {
                     activities_wasm,
-                    activities_js,
+                    activities_js: activities_js_verified,
                     activities_stub_ext,
                     workflows,
                     webhooks_by_names,

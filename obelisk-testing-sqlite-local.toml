@@ -108,16 +108,9 @@ backtrace.ignore_component_digest = true
 
 # [[activity_js]]
 # name = "activity_js_fetch_get"
+# location = "activities/fetch_get.js"
 # ffqn = "test:pkg/ifc.fetch-get"
 # max_retries = 0
-# source = """
-# async function fetch_get(params) {
-#     console.info("Fetching " + params[0]);
-#     const resp = await fetch(params[0]);
-#     const text = await resp.text();
-#     return text;
-# }
-# """
 # [[activity_js.allowed_host]]
 # pattern = "http://localhost:5005" # all https is allowed
 # methods = ["GET"]

@@ -178,6 +178,14 @@
             "$ref": "#/$defs/AllowedHostToml"
           }
         },
+        "content_digest": {
+          "description": "Content digest of the JS source file.\nRecommended for GitHub releases to enable caching and reproducible builds.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml"
         },
@@ -189,6 +197,10 @@
         },
         "forward_stdout": {
           "$ref": "#/$defs/ComponentStdOutputToml"
+        },
+        "location": {
+          "description": "Location of the JavaScript source file.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported for JS activities.",
+          "$ref": "#/$defs/JsLocationToml"
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml"
@@ -204,15 +216,12 @@
         },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"
-        },
-        "source": {
-          "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
         "name",
-        "source",
+        "location",
         "ffqn"
       ]
     },
@@ -764,6 +773,10 @@
           "minimum": 0
         }
       ]
+    },
+    "JsLocationToml": {
+      "description": "Location of a JavaScript source file for JS activities.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported.",
+      "type": "string"
     },
     "LockingStrategy": {
       "type": "string",
