@@ -1,4 +1,4 @@
-package obelisk:workflow@4.1.0;
+package obelisk:workflow@4.2.0;
 
 @since(version = 4.0.0)
 interface workflow-support {
@@ -26,6 +26,14 @@ interface workflow-support {
 
     @since(version = 4.1.0)
     variant submit-json-error {
+        /// See `Function` definition
+        ffqn-parsing-error(string),
+        function-not-found,
+        params-parsing-error(string),
+    }
+
+    @since(version = 4.2.0)
+    variant schedule-json-error {
         /// See `Function` definition
         ffqn-parsing-error(string),
         function-not-found,
@@ -94,6 +102,10 @@ interface workflow-support {
     /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
     @since(version = 4.1.0)
     submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
+
+    /// Schedule a child execution request with its parameters serialized as JSON array.
+    @since(version = 4.2.0)
+    schedule-json: func(schedule-at: schedule-at, function: function, params: string, config: option<submit-config>) -> result<execution-id, schedule-json-error>;
 
     /// Block the workflow execution until next response associated with the join set arrives.
     /// The response is marked as processed.

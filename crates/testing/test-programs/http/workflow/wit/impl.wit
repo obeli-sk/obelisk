@@ -5,6 +5,6 @@ world any {
 
     import testing:http/http-get;
     import testing:http-obelisk-ext/http-get;
-    import obelisk:workflow/workflow-support@4.1.0;
+    import obelisk:workflow/workflow-support@4.2.0;
     import obelisk:log/log@1.0.0;
 }

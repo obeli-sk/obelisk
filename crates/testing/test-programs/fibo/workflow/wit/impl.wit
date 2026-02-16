@@ -4,7 +4,7 @@ world any {
     export testing:fibo-workflow/workflow;
 
     import obelisk:log/log@1.0.0;
-    import obelisk:workflow/workflow-support@4.1.0;
+    import obelisk:workflow/workflow-support@4.2.0;
 
     import testing:fibo/fibo;
     import testing:fibo-obelisk-ext/fibo;

@@ -3,6 +3,6 @@ package any:any;
 world any {
     export testing:adhoc-js-workflow/workflow;
 
-    import obelisk:workflow/workflow-support@4.1.0;
+    import obelisk:workflow/workflow-support@4.2.0;
     import obelisk:log/log@1.0.0;
 }

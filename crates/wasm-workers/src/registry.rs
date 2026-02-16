@@ -158,6 +158,7 @@ impl ComponentConfigRegistry {
                     "obelisk:log@1.0.0"
                         | "obelisk:workflow@4.0.0"
                         | "obelisk:workflow@4.1.0"
+                        | "obelisk:workflow@4.2.0"
                         | "obelisk:types@4.0.0"
                         | "obelisk:types@4.1.0"
                 )

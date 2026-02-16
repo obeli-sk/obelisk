@@ -783,7 +783,7 @@ impl WasiView for WorkflowCtx {
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT_4_1: &str = "obelisk:workflow/workflow-support@4.1.0";
+const IFC_FQN_WORKFLOW_SUPPORT_4_2: &str = "obelisk:workflow/workflow-support@4.2.0";
 
 impl WorkflowCtx {
     #[expect(clippy::too_many_arguments)]
@@ -859,7 +859,7 @@ impl WorkflowCtx {
             .as_date_time(self.clock_fn.now())
             .map_err(|err| {
                 const FFQN: FunctionFqn =
-                    FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4_1, "sleep");
+                    FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4_2, "sleep");
                 WorkflowFunctionError::ImportedFunctionCallError {
                     ffqn: FFQN,
                     reason: "schedule-at conversion error".into(),
@@ -951,7 +951,7 @@ impl WorkflowCtx {
         })?;
 
         // link obelisk:workflow/workflow-support interface
-        Self::add_to_linker_workflow_support(linker, IFC_FQN_WORKFLOW_SUPPORT_4_1)?;
+        Self::add_to_linker_workflow_support(linker, IFC_FQN_WORKFLOW_SUPPORT_4_2)?;
 
         // link obelisk:types/join-set interface
         Self::add_to_linker_join_set(linker)?;
@@ -1244,6 +1244,42 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function get-result-json", err))?;
 
+        // schedule-json: func(schedule-at: schedule-at, function: function, params: string, config: option<submit-config>) -> result<execution-id, schedule-json-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "schedule-json",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (schedule_at, function, params, _config): (
+                    ScheduleAt_4_1_0,
+                    types_4_1_0::execution::Function,
+                    String,                                       // params JSON
+                    Option<types_4_1_0::execution::SubmitConfig>, // TODO: Implement SubmitConfig
+                )| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    Box::new(async move {
+                        use v4_1_0::obelisk::workflow::workflow_support::ScheduleJsonError;
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let ffqn = match FunctionFqn::try_from_tuple(
+                            &function.interface_name,
+                            &function.function_name,
+                        ) {
+                            Ok(ffqn) => ffqn,
+                            Err(err) => {
+                                let wit_result =
+                                    Err(ScheduleJsonError::FfqnParsingError(err.to_string()));
+                                return Ok((wit_result,));
+                            }
+                        };
+                        let wit_result = host
+                            .schedule_json(ffqn, params, schedule_at, wasm_backtrace)
+                            .await?;
+                        Ok((wit_result,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function schedule-json", err))?;
+
         // submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id
         inst_workflow_support
             .func_wrap_async(
@@ -1362,13 +1398,14 @@ enum JoinSetCreateError {
 }
 
 pub(crate) mod workflow_support {
-    use super::{SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, types_4_1_0};
+    use super::{Schedule, SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, types_4_1_0};
     use crate::workflow::event_history::{JoinNext, JoinNextTry, Persist, SubmitDelay};
     use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextError;
     use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, v4_1_0};
-    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4_1, JoinSetCreateError};
+    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4_2, JoinSetCreateError};
+    use concepts::ExecutionId;
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::storage::HistoryEventScheduleAt;
     use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind, Params};
@@ -1509,7 +1546,7 @@ pub(crate) mod workflow_support {
                     .as_date_time(self.clock_fn.now())
                     .map_err(|err| {
                         const FFQN: FunctionFqn =
-                            FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4_1, "submit-delay");
+                            FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4_2, "submit-delay");
 
                         WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: FFQN,
@@ -1728,6 +1765,92 @@ pub(crate) mod workflow_support {
 
             Ok(Ok(types_4_1_0::execution::ExecutionId {
                 id: child_execution_id.to_string(),
+            }))
+        }
+
+        /// Schedule an execution request with JSON-serialized parameters.
+        pub(crate) async fn schedule_json(
+            &mut self,
+            target_ffqn: FunctionFqn,
+            params_json: String,
+            schedule_at: HistoryEventScheduleAt,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> wasmtime::Result<
+            Result<
+                types_4_1_0::execution::ExecutionId,
+                v4_1_0::obelisk::workflow::workflow_support::ScheduleJsonError,
+            >,
+        > {
+            use v4_1_0::obelisk::workflow::workflow_support::ScheduleJsonError;
+
+            // Look up the function in the registry
+            let Some((fn_metadata, fn_component_id)) = self
+                .event_history
+                .fn_registry
+                .get_by_exported_function(&target_ffqn)
+            else {
+                return Ok(Err(ScheduleJsonError::FunctionNotFound));
+            };
+            let params = match serde_json::from_str(&params_json) {
+                Ok(serde_json::Value::Array(params)) => params,
+                Ok(_other) => {
+                    return Ok(Err(ScheduleJsonError::ParamsParsingError(
+                        "params must be a json array".to_string(),
+                    )));
+                }
+                Err(err) => {
+                    return Ok(Err(ScheduleJsonError::ParamsParsingError(format!(
+                        "cannot parse params as JSON array: {err}"
+                    ))));
+                }
+            };
+
+            assert_eq!(
+                None, fn_metadata.extension,
+                "get_by_exported_function must not return extended functions"
+            );
+
+            let params = match Params::from_json_values(
+                Arc::from(params),
+                fn_metadata
+                    .parameter_types
+                    .iter()
+                    .map(|param_type| &param_type.type_wrapper),
+            ) {
+                Ok(params) => params,
+                Err(err) => {
+                    return Ok(Err(ScheduleJsonError::ParamsParsingError(format!(
+                        "params type checking failed: {err}"
+                    ))));
+                }
+            };
+
+            // Generate new execution ID
+            let execution_id = ExecutionId::from_parts(
+                self.execution_id.get_top_level().timestamp_part(),
+                self.next_u128(),
+            );
+
+            let called_at = self.clock_fn.now();
+            let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|err| {
+                wasmtime::Error::msg(format!("schedule-at conversion error: {err:?}"))
+            })?;
+
+            Schedule {
+                schedule_at,
+                scheduled_at_if_new,
+                execution_id: execution_id.clone(),
+                ffqn: target_ffqn,
+                fn_component_id,
+                params,
+                wasm_backtrace,
+            }
+            .apply(&mut self.event_history, &mut self.db_connection, called_at)
+            .await
+            .map_err(wasmtime::Error::new)?;
+
+            Ok(Ok(types_4_1_0::execution::ExecutionId {
+                id: execution_id.to_string(),
             }))
         }
 

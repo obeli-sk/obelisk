@@ -21,8 +21,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@4.1.0.join-set-create": {
-    "ffqn": "obelisk:workflow/workflow-support@4.1.0.join-set-create",
+  "obelisk:workflow/workflow-support@4.2.0.join-set-create": {
+    "ffqn": "obelisk:workflow/workflow-support@4.2.0.join-set-create",
     "parameter_types": [],
     "return_type": {
       "non_extendable": {

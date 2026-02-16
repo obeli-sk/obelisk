@@ -8,7 +8,7 @@ world root {
   import obelisk:types/time@4.1.0;
   import obelisk:types/execution@4.1.0;
   import obelisk:types/join-set@4.1.0;
-  import obelisk:workflow/workflow-support@4.1.0;
+  import obelisk:workflow/workflow-support@4.2.0;
   import testing:fibo/fibo;
   import testing:fibo-obelisk-ext/fibo;
 
@@ -163,7 +163,7 @@ package obelisk:types@4.1.0 {
 }
 
 
-package obelisk:workflow@4.1.0 {
+package obelisk:workflow@4.2.0 {
   interface workflow-support {
     use obelisk:types/join-set@4.1.0.{join-set};
     use obelisk:types/execution@4.1.0.{function, submit-config, execution-id, response-id};
