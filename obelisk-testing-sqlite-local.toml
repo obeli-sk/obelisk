@@ -108,7 +108,7 @@ backtrace.ignore_component_digest = true
 
 # [[activity_js]]
 # name = "activity_js_fetch_get"
-# location = "activities/fetch_get.js"
+# location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/fetch.js"
 # ffqn = "test:pkg/ifc.fetch-get"
 # max_retries = 0
 # [[activity_js.allowed_host]]
