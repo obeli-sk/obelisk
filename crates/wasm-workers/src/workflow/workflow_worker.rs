@@ -1399,9 +1399,6 @@ pub(crate) mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_submit_json_unknown_ffqn(database: Database) {
-        if database == Database::Postgres {
-            return; // Skip if Postgres not configured
-        }
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = database.set_up().await;
         test_submit_json_unknown_ffqn_inner(db_pool.clone(), sim_clock).await;
@@ -1466,9 +1463,6 @@ pub(crate) mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_submit_json_malformed_params(database: Database) {
-        if database == Database::Postgres {
-            return;
-        }
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = database.set_up().await;
         test_submit_json_malformed_params_inner(db_pool.clone(), sim_clock).await;
@@ -1534,9 +1528,6 @@ pub(crate) mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_get_result_json_before_await(database: Database) {
-        if database == Database::Postgres {
-            return;
-        }
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = database.set_up().await;
         test_get_result_json_before_await_inner(db_pool.clone(), sim_clock).await;
@@ -1627,9 +1618,6 @@ pub(crate) mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_get_result_json_err_variant(database: Database) {
-        if database == Database::Postgres {
-            return;
-        }
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = database.set_up().await;
         test_get_result_json_err_variant_inner(db_pool.clone(), sim_clock).await;
