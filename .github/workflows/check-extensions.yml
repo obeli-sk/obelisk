@@ -17,7 +17,7 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  check-build-verify-toml-schema:
+  check-extensions:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
