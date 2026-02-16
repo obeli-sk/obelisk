@@ -1431,22 +1431,29 @@ impl ConfigVerified {
                     let (k, v) = webhook??;
                     webhooks_by_names.insert(k, v);
                 }
-                let activity_js_wasm_path = activity_js_runtime_result.transpose()?;
-                let mut activities_js_verified = Vec::with_capacity(activities_js.len());
-                for js in activities_js {
-                    let wasm_path = activity_js_wasm_path.clone()
-                        .expect("activity-js runtime must be fetched when JS activities are configured");
-                    activities_js_verified.push(
-                        js.fetch_and_verify(
-                            wasm_path,
-                            wasm_cache_dir.clone(),
-                            path_prefixes.clone(),
-                            ignore_missing_env_vars,
-                            global_executor_instance_limiter.clone(),
-                            fuel,
-                        ).await?
-                    );
-                }
+
+                let activities_js_verified = if !activities_js.is_empty() {
+                    let activity_js_wasm_path = activity_js_runtime_result.transpose()?;
+                    let activity_js_wasm_path: Arc<Path> = Arc::from(activity_js_wasm_path
+                        .expect("None only if there are no JS activities, see `activity_js_runtime_fetch`"));
+                    let mut activities_js_verified = Vec::with_capacity(activities_js.len());
+                    for js in activities_js {
+                        activities_js_verified.push(
+                            js.fetch_and_verify(
+                                activity_js_wasm_path.clone(),
+                                wasm_cache_dir.clone(),
+                                path_prefixes.clone(),
+                                ignore_missing_env_vars,
+                                global_executor_instance_limiter.clone(),
+                                fuel,
+                            ).await?
+                        );
+                    }
+                    activities_js_verified
+                } else {
+                    Vec::new()
+                };
+
                 Ok(ConfigVerified {
                     activities_wasm,
                     activities_js: activities_js_verified,

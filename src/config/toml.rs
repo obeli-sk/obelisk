@@ -1065,7 +1065,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
 
 #[derive(Debug)]
 pub(crate) struct ActivityJsConfigVerified {
-    pub(crate) wasm_path: PathBuf,
+    pub(crate) wasm_path: Arc<Path>, // same for all JS activities
     pub(crate) js_source: String,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) activity_config: ActivityConfig,
@@ -1083,7 +1083,7 @@ impl ActivityJsComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
     pub(crate) async fn fetch_and_verify(
         self,
-        wasm_path: PathBuf,
+        wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
         path_prefixes: Arc<PathPrefixes>,
         ignore_missing_env_vars: bool,
