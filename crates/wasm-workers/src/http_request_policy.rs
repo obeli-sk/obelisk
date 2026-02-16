@@ -2,7 +2,7 @@ use hashbrown::HashSet;
 use hyper::Uri;
 use rand::RngCore;
 use secrecy::{ExposeSecret, SecretString};
-use std::{fmt, sync::Arc};
+use std::{fmt, net::SocketAddr, sync::Arc};
 use tracing::debug;
 use wasmtime_wasi_http::bindings::http::types::ErrorCode;
 
@@ -102,6 +102,76 @@ impl HostPattern {
             return false;
         }
         match_wildcard(&self.host_pattern, host)
+    }
+}
+
+impl HostPattern {
+    /// Check if this pattern could match a given socket address.
+    /// Used to warn when `allowed_hosts` could reach the server's own ports.
+    /// This is best-effort: it checks localhost variants, 127.0.0.0/8, 0.0.0.0,
+    /// `[::1]`, `[::]`, and wildcard patterns.
+    #[must_use]
+    pub fn could_match_socket_addr(&self, addr: &SocketAddr) -> bool {
+        // Only HTTP scheme can reach local services
+        if self.scheme != "http" {
+            return false;
+        }
+        if self.port != addr.port() {
+            return false;
+        }
+        let addr_ip = addr.ip();
+        let is_local_addr = addr_ip.is_loopback()
+            || addr_ip.is_unspecified() // 0.0.0.0 or [::]
+            || addr == &SocketAddr::from(([127, 0, 0, 1], addr.port()));
+
+        if !is_local_addr {
+            // The server is bound to a specific non-local IP.
+            // Check if the pattern matches that specific IP.
+            let ip_str = addr_ip.to_string();
+            return match_wildcard(&self.host_pattern, &ip_str);
+        }
+
+        // Server is bound to a local address. Check if the host pattern
+        // could resolve to localhost.
+        let host = &self.host_pattern;
+
+        // Exact wildcard matches everything
+        if host == "*" {
+            return true;
+        }
+
+        // Check common localhost names
+        let localhost_names = ["localhost", "127.0.0.1", "[::1]", "0.0.0.0", "[::]"];
+        for name in &localhost_names {
+            if match_wildcard(host, name) {
+                return true;
+            }
+        }
+
+        // Check 127.x.y.z patterns (the whole 127.0.0.0/8 block is loopback)
+        if host.starts_with("127.") || host == "127.*" {
+            return true;
+        }
+        // Suffix wildcard like "12*" would match "127.0.0.1"
+        if host.ends_with('*') {
+            let prefix = &host[..host.len() - 1];
+            if "127.0.0.1".starts_with(prefix)
+                || "localhost".starts_with(prefix)
+                || "[::1]".starts_with(prefix)
+            {
+                return true;
+            }
+        }
+        // Prefix wildcard like "*1" would match "127.0.0.1" or "[::1]"
+        if let Some(suffix) = host.strip_prefix('*')
+            && ("127.0.0.1".ends_with(suffix)
+                || "localhost".ends_with(suffix)
+                || "[::1]".ends_with(suffix))
+        {
+            return true;
+        }
+
+        false
     }
 }
 
@@ -463,6 +533,162 @@ mod tests {
 
         let p = HostPattern::parse("internal.corp.com:8443").unwrap();
         assert_eq!(p.to_string(), "https://internal.corp.com:8443");
+    }
+
+    #[test]
+    fn could_match_socket_addr_localhost_5005() {
+        let addr: SocketAddr = "127.0.0.1:5005".parse().unwrap();
+        // Exact match
+        assert!(
+            HostPattern::parse("http://127.0.0.1:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        // localhost alias
+        assert!(
+            HostPattern::parse("http://localhost:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        // Wildcard host
+        assert!(
+            HostPattern::parse("http://*:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        // 127.* prefix wildcard
+        assert!(
+            HostPattern::parse("http://127.*:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        // Wrong port
+        assert!(
+            !HostPattern::parse("http://127.0.0.1:9999")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        // HTTPS scheme doesn't match local HTTP
+        assert!(
+            !HostPattern::parse("https://127.0.0.1:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        // Different host entirely
+        assert!(
+            !HostPattern::parse("http://api.example.com:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+    }
+
+    #[test]
+    fn could_match_socket_addr_unspecified() {
+        // 0.0.0.0 accepts traffic on all interfaces
+        let addr: SocketAddr = "0.0.0.0:8080".parse().unwrap();
+        assert!(
+            HostPattern::parse("http://localhost:8080")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            HostPattern::parse("http://127.0.0.1:8080")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            HostPattern::parse("http://0.0.0.0:8080")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            HostPattern::parse("http://*:8080")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+    }
+
+    #[test]
+    fn could_match_socket_addr_ipv6_loopback() {
+        let addr: SocketAddr = "[::1]:5005".parse().unwrap();
+        assert!(
+            HostPattern::parse("http://[::1]:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            HostPattern::parse("http://localhost:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            HostPattern::parse("http://*:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+    }
+
+    #[test]
+    fn could_match_socket_addr_ipv6_unspecified() {
+        let addr: SocketAddr = "[::]:5005".parse().unwrap();
+        assert!(
+            HostPattern::parse("http://localhost:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            HostPattern::parse("http://[::]:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            HostPattern::parse("http://*:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+    }
+
+    #[test]
+    fn could_match_socket_addr_suffix_wildcard() {
+        let addr: SocketAddr = "127.0.0.1:5005".parse().unwrap();
+        // "*1" matches "127.0.0.1" (ends with 1) and "[::1]"
+        assert!(
+            HostPattern::parse("http://*1:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        // "*host" matches "localhost"
+        assert!(
+            HostPattern::parse("http://*host:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+    }
+
+    #[test]
+    fn could_match_socket_addr_non_local_binding() {
+        // Server bound to a specific public IP
+        let addr: SocketAddr = "192.168.1.100:5005".parse().unwrap();
+        assert!(
+            HostPattern::parse("http://192.168.1.100:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            HostPattern::parse("http://192.168.1.*:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            !HostPattern::parse("http://localhost:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
+        assert!(
+            !HostPattern::parse("http://127.0.0.1:5005")
+                .unwrap()
+                .could_match_socket_addr(&addr)
+        );
     }
 
     #[test]

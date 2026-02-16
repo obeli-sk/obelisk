@@ -110,6 +110,7 @@ use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
+use wasm_workers::http_request_policy::HostPattern;
 use wasm_workers::log_db_forwarder;
 use wasm_workers::preopens_cleaner::PreopensCleaner;
 use wasm_workers::registry::ComponentConfig;
@@ -755,6 +756,80 @@ async fn run_internal(
     Ok(())
 }
 
+/// Warn if any component's `allowed_hosts` or `secrets[].hosts` patterns could
+/// reach the server's own API or webhook listener ports.
+fn warn_if_self_access_allowed(
+    api_listening_addr: Option<std::net::SocketAddr>,
+    http_servers: &[webhook::HttpServer],
+    activities_wasm: &[ActivityWasmComponentConfigToml],
+    activities_js: &[ActivityJsComponentConfigToml],
+    webhooks: &[webhook::WebhookComponentConfigToml],
+) {
+    // Collect all server-side listening addresses.
+    let mut server_addrs: Vec<(std::net::SocketAddr, &str)> = Vec::new();
+    if let Some(addr) = api_listening_addr {
+        server_addrs.push((addr, "api"));
+    }
+    for hs in http_servers {
+        server_addrs.push((hs.listening_addr, "http_server"));
+    }
+    if server_addrs.is_empty() {
+        return;
+    }
+
+    // Collect (component_type, component_name, host_pattern_string) triples.
+    let mut host_strings: Vec<(&str, &dyn std::fmt::Display, &str)> = Vec::new();
+    for a in activities_wasm {
+        for h in &a.allowed_hosts {
+            host_strings.push(("activity_wasm", &a.common.name, h));
+        }
+        for s in &a.secrets {
+            for h in &s.hosts {
+                host_strings.push(("activity_wasm", &a.common.name, h));
+            }
+        }
+    }
+    for a in activities_js {
+        for h in &a.allowed_hosts {
+            host_strings.push(("activity_js", &a.name, h));
+        }
+        for s in &a.secrets {
+            for h in &s.hosts {
+                host_strings.push(("activity_js", &a.name, h));
+            }
+        }
+    }
+    for w in webhooks {
+        // Skip the built-in webui webhook — it legitimately accesses the API.
+        if w.common.name.to_string() == "obelisk_webui" {
+            continue;
+        }
+        for h in &w.allowed_hosts {
+            host_strings.push(("webhook_endpoint", &w.common.name, h));
+        }
+        for s in &w.secrets {
+            for h in &s.hosts {
+                host_strings.push(("webhook_endpoint", &w.common.name, h));
+            }
+        }
+    }
+
+    for (component_type, component_name, host_str) in host_strings {
+        let Ok(pattern) = HostPattern::parse(host_str) else {
+            continue; // Invalid patterns are caught later during verification.
+        };
+        for &(addr, listener_name) in &server_addrs {
+            if pattern.could_match_socket_addr(&addr) {
+                warn!(
+                    "Component `{component_name}` ({component_type}) has an allowed host \
+                     pattern `{host_str}` that may allow HTTP requests to the server's own \
+                     `{listener_name}` listener at `{addr}`. This could be a security risk."
+                );
+            }
+        }
+    }
+}
+
 fn make_span<B>(request: &axum::http::Request<B>) -> Span {
     let headers = request.headers();
     info_span!(
@@ -860,6 +935,15 @@ impl ServerVerified {
             .get_directories()
             .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
+
+        // Warn if any component's allowed_hosts could reach the server's own ports.
+        warn_if_self_access_allowed(
+            config.api.listening_addr,
+            &http_servers,
+            &config.activities_wasm,
+            &config.activities_js,
+            &webhooks,
+        );
 
         let mut config = ConfigVerified::fetch_and_verify_all(
             config.activities_wasm,
