@@ -48,10 +48,7 @@ pattern = "*" # only https allowed
 
 [[activity_wasm.allowed_host]]
 pattern = "httpbin.org"
-
-[activity_wasm.allowed_host.secrets]
-env_vars = ["OPENAI_API_KEY=foo"]
-replace_in = ["headers", "params", "body"]
+secrets = {env_vars = ["API_KEY=foo"], replace_in = ["headers", "params", "body"] }
 
 [[workflow]]
 name = "test_programs_http_get_workflow"
@@ -113,8 +110,6 @@ backtrace.ignore_component_digest = true
 # name = "activity_js_fetch_get"
 # ffqn = "test:pkg/ifc.fetch-get"
 # max_retries = 0
-# [[activity_js.allowed_host]]
-# pattern = "*" # all https is allowed
 # source = """
 # async function fetch_get(params) {
 #     console.info("Fetching " + params[0]);
@@ -123,3 +118,6 @@ backtrace.ignore_component_digest = true
 #     return text;
 # }
 # """
+# [[activity_js.allowed_host]]
+# pattern = "http://localhost:5005" # all https is allowed
+# methods = ["GET"]
