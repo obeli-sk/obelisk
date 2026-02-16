@@ -1,7 +1,8 @@
 use super::activity_worker::{ActivityConfig, ProcessProvider};
 use crate::component_logger::log_activities::obelisk::log::log::Host;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
-use crate::http_request_policy::{HttpRequestPolicy, PlaceholderSecret, generate_placeholder};
+use crate::http_request_policy::HttpRequestPolicy;
+use crate::policy_builder::build_http_policy;
 use crate::std_output_stream::{LogStream, StdOutput};
 use bytes::Bytes;
 use concepts::ExecutionId;
@@ -180,23 +181,7 @@ pub(crate) fn store(
     }
 
     // Generate fresh placeholders for this execution run
-    let mut policy_secrets = Vec::new();
-    for secret_config in config.secrets.iter() {
-        for (env_key, real_value) in &secret_config.env_mappings {
-            let placeholder = generate_placeholder();
-            wasi_ctx.env(env_key, &placeholder);
-            policy_secrets.push(PlaceholderSecret {
-                placeholder,
-                real_value: real_value.clone(),
-                allowed_hosts: secret_config.hosts.clone(),
-                replace_in: secret_config.replace_in.clone(),
-            });
-        }
-    }
-    let http_policy = HttpRequestPolicy {
-        allowed_hosts: config.allowed_hosts.clone(),
-        secrets: policy_secrets,
-    };
+    let http_policy = build_http_policy(&config.allowed_hosts, &mut wasi_ctx);
 
     if let Some(preopened_dir) = &preopened_dir {
         let res = wasi_ctx.preopened_dir(preopened_dir, ".", DirPerms::all(), FilePerms::all());

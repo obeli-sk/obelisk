@@ -379,7 +379,6 @@ mod tests {
                 env_vars: Arc::from([]),
                 directories_config: None,
                 fuel: None,
-                secrets: Arc::from([]),
                 allowed_hosts: Arc::from([]),
             }
         })
@@ -643,8 +642,8 @@ mod tests {
         user_ffqn: FunctionFqn,
         allowed_host: &str,
     ) -> Arc<dyn Worker> {
-        use crate::http_request_policy::HostPattern;
-        let host_pattern = HostPattern::parse(allowed_host).unwrap();
+        use crate::http_request_policy::{AllowedHostConfig, HostPattern};
+        let host_pattern = HostPattern::parse_with_methods(allowed_host, vec![]).unwrap();
         new_js_activity_worker_with_config(js_source, user_ffqn, move |component_id| {
             super::super::activity_worker::ActivityConfig {
                 component_id,
@@ -653,8 +652,11 @@ mod tests {
                 env_vars: Arc::from([]),
                 directories_config: None,
                 fuel: None,
-                secrets: Arc::from([]),
-                allowed_hosts: Arc::from(vec![host_pattern]),
+                allowed_hosts: Arc::from(vec![AllowedHostConfig {
+                    pattern: host_pattern,
+                    secret_env_mappings: Vec::new(),
+                    replace_in: hashbrown::HashSet::new(),
+                }]),
             }
         })
         .await

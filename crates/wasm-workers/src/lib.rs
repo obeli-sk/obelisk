@@ -10,6 +10,7 @@ pub mod engines;
 pub mod epoch_ticker;
 pub mod http_request_policy;
 pub mod log_db_forwarder;
+pub(crate) mod policy_builder;
 pub mod preopens_cleaner;
 pub mod registry;
 pub mod std_output_stream;
