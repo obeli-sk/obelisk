@@ -57,7 +57,6 @@ mod bench {
             env_vars: Arc::from([]),
             directories_config: None,
             fuel: None,
-            secrets: Arc::from([]),
             allowed_hosts: Arc::from([]),
         }
     }

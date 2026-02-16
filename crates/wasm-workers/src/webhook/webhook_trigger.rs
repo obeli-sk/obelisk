@@ -2,7 +2,7 @@ use crate::activity::activity_ctx::HttpClientTracesContainer;
 use crate::component_logger::log_activities::obelisk::log::log::Host;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
-use crate::http_request_policy::{HttpRequestPolicy, PlaceholderSecret, generate_placeholder};
+use crate::http_request_policy::HttpRequestPolicy;
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
 use crate::webhook::webhook_trigger::types_v4_1_0::obelisk::types::join_set::JoinNextError;
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
@@ -393,8 +393,7 @@ pub struct WebhookEndpointConfig {
     pub backtrace_persist: bool,
     pub subscription_interruption: Option<Duration>,
     pub logs_store_min_level: Option<LogLevel>,
-    pub secrets: Arc<[crate::http_request_policy::SecretConfig]>,
-    pub allowed_hosts: Arc<[crate::http_request_policy::HostPattern]>,
+    pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
 }
 
 struct WebhookEndpointCtx<S: Sleep> {
@@ -843,23 +842,8 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
         }
 
         // Generate fresh placeholders for this execution run
-        let mut policy_secrets = Vec::new();
-        for secret_config in config.secrets.iter() {
-            for (env_key, real_value) in &secret_config.env_mappings {
-                let placeholder = generate_placeholder();
-                wasi_ctx.env(env_key, &placeholder);
-                policy_secrets.push(PlaceholderSecret {
-                    placeholder,
-                    real_value: real_value.clone(),
-                    allowed_hosts: secret_config.hosts.clone(),
-                    replace_in: secret_config.replace_in.clone(),
-                });
-            }
-        }
-        let http_policy = HttpRequestPolicy {
-            allowed_hosts: config.allowed_hosts.clone(),
-            secrets: policy_secrets,
-        };
+        let http_policy =
+            crate::policy_builder::build_http_policy(&config.allowed_hosts, &mut wasi_ctx);
 
         for (key, val) in params {
             wasi_ctx.env(key, val);
@@ -1306,7 +1290,7 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::{compile_activity, new_activity_fibo};
         use crate::activity::cancel_registry::CancelRegistry;
         use crate::engines::{EngineConfig, Engines};
-        use crate::http_request_policy::HostPattern;
+        use crate::http_request_policy::{AllowedHostConfig, HostPattern};
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, WebhookEndpointCompiled, WebhookEndpointConfig,
@@ -1422,7 +1406,6 @@ pub(crate) mod tests {
                             backtrace_persist: false,
                             subscription_interruption: None,
                             logs_store_min_level: None,
-                            secrets: Arc::from([]),
                             allowed_hosts: Arc::from([]),
                         },
                         wasm_file,
@@ -1693,10 +1676,11 @@ pub(crate) mod tests {
                         backtrace_persist: false,
                         subscription_interruption: None,
                         logs_store_min_level: None,
-                        secrets: Arc::from([]),
-                        allowed_hosts: Arc::from(vec![
-                            HostPattern::parse(&mock_allowed_host).unwrap(),
-                        ]),
+                        allowed_hosts: Arc::from(vec![AllowedHostConfig {
+                            pattern: HostPattern::parse(&mock_allowed_host).unwrap(),
+                            secret_env_mappings: Vec::new(),
+                            replace_in: hashbrown::HashSet::new(),
+                        }]),
                     },
                     wasm_file,
                     &engine,
@@ -1865,7 +1849,6 @@ pub(crate) mod tests {
                         backtrace_persist: false,
                         subscription_interruption: None,
                         logs_store_min_level: None,
-                        secrets: Arc::from([]),
                         allowed_hosts: Arc::from([]), // NO allowed hosts - request should be denied
                     },
                     wasm_file,

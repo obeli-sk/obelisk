@@ -37,8 +37,7 @@ pub struct ActivityConfig {
     pub env_vars: Arc<[EnvVar]>,
     pub directories_config: Option<ActivityDirectoriesConfig>,
     pub fuel: Option<u64>,
-    pub secrets: Arc<[crate::http_request_policy::SecretConfig]>,
-    pub allowed_hosts: Arc<[crate::http_request_policy::HostPattern]>,
+    pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
 }
 
 #[derive(Clone, Debug)]
@@ -584,7 +583,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::engines::PoolingOptions;
     use crate::engines::{EngineConfig, Engines};
-    use crate::http_request_policy::HostPattern;
+    use crate::http_request_policy::{AllowedHostConfig, HostPattern};
     use assert_matches::assert_matches;
     use concepts::component_id::InputContentDigest;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
@@ -638,7 +637,6 @@ pub(crate) mod tests {
             env_vars: Arc::from([]),
             directories_config: None,
             fuel: None,
-            secrets: Arc::from([]),
             allowed_hosts: Arc::from([]),
         }
     }
@@ -654,8 +652,11 @@ pub(crate) mod tests {
             env_vars: Arc::from([]),
             directories_config: None,
             fuel: None,
-            secrets: Arc::from([]),
-            allowed_hosts: Arc::from(vec![HostPattern::parse(allowed_host).unwrap()]),
+            allowed_hosts: Arc::from(vec![AllowedHostConfig {
+                pattern: HostPattern::parse(allowed_host).unwrap(),
+                secret_env_mappings: Vec::new(),
+                replace_in: hashbrown::HashSet::new(),
+            }]),
         }
     }
 
@@ -1706,7 +1707,7 @@ pub(crate) mod tests {
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,
     ) {
-        use crate::http_request_policy::{ReplacementLocation, SecretConfig};
+        use crate::http_request_policy::{AllowedHostConfig, ReplacementLocation};
         use hashbrown::HashSet;
         use secrecy::SecretString;
         use wiremock::{
@@ -1740,9 +1741,9 @@ pub(crate) mod tests {
                     env_vars: Arc::from([]),
                     directories_config: None,
                     fuel: None,
-                    secrets: Arc::from(vec![SecretConfig {
-                        hosts: HashSet::from_iter([host_pattern.clone()]),
-                        env_mappings: vec![(
+                    allowed_hosts: Arc::from(vec![AllowedHostConfig {
+                        pattern: host_pattern,
+                        secret_env_mappings: vec![(
                             SECRET_ENV_VAR.to_string(),
                             SecretString::from(SECRET_VALUE.to_string()),
                         )],
@@ -1752,7 +1753,6 @@ pub(crate) mod tests {
                             ReplacementLocation::Body,
                         ]),
                     }]),
-                    allowed_hosts: Arc::from(vec![host_pattern]),
                 }
             },
         )
@@ -1873,7 +1873,6 @@ pub(crate) mod tests {
                     process_provider: None,
                 }),
                 fuel: None,
-                secrets: Arc::from([]),
                 allowed_hosts: Arc::from([]),
             },
             retry_config,
@@ -1976,7 +1975,6 @@ pub(crate) mod tests {
                     process_provider: Some(ProcessProvider::Native),
                 }),
                 fuel: None,
-                secrets: Arc::from([]),
                 allowed_hosts: Arc::from([]),
             },
             ComponentRetryConfig::ZERO,
@@ -2041,7 +2039,6 @@ pub(crate) mod tests {
                 env_vars: Arc::default(),
                 directories_config: None,
                 fuel: None,
-                secrets: Arc::from([]),
                 allowed_hosts: Arc::from([]),
             },
             engine,
@@ -2103,7 +2100,6 @@ pub(crate) mod tests {
                     process_provider: Some(ProcessProvider::Native),
                 }),
                 fuel: None,
-                secrets: Arc::from([]),
                 allowed_hosts: Arc::from([]),
             },
             ComponentRetryConfig::ZERO,
@@ -2187,7 +2183,6 @@ pub(crate) mod tests {
                 env_vars: Arc::default(),
                 directories_config: None,
                 fuel: None,
-                secrets: Arc::from([]),
                 allowed_hosts: Arc::from([]),
             },
             ComponentRetryConfig::ZERO,
@@ -2255,7 +2250,6 @@ pub(crate) mod tests {
                 env_vars: Arc::default(),
                 directories_config: None,
                 fuel: None,
-                secrets: Arc::from([]),
                 allowed_hosts: Arc::from([]),
             },
             ComponentRetryConfig::ZERO,
@@ -2329,7 +2323,6 @@ pub(crate) mod tests {
                 env_vars: Arc::default(),
                 directories_config: None,
                 fuel: None,
-                secrets: Arc::from([]),
                 allowed_hosts: Arc::from([]),
             },
             retry_config,

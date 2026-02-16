@@ -13,6 +13,7 @@ use crate::config::toml::ActivityStubExtComponentConfigToml;
 use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
+use crate::config::toml::AllowedHostToml;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
@@ -841,8 +842,11 @@ impl ServerVerified {
                 }],
                 backtrace: ComponentBacktraceConfig::default(),
                 logs_store_min_level: LogLevelToml::Off,
-                allowed_hosts: vec![target_url],
-                secrets: vec![],
+                allowed_host: vec![AllowedHostToml {
+                    pattern: target_url,
+                    methods: vec![],
+                    secrets: None,
+                }],
             });
         }
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
@@ -1606,7 +1610,6 @@ async fn compile_and_verify(
                                 backtrace_persist: global_backtrace_persist,
                                 subscription_interruption: webhook.subscription_interruption,
                                 logs_store_min_level: webhook.logs_store_min_level,
-                                secrets: webhook.secrets,
                                 allowed_hosts: webhook.allowed_hosts,
                             };
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(

@@ -1,8 +1,8 @@
-use hashbrown::HashSet;
 use hyper::Uri;
+use hyper::http::Method;
 use rand::RngCore;
 use secrecy::{ExposeSecret, SecretString};
-use std::{fmt, sync::Arc};
+use std::fmt;
 use tracing::debug;
 use wasmtime_wasi_http::bindings::http::types::ErrorCode;
 
@@ -14,27 +14,31 @@ pub enum ReplacementLocation {
     Params,
 }
 
-/// A secret that uses placeholder-based injection.
+/// A secret with a generated placeholder, ready for injection at runtime.
+/// Each execution run gets fresh placeholders.
 #[derive(Clone, Debug)]
 pub struct PlaceholderSecret {
     /// The placeholder string exposed to WASM.
     pub placeholder: String,
     /// The real secret value.
     pub real_value: SecretString,
-    /// Hosts where replacement is allowed (scheme, host, port triples).
-    pub allowed_hosts: HashSet<HostPattern>,
     /// Where in the request replacement is allowed.
-    pub replace_in: HashSet<ReplacementLocation>,
+    pub replace_in: hashbrown::HashSet<ReplacementLocation>,
 }
 
 /// A parsed host pattern for matching outgoing requests.
 /// Supports wildcards: `*` means all hosts, `*.example.com` matches subdomains,
 /// `192.168.1.*` matches a /24 range.
+///
+/// Optionally restricts allowed HTTP methods. When `methods` is empty, all
+/// methods are permitted.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HostPattern {
     pub scheme: String,
     pub host_pattern: String,
     pub port: u16,
+    /// Allowed HTTP methods. Empty means all methods are allowed.
+    pub methods: Vec<Method>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -92,16 +96,34 @@ impl HostPattern {
             scheme: scheme.to_string(),
             host_pattern: host,
             port,
+            methods: Vec::new(),
         })
     }
 
-    /// Check if a (scheme, host, port) triple matches this pattern.
+    /// Check if a (scheme, host, port) triple matches this pattern (ignoring method).
     #[must_use]
-    pub fn matches(&self, scheme: &str, host: &str, port: u16) -> bool {
+    pub fn matches_host(&self, scheme: &str, host: &str, port: u16) -> bool {
         if self.scheme != scheme || self.port != port {
             return false;
         }
         match_wildcard(&self.host_pattern, host)
+    }
+
+    /// Check if a (scheme, host, port, method) tuple matches this pattern.
+    /// When `self.methods` is empty, all methods are allowed.
+    #[must_use]
+    pub fn matches(&self, scheme: &str, host: &str, port: u16, method: &Method) -> bool {
+        if !self.matches_host(scheme, host, port) {
+            return false;
+        }
+        self.methods.is_empty() || self.methods.contains(method)
+    }
+
+    /// Return a new `HostPattern` with the given methods.
+    #[must_use]
+    pub fn with_methods(mut self, methods: Vec<Method>) -> Self {
+        self.methods = methods;
+        self
     }
 }
 
@@ -109,10 +131,15 @@ impl fmt::Display for HostPattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let default_port = if self.scheme == "https" { 443 } else { 80 };
         if self.port == default_port {
-            write!(f, "{}://{}", self.scheme, self.host_pattern)
+            write!(f, "{}://{}", self.scheme, self.host_pattern)?;
         } else {
-            write!(f, "{}://{}:{}", self.scheme, self.host_pattern, self.port)
+            write!(f, "{}://{}:{}", self.scheme, self.host_pattern, self.port)?;
         }
+        if !self.methods.is_empty() {
+            let methods: Vec<&str> = self.methods.iter().map(Method::as_str).collect();
+            write!(f, " [{}]", methods.join(", "))?;
+        }
+        Ok(())
     }
 }
 
@@ -130,11 +157,17 @@ fn match_wildcard(pattern: &str, value: &str) -> bool {
     pattern == value
 }
 
+/// Per-host policy entry: a host pattern with optional secrets.
+#[derive(Clone, Debug)]
+pub struct AllowedHostPolicy {
+    pub pattern: HostPattern,
+    pub secrets: Vec<PlaceholderSecret>,
+}
+
 /// Per-component HTTP outgoing request policy.
 #[derive(Clone, Debug, Default)]
 pub struct HttpRequestPolicy {
-    pub allowed_hosts: Arc<[HostPattern]>,
-    pub secrets: Vec<PlaceholderSecret>,
+    pub hosts: Vec<AllowedHostPolicy>,
 }
 
 /// Which content types get body replacement.
@@ -160,8 +193,9 @@ fn extract_request_target(uri: &hyper::Uri) -> Option<(String, String, u16)> {
 pub(crate) enum PolicyError {
     #[error("outgoing HTTP request has no host in URI: {0}")]
     RequestHasNoHost(Uri),
-    #[error("outgoing HTTP request to {scheme}://{host}:{port} denied")]
+    #[error("outgoing HTTP {method} request to {scheme}://{host}:{port} denied")]
     RequestDenied {
+        method: Method,
         scheme: String,
         host: String,
         port: u16,
@@ -183,26 +217,26 @@ impl HttpRequestPolicy {
         let Some((scheme, host, port)) = extract_request_target(request.uri()) else {
             return Err(PolicyError::RequestHasNoHost(request.uri().clone()));
         };
+        let method = request.method().clone();
 
-        // 1. Check allowlist
-        let is_allowed = self
-            .allowed_hosts
+        // 1. Find matching host entries (check host + method)
+        let matching: Vec<&AllowedHostPolicy> = self
+            .hosts
             .iter()
-            .any(|pattern| pattern.matches(&scheme, &host, port));
-        if !is_allowed {
-            return Err(PolicyError::RequestDenied { scheme, host, port });
+            .filter(|h| h.pattern.matches(&scheme, &host, port, &method))
+            .collect();
+        if matching.is_empty() {
+            return Err(PolicyError::RequestDenied {
+                method,
+                scheme,
+                host,
+                port,
+            });
         }
 
-        // 2. Collect applicable secrets for this host
-        let applicable: Vec<&PlaceholderSecret> = self
-            .secrets
-            .iter()
-            .filter(|s| {
-                s.allowed_hosts
-                    .iter()
-                    .any(|pattern| pattern.matches(&scheme, &host, port))
-            })
-            .collect();
+        // 2. Collect all applicable secrets from matching host entries
+        let applicable: Vec<&PlaceholderSecret> =
+            matching.iter().flat_map(|h| h.secrets.iter()).collect();
 
         if applicable.is_empty() {
             return Ok(());
@@ -259,19 +293,16 @@ impl HttpRequestPolicy {
         Ok(())
     }
 
-    /// Get body secrets applicable for the request's target host.
-    fn body_secrets_for(&self, uri: &hyper::Uri) -> Vec<&PlaceholderSecret> {
+    /// Get body secrets applicable for the request's target host and method.
+    fn body_secrets_for(&self, uri: &hyper::Uri, method: &Method) -> Vec<&PlaceholderSecret> {
         let Some((scheme, host, port)) = extract_request_target(uri) else {
             return Vec::new();
         };
-        self.secrets
+        self.hosts
             .iter()
-            .filter(|s| {
-                s.replace_in.contains(&ReplacementLocation::Body)
-                    && s.allowed_hosts
-                        .iter()
-                        .any(|pattern| pattern.matches(&scheme, &host, port))
-            })
+            .filter(|h| h.pattern.matches(&scheme, &host, port, method))
+            .flat_map(|h| h.secrets.iter())
+            .filter(|s| s.replace_in.contains(&ReplacementLocation::Body))
             .collect()
     }
 
@@ -282,7 +313,7 @@ impl HttpRequestPolicy {
         &self,
         request: &mut hyper::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
     ) {
-        let body_secrets = self.body_secrets_for(request.uri());
+        let body_secrets = self.body_secrets_for(request.uri(), request.method());
         if body_secrets.is_empty() {
             debug!("No secrets, no modifications to HTTP body");
             return;
@@ -348,14 +379,14 @@ pub fn generate_placeholder() -> String {
     format!("OBELISK_SECRET_{hex}")
 }
 
-/// Resolved secret configuration from TOML (real values resolved, no placeholders yet).
+/// Resolved per-host configuration: host pattern + optional secrets.
 #[derive(Clone, Debug)]
-pub struct SecretConfig {
-    pub hosts: HashSet<HostPattern>,
+pub struct AllowedHostConfig {
+    pub pattern: HostPattern,
     /// `(env_key_for_wasm, real_value)` pairs.
-    pub env_mappings: Vec<(String, SecretString)>,
+    pub secret_env_mappings: Vec<(String, SecretString)>,
     /// Where in the request to perform replacement.
-    pub replace_in: HashSet<ReplacementLocation>,
+    pub replace_in: hashbrown::HashSet<ReplacementLocation>,
 }
 
 #[cfg(test)]
@@ -368,8 +399,8 @@ mod tests {
         assert_eq!(p.scheme, "https");
         assert_eq!(p.host_pattern, "api.openai.com");
         assert_eq!(p.port, 443);
-        assert!(p.matches("https", "api.openai.com", 443));
-        assert!(!p.matches("http", "api.openai.com", 80));
+        assert!(p.matches("https", "api.openai.com", 443, &Method::GET));
+        assert!(!p.matches("http", "api.openai.com", 80, &Method::GET));
     }
 
     #[test]
@@ -378,8 +409,8 @@ mod tests {
         assert_eq!(p.scheme, "http");
         assert_eq!(p.host_pattern, "localhost");
         assert_eq!(p.port, 8080);
-        assert!(p.matches("http", "localhost", 8080));
-        assert!(!p.matches("https", "localhost", 8080));
+        assert!(p.matches("http", "localhost", 8080, &Method::GET));
+        assert!(!p.matches("https", "localhost", 8080, &Method::GET));
     }
 
     #[test]
@@ -393,30 +424,30 @@ mod tests {
     #[test]
     fn parse_host_pattern_wildcard_prefix() {
         let p = HostPattern::parse("*.example.com").unwrap();
-        assert!(p.matches("https", "api.example.com", 443));
-        assert!(p.matches("https", "foo.bar.example.com", 443));
-        assert!(!p.matches("https", "example.com", 443));
+        assert!(p.matches("https", "api.example.com", 443, &Method::GET));
+        assert!(p.matches("https", "foo.bar.example.com", 443, &Method::POST));
+        assert!(!p.matches("https", "example.com", 443, &Method::GET));
     }
 
     #[test]
     fn parse_host_pattern_wildcard_suffix() {
         let p = HostPattern::parse("192.168.1.*").unwrap();
-        assert!(p.matches("https", "192.168.1.100", 443));
-        assert!(!p.matches("https", "192.168.2.100", 443));
+        assert!(p.matches("https", "192.168.1.100", 443, &Method::GET));
+        assert!(!p.matches("https", "192.168.2.100", 443, &Method::GET));
     }
 
     #[test]
     fn parse_host_pattern_wildcard_all_https() {
         let p = HostPattern::parse("*").unwrap();
-        assert!(p.matches("https", "anything.com", 443));
-        assert!(!p.matches("http", "anything.com", 80));
+        assert!(p.matches("https", "anything.com", 443, &Method::GET));
+        assert!(!p.matches("http", "anything.com", 80, &Method::GET));
     }
 
     #[test]
     fn parse_host_pattern_wildcard_http() {
         let p = HostPattern::parse("http://*").unwrap();
-        assert!(!p.matches("https", "anything.com", 443));
-        assert!(p.matches("http", "anything.com", 80));
+        assert!(!p.matches("https", "anything.com", 443, &Method::GET));
+        assert!(p.matches("http", "anything.com", 80, &Method::GET));
     }
 
     #[test]
@@ -437,6 +468,35 @@ mod tests {
         assert_eq!(p.scheme, "https");
         assert_eq!(p.host_pattern, "internal.corp.com");
         assert_eq!(p.port, 8443);
+    }
+
+    #[test]
+    fn host_pattern_method_restriction() {
+        let p = HostPattern::parse("api.example.com")
+            .unwrap()
+            .with_methods(vec![Method::GET, Method::HEAD]);
+        assert!(p.matches("https", "api.example.com", 443, &Method::GET));
+        assert!(p.matches("https", "api.example.com", 443, &Method::HEAD));
+        assert!(!p.matches("https", "api.example.com", 443, &Method::POST));
+        assert!(!p.matches("https", "api.example.com", 443, &Method::DELETE));
+    }
+
+    #[test]
+    fn host_pattern_no_methods_allows_all() {
+        let p = HostPattern::parse("api.example.com").unwrap();
+        assert!(p.methods.is_empty());
+        assert!(p.matches("https", "api.example.com", 443, &Method::GET));
+        assert!(p.matches("https", "api.example.com", 443, &Method::POST));
+        assert!(p.matches("https", "api.example.com", 443, &Method::DELETE));
+        assert!(p.matches("https", "api.example.com", 443, &Method::PUT));
+    }
+
+    #[test]
+    fn display_host_pattern_with_methods() {
+        let p = HostPattern::parse("api.example.com")
+            .unwrap()
+            .with_methods(vec![Method::GET, Method::POST]);
+        assert_eq!(p.to_string(), "https://api.example.com [GET, POST]");
     }
 
     #[test]

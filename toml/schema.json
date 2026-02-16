@@ -171,12 +171,11 @@
     "ActivityJsComponentConfigToml": {
       "type": "object",
       "properties": {
-        "allowed_hosts": {
-          "description": "Only these hosts can be reached by outgoing HTTP requests.",
+        "allowed_host": {
+          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
           "type": "array",
-          "default": [],
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/AllowedHostToml"
           }
         },
         "exec": {
@@ -205,13 +204,6 @@
         },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"
-        },
-        "secrets": {
-          "description": "Secrets injected via placeholder replacement in outgoing HTTP requests.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SecretConfigToml"
-          }
         },
         "source": {
           "type": "string"
@@ -251,12 +243,11 @@
     "ActivityWasmComponentConfigToml": {
       "type": "object",
       "properties": {
-        "allowed_hosts": {
-          "description": "Only these hosts can be reached by outgoing HTTP requests.",
+        "allowed_host": {
+          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
           "type": "array",
-          "default": [],
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/AllowedHostToml"
           }
         },
         "content_digest": {
@@ -302,19 +293,69 @@
         },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"
-        },
-        "secrets": {
-          "description": "Secrets injected via placeholder replacement in outgoing HTTP requests.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SecretConfigToml"
-          }
         }
       },
       "additionalProperties": false,
       "required": [
         "name",
         "location"
+      ]
+    },
+    "AllowedHostSecretsToml": {
+      "description": "Secrets configuration for an allowed host.",
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "description": "Env vars using the same syntax as top-level `env_vars`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
+        "replace_in": {
+          "description": "Where in the request to perform replacement.\nDefault: empty (no replacement — deny by default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReplaceIn"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "env_vars"
+      ]
+    },
+    "AllowedHostToml": {
+      "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.",
+      "type": "object",
+      "properties": {
+        "methods": {
+          "description": "Allowed HTTP methods. Empty or omitted means all methods are allowed.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "pattern": {
+          "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`).",
+          "type": "string"
+        },
+        "secrets": {
+          "description": "Optional secrets for this host.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AllowedHostSecretsToml"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern"
       ]
     },
     "ApiConfig": {
@@ -856,38 +897,6 @@
         "never"
       ]
     },
-    "SecretConfigToml": {
-      "description": "A secret group: env vars bound to specific hosts.",
-      "type": "object",
-      "properties": {
-        "env_vars": {
-          "description": "Env vars using the same syntax as top-level `env_vars`.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/EnvVarConfig"
-          }
-        },
-        "hosts": {
-          "description": "Hosts where these secrets are allowed to be injected.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "replace_in": {
-          "description": "Where in the request to perform replacement.\nDefault: empty (no replacement — deny by default).",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ReplaceIn"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "hosts",
-        "env_vars"
-      ]
-    },
     "SpanConfig": {
       "oneOf": [
         {
@@ -1169,12 +1178,11 @@
     "WebhookComponentConfigToml": {
       "type": "object",
       "properties": {
-        "allowed_hosts": {
-          "description": "Only these hosts can be reached by outgoing HTTP requests.",
+        "allowed_host": {
+          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
           "type": "array",
-          "default": [],
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/AllowedHostToml"
           }
         },
         "backtrace": {
@@ -1216,13 +1224,6 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/WebhookRoute"
-          }
-        },
-        "secrets": {
-          "description": "Secrets injected via placeholder replacement in outgoing HTTP requests.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SecretConfigToml"
           }
         }
       },
