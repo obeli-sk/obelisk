@@ -126,6 +126,32 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## When running on linux, the `native` process API provider attempts to kill the spawned processes using process groups.
 # directories.process_provider = "none" # Default is "none". Possible value: "none"|"native"
 
+### JavaScript Activity components configuration
+# [[activity_js]]
+# name = "name"                              # Required. Component name.
+## Location of the JavaScript source file.
+## Supports local file paths and `gh://` GitHub release references.
+## OCI references are NOT supported for JS activities.
+# location = "path/to/source.js"
+# location = "gh://user/repo@release/my-activity.js"
+# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
+# ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
+## Common executor settings - see above.
+## Retry customization: same as activity_wasm.
+# max_retries = 5
+# retry_exp_backoff.milliseconds = 100
+## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "db".
+# forward_stdout="db"
+# forward_stderr="db"
+# logs_store_min_level = "debug"             # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
+## Outgoing HTTP host allowlist - same syntax as activity_wasm.allowed_host.
+# [[activity_js.allowed_host]]
+# pattern = "api.example.com"
+# methods = ["GET", "POST"]
+# [activity_js.allowed_host.secrets]
+# env_vars = ["API_KEY"]
+# replace_in = ["headers"]
+
 ### External Activity components configuration - only WIT schema is loaded
 # [[activity_external]]
 ## Common settings for all components - see above.
