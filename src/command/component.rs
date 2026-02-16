@@ -1,6 +1,7 @@
 use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
 use crate::args;
+use crate::config::config_holder::ConfigFileOption;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::ConfigSource;
 use crate::config::config_holder::OBELISK_HELP_TOML;
@@ -83,12 +84,12 @@ pub(crate) async fn add(
     component_type: ComponentType,
     name: String,
     location: ComponentLocationToml,
-    toml_path: Option<PathBuf>,
+    config: Option<PathBuf>,
     locked: bool,
 ) -> anyhow::Result<()> {
     // Check name
     ConfigName::new(name.clone().into()).context("name is invalid")?;
-    let toml_path = toml_path.unwrap_or_else(|| PathBuf::from("obelisk.toml"));
+    let toml_path = config.unwrap_or_else(|| PathBuf::from("obelisk.toml"));
     // Generate from default if file does not exist.
     let (mut file, contents, prefix) = if toml_path.try_exists().unwrap_or_default() {
         let contents = tokio::fs::read_to_string(&toml_path)
@@ -118,7 +119,11 @@ pub(crate) async fn add(
 
     // Fetch, store to local Compute content_digest if `locked`
     let content_digest: Option<ContentDigest> = if locked {
-        let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), None, true)?;
+        let config_holder = ConfigHolder::new(
+            project_dirs(),
+            BaseDirs::new(),
+            ConfigFileOption::AllowMissing(Some(ConfigSource(toml_path))),
+        )?;
         let config = config_holder.load_config().await?;
         let wasm_cache_dir = config
             .wasm_global_config
@@ -249,7 +254,11 @@ pub(crate) async fn inspect(
     verbosity: FunctionMetadataVerbosity,
     extensions: bool,
 ) -> anyhow::Result<()> {
-    let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), config, true)?;
+    let config_holder = ConfigHolder::new(
+        project_dirs(),
+        BaseDirs::new(),
+        ConfigFileOption::AllowMissing(config),
+    )?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
     let path_prefixes = &config_holder.path_prefixes;

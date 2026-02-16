@@ -2,8 +2,8 @@ use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::server::{VerifyParams, verify_config_compile_link};
 use crate::command::termination_notifier::termination_notifier;
-use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::ConfigSource;
+use crate::config::config_holder::{ConfigFileOption, ConfigHolder};
 use crate::init::{self};
 use crate::project_dirs;
 use crate::wit_printer::{OutputToFile, process_pkg_with_deps};
@@ -224,7 +224,11 @@ pub(crate) async fn generate_wit_deps(
     output_directory: PathBuf,
     overwrite: bool,
 ) -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config, true)?;
+    let config_holder = ConfigHolder::new(
+        project_dirs,
+        base_dirs,
+        ConfigFileOption::AllowMissing(config),
+    )?;
     let mut config = config_holder.load_config().await?;
     let _guard = init::init(&mut config)?;
     let (termination_sender, mut termination_watcher) = watch::channel(());

@@ -5,26 +5,23 @@ use directories::{BaseDirs, ProjectDirs};
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
-use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
-/// Represents either a local file path or a remote URL for the config.
+/// Represents a local file path for the config.
 #[derive(Debug, Clone)]
-pub(crate) enum ConfigSource {
-    LocalFile(PathBuf),
-    Url(String),
+pub(crate) struct ConfigSource(pub(crate) PathBuf);
+impl Default for ConfigSource {
+    fn default() -> Self {
+        Self(PathBuf::from("obelisk.toml"))
+    }
 }
 
 impl std::str::FromStr for ConfigSource {
     type Err = std::convert::Infallible;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.starts_with("http://") || s.starts_with("https://") {
-            Ok(ConfigSource::Url(s.to_string()))
-        } else {
-            Ok(ConfigSource::LocalFile(PathBuf::from(s)))
-        }
+        Ok(ConfigSource(PathBuf::from(s)))
     }
 }
 
@@ -155,8 +152,14 @@ impl PathPrefixes {
 }
 
 pub(crate) struct ConfigHolder {
-    config_source: Option<ConfigSource>,
+    config_source: ConfigSource,
     pub(crate) path_prefixes: PathPrefixes,
+}
+
+#[derive(Debug)]
+pub(crate) enum ConfigFileOption {
+    MustExist(ConfigSource),
+    AllowMissing(Option<ConfigSource>),
 }
 
 impl ConfigHolder {
@@ -194,39 +197,30 @@ impl ConfigHolder {
     pub(crate) fn new(
         project_dirs: Option<ProjectDirs>,
         base_dirs: Option<BaseDirs>,
-        config: Option<ConfigSource>,
-        allow_missing: bool,
+        config: ConfigFileOption,
     ) -> Result<Self, anyhow::Error> {
-        let config_source = if let Some(config) = config {
-            Some(config)
-        } else {
-            let local = PathBuf::from("obelisk.toml");
-            let exists = local.try_exists().unwrap_or_default();
-            if !allow_missing && !exists {
-                bail!("cannot find `obelisk.toml` in current directory");
+        let config_source = match config {
+            ConfigFileOption::MustExist(config_source) => {
+                let exists = config_source.0.try_exists().unwrap_or_default();
+                if !exists {
+                    bail!("cannot find `obelisk.toml` in current directory");
+                }
+                config_source
             }
-            if exists {
-                info!("Using configuration file {:?}", local);
-                Some(ConfigSource::LocalFile(local))
-            } else {
-                None
-            }
+            ConfigFileOption::AllowMissing(Some(config_source)) => config_source,
+            ConfigFileOption::AllowMissing(None) => ConfigSource::default(),
         };
+        info!("Using configuration file {:?}", config_source.0);
 
-        let obelisk_toml_dir = match &config_source {
-            None | Some(ConfigSource::Url(_)) => {
-                // For URLs or no config, use current working directory
-                std::env::current_dir().context("failed to get CWD")?
-            }
-            Some(ConfigSource::LocalFile(path)) => path
-                .canonicalize()
-                .with_context(|| {
-                    format!("error while calling canonicalize on parent path of {path:?}")
-                })?
-                .parent()
-                .with_context(|| format!("error getting parent path of {path:?}"))?
-                .to_path_buf(),
-        };
+        let obelisk_toml_dir = config_source
+            .0
+            .canonicalize()
+            .with_context(|| {
+                format!("error while calling canonicalize on parent path of {config_source:?}")
+            })?
+            .parent()
+            .with_context(|| format!("error getting parent path of {config_source:?}"))?
+            .to_path_buf();
 
         Ok(Self {
             path_prefixes: PathPrefixes {
@@ -239,61 +233,15 @@ impl ConfigHolder {
     }
 
     pub(crate) async fn load_config(&self) -> Result<ConfigToml, anyhow::Error> {
-        let mut builder = ConfigBuilder::<AsyncState>::default();
-        match &self.config_source {
-            Some(ConfigSource::LocalFile(path)) => {
-                builder = builder.add_source(
-                    File::from(path.as_path())
-                        .required(true)
-                        .format(FileFormat::Toml),
-                );
-            }
-            Some(ConfigSource::Url(url)) => {
-                info!("Fetching configuration from URL: {url}");
-                let content = fetch_url_content(url)
-                    .await
-                    .with_context(|| format!("failed to fetch configuration from {url}"))?;
-                debug!("Downloaded {content}");
-                builder = builder.add_source(File::from_str(&content, FileFormat::Toml));
-            }
-            None => {}
-        }
-        let settings = builder
-            .add_source(Environment::with_prefix("obelisk").separator("__"))
-            .build()
-            .await?;
+        let builder = ConfigBuilder::<AsyncState>::default()
+            .add_source(
+                File::from(self.config_source.0.as_path())
+                    .required(true)
+                    .format(FileFormat::Toml),
+            )
+            .add_source(Environment::with_prefix("obelisk").separator("__"));
+
+        let settings = builder.build().await?;
         Ok(settings.try_deserialize()?)
     }
-}
-
-async fn fetch_url_content(url: &str) -> Result<String, anyhow::Error> {
-    let client = reqwest::Client::builder()
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let response = client
-        .get(url)
-        .header(reqwest::header::ACCEPT, "application/toml, text/plain, */*")
-        .send()
-        .await
-        .with_context(|| format!("failed to send request to {url}"))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_body = response.text().await.unwrap_or_default();
-        bail!("HTTP {status}: {error_body}");
-    }
-
-    // Check for obviously wrong content types that indicate an error page
-    if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE)
-        && let Ok(ct) = content_type.to_str()
-        && ct.starts_with("text/html")
-    {
-        bail!("server returned HTML instead of TOML (Content-Type: {ct})");
-    }
-
-    response
-        .text()
-        .await
-        .with_context(|| format!("failed to read response body from {url}"))
 }

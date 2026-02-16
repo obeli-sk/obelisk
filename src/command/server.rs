@@ -1,6 +1,7 @@
 use crate::args::Server;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
+use crate::config::config_holder::ConfigFileOption;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::ConfigSource;
 use crate::config::config_holder::PathPrefixes;
@@ -148,7 +149,7 @@ impl Server {
                 Box::pin(run(
                     project_dirs(),
                     BaseDirs::new(),
-                    config,
+                    config.unwrap_or_default(),
                     RunParams {
                         clean_cache,
                         clean_codegen_cache,
@@ -169,7 +170,7 @@ impl Server {
                 verify(
                     project_dirs(),
                     BaseDirs::new(),
-                    config,
+                    config.unwrap_or_default(),
                     VerifyParams {
                         clean_cache,
                         clean_codegen_cache,
@@ -349,10 +350,11 @@ pub(crate) struct RunParams {
 pub(crate) async fn run(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    config: Option<ConfigSource>,
+    config: ConfigSource,
     params: RunParams,
 ) -> anyhow::Result<()> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config, false)?;
+    let config_holder =
+        ConfigHolder::new(project_dirs, base_dirs, ConfigFileOption::MustExist(config))?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
     let (termination_sender, termination_watcher) = watch::channel(());
@@ -380,11 +382,12 @@ pub(crate) struct VerifyParams {
 pub(crate) async fn verify(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    config: Option<ConfigSource>,
+    config: ConfigSource,
     verify_params: VerifyParams,
     skip_db: bool,
 ) -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, config, false)?;
+    let config_holder =
+        ConfigHolder::new(project_dirs, base_dirs, ConfigFileOption::MustExist(config))?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
     let deployment_id = config.get_deployment_id();
@@ -2112,7 +2115,7 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{ServerCompiledLinked, ServerVerified, VerifyParams},
-        config::config_holder::ConfigHolder,
+        config::config_holder::{ConfigFileOption, ConfigHolder, ConfigSource},
     };
     use directories::BaseDirs;
     use rstest::rstest;
@@ -2141,10 +2144,7 @@ mod tests {
         let config_holder = ConfigHolder::new(
             project_dirs,
             base_dirs,
-            Some(crate::config::config_holder::ConfigSource::LocalFile(
-                obelisk_toml,
-            )),
-            false,
+            ConfigFileOption::MustExist(ConfigSource(obelisk_toml)),
         )?;
         let config = config_holder.load_config().await?;
 
