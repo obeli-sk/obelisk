@@ -58,7 +58,13 @@ impl HostPattern {
     ///
     /// # Errors
     /// Returns an error if the wildcard is in the middle of the host.
-    pub fn parse(input: &str) -> Result<Self, HostPatternError> {
+    pub fn parse_with_methods(input: &str, methods: Vec<Method>) -> Result<Self, HostPatternError> {
+        let mut host_pattern = Self::parse(input)?;
+        host_pattern.methods = methods;
+        Ok(host_pattern)
+    }
+
+    fn parse(input: &str) -> Result<Self, HostPatternError> {
         let (scheme, rest) = if let Some(rest) = input.strip_prefix("https://") {
             ("https", rest)
         } else if let Some(rest) = input.strip_prefix("http://") {
@@ -100,30 +106,17 @@ impl HostPattern {
         })
     }
 
-    /// Check if a (scheme, host, port) triple matches this pattern (ignoring method).
-    #[must_use]
-    pub fn matches_host(&self, scheme: &str, host: &str, port: u16) -> bool {
-        if self.scheme != scheme || self.port != port {
-            return false;
-        }
-        match_wildcard(&self.host_pattern, host)
-    }
-
     /// Check if a (scheme, host, port, method) tuple matches this pattern.
     /// When `self.methods` is empty, all methods are allowed.
     #[must_use]
-    pub fn matches(&self, scheme: &str, host: &str, port: u16, method: &Method) -> bool {
-        if !self.matches_host(scheme, host, port) {
+    fn matches(&self, scheme: &str, host: &str, port: u16, method: &Method) -> bool {
+        if self.scheme != scheme || self.port != port {
+            return false;
+        }
+        if !match_wildcard(&self.host_pattern, host) {
             return false;
         }
         self.methods.is_empty() || self.methods.contains(method)
-    }
-
-    /// Return a new `HostPattern` with the given methods.
-    #[must_use]
-    pub fn with_methods(mut self, methods: Vec<Method>) -> Self {
-        self.methods = methods;
-        self
     }
 }
 
@@ -472,9 +465,8 @@ mod tests {
 
     #[test]
     fn host_pattern_method_restriction() {
-        let p = HostPattern::parse("api.example.com")
-            .unwrap()
-            .with_methods(vec![Method::GET, Method::HEAD]);
+        let p = HostPattern::parse_with_methods("api.example.com", vec![Method::GET, Method::HEAD])
+            .unwrap();
         assert!(p.matches("https", "api.example.com", 443, &Method::GET));
         assert!(p.matches("https", "api.example.com", 443, &Method::HEAD));
         assert!(!p.matches("https", "api.example.com", 443, &Method::POST));
@@ -493,9 +485,8 @@ mod tests {
 
     #[test]
     fn display_host_pattern_with_methods() {
-        let p = HostPattern::parse("api.example.com")
-            .unwrap()
-            .with_methods(vec![Method::GET, Method::POST]);
+        let p = HostPattern::parse_with_methods("api.example.com", vec![Method::GET, Method::POST])
+            .unwrap();
         assert_eq!(p.to_string(), "https://api.example.com [GET, POST]");
     }
 

@@ -1825,8 +1825,6 @@ fn resolve_allowed_hosts(
     entries
         .into_iter()
         .map(|entry| {
-            let pattern = HostPattern::parse(&entry.pattern)?;
-
             let methods = entry
                 .methods
                 .into_iter()
@@ -1835,7 +1833,8 @@ fn resolve_allowed_hosts(
                         .map_err(|_| ResolveAllowedHostsError::InvalidMethod(m))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let pattern = pattern.with_methods(methods);
+
+            let pattern = HostPattern::parse_with_methods(&entry.pattern, methods)?;
 
             let (secret_env_mappings, replace_in) = if let Some(secrets) = entry.secrets {
                 if secrets.env_vars.is_empty() {

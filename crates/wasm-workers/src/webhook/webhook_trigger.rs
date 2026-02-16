@@ -1677,7 +1677,8 @@ pub(crate) mod tests {
                         subscription_interruption: None,
                         logs_store_min_level: None,
                         allowed_hosts: Arc::from(vec![AllowedHostConfig {
-                            pattern: HostPattern::parse(&mock_allowed_host).unwrap(),
+                            pattern: HostPattern::parse_with_methods(&mock_allowed_host, vec![])
+                                .unwrap(),
                             secret_env_mappings: Vec::new(),
                             replace_in: hashbrown::HashSet::new(),
                         }]),

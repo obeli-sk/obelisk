@@ -643,7 +643,7 @@ mod tests {
         allowed_host: &str,
     ) -> Arc<dyn Worker> {
         use crate::http_request_policy::{AllowedHostConfig, HostPattern};
-        let host_pattern = HostPattern::parse(allowed_host).unwrap();
+        let host_pattern = HostPattern::parse_with_methods(allowed_host, vec![]).unwrap();
         new_js_activity_worker_with_config(js_source, user_ffqn, move |component_id| {
             super::super::activity_worker::ActivityConfig {
                 component_id,

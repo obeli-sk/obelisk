@@ -653,7 +653,7 @@ pub(crate) mod tests {
             directories_config: None,
             fuel: None,
             allowed_hosts: Arc::from(vec![AllowedHostConfig {
-                pattern: HostPattern::parse(allowed_host).unwrap(),
+                pattern: HostPattern::parse_with_methods(allowed_host, vec![]).unwrap(),
                 secret_env_mappings: Vec::new(),
                 replace_in: hashbrown::HashSet::new(),
             }]),
@@ -1724,7 +1724,7 @@ pub(crate) mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let server_address = listener.local_addr().unwrap();
         let allowed_host = format!("http://127.0.0.1:{port}", port = server_address.port());
-        let host_pattern = HostPattern::parse(&allowed_host).unwrap();
+        let host_pattern = HostPattern::parse_with_methods(&allowed_host, vec![]).unwrap();
 
         // Create worker with secret configuration
         let (worker, component_id) = new_activity_worker_with_config(
