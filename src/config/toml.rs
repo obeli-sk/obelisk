@@ -600,11 +600,13 @@ impl FromStr for JsLocationToml {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.starts_with(OCI_SCHEMA_PREFIX) {
-            bail!("OCI references are not supported for JS activities. Use a local file path or gh:// reference.");
+            bail!(
+                "OCI references are not supported for JS activities. Use a local file path or gh:// reference."
+            );
         } else if let Some(location) = s.strip_prefix(GH_SCHEMA_PREFIX) {
-            Ok(JsLocationToml::GitHub(
-                GitHubReleaseReference::from_str(location)?,
-            ))
+            Ok(JsLocationToml::GitHub(GitHubReleaseReference::from_str(
+                location,
+            )?))
         } else {
             Ok(JsLocationToml::Path(s.to_string()))
         }
@@ -624,20 +626,16 @@ impl JsLocationToml {
         expected_digest: Option<&ContentDigest>,
     ) -> Result<String, anyhow::Error> {
         let file_path = match self {
-            JsLocationToml::Path(path) => {
-                path_prefixes.replace_file_prefix_verify_exists(path)?
-            }
+            JsLocationToml::Path(path) => path_prefixes.replace_file_prefix_verify_exists(path)?,
             JsLocationToml::GitHub(github_ref) => {
                 // Happy path: if content_digest is known and file exists in cache, use it
                 if let Some(expected) = expected_digest {
                     let cached = content_digest_to_wasm_file(wasm_cache_dir, expected);
                     if cached.exists() {
                         trace!("Using cached JS source for known content digest");
-                        return tokio::fs::read_to_string(&cached)
-                            .await
-                            .with_context(|| {
-                                format!("cannot read cached JS source file `{cached:?}`")
-                            });
+                        return tokio::fs::read_to_string(&cached).await.with_context(|| {
+                            format!("cannot read cached JS source file `{cached:?}`")
+                        });
                     }
                 }
                 let (actual_digest, cached_path) =
@@ -1097,7 +1095,11 @@ impl ActivityJsComponentConfigToml {
 
         let js_source = self
             .location
-            .read_to_string(&wasm_cache_dir, &path_prefixes, self.content_digest.as_ref())
+            .read_to_string(
+                &wasm_cache_dir,
+                &path_prefixes,
+                self.content_digest.as_ref(),
+            )
             .await?;
 
         // Compute content digest from source + ffqn
