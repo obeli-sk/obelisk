@@ -106,6 +106,94 @@ expression: imports
     "extension": null,
     "submittable": false
   },
+  "obelisk:workflow/workflow-support@4.2.0.schedule-json": {
+    "ffqn": "obelisk:workflow/workflow-support@4.2.0.schedule-json",
+    "parameter_types": [
+      {
+        "type_wrapper": {
+          "variant": {
+            "at": {
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
+              }
+            },
+            "in": {
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
+              }
+            },
+            "now": null
+          }
+        },
+        "name": "schedule-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": {
+          "record": {
+            "function-name": "string",
+            "interface-name": "string"
+          }
+        },
+        "name": "function",
+        "wit_type": "function"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "params",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": {
+          "option": {
+            "record": {
+              "timeout": {
+                "option": {
+                  "variant": {
+                    "days": "u32",
+                    "hours": "u32",
+                    "milliseconds": "u64",
+                    "minutes": "u32",
+                    "seconds": "u64"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "name": "config",
+        "wit_type": "option<submit-config>"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "result": {
+            "ok": {
+              "record": {
+                "id": "string"
+              }
+            },
+            "err": {
+              "variant": {
+                "ffqn-parsing-error": "string",
+                "function-not-found": null,
+                "params-parsing-error": "string"
+              }
+            }
+          }
+        },
+        "wit_type": "result<execution-id, schedule-json-error>"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
   "obelisk:workflow/workflow-support@4.2.0.submit-json": {
     "ffqn": "obelisk:workflow/workflow-support@4.2.0.submit-json",
     "parameter_types": [

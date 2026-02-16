@@ -974,6 +974,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::collections::VecDeque;
     use std::ops::Deref;
+    use std::str::FromStr;
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
     use test_utils::ExecutionLogSanitized;
@@ -983,7 +984,7 @@ pub(crate) mod tests {
     use utils::sha256sum::calculate_sha256_file;
     use val_json::{
         type_wrapper::TypeWrapper,
-        wast_val::{WastVal, WastValWithType},
+        wast_val::{ValKey, WastVal, WastValWithType},
     };
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
@@ -1007,6 +1008,9 @@ pub(crate) mod tests {
     );
     const TEST_GET_RESULT_JSON_ERR_VARIANT_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::TEST_GET_RESULT_JSON_ERR_VARIANT,
+    );
+    const TEST_SCHEDULE_JSON_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::TEST_SCHEDULE_JSON,
     );
     const SLEEP1_HOST_ACTIVITY_FFQN: FunctionFqn =
         FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_HOST_ACTIVITY); // sleep-host-activity: func(millis: u64);
@@ -1708,6 +1712,93 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+    }
+
+    /// Test: `schedule_json` function for scheduling executions with JSON params
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn test_schedule_json(database: Database) {
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        test_schedule_json_inner(db_pool.clone(), sim_clock).await;
+        db_close.close().await;
+    }
+
+    async fn test_schedule_json_inner(db_pool: Arc<dyn DbPool>, sim_clock: SimClock) {
+        test_utils::set_up();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                .await,
+        ]);
+        let cancel_registry = CancelRegistry::new();
+        let workflow_exec = new_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            cancel_registry,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        let params = Params::from_json_values_test(vec![]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: TEST_SCHEDULE_JSON_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        let res = db_connection
+            .wait_for_finished_result(&execution_id, None)
+            .await
+            .unwrap();
+
+        // Extract the execution-id record from the result
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val);
+        let record = assert_matches!(res.value, WastVal::Record(map) => map);
+
+        // Extract the "id" field from the record
+        let id_val = record
+            .get(&ValKey::new_snake("id"))
+            .expect("id field should exist");
+        let scheduled_execution_id_str = assert_matches!(id_val, WastVal::String(s) => s);
+
+        // Parse the execution ID
+        let scheduled_execution_id =
+            ExecutionId::from_str(scheduled_execution_id_str).expect("valid execution id");
+
+        // Verify the scheduled execution exists in the database
+        let create_request = db_connection
+            .get_create_request(&scheduled_execution_id)
+            .await
+            .expect("scheduled execution should exist in db");
+
+        // Verify it's the fibo activity that was scheduled
+        assert_eq!(
+            create_request.ffqn,
+            FunctionFqn::new_static("testing:fibo/fibo", "fibo")
+        );
     }
 
     #[tokio::test]

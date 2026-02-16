@@ -57,6 +57,12 @@ interface workflow {
   test-get-result-json-err-variant-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
 
   test-get-result-json-err-variant-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
+
+  test-schedule-json-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+  test-schedule-json-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<execution-id, string>>, await-next-extension-error>;
+
+  test-schedule-json-get: func(execution-id: execution-id) -> result<result<execution-id, string>, get-extension-error>;
 }
 
 
@@ -83,4 +89,6 @@ interface workflow {
   test-get-result-json-before-await-schedule: func(schedule-at: schedule-at) -> execution-id;
 
   test-get-result-json-err-variant-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+  test-schedule-json-schedule: func(schedule-at: schedule-at) -> execution-id;
 }

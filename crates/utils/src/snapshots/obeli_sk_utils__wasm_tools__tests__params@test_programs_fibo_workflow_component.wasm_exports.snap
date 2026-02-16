@@ -132,6 +132,25 @@ expression: exports
     "extension": null,
     "submittable": true
   },
+  "testing:fibo-workflow/workflow.test-schedule-json": {
+    "ffqn": "testing:fibo-workflow/workflow.test-schedule-json",
+    "parameter_types": [],
+    "return_type": {
+      "extendable": {
+        "type_wrapper_tl": {
+          "ok": {
+            "record": {
+              "id": "string"
+            }
+          },
+          "err": "string"
+        },
+        "wit_type": "result<execution-id, string>"
+      }
+    },
+    "extension": null,
+    "submittable": true
+  },
   "testing:fibo-workflow/workflow.test-submit-json-malformed-params": {
     "ffqn": "testing:fibo-workflow/workflow.test-submit-json-malformed-params",
     "parameter_types": [],

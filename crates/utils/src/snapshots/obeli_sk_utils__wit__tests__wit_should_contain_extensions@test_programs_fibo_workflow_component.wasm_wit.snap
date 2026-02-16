@@ -166,9 +166,17 @@ package obelisk:types@4.1.0 {
 package obelisk:workflow@4.2.0 {
   interface workflow-support {
     use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/execution@4.1.0.{function, submit-config, execution-id, response-id};
+    use obelisk:types/execution@4.1.0.{function, submit-config, execution-id};
+    use obelisk:types/time@4.1.0.{schedule-at};
+    use obelisk:types/execution@4.1.0.{response-id};
 
     variant submit-json-error {
+      ffqn-parsing-error(string),
+      function-not-found,
+      params-parsing-error(string),
+    }
+
+    variant schedule-json-error {
       ffqn-parsing-error(string),
       function-not-found,
       params-parsing-error(string),
@@ -188,6 +196,8 @@ package obelisk:workflow@4.2.0 {
     submit-json: func(join-set: borrow<join-set>, function: function, params: string, config: option<submit-config>) -> result<execution-id, submit-json-error>;
 
     get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
+
+    schedule-json: func(schedule-at: schedule-at, function: function, params: string, config: option<submit-config>) -> result<execution-id, schedule-json-error>;
 
     join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
   }
@@ -215,6 +225,8 @@ package testing:fibo-obelisk-ext {
 
 package testing:fibo-workflow {
   interface workflow {
+    use obelisk:types/execution@4.1.0.{execution-id};
+
     fibow: func(n: u8, iterations: u32) -> result<u64>;
 
     fiboa: func(n: u8, iterations: u32) -> result<u64>;
@@ -230,6 +242,8 @@ package testing:fibo-workflow {
     test-get-result-json-before-await: func() -> result<_, string>;
 
     test-get-result-json-err-variant: func() -> result<_, string>;
+
+    test-schedule-json: func() -> result<execution-id, string>;
   }
 }
 
@@ -287,6 +301,12 @@ package testing:fibo-workflow-obelisk-ext {
     test-get-result-json-err-variant-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
 
     test-get-result-json-err-variant-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
+
+    test-schedule-json-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+    test-schedule-json-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<execution-id, string>>, await-next-extension-error>;
+
+    test-schedule-json-get: func(execution-id: execution-id) -> result<result<execution-id, string>, get-extension-error>;
   }
 }
 
@@ -311,5 +331,7 @@ package testing:fibo-workflow-obelisk-schedule {
     test-get-result-json-before-await-schedule: func(schedule-at: schedule-at) -> execution-id;
 
     test-get-result-json-err-variant-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+    test-schedule-json-schedule: func(schedule-at: schedule-at) -> execution-id;
   }
 }

@@ -2,15 +2,17 @@ use assert_matches::assert_matches;
 use generated::export;
 use generated::exports::testing::fibo_workflow::workflow::Guest;
 use generated::obelisk::types::execution::Function;
+use generated::obelisk::types::time::ScheduleAt;
 use generated::obelisk::workflow::workflow_support::{
-    GetResultJsonError, SubmitJsonError, get_result_json, join_next, join_set_create, submit_json,
+    GetResultJsonError, ScheduleJsonError, SubmitJsonError, get_result_json, join_next,
+    join_set_create, schedule_json, submit_json,
 };
 use generated::testing::{
     fibo::fibo::fibo as fibo_activity,
     fibo_obelisk_ext::fibo::{fibo_await_next, fibo_submit},
 };
 
-use crate::generated::obelisk::types::execution::ResponseId;
+use crate::generated::obelisk::types::execution::{ExecutionId, ResponseId};
 
 mod generated {
     #![allow(clippy::all)]
@@ -216,6 +218,67 @@ impl Guest for Component {
             Err(Some(json)) => Err(format!("expected Err(None), got Err(Some({json}))")),
             Ok(v) => Err(format!("expected Err, got Ok({v:?})")),
         }
+    }
+
+    /// Test schedule-json to schedule an execution.
+    fn test_schedule_json() -> Result<ExecutionId, String> {
+        let function = Function {
+            interface_name: "testing:fibo/fibo".to_string(),
+            function_name: "fibo".to_string(),
+        };
+
+        // Test 1: Schedule with ScheduleAt::Now
+        let execution_id = schedule_json(ScheduleAt::Now, &function, "[10]", None)
+            .map_err(|e| format!("schedule_json failed: {e:?}"))?;
+
+        // Test 2: Schedule with unknown FFQN -> FunctionNotFound
+        let unknown_function = Function {
+            interface_name: "testing:nonexistent/ifc".to_string(),
+            function_name: "unknown-fn".to_string(),
+        };
+        match schedule_json(ScheduleAt::Now, &unknown_function, "[]", None) {
+            Err(ScheduleJsonError::FunctionNotFound) => {}
+            Err(other) => return Err(format!("2: expected FunctionNotFound, got {other:?}")),
+            Ok(_) => return Err("2: expected error, got Ok".to_string()),
+        }
+
+        // Test 3: Schedule with malformed JSON params -> ParamsParsingError
+        match schedule_json(ScheduleAt::Now, &function, "not valid json", None) {
+            Err(ScheduleJsonError::ParamsParsingError(msg)) => {
+                if !msg.contains("cannot parse params as JSON array") {
+                    return Err(format!("3: unexpected error message: {msg}"));
+                }
+            }
+            Err(other) => return Err(format!("3: expected ParamsParsingError, got {other:?}")),
+            Ok(_) => return Err("3: expected error, got Ok".to_string()),
+        }
+
+        // Test 4: Schedule with valid JSON but not an array
+        match schedule_json(ScheduleAt::Now, &function, "42", None) {
+            Err(ScheduleJsonError::ParamsParsingError(msg)) => {
+                if msg.contains("4: params must be a json array") {
+                    return Err(format!("4: unexpected error message: {msg}"));
+                }
+            }
+            Err(other) => return Err(format!("4: expected ParamsParsingError, got {other:?}")),
+            Ok(_) => return Err("4: expected error, got Ok".to_string()),
+        }
+
+        // Test 5: Schedule with valid JSON but not the expected types
+        match schedule_json(ScheduleAt::Now, &function, r#"["42"]"#, None) {
+            Err(ScheduleJsonError::ParamsParsingError(msg)) => {
+                if !msg.starts_with(
+                    "params type checking failed: parameters cannot be deserialized: cannot parse 1-th parameter - \
+                    `invalid type: string \"42\", expected value matching \"u8\"")
+                {
+                    return Err(format!("5: unexpected error message: {msg}"));
+                }
+            }
+            Err(other) => return Err(format!("5: expected ParamsParsingError, got {other:?}")),
+            Ok(_) => return Err("5: expected error, got Ok".to_string()),
+        }
+
+        Ok(execution_id)
     }
 }
 
