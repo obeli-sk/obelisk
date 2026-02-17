@@ -4,26 +4,32 @@
 //! This wrapper translates the user's typed interface `func(params: list<string>) -> result<string, string>`
 //! into calls to the Boa component.
 
-use super::workflow_worker::{WorkflowWorker, WorkflowWorkerCompiled};
+use super::workflow_worker::{ReplayError, WorkflowConfig, WorkflowWorker, WorkflowWorkerCompiled};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
-use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
+use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryForReplay};
 use async_trait::async_trait;
-use concepts::prefixed_ulid::DeploymentId;
-use concepts::storage::DbPool;
+use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
+use concepts::storage::{DbConnection, DbPool, Locked};
+use concepts::time::{ClockFn, ConstClock};
 use concepts::{
-    ExecutionFailureKind, FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry,
-    PackageIfcFns, ParameterType, ParameterTypes, Params, ResultParsingError,
-    ResultParsingErrorFromVal, ReturnType, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ExecutionFailureKind, ExecutionId, ExecutionMetadata,
+    FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, PackageIfcFns,
+    ParameterType, ParameterTypes, Params, ResultParsingError, ResultParsingErrorFromVal,
+    ReturnType, StrVariant, SupportedFunctionReturnValue,
 };
+use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
 use indexmap::IndexMap;
 use std::sync::Arc;
-use tracing::debug;
+use std::time::Duration;
+use tracing::{Span, debug};
+use utils::wasm_tools::ExIm;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
+use wasmtime::Engine;
 
 /// Compiled JS workflow. Holds the compiled Boa WASM component + JS source + user FFQN.
 pub struct WorkflowJsWorkerCompiled {
@@ -307,6 +313,119 @@ impl Worker for WorkflowJsWorker {
     }
 }
 
+impl WorkflowJsWorker {
+    /// Replay a JS workflow execution for debugging/verification.
+    ///
+    /// This function recreates the workflow execution from the database log,
+    /// transforming the context to call the workflow-js-runtime just like the
+    /// regular `run` method does.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn replay(
+        deployment_id: DeploymentId,
+        component_id: ComponentId,
+        wasmtime_component: wasmtime::component::Component,
+        exim: &ExIm,
+        engine: Arc<Engine>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        db_conn: &dyn DbConnection,
+        execution_id: ExecutionId,
+        logs_storage_config: Option<LogStrageConfig>,
+        js_source: String,
+        user_ffqn: FunctionFqn,
+    ) -> Result<(), ReplayError> {
+        let clock_fn = ConstClock(chrono::DateTime::from_timestamp_nanos(0));
+
+        let config = WorkflowConfig {
+            join_next_blocking_strategy:
+                super::workflow_worker::JoinNextBlockingStrategy::Interrupt,
+            backtrace_persist: false,
+            lock_extension: Duration::ZERO,
+            subscription_interruption: None,
+            component_id,
+            stub_wasi: true,
+            fuel: None,
+        };
+
+        let log = db_conn
+            .get(&execution_id)
+            .await
+            .map_err(concepts::storage::DbErrorWrite::from)?;
+        let is_finished = log.is_finished();
+
+        // Transform the stored params to the workflow-js-runtime format
+        let _original_ffqn = log.ffqn().clone();
+        let original_params = log.params().clone();
+
+        // Build the transformed params for the JS runtime
+        let json_params = original_params
+            .as_json_values()
+            .expect("params come from database");
+        let list_of_strings = json_params.first().expect("JS workflow has one param");
+        let params_json_str =
+            serde_json::to_string(list_of_strings).expect("serde_json::Value must be serializable");
+
+        let boa_ffqn =
+            FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
+        let boa_params: Arc<[serde_json::Value]> = Arc::from([
+            serde_json::Value::String(user_ffqn.function_name.to_string()),
+            serde_json::Value::String(js_source),
+            serde_json::Value::String(params_json_str),
+        ]);
+        let transformed_params = Params::from_json_values(
+            boa_params,
+            [
+                &TypeWrapper::String,
+                &TypeWrapper::String,
+                &TypeWrapper::String,
+            ]
+            .into_iter(),
+        )
+        .expect("types checked at compile time");
+
+        let ctx = WorkerContext {
+            execution_id,
+            metadata: ExecutionMetadata::empty(),
+            ffqn: boa_ffqn,
+            params: transformed_params,
+            event_history: log.event_history().collect(),
+            responses: log.responses,
+            version: log.next_version,
+            can_be_retried: true,
+            worker_span: Span::current(),
+            locked_event: Locked {
+                component_id: config.component_id.clone(),
+                deployment_id,
+                executor_id: ExecutorId::generate(),
+                run_id: RunId::generate(),
+                lock_expires_at: clock_fn.now(),
+                retry_config: ComponentRetryConfig::WORKFLOW,
+            },
+        };
+
+        let compiled = WorkflowWorkerCompiled::new_with_config_inner(
+            wasmtime_component,
+            exim,
+            config,
+            engine,
+            clock_fn.clone_box(),
+        )?;
+        let linked = compiled.link(fn_registry)?;
+        let db_pool = Arc::new(InMemoryPool::new());
+        let worker = linked.into_worker(
+            deployment_id,
+            db_pool,
+            Arc::new(DeadlineTrackerFactoryForReplay {}),
+            CancelRegistry::new(),
+            logs_storage_config,
+        );
+        worker
+            .run_internal(ctx, is_finished)
+            .await
+            .map(|_| ())
+            .map_err(ReplayError::from)
+    }
+}
+
 /// Create the `FunctionMetadata` for the user's function:
 /// `func(params: list<string>) -> result<string, string>`
 fn make_fn_metadata(ffqn: FunctionFqn) -> FunctionMetadata {
@@ -383,9 +502,11 @@ mod tests {
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
     use test_utils::sim_clock::SimClock;
+    use tokio::sync::mpsc;
     use tracing::{info, info_span};
     use utils::sha256sum::calculate_sha256_file;
     use val_json::wast_val::WastVal;
+    use wasmtime::Engine;
 
     const FIBO_10_OUTPUT: u64 = 55;
 
@@ -403,7 +524,7 @@ mod tests {
 
         // Compile the Boa WASM component
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
-        let runnable =
+        let runnable_component =
             RunnableComponent::new(wasm_path, &engine, component_id.component_type).unwrap();
 
         let config = WorkflowConfig {
@@ -416,9 +537,13 @@ mod tests {
             subscription_interruption: None,
         };
 
-        let compiled =
-            WorkflowWorkerCompiled::new_with_config(runnable, config, engine, clock_fn.clone_box())
-                .unwrap();
+        let compiled = WorkflowWorkerCompiled::new_with_config(
+            runnable_component.clone(),
+            config,
+            engine,
+            clock_fn.clone_box(),
+        )
+        .unwrap();
 
         let js_compiled = WorkflowJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn);
 
@@ -602,10 +727,8 @@ mod tests {
         db_pool: Arc<dyn DbPool>,
         clock_fn: Box<dyn ClockFn>,
         fn_registry: Arc<dyn FunctionRegistry>,
-    ) -> (WorkflowJsWorker, concepts::ComponentId) {
-        let workflow_engine =
-            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-
+        workflow_engine: Arc<Engine>,
+    ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
         let component_id = concepts::ComponentId::new(
             ComponentType::Workflow,
@@ -614,7 +737,7 @@ mod tests {
         )
         .unwrap();
 
-        let runnable =
+        let runnable_component =
             RunnableComponent::new(wasm_path, &workflow_engine, component_id.component_type)
                 .unwrap();
 
@@ -629,7 +752,7 @@ mod tests {
         };
 
         let compiled = WorkflowWorkerCompiled::new_with_config(
-            runnable,
+            runnable_component.clone(),
             config,
             workflow_engine,
             clock_fn.clone_box(),
@@ -654,6 +777,7 @@ mod tests {
                 None,
             ),
             component_id,
+            runnable_component,
         )
     }
 
@@ -709,13 +833,15 @@ mod tests {
 
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
-
-        let (worker, component_id) = compile_js_workflow_worker(
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, component_id, _runnable_component) = compile_js_workflow_worker(
             js_source,
             user_ffqn.clone(),
             db_pool.clone(),
             sim_clock.clone_box(),
             fn_registry,
+            workflow_engine,
         )
         .await;
 
@@ -731,7 +857,7 @@ mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id: execution_id.clone(),
-                ffqn: user_ffqn,
+                ffqn: user_ffqn.clone(),
                 params,
                 parent: None,
                 metadata: ExecutionMetadata::empty(),
@@ -882,12 +1008,15 @@ mod tests {
                 .await,
         ]);
 
-        let (worker, component_id) = compile_js_workflow_worker(
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, component_id, runnable_component) = compile_js_workflow_worker(
             js_source,
             user_ffqn.clone(),
             db_pool.clone(),
             sim_clock.clone_box(),
             fn_registry.clone(),
+            workflow_engine.clone(),
         )
         .await;
 
@@ -907,7 +1036,7 @@ mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id: execution_id.clone(),
-                ffqn: user_ffqn,
+                ffqn: user_ffqn.clone(),
                 params,
                 parent: None,
                 metadata: ExecutionMetadata::empty(),
@@ -1074,5 +1203,31 @@ mod tests {
                 })
             );
         }
+
+        let stopwatch = std::time::Instant::now();
+        let (log_sender, mut log_storage_recv) = mpsc::channel(100);
+        WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            workflow_exec.config.component_id.clone(),
+            runnable_component.wasmtime_component,
+            &runnable_component.wasm_component.exim,
+            workflow_engine,
+            fn_registry,
+            db_connection.as_ref(),
+            execution_id,
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender,
+            }),
+            js_source.to_string(),
+            user_ffqn,
+        )
+        .await
+        .unwrap();
+        info!("Replayed in {:?}", stopwatch.elapsed());
+        // Nothing should be added to logs
+        let mut buffer = Vec::new();
+        let received = log_storage_recv.recv_many(&mut buffer, 100).await;
+        assert_eq!(0, received, "expected no new messages, got {buffer:?}");
     }
 }

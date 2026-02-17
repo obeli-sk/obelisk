@@ -93,6 +93,12 @@
         "$ref": "#/$defs/WorkflowComponentConfigToml"
       }
     },
+    "workflow_js": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WorkflowJsComponentConfigToml"
+      }
+    },
     "workflows": {
       "$ref": "#/$defs/WorkflowsGlobalConfigToml"
     }
@@ -1321,6 +1327,50 @@
       "required": [
         "name",
         "location"
+      ]
+    },
+    "WorkflowJsComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "blocking_strategy": {
+          "$ref": "#/$defs/BlockingStrategyConfigToml"
+        },
+        "content_digest": {
+          "description": "Content digest of the JS source file.\nRecommended for GitHub releases to enable caching and reproducible builds.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml"
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "location": {
+          "description": "Location of the JavaScript source file.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported for JS workflows.",
+          "$ref": "#/$defs/JsLocationToml"
+        },
+        "lock_extension": {
+          "$ref": "#/$defs/DurationConfig"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location",
+        "ffqn"
       ]
     },
     "WorkflowsGlobalConfigToml": {

@@ -88,6 +88,8 @@ pub(crate) struct ConfigToml {
     pub(crate) activities_js: Vec<ActivityJsComponentConfigToml>,
     #[serde(default, rename = "workflow")]
     pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
+    #[serde(default, rename = "workflow_js")]
+    pub(crate) workflows_js: Vec<WorkflowJsComponentConfigToml>,
     #[cfg(feature = "otlp")]
     #[serde(default)]
     pub(crate) otlp: Option<otlp::OtlpConfig>,
@@ -1139,6 +1141,114 @@ impl ActivityJsComponentConfigToml {
             js_source,
             ffqn,
             activity_config,
+            exec_config: self.exec.into_exec_exec_config(
+                component_id,
+                global_executor_instance_limiter,
+                retry_config,
+            ),
+            logs_store_min_level: self.logs_store_min_level.into(),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkflowJsComponentConfigToml {
+    pub(crate) name: ConfigName,
+    /// Location of the JavaScript source file.
+    /// Supports local file paths and `gh://` GitHub release references.
+    /// OCI references are not supported for JS workflows.
+    pub(crate) location: JsLocationToml,
+    /// Content digest of the JS source file.
+    /// Recommended for GitHub releases to enable caching and reproducible builds.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) content_digest: Option<ContentDigest>,
+    pub(crate) ffqn: String,
+    #[serde(default)]
+    pub(crate) exec: ExecConfigToml,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) retry_exp_backoff: DurationConfig,
+    #[serde(default)]
+    pub(crate) blocking_strategy: BlockingStrategyConfigToml,
+    #[serde(default = "default_lock_extension")]
+    lock_extension: DurationConfig,
+    #[serde(default)]
+    pub(crate) logs_store_min_level: LogLevelToml,
+}
+
+#[derive(Debug)]
+pub(crate) struct WorkflowJsConfigVerified {
+    pub(crate) wasm_path: Arc<Path>, // same for all JS workflows
+    pub(crate) js_source: String,
+    pub(crate) ffqn: FunctionFqn,
+    pub(crate) workflow_config: WorkflowConfig,
+    pub(crate) exec_config: executor::executor::ExecConfig,
+    pub(crate) logs_store_min_level: Option<LogLevel>,
+}
+
+impl WorkflowJsConfigVerified {
+    pub fn component_id(&self) -> &ComponentId {
+        &self.workflow_config.component_id
+    }
+}
+
+impl WorkflowJsComponentConfigToml {
+    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
+    pub(crate) async fn fetch_and_verify(
+        self,
+        wasm_path: Arc<Path>,
+        wasm_cache_dir: Arc<Path>,
+        path_prefixes: Arc<PathPrefixes>,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
+        let ffqn = FunctionFqn::from_str(&self.ffqn)
+            .map_err(|e| anyhow!("invalid ffqn `{}`: {e}", self.ffqn))?;
+
+        let js_source = self
+            .location
+            .read_to_string(
+                &wasm_cache_dir,
+                &path_prefixes,
+                self.content_digest.as_ref(),
+            )
+            .await?;
+
+        // Compute content digest from source + ffqn
+        use sha2::{Digest as _, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"workflow_js:");
+        hasher.update(js_source.as_bytes());
+        hasher.update(self.ffqn.as_bytes());
+        let hash: [u8; 32] = hasher.finalize().into();
+        let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
+
+        let component_id = ComponentId::new(
+            ComponentType::Workflow, // Use Workflow type, not a separate WorkflowJs
+            StrVariant::from(self.name),
+            InputContentDigest(content_digest),
+        )?;
+
+        let workflow_config = WorkflowConfig {
+            component_id: component_id.clone(),
+            join_next_blocking_strategy: self.blocking_strategy.into(),
+            backtrace_persist: false, // JS workflows don't support backtraces
+            stub_wasi: false,
+            fuel: None, // Fuel is controlled by the JS runtime
+            lock_extension: self.lock_extension.into(),
+            subscription_interruption: None,
+        };
+
+        let retry_config = ComponentRetryConfig {
+            max_retries: None, // Workflows retry forever
+            retry_exp_backoff: self.retry_exp_backoff.into(),
+        };
+
+        Ok(WorkflowJsConfigVerified {
+            wasm_path,
+            js_source,
+            ffqn,
+            workflow_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
                 global_executor_instance_limiter,

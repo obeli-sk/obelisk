@@ -18,8 +18,6 @@ use crate::config::toml::AllowedHostToml;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
-#[cfg(not(feature = "activity-js-local"))]
-use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
@@ -30,6 +28,8 @@ use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowComponentConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
+use crate::config::toml::WorkflowJsComponentConfigToml;
+use crate::config::toml::WorkflowJsConfigVerified;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
@@ -126,6 +126,8 @@ use wasm_workers::webhook::webhook_trigger::WebhookEndpointConfig;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstanceLinked;
 use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
+use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerCompiled;
+use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerLinked;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 use wasmtime::Engine;
@@ -134,6 +136,8 @@ const EPOCH_MILLIS: u64 = 10;
 const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
 #[cfg(not(feature = "activity-js-local"))]
 const ACTIVITY_JS_LOCATION: &str = include_str!("../../assets/activity-js-version.txt");
+#[cfg(not(feature = "workflow-js-local"))]
+const WORKFLOW_JS_LOCATION: &str = include_str!("../../assets/workflow-js-version.txt");
 
 pub(crate) type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 
@@ -874,6 +878,7 @@ impl ServerVerified {
             config.activities_stub,
             config.activities_external,
             config.workflows,
+            config.workflows_js,
             http_servers,
             webhooks,
             wasm_cache_dir,
@@ -951,6 +956,7 @@ impl ServerCompiledLinked {
             server_verified.config.activities_js,
             server_verified.config.activities_stub_ext,
             server_verified.config.workflows,
+            server_verified.config.workflows_js,
             server_verified.config.webhooks_by_names,
             server_verified.config.global_backtrace_persist,
             server_verified.config.fuel,
@@ -1233,6 +1239,7 @@ struct ConfigVerified {
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
+    workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     global_backtrace_persist: bool,
@@ -1248,6 +1255,7 @@ impl ConfigVerified {
         activities_stub: Vec<ActivityStubExtComponentConfigToml>,
         activities_external: Vec<ActivityStubExtComponentConfigToml>,
         workflows: Vec<WorkflowComponentConfigToml>,
+        workflows_js: Vec<WorkflowJsComponentConfigToml>,
         http_servers: Vec<webhook::HttpServer>,
         webhooks: Vec<webhook::WebhookComponentConfigToml>,
         wasm_cache_dir: Arc<Path>,
@@ -1410,19 +1418,34 @@ impl ConfigVerified {
         }
         .into();
 
+        // Skip fetching when no JS workflows are configured
+        let workflow_js_runtime_fetch: OptionFuture<_> = if workflows_js.is_empty() {
+            None
+        } else {
+            Some(fetch_workflow_js_runtime(
+                wasm_cache_dir.clone(),
+                metadata_dir.clone(),
+                path_prefixes.clone(),
+            ))
+        }
+        .into();
+
         // Abort/cancel safety:
         // If an error happens or Ctrl-C is pressed the whole process will shut down.
         // Downloading metadata and content must be robust enough to handle it.
         // We do not need to abort the tasks here.
-        let all = futures_util::future::join5(
-            futures_util::future::join_all(activities_wasm),
-            futures_util::future::join_all(activities_stub_ext),
-            futures_util::future::join_all(workflows),
-            futures_util::future::join_all(webhooks_by_names),
-            activity_js_runtime_fetch,
+        let all = futures_util::future::join(
+            futures_util::future::join5(
+                futures_util::future::join_all(activities_wasm),
+                futures_util::future::join_all(activities_stub_ext),
+                futures_util::future::join_all(workflows),
+                futures_util::future::join_all(webhooks_by_names),
+                activity_js_runtime_fetch,
+            ),
+            workflow_js_runtime_fetch,
         );
         tokio::select! {
-            (activity_wasm_results, activity_stub_ext_results, workflow_results, webhook_results, activity_js_runtime_result) = all => {
+            ((activity_wasm_results, activity_stub_ext_results, workflow_results, webhook_results, activity_js_runtime_result), workflow_js_runtime_result) = all => {
                 let activities_wasm = activity_wasm_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let activities_stub_ext = activity_stub_ext_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
@@ -1454,11 +1477,32 @@ impl ConfigVerified {
                     Vec::new()
                 };
 
+                let workflows_js_verified = if !workflows_js.is_empty() {
+                    let workflow_js_wasm_path = workflow_js_runtime_result.transpose()?;
+                    let workflow_js_wasm_path: Arc<Path> = Arc::from(workflow_js_wasm_path
+                        .expect("None only if there are no JS workflows, see `workflow_js_runtime_fetch`"));
+                    let mut workflows_js_verified = Vec::with_capacity(workflows_js.len());
+                    for js in workflows_js {
+                        workflows_js_verified.push(
+                            js.fetch_and_verify(
+                                workflow_js_wasm_path.clone(),
+                                wasm_cache_dir.clone(),
+                                path_prefixes.clone(),
+                                global_executor_instance_limiter.clone(),
+                            ).await?
+                        );
+                    }
+                    workflows_js_verified
+                } else {
+                    Vec::new()
+                };
+
                 Ok(ConfigVerified {
                     activities_wasm,
                     activities_js: activities_js_verified,
                     activities_stub_ext,
                     workflows,
+                    workflows_js: workflows_js_verified,
                     webhooks_by_names,
                     http_servers_to_webhook_names,
                     global_backtrace_persist,
@@ -1503,6 +1547,7 @@ async fn compile_and_verify(
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
+    workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
@@ -1603,6 +1648,24 @@ async fn compile_and_verify(
                             component_config,
                         }
                     })
+                })
+            })
+        }))
+        .chain(workflows_js.into_iter().map(|workflow_js| {
+            let engines = engines.clone();
+            let build_semaphore = build_semaphore.clone();
+            let parent_span = parent_span.clone();
+            tokio::task::spawn_blocking(move || {
+                let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+                let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
+                span.in_scope(|| {
+                    prespawn_js_workflow(workflow_js, &engines, workflows_lock_extension_leeway)
+                        .map(|(worker, component_config)| {
+                            CompiledComponent::ActivityOrWorkflow {
+                                worker,
+                                component_config,
+                            }
+                        })
                 })
             })
         }))
@@ -1829,13 +1892,42 @@ async fn fetch_activity_js_runtime(
     metadata_dir: Arc<Path>,
     path_prefixes: Arc<PathPrefixes>,
 ) -> Result<PathBuf, anyhow::Error> {
-    let location: ComponentLocationToml = ACTIVITY_JS_LOCATION
+    let location: crate::config::toml::ComponentLocationToml = ACTIVITY_JS_LOCATION
         .parse()
         .context("cannot parse built-in activity-js runtime location")?;
     let (_content_digest, wasm_path) = location
         .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes, None)
         .await
         .context("cannot fetch activity-js runtime")?;
+    Ok(wasm_path)
+}
+
+/// Resolve the workflow-js runtime WASM path from the local build.
+#[cfg(feature = "workflow-js-local")]
+async fn fetch_workflow_js_runtime(
+    _wasm_cache_dir: Arc<Path>,
+    _metadata_dir: Arc<Path>,
+    _path_prefixes: Arc<PathPrefixes>,
+) -> Result<PathBuf, anyhow::Error> {
+    Ok(PathBuf::from(
+        workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME,
+    ))
+}
+
+/// Fetch the workflow-js runtime WASM from OCI.
+#[cfg(not(feature = "workflow-js-local"))]
+async fn fetch_workflow_js_runtime(
+    wasm_cache_dir: Arc<Path>,
+    metadata_dir: Arc<Path>,
+    path_prefixes: Arc<PathPrefixes>,
+) -> Result<PathBuf, anyhow::Error> {
+    let location: crate::config::toml::ComponentLocationToml = WORKFLOW_JS_LOCATION
+        .parse()
+        .context("cannot parse built-in workflow-js runtime location")?;
+    let (_content_digest, wasm_path) = location
+        .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes, None)
+        .await
+        .context("cannot fetch workflow-js runtime")?;
     Ok(wasm_path)
 }
 
@@ -1872,8 +1964,49 @@ fn prespawn_workflow(
     .with_context(|| format!("cannot compile {component_id}"))
 }
 
+#[instrument(level = "debug", skip_all, fields(
+    executor_id = %workflow_js.exec_config.executor_id,
+    component_id = %workflow_js.exec_config.component_id,
+    wasm_path = ?workflow_js.wasm_path,
+))]
+fn prespawn_js_workflow(
+    workflow_js: WorkflowJsConfigVerified,
+    engines: &Engines,
+    workflows_lock_extension_leeway: Duration,
+) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+    let component_id = workflow_js.component_id().clone();
+    assert!(component_id.component_type == ComponentType::Workflow);
+    debug!("Instantiating JS workflow");
+    let engine = engines.workflow_engine.clone();
+    let runnable_component =
+        RunnableComponent::new(&workflow_js.wasm_path, &engine, ComponentType::Workflow)?;
+
+    let inner = WorkflowWorkerCompiled::new_with_config(
+        runnable_component.clone(),
+        workflow_js.workflow_config,
+        engine,
+        Now.clone_box(),
+    )
+    .with_context(|| format!("cannot compile JS workflow runtime for {component_id}"))?;
+
+    let worker =
+        WorkflowJsWorkerCompiled::new(inner, workflow_js.js_source, workflow_js.ffqn.clone());
+    Ok(WorkerCompiled::new_js_workflow(
+        worker,
+        runnable_component,
+        workflow_js.exec_config,
+        workflow_js.logs_store_min_level,
+        workflows_lock_extension_leeway,
+    ))
+}
+
 struct WorkflowWorkerCompiledWithConfig {
     worker: WorkflowWorkerCompiled,
+    workflows_lock_extension_leeway: Duration,
+}
+
+struct WorkflowJsWorkerCompiledWithConfig {
+    worker: WorkflowJsWorkerCompiled,
     workflows_lock_extension_leeway: Duration,
 }
 
@@ -1881,6 +2014,7 @@ enum CompiledWorkerKind {
     ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
     ActivityJs(ActivityJsWorkerCompiled<TokioSleep>),
     Workflow(WorkflowWorkerCompiledWithConfig),
+    WorkflowJs(WorkflowJsWorkerCompiledWithConfig),
 }
 
 struct WorkerCompiled {
@@ -1980,6 +2114,39 @@ impl WorkerCompiled {
         ))
     }
 
+    fn new_js_workflow(
+        worker: WorkflowJsWorkerCompiled,
+        runnable_component: RunnableComponent,
+        exec_config: ExecConfig,
+        logs_store_min_level: Option<LogLevel>,
+        workflows_lock_extension_leeway: Duration,
+    ) -> (WorkerCompiled, ComponentConfig) {
+        let component = ComponentConfig {
+            component_id: exec_config.component_id.clone(),
+            workflow_or_activity_config: Some(ComponentConfigImportable {
+                exports_ext: worker.exported_functions_ext().to_vec(),
+                exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
+            }),
+            imports: worker.imported_functions().to_vec(),
+            wit: None,
+            workflow_replay_info: Some(WorkflowReplayInfo {
+                runnable_component,
+                logs_store_min_level,
+            }),
+        };
+        (
+            WorkerCompiled {
+                worker: CompiledWorkerKind::WorkflowJs(WorkflowJsWorkerCompiledWithConfig {
+                    worker,
+                    workflows_lock_extension_leeway,
+                }),
+                exec_config,
+                logs_store_min_level,
+            },
+            component,
+        )
+    }
+
     #[instrument(skip_all, fields(component_id = %self.exec_config.component_id))]
     fn link(self, fn_registry: &Arc<dyn FunctionRegistry>) -> Result<WorkerLinked, anyhow::Error> {
         Ok(WorkerLinked {
@@ -1997,6 +2164,13 @@ impl WorkerCompiled {
                             .workflows_lock_extension_leeway,
                     })
                 }
+                CompiledWorkerKind::WorkflowJs(workflow_js_compiled) => {
+                    LinkedWorkerKind::WorkflowJs(WorkflowJsWorkerLinkedWithConfig {
+                        worker: workflow_js_compiled.worker.link(fn_registry.clone())?,
+                        workflows_lock_extension_leeway: workflow_js_compiled
+                            .workflows_lock_extension_leeway,
+                    })
+                }
             },
             exec_config: self.exec_config,
             logs_store_min_level: self.logs_store_min_level,
@@ -2009,10 +2183,16 @@ struct WorkflowWorkerLinkedWithConfig {
     workflows_lock_extension_leeway: Duration,
 }
 
+struct WorkflowJsWorkerLinkedWithConfig {
+    worker: WorkflowJsWorkerLinked,
+    workflows_lock_extension_leeway: Duration,
+}
+
 enum LinkedWorkerKind {
     ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
     ActivityJs(ActivityJsWorkerCompiled<TokioSleep>),
     Workflow(WorkflowWorkerLinkedWithConfig),
+    WorkflowJs(WorkflowJsWorkerLinkedWithConfig),
 }
 
 struct WorkerLinked {
@@ -2053,6 +2233,18 @@ impl WorkerLinked {
                     db_pool.clone(),
                     Arc::new(DeadlineTrackerFactoryTokio {
                         leeway: workflow_linked.workflows_lock_extension_leeway,
+                        clock_fn: Now.clone_box(),
+                    }),
+                    cancel_registry,
+                    logs_storage_config,
+                ))
+            }
+            LinkedWorkerKind::WorkflowJs(workflow_js_linked) => {
+                Arc::from(workflow_js_linked.worker.into_worker(
+                    deployment_id,
+                    db_pool.clone(),
+                    Arc::new(DeadlineTrackerFactoryTokio {
+                        leeway: workflow_js_linked.workflows_lock_extension_leeway,
                         clock_fn: Now.clone_box(),
                     }),
                     cancel_registry,

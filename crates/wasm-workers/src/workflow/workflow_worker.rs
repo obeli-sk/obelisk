@@ -109,7 +109,7 @@ impl WorkflowWorkerCompiled {
         )
     }
 
-    fn new_with_config_inner(
+    pub(crate) fn new_with_config_inner(
         wasmtime_component: wasmtime::component::Component,
         exim: &ExIm,
         config: WorkflowConfig,
@@ -759,7 +759,7 @@ impl WorkflowWorker {
         }
     }
 
-    async fn run_internal(
+    pub(crate) async fn run_internal(
         &self,
         ctx: WorkerContext,
         is_replaying_finished: bool,

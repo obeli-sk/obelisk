@@ -21,6 +21,7 @@ val-json.workspace = true
 wasm-workers.workspace = true
 
 activity-js-runtime-builder = { workspace = true, optional = true } # Only for local development
+workflow-js-runtime-builder = { workspace = true, optional = true } # Only for local development
 
 anyhow.workspace = true
 async-trait.workspace = true
@@ -115,6 +116,7 @@ otlp = [
     "dep:opentelemetry-semantic-conventions",
 ]
 "activity-js-local" = ["dep:activity-js-runtime-builder"]
+"workflow-js-local" = ["dep:workflow-js-runtime-builder"]
 default = ["otlp"]
 
 [lints]

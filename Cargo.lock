@@ -3263,6 +3263,7 @@ dependencies = [
  "wasmtime",
  "wit-component",
  "wit-parser 0.244.0",
+ "workflow-js-runtime-builder",
 ]
 
 [[package]]
