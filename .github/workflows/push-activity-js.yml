@@ -51,7 +51,7 @@ jobs:
 
       - name: Push activity-js runtime
         run: |
-          nix develop --command ./scripts/push-activity-js.sh $TAG assets/activity-js-version.txt
+          nix develop --command ./scripts/push-activity-js.sh $TAG
         env:
           TAG: ${{ github.event.inputs.tag }}
 
@@ -67,7 +67,7 @@ jobs:
       - name: Push directly to main
         if: ${{ github.event.inputs.push_to_main == 'true' }}
         run: |
-          git add assets/activity-js-version.txt
+          git add .
           git commit -m "chore: Bump activity-js runtime to $TAG"
           git push origin main
         env:
@@ -77,7 +77,7 @@ jobs:
         if: ${{ github.event.inputs.push_to_main != 'true' }}
         run: |
           git checkout -b ${{ steps.branch-name.outputs.branch_name }}
-          git add assets/activity-js-version.txt
+          git add .
           git commit -m "chore: Bump activity-js runtime to $TAG"
           git push origin ${{ steps.branch-name.outputs.branch_name }}
           OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
