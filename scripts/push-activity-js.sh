@@ -6,7 +6,7 @@ set -exuo pipefail
 cd "$(dirname "$0")/.."
 
 TAG="$1"
-OUTPUT_FILE="${2:-/dev/stdout}"
+OUTPUT_FILE="${2:-assets/activity-js-version.txt}"
 
 cargo check --workspace # triggers build.rs of activity-js-runtime-builder
 
