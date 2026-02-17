@@ -77,7 +77,7 @@ pub struct WorkflowWorkerLinked {
 
 pub struct WorkflowWorker {
     deployment_id: DeploymentId,
-    config: WorkflowConfig,
+    pub(crate) config: WorkflowConfig,
     engine: Arc<Engine>,
     exported_functions_noext: Vec<FunctionMetadata>,
     db_pool: Arc<dyn DbPool>,
