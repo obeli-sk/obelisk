@@ -118,6 +118,7 @@ use wasm_workers::registry::ComponentConfig;
 use wasm_workers::registry::ComponentConfigImportable;
 use wasm_workers::registry::ComponentConfigRegistry;
 use wasm_workers::registry::ComponentConfigRegistryRO;
+use wasm_workers::registry::JsWorkflowReplayInfo;
 use wasm_workers::registry::WorkflowReplayInfo;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
@@ -1989,14 +1990,19 @@ fn prespawn_js_workflow(
     )
     .with_context(|| format!("cannot compile JS workflow runtime for {component_id}"))?;
 
-    let worker =
-        WorkflowJsWorkerCompiled::new(inner, workflow_js.js_source, workflow_js.ffqn.clone());
+    let worker = WorkflowJsWorkerCompiled::new(
+        inner,
+        workflow_js.js_source.clone(),
+        workflow_js.ffqn.clone(),
+    );
     Ok(WorkerCompiled::new_js_workflow(
         worker,
         runnable_component,
         workflow_js.exec_config,
         workflow_js.logs_store_min_level,
         workflows_lock_extension_leeway,
+        workflow_js.js_source,
+        workflow_js.ffqn,
     ))
 }
 
@@ -2099,6 +2105,7 @@ impl WorkerCompiled {
             workflow_replay_info: Some(WorkflowReplayInfo {
                 runnable_component,
                 logs_store_min_level: workflow.logs_store_min_level,
+                js_workflow_info: None,
             }),
         };
         Ok((
@@ -2120,6 +2127,8 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         logs_store_min_level: Option<LogLevel>,
         workflows_lock_extension_leeway: Duration,
+        js_source: String,
+        user_ffqn: FunctionFqn,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
@@ -2132,6 +2141,10 @@ impl WorkerCompiled {
             workflow_replay_info: Some(WorkflowReplayInfo {
                 runnable_component,
                 logs_store_min_level,
+                js_workflow_info: Some(JsWorkflowReplayInfo {
+                    js_source,
+                    user_ffqn,
+                }),
             }),
         };
         (

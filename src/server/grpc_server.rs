@@ -72,6 +72,7 @@ use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::registry::ComponentConfigRegistryRO;
+use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
 use wasm_workers::workflow::workflow_worker::WorkflowWorker;
 
 pub(crate) const IGNORING_COMPONENT_DIGEST: InputContentDigest =
@@ -785,23 +786,43 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .get_workflow_replay_info(&component_id.input_digest)
             .expect("digest taken from found component id");
 
-        let replay_res = WorkflowWorker::replay(
-            self.deployment_id,
-            component_id.clone(),
-            replay_info.runnable_component.wasmtime_component.clone(),
-            &replay_info.runnable_component.wasm_component.exim,
-            self.engines.workflow_engine.clone(),
-            Arc::new(self.component_registry_ro.clone()),
-            conn.as_ref(),
-            execution_id.clone(),
+        let logs_storage_config =
             replay_info
                 .logs_store_min_level
                 .map(|min_level| LogStrageConfig {
                     min_level,
                     log_sender: self.log_forwarder_sender.clone(),
-                }),
-        )
-        .await;
+                });
+
+        let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
+            WorkflowJsWorker::replay(
+                self.deployment_id,
+                component_id.clone(),
+                replay_info.runnable_component.wasmtime_component.clone(),
+                &replay_info.runnable_component.wasm_component.exim,
+                self.engines.workflow_engine.clone(),
+                Arc::new(self.component_registry_ro.clone()),
+                conn.as_ref(),
+                execution_id.clone(),
+                logs_storage_config,
+                js_info.js_source.clone(),
+                js_info.user_ffqn.clone(),
+            )
+            .await
+        } else {
+            WorkflowWorker::replay(
+                self.deployment_id,
+                component_id.clone(),
+                replay_info.runnable_component.wasmtime_component.clone(),
+                &replay_info.runnable_component.wasm_component.exim,
+                self.engines.workflow_engine.clone(),
+                Arc::new(self.component_registry_ro.clone()),
+                conn.as_ref(),
+                execution_id.clone(),
+                logs_storage_config,
+            )
+            .await
+        };
         if let Err(err) = replay_res {
             debug!("Replay failed: {err:?}");
             return Err(tonic::Status::internal(format!("replay failed: {err}")));
@@ -835,27 +856,45 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .ok_or_else(|| {
                     tonic::Status::not_found(format!("new component '{new}' not found in registry"))
                 })?;
-            let replay_res = WorkflowWorker::replay(
-                self.deployment_id,
-                component_id.clone(),
-                replay_info.runnable_component.wasmtime_component.clone(),
-                &replay_info.runnable_component.wasm_component.exim,
-                self.engines.workflow_engine.clone(),
-                Arc::new(self.component_registry_ro.clone()),
-                self.db_pool
-                    .connection()
-                    .await
-                    .map_err(map_to_status)?
-                    .as_ref(),
-                execution_id.clone(),
+
+            let logs_storage_config =
                 replay_info
                     .logs_store_min_level
                     .map(|min_level| LogStrageConfig {
                         min_level,
                         log_sender: self.log_forwarder_sender.clone(),
-                    }),
-            )
-            .await;
+                    });
+            let conn = self.db_pool.connection().await.map_err(map_to_status)?;
+
+            let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
+                WorkflowJsWorker::replay(
+                    self.deployment_id,
+                    component_id.clone(),
+                    replay_info.runnable_component.wasmtime_component.clone(),
+                    &replay_info.runnable_component.wasm_component.exim,
+                    self.engines.workflow_engine.clone(),
+                    Arc::new(self.component_registry_ro.clone()),
+                    conn.as_ref(),
+                    execution_id.clone(),
+                    logs_storage_config,
+                    js_info.js_source.clone(),
+                    js_info.user_ffqn.clone(),
+                )
+                .await
+            } else {
+                WorkflowWorker::replay(
+                    self.deployment_id,
+                    component_id.clone(),
+                    replay_info.runnable_component.wasmtime_component.clone(),
+                    &replay_info.runnable_component.wasm_component.exim,
+                    self.engines.workflow_engine.clone(),
+                    Arc::new(self.component_registry_ro.clone()),
+                    conn.as_ref(),
+                    execution_id.clone(),
+                    logs_storage_config,
+                )
+                .await
+            };
             if let Err(err) = replay_res {
                 debug!("Replay failed: {err:?}");
                 return Err(tonic::Status::internal(format!("replay failed: {err}")));

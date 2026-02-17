@@ -27,6 +27,14 @@ pub struct ComponentConfig {
 pub struct WorkflowReplayInfo {
     pub runnable_component: RunnableComponent,
     pub logs_store_min_level: Option<LogLevel>,
+    /// For JS workflows: the JS source code and user's FFQN
+    pub js_workflow_info: Option<JsWorkflowReplayInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct JsWorkflowReplayInfo {
+    pub js_source: String,
+    pub user_ffqn: FunctionFqn,
 }
 
 #[derive(Debug, Clone)]
