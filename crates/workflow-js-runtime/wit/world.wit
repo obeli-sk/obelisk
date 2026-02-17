@@ -1,0 +1,8 @@
+package any:any;
+
+world any {
+    export obelisk-workflow:workflow-js-runtime/execute;
+
+    import obelisk:workflow/workflow-support@4.2.0;
+    import obelisk:log/log@1.0.0;
+}

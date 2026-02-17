@@ -133,6 +133,7 @@ pub(crate) mod tests {
             test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
             test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
             test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
+            activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
             ])]
         #[tokio::test]
         async fn activity(wasm_path: &str) {
@@ -143,6 +144,7 @@ pub(crate) mod tests {
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME,
             ])]
         #[tokio::test]
         async fn workflow(wasm_path: &str) {
@@ -156,15 +158,6 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn workflow_adhoc(wasm_path: &str) {
             compile_workflow(wasm_path).await;
-        }
-
-        #[cfg(feature = "activity-js")]
-        #[rstest::rstest(wasm_path => [
-            activity_js_runtime_builder::ACTIVITY_JS_RUNTIME
-            ])]
-        #[tokio::test]
-        async fn jd_activity(wasm_path: &str) {
-            compile_activity(wasm_path).await;
         }
 
         #[rstest::rstest(wasm_path => [

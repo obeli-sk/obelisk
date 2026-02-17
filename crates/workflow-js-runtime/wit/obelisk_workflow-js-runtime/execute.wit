@@ -1,0 +1,26 @@
+package obelisk-workflow:workflow-js-runtime;
+
+interface execute {
+
+    variant js-runtime-error {
+        /// Must exist to satisfy Obelisk contract.
+        execution-failed,
+        /// Error when `js-code` could not be evaluated, before actually running the function.
+        cannot-declare-function(string),
+        /// `js-code` was evaluated, but `fn-name` is not a function.
+        function-not-found,
+        /// Function was executed and succeeded, but result did not type check.
+        wrong-return-type(string),
+        /// Function was executed and threw an error, but it did not type check.
+        wrong-thrown-type(string),
+    }
+
+    /// Execute JavaScript code as a workflow.
+    ///
+    /// The JS code should define a function named as declared in `fn-name` that receives
+    /// the params as the first argument (a JSON array) and returns a string.
+    ///
+    /// Returns Ok(Ok(result)) on success, Ok(Err(error_message)) on user error,
+    /// or Err(js-runtime-error) on runtime error.
+    run: func(fn-name: string, js-code: string, params-json: string) -> result<result<string, string>, js-runtime-error>;
+}

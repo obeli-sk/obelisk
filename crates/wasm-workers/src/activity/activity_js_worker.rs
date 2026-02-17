@@ -121,7 +121,9 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
             serde_json::to_string(list_of_strings).expect("serde_json::Value must be serializable");
 
         // Rewrite context to call
-        ctx.ffqn = FunctionFqn::new_static_tuple(activity_js_runtime_builder::exports::obelisk_activity::activity_js_runtime::execute::RUN);
+        ctx.ffqn =
+            // Copied from activity_js_runtime_builder::exports::obelisk_activity::activity_js_runtime::execute::RUN
+            FunctionFqn::new_static_tuple(("obelisk-activity:activity-js-runtime/execute", "run"));
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(self.user_ffqn.function_name.to_string()),
             serde_json::Value::String(self.js_source.clone()),
@@ -308,7 +310,7 @@ fn make_exports_hierarchy(
     }]
 }
 
-#[cfg(all(test, feature = "activity-js"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::activity::activity_worker::tests::compile_activity_with_engine;

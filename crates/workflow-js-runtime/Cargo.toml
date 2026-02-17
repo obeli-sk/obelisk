@@ -1,0 +1,24 @@
+[package]
+name = "workflow-js-runtime"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+wit-bindgen.workspace = true
+boa_engine = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false }
+
+[build-dependencies]
+anyhow.workspace = true
+wit-bindgen-rust.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(getrandom_backend, values("custom"))'] }

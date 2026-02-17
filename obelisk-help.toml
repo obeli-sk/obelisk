@@ -187,6 +187,24 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # stub_wasi = false # Default is false.
 
 
+### JavaScript Workflow components configuration
+# [[workflow_js]]
+# name = "name"                              # Required. Component name.
+## Location of the JavaScript source file.
+## Supports local file paths and `gh://` GitHub release references.
+## OCI references are NOT supported for JS workflows.
+# location = "path/to/workflow.js"
+# location = "gh://user/repo@release/my-workflow.js"
+# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
+# ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
+## All JS workflows have signature: func(params: list<string>) -> result<string, string>
+## Common executor settings - see above.
+## Retry customization: same as regular workflow.
+# retry_exp_backoff.milliseconds = 100
+# lock_extension.seconds = 1
+# blocking_strategy = "await"
+# logs_store_min_level = "debug"             # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
+
 ### Webhook Endpoint section
 # [[http_server]]
 # name = "external"

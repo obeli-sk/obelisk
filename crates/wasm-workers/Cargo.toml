@@ -15,7 +15,6 @@ db-mem.workspace = true
 executor.workspace = true
 utils.workspace = true
 val-json.workspace = true
-activity-js-runtime-builder = {workspace = true, optional = true}
 
 arbitrary.workspace = true
 assert_matches.workspace = true
@@ -49,23 +48,20 @@ wasmtime.workspace = true
 
 [features]
 test = []
-activity-js = ["dep:activity-js-runtime-builder"]
 boa-unstable-workflow = []
-default = ["activity-js"]
 
 [dev-dependencies]
+activity-js-runtime-builder.workspace = true
 concepts = { workspace = true, features = ["test"] }
 db-sqlite = { workspace = true, features = ["tempfile"] }
 db-tests.workspace = true
 executor = { workspace = true, features = ["test"] }
-insta.workspace = true
-serde_json.workspace = true
 test-db-macro.workspace = true
+test-programs-adhoc-js-workflow-builder.workspace = true
 test-programs-dir-activity-builder.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-webhook-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
-test-programs-adhoc-js-workflow-builder.workspace = true
 test-programs-http-get-activity-builder.workspace = true
 test-programs-http-get-webhook-builder.workspace = true
 test-programs-http-get-workflow-builder.workspace = true
@@ -78,11 +74,14 @@ test-programs-stub-activity-builder.workspace = true
 test-programs-stub-workflow-builder.workspace = true
 test-utils.workspace = true
 utils.workspace = true
+workflow-js-runtime-builder.workspace = true
 
 async-trait.workspace = true
 futures-util.workspace = true
+insta.workspace = true
 reqwest.workspace = true
 rstest.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 wiremock.workspace = true
 
