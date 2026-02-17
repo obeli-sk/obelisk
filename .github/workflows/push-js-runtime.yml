@@ -1,4 +1,4 @@
-name: push-activity-js
+name: push-js-runtime
 
 permissions:
   contents: write
@@ -6,8 +6,15 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      runtime_type:
+        description: "Which JS runtime to push"
+        required: true
+        type: choice
+        options:
+          - activity-js
+          - workflow-js
       tag:
-        description: "The tag to be used when pushing the activity-js runtime to Docker Hub."
+        description: "The tag to be used when pushing the runtime to Docker Hub."
         required: true
         type: string
       ref:
@@ -25,7 +32,7 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  push-activity-js:
+  push-js-runtime:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
@@ -49,10 +56,11 @@ jobs:
           DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
           DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Push activity-js runtime
+      - name: Push JS runtime
         run: |
-          nix develop --command ./scripts/push-activity-js.sh $TAG
+          nix develop --command ./scripts/push-$RUNTIME_TYPE.sh $TAG
         env:
+          RUNTIME_TYPE: ${{ github.event.inputs.runtime_type }}
           TAG: ${{ github.event.inputs.tag }}
 
       - name: Configure git before push
@@ -62,15 +70,18 @@ jobs:
 
       - name: Generate Unique Branch Name
         id: branch-name
-        run: echo "branch_name=bump-activity-js-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+        run: echo "branch_name=bump-$RUNTIME_TYPE-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+        env:
+          RUNTIME_TYPE: ${{ github.event.inputs.runtime_type }}
 
       - name: Push directly to main
         if: ${{ github.event.inputs.push_to_main == 'true' }}
         run: |
           git add .
-          git commit -m "chore: Bump activity-js runtime to $TAG"
+          git commit -m "chore: Bump $RUNTIME_TYPE runtime to $TAG"
           git push origin main
         env:
+          RUNTIME_TYPE: ${{ github.event.inputs.runtime_type }}
           TAG: ${{ github.event.inputs.tag }}
 
       - name: Create a PR
@@ -78,7 +89,7 @@ jobs:
         run: |
           git checkout -b ${{ steps.branch-name.outputs.branch_name }}
           git add .
-          git commit -m "chore: Bump activity-js runtime to $TAG"
+          git commit -m "chore: Bump $RUNTIME_TYPE runtime to $TAG"
           git push origin ${{ steps.branch-name.outputs.branch_name }}
           OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
           REPO=$(echo "${{ github.repository }}" | cut -d'/' -f2)
@@ -87,11 +98,12 @@ jobs:
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             https://api.github.com/repos/$OWNER/$REPO/pulls \
             -d '{
-              "title": "chore: Bump activity-js runtime",
+              "title": "chore: Bump '"$RUNTIME_TYPE"' runtime to '"$TAG"'",
               "head": "'${{ steps.branch-name.outputs.branch_name }}'",
               "base": "main",
               "body": ""
             }'
         env:
+          RUNTIME_TYPE: ${{ github.event.inputs.runtime_type }}
           TAG: ${{ github.event.inputs.tag }}
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN_PR_RW }}
