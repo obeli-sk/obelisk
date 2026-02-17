@@ -375,7 +375,7 @@ mod tests {
     use tracing::info_span;
     use val_json::wast_val::WastVal;
 
-    async fn new_js_workflow_worker(js_source: &str, user_ffqn: FunctionFqn) -> Arc<dyn Worker> {
+    fn new_js_workflow_worker(js_source: &str, user_ffqn: FunctionFqn) -> Arc<dyn Worker> {
         let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let cancel_registry = CancelRegistry::new();
         let clock_fn: Box<dyn ClockFn> = Now.clone_box();
@@ -476,7 +476,7 @@ mod tests {
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone()).await;
+        let worker = new_js_workflow_worker(js_source, ffqn.clone());
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -498,7 +498,7 @@ mod tests {
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone()).await;
+        let worker = new_js_workflow_worker(js_source, ffqn.clone());
         let ctx = make_worker_context(ffqn, &["World".to_string(), "Hello".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -518,7 +518,7 @@ mod tests {
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone()).await;
+        let worker = new_js_workflow_worker(js_source, ffqn.clone());
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -539,7 +539,7 @@ mod tests {
             }
         ";
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone()).await;
+        let worker = new_js_workflow_worker(js_source, ffqn.clone());
         let ctx = make_worker_context(ffqn, &[]);
 
         let err = worker.run(ctx).await.unwrap_err();
@@ -564,7 +564,7 @@ mod tests {
             }
         ";
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone()).await;
+        let worker = new_js_workflow_worker(js_source, ffqn.clone());
         let ctx = make_worker_context(ffqn, &[]);
 
         let err = worker.run(ctx).await.unwrap_err();
