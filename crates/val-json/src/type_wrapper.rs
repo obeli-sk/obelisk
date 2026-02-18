@@ -528,8 +528,8 @@ fn parse_type(s: &str) -> Result<(TypeWrapper, &str), String> {
             let rest = expect_char(rest_trimmed, '<')?;
             let rest_trimmed = rest.trim_start();
 
-            let (ok, rest) = if rest_trimmed.starts_with('_') {
-                (None, &rest_trimmed[1..])
+            let (ok, rest) = if let Some(stripped) = rest_trimmed.strip_prefix('_') {
+                (None, stripped)
             } else {
                 let (ty, rest) = parse_type(rest)?;
                 (Some(Box::new(ty)), rest)
@@ -537,8 +537,7 @@ fn parse_type(s: &str) -> Result<(TypeWrapper, &str), String> {
 
             let rest_trimmed = rest.trim_start();
 
-            if rest_trimmed.starts_with(',') {
-                let rest = &rest_trimmed[1..];
+            if let Some(rest) = rest_trimmed.strip_prefix(',') {
                 let (err_ty, rest) = parse_type(rest)?;
                 let rest = expect_char(rest.trim_start(), '>')?;
                 Ok((
@@ -571,10 +570,7 @@ fn expect_char(s: &str, expected: char) -> Result<&str, String> {
     }
 }
 
-fn parse_comma_separated_types(
-    s: &str,
-    closing: char,
-) -> Result<(Vec<TypeWrapper>, &str), String> {
+fn parse_comma_separated_types(s: &str, closing: char) -> Result<(Vec<TypeWrapper>, &str), String> {
     let mut items = Vec::new();
     let mut rest = s.trim_start();
 

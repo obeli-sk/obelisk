@@ -439,12 +439,8 @@ mod tests {
         )
         .unwrap();
 
-        let js_compiled = ActivityJsWorkerCompiled::new(
-            compiled,
-            js_source.to_string(),
-            user_ffqn,
-            user_params,
-        );
+        let js_compiled =
+            ActivityJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn, user_params);
 
         Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
     }
@@ -968,8 +964,7 @@ mod tests {
             }
         "#;
 
-        let worker =
-            new_js_activity_worker_custom_params(js_source, ffqn.clone(), vec![]).await;
+        let worker = new_js_activity_worker_custom_params(js_source, ffqn.clone(), vec![]).await;
         let ctx = make_worker_context_custom(ffqn, vec![]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
