@@ -1050,9 +1050,9 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) ffqn: String,
     /// Custom parameters for the JS function.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
-    /// If omitted, defaults to a single `params: list<string>` parameter.
+    /// If omitted, defaults to a single `(params: list<string>)` parameter.
     #[serde(default)]
-    pub(crate) params: Vec<JsParamToml>,
+    pub(crate) params: ParamsSpec,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
@@ -1068,6 +1068,15 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
     #[serde(default)]
     pub(crate) allowed_host: Vec<AllowedHostToml>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ParamsSpec {
+    #[default]
+    Default, // `(params: list<string>)`
+    Inline(Vec<JsParamToml>),
+    // TODO: Add a WIT folder location later
 }
 
 /// A parameter declaration for a JS activity function.
@@ -1113,16 +1122,17 @@ impl ActivityJsComponentConfigToml {
             .map_err(|e| anyhow!("invalid ffqn `{}`: {e}", self.ffqn))?;
 
         // Parse custom params or default to `params: list<string>`
-        let parsed_params = if self.params.is_empty() {
-            vec![concepts::ParameterType {
-                type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
-                    val_json::type_wrapper::TypeWrapper::String,
-                )),
-                name: StrVariant::Static("params"),
-                wit_type: StrVariant::Static("list<string>"),
-            }]
-        } else {
-            self.params
+        let parsed_params = match self.params {
+            ParamsSpec::Default => {
+                vec![concepts::ParameterType {
+                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
+                        val_json::type_wrapper::TypeWrapper::String,
+                    )),
+                    name: StrVariant::Static("params"),
+                    wit_type: StrVariant::Static("list<string>"),
+                }]
+            }
+            ParamsSpec::Inline(params) => params
                 .iter()
                 .map(|p| {
                     let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
@@ -1133,7 +1143,7 @@ impl ActivityJsComponentConfigToml {
                         wit_type: StrVariant::from(p.wit_type.clone()),
                     })
                 })
-                .collect::<Result<Vec<_>, anyhow::Error>>()?
+                .collect::<Result<Vec<_>, anyhow::Error>>()?,
         };
 
         let js_source = self
