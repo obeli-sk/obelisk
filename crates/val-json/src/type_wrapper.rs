@@ -452,3 +452,237 @@ mod tests {
         );
     }
 }
+
+/// Parse a WIT type syntax string into a `TypeWrapper`.
+///
+/// Supports primitives (`bool`, `u8`..`u64`, `s8`..`s64`, `f32`, `f64`, `char`, `string`),
+/// `list<T>`, `option<T>`, `tuple<T1, T2, ...>`, and `result` variants.
+pub fn parse_wit_type(s: &str) -> Result<TypeWrapper, String> {
+    let s = s.trim();
+    let (ty, rest) = parse_type(s)?;
+    let rest = rest.trim();
+    if !rest.is_empty() {
+        return Err(format!("unexpected trailing characters: '{rest}'"));
+    }
+    Ok(ty)
+}
+
+fn parse_type(s: &str) -> Result<(TypeWrapper, &str), String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("unexpected end of input".to_string());
+    }
+
+    let ident_end = s
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+        .unwrap_or(s.len());
+    let ident = &s[..ident_end];
+    let rest = &s[ident_end..];
+
+    match ident {
+        "bool" => Ok((TypeWrapper::Bool, rest)),
+        "s8" => Ok((TypeWrapper::S8, rest)),
+        "u8" => Ok((TypeWrapper::U8, rest)),
+        "s16" => Ok((TypeWrapper::S16, rest)),
+        "u16" => Ok((TypeWrapper::U16, rest)),
+        "s32" => Ok((TypeWrapper::S32, rest)),
+        "u32" => Ok((TypeWrapper::U32, rest)),
+        "s64" => Ok((TypeWrapper::S64, rest)),
+        "u64" => Ok((TypeWrapper::U64, rest)),
+        "f32" => Ok((TypeWrapper::F32, rest)),
+        "f64" => Ok((TypeWrapper::F64, rest)),
+        "char" => Ok((TypeWrapper::Char, rest)),
+        "string" => Ok((TypeWrapper::String, rest)),
+
+        "list" => {
+            let rest = expect_char(rest.trim_start(), '<')?;
+            let (inner, rest) = parse_type(rest)?;
+            let rest = expect_char(rest.trim_start(), '>')?;
+            Ok((TypeWrapper::List(Box::new(inner)), rest))
+        }
+
+        "option" => {
+            let rest = expect_char(rest.trim_start(), '<')?;
+            let (inner, rest) = parse_type(rest)?;
+            let rest = expect_char(rest.trim_start(), '>')?;
+            Ok((TypeWrapper::Option(Box::new(inner)), rest))
+        }
+
+        "tuple" => {
+            let rest = expect_char(rest.trim_start(), '<')?;
+            let (items, rest) = parse_comma_separated_types(rest, '>')?;
+            Ok((TypeWrapper::Tuple(items.into_boxed_slice()), rest))
+        }
+
+        "result" => {
+            let rest_trimmed = rest.trim_start();
+            if !rest_trimmed.starts_with('<') {
+                return Ok((
+                    TypeWrapper::Result {
+                        ok: None,
+                        err: None,
+                    },
+                    rest,
+                ));
+            }
+            let rest = expect_char(rest_trimmed, '<')?;
+            let rest_trimmed = rest.trim_start();
+
+            let (ok, rest) = if rest_trimmed.starts_with('_') {
+                (None, &rest_trimmed[1..])
+            } else {
+                let (ty, rest) = parse_type(rest)?;
+                (Some(Box::new(ty)), rest)
+            };
+
+            let rest_trimmed = rest.trim_start();
+
+            if rest_trimmed.starts_with(',') {
+                let rest = &rest_trimmed[1..];
+                let (err_ty, rest) = parse_type(rest)?;
+                let rest = expect_char(rest.trim_start(), '>')?;
+                Ok((
+                    TypeWrapper::Result {
+                        ok,
+                        err: Some(Box::new(err_ty)),
+                    },
+                    rest,
+                ))
+            } else {
+                let rest = expect_char(rest_trimmed, '>')?;
+                Ok((TypeWrapper::Result { ok, err: None }, rest))
+            }
+        }
+
+        _ => Err(format!("unknown type: '{ident}'")),
+    }
+}
+
+fn expect_char(s: &str, expected: char) -> Result<&str, String> {
+    let s = s.trim_start();
+    if s.starts_with(expected) {
+        Ok(&s[expected.len_utf8()..])
+    } else {
+        let found = s
+            .chars()
+            .next()
+            .map_or("end of input".to_string(), |c| format!("'{c}'"));
+        Err(format!("expected '{expected}', found {found}"))
+    }
+}
+
+fn parse_comma_separated_types(
+    s: &str,
+    closing: char,
+) -> Result<(Vec<TypeWrapper>, &str), String> {
+    let mut items = Vec::new();
+    let mut rest = s.trim_start();
+
+    if rest.starts_with(closing) {
+        return Ok((items, &rest[closing.len_utf8()..]));
+    }
+
+    loop {
+        let (ty, r) = parse_type(rest)?;
+        items.push(ty);
+        rest = r.trim_start();
+
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if rest.starts_with(closing) {
+            rest = &rest[closing.len_utf8()..];
+            break;
+        } else {
+            let found = rest
+                .chars()
+                .next()
+                .map_or("end of input".to_string(), |c| format!("'{c}'"));
+            return Err(format!("expected ',' or '{closing}', found {found}"));
+        }
+    }
+
+    Ok((items, rest))
+}
+
+#[cfg(test)]
+mod tests_parse_wit_type {
+    use super::*;
+
+    #[test]
+    fn primitives() {
+        assert_eq!(parse_wit_type("bool").unwrap(), TypeWrapper::Bool);
+        assert_eq!(parse_wit_type("u32").unwrap(), TypeWrapper::U32);
+        assert_eq!(parse_wit_type("string").unwrap(), TypeWrapper::String);
+        assert_eq!(parse_wit_type("f64").unwrap(), TypeWrapper::F64);
+    }
+
+    #[test]
+    fn list() {
+        assert_eq!(
+            parse_wit_type("list<string>").unwrap(),
+            TypeWrapper::List(Box::new(TypeWrapper::String))
+        );
+        assert_eq!(
+            parse_wit_type("list<list<u8>>").unwrap(),
+            TypeWrapper::List(Box::new(TypeWrapper::List(Box::new(TypeWrapper::U8))))
+        );
+    }
+
+    #[test]
+    fn option() {
+        assert_eq!(
+            parse_wit_type("option<u32>").unwrap(),
+            TypeWrapper::Option(Box::new(TypeWrapper::U32))
+        );
+    }
+
+    #[test]
+    fn tuple() {
+        assert_eq!(
+            parse_wit_type("tuple<u32, string>").unwrap(),
+            TypeWrapper::Tuple(vec![TypeWrapper::U32, TypeWrapper::String].into_boxed_slice())
+        );
+    }
+
+    #[test]
+    fn result_variants() {
+        assert_eq!(
+            parse_wit_type("result<string, string>").unwrap(),
+            TypeWrapper::Result {
+                ok: Some(Box::new(TypeWrapper::String)),
+                err: Some(Box::new(TypeWrapper::String)),
+            }
+        );
+        assert_eq!(
+            parse_wit_type("result<string>").unwrap(),
+            TypeWrapper::Result {
+                ok: Some(Box::new(TypeWrapper::String)),
+                err: None,
+            }
+        );
+        assert_eq!(
+            parse_wit_type("result").unwrap(),
+            TypeWrapper::Result {
+                ok: None,
+                err: None,
+            }
+        );
+        assert_eq!(
+            parse_wit_type("result<_, string>").unwrap(),
+            TypeWrapper::Result {
+                ok: None,
+                err: Some(Box::new(TypeWrapper::String)),
+            }
+        );
+    }
+
+    #[test]
+    fn trailing_chars() {
+        assert!(parse_wit_type("u32 extra").is_err());
+    }
+
+    #[test]
+    fn unknown_type() {
+        assert!(parse_wit_type("foobar").is_err());
+    }
+}

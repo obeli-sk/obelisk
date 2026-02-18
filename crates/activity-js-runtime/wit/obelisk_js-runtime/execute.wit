@@ -17,9 +17,10 @@ interface execute {
     /// Execute JavaScript code as an activity.
     ///
     /// The JS code should define a function named as declared in `fn-name` that receives
-    /// the params as positional arguments (spread from the JSON array)
-    /// and returns a JSON-serializable value.
+    /// the params as positional arguments (each element is one JSON-serialized parameter value)
+    /// and returns a string.
     ///
-    /// Returns Ok(json_result) on success, Err(error_message) on failure.
-    run: func(fn-name: string, js-code: string, params-json: string) -> result<result<string, string>, js-runtime-error>;
+    /// Returns Ok(Ok(string)) on success, Ok(Err(string)) on thrown string/Error,
+    /// or Err(js-runtime-error) on type/declaration errors.
+    run: func(fn-name: string, js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>;
 }
