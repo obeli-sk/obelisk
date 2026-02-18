@@ -1578,10 +1578,9 @@ async fn compile_and_verify(
             span.in_scope(|| {
                 debug!("Building activity-js-runtime");
                 let engine = engines.activity_engine.clone();
-                let runnable_component =
-                    RunnableComponent::new(&wasm_path, &engine, ComponentType::ActivityJs)
-                        .expect("FIXME: error handling");
-                runnable_component
+
+                RunnableComponent::new(&wasm_path, &engine, ComponentType::ActivityJs)
+                    .expect("FIXME: error handling")
             })
         })
         .await
@@ -1602,10 +1601,9 @@ async fn compile_and_verify(
             span.in_scope(|| {
                 debug!("Building workflow-js-runtime");
                 let engine = engines.workflow_engine.clone();
-                let runnable_component =
-                    RunnableComponent::new(&wasm_path, &engine, ComponentType::Workflow)
-                        .expect("FIXME: error handling");
-                runnable_component
+
+                RunnableComponent::new(&wasm_path, &engine, ComponentType::Workflow)
+                    .expect("FIXME: error handling")
             })
         })
         .await
