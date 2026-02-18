@@ -1220,6 +1220,11 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
     pub(crate) ffqn: String,
+    /// Custom parameters for the JS workflow function.
+    /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
+    /// If omitted, defaults to a single `(params: list<string>)` parameter.
+    #[serde(default)]
+    pub(crate) params: ParamsSpec,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_retry_exp_backoff")]
@@ -1237,6 +1242,7 @@ pub(crate) struct WorkflowJsConfigVerified {
     pub(crate) wasm_path: Arc<Path>, // same for all JS workflows
     pub(crate) js_source: String,
     pub(crate) ffqn: FunctionFqn,
+    pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
@@ -1260,6 +1266,31 @@ impl WorkflowJsComponentConfigToml {
         let ffqn = FunctionFqn::from_str(&self.ffqn)
             .map_err(|e| anyhow!("invalid ffqn `{}`: {e}", self.ffqn))?;
 
+        // Parse custom params or default to `params: list<string>`
+        let parsed_params = match self.params {
+            ParamsSpec::Default => {
+                vec![concepts::ParameterType {
+                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
+                        val_json::type_wrapper::TypeWrapper::String,
+                    )),
+                    name: StrVariant::Static("params"),
+                    wit_type: StrVariant::Static("list<string>"),
+                }]
+            }
+            ParamsSpec::Inline(params) => params
+                .iter()
+                .map(|p| {
+                    let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
+                        .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
+                    Ok(concepts::ParameterType {
+                        type_wrapper: tw,
+                        name: StrVariant::from(p.name.clone()),
+                        wit_type: StrVariant::from(p.wit_type.clone()),
+                    })
+                })
+                .collect::<Result<Vec<_>, anyhow::Error>>()?,
+        };
+
         let js_source = self
             .location
             .read_to_string(
@@ -1269,12 +1300,15 @@ impl WorkflowJsComponentConfigToml {
             )
             .await?;
 
-        // Compute content digest from source + ffqn
+        // Compute content digest from source + ffqn + params
         use sha2::{Digest as _, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"workflow_js:");
         hasher.update(js_source.as_bytes());
         hasher.update(self.ffqn.as_bytes());
+        for p in &parsed_params {
+            hasher.update(p.wit_type.as_ref().as_bytes());
+        }
         let hash: [u8; 32] = hasher.finalize().into();
         let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
 
@@ -1303,6 +1337,7 @@ impl WorkflowJsComponentConfigToml {
             wasm_path,
             js_source,
             ffqn,
+            params: parsed_params,
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,

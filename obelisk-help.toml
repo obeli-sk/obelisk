@@ -136,6 +136,12 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # location = "gh://user/repo@release/my-activity.js"
 # content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
+## Custom parameters. If omitted, defaults to a single `(params: list<string>)` parameter.
+## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
+# params.inline = [
+#   { name = "name", type = "string" },
+#   { name = "count", type = "u32" },
+# ]
 ## Common executor settings - see above.
 ## Retry customization: same as activity_wasm.
 # max_retries = 5
@@ -197,7 +203,13 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # location = "gh://user/repo@release/my-workflow.js"
 # content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
-## All JS workflows have signature: func(params: list<string>) -> result<string, string>
+## Custom parameters. If omitted, defaults to a single `(params: list<string>)` parameter.
+## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
+## Return type is always `result<string, string>`.
+# params.inline = [
+#   { name = "name", type = "string" },
+#   { name = "count", type = "u32" },
+# ]
 ## Common executor settings - see above.
 ## Retry customization: same as regular workflow.
 # retry_exp_backoff.milliseconds = 100

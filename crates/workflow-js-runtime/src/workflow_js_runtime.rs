@@ -56,10 +56,13 @@ fn take_join_set(idx: usize) -> Option<JoinSet> {
 }
 
 /// Execute JavaScript code with the given parameters.
+///
+/// `params_json` is a list of JSON-serialized parameter values.
+/// Each element is passed as a positional argument to the JS function `fn_name`.
 pub fn execute(
     fn_name: &str,
     js_code: &str,
-    params_json: &str,
+    params_json: &[String],
 ) -> Result<Result<String, String>, JsRuntimeError> {
     // `fn_name` comes from trusted `workflow_js_worker`, must be FFQN's fn name
     let fn_name = fn_name.replace('-', "_");
@@ -73,11 +76,12 @@ pub fn execute(
     setup_console(&mut context).expect("console setup must work");
 
     // `params_json` is sent by trusted `workflow_js_worker`, params were typechecked.
-    // Store as global `__params__` array.
-    let params_code = format!("const __params__ = {params_json};");
+    // Parse each JSON param and store as `__params__` array.
+    let params_js_parts: Vec<&str> = params_json.iter().map(|p| p.as_str()).collect();
+    let params_array = format!("const __params__ = [{}];", params_js_parts.join(", "));
     context
-        .eval(Source::from_bytes(&params_code))
-        .expect("already verified that params_json is parseable");
+        .eval(Source::from_bytes(&params_array))
+        .expect("already verified that params_json elements are parseable");
 
     // Add the function to the context, without running it.
     let bare_fn_eval = context.eval(Source::from_bytes(js_code));
@@ -97,7 +101,11 @@ pub fn execute(
         return Err(JsRuntimeError::FunctionNotFound);
     }
 
-    let call_fn = format!("{fn_name}(__params__);");
+    // Spread params as positional arguments: fn_name(__params__[0], __params__[1], ...)
+    let spread_args: Vec<String> = (0..params_json.len())
+        .map(|i| format!("__params__[{i}]"))
+        .collect();
+    let call_fn = format!("{fn_name}({});", spread_args.join(", "));
     let result = context.eval(Source::from_bytes(&call_fn));
 
     match result {

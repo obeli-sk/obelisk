@@ -18,9 +18,10 @@ interface execute {
     /// Execute JavaScript code as a workflow.
     ///
     /// The JS code should define a function named as declared in `fn-name` that receives
-    /// the params as the first argument (a JSON array) and returns a string.
+    /// the params as positional arguments (each element is one JSON-serialized parameter value)
+    /// and returns a string.
     ///
     /// Returns Ok(Ok(result)) on success, Ok(Err(error_message)) on user error,
     /// or Err(js-runtime-error) on runtime error.
-    run: func(fn-name: string, js-code: string, params-json: string) -> result<result<string, string>, js-runtime-error>;
+    run: func(fn-name: string, js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>;
 }

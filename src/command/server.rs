@@ -1999,6 +1999,7 @@ fn prespawn_js_workflow(
         inner,
         workflow_js.js_source.clone(),
         workflow_js.ffqn.clone(),
+        workflow_js.params.clone(),
     );
     Ok(WorkerCompiled::new_js_workflow(
         worker,
@@ -2008,6 +2009,7 @@ fn prespawn_js_workflow(
         workflows_lock_extension_leeway,
         workflow_js.js_source,
         workflow_js.ffqn,
+        workflow_js.params,
     ))
 }
 
@@ -2134,6 +2136,7 @@ impl WorkerCompiled {
         workflows_lock_extension_leeway: Duration,
         js_source: String,
         user_ffqn: FunctionFqn,
+        user_params: Vec<concepts::ParameterType>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
@@ -2149,6 +2152,7 @@ impl WorkerCompiled {
                 js_workflow_info: Some(JsWorkflowReplayInfo {
                     js_source,
                     user_ffqn,
+                    user_params,
                 }),
             }),
         };
