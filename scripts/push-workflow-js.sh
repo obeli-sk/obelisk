@@ -12,7 +12,7 @@ cargo check --workspace # triggers build.rs of workflow-js-runtime-builder
 
 if [ "$TAG" != "dry-run" ]; then
     OUTPUT=$(cargo run --  component push \
-        "target/release_testprograms/wasm32-unknown-unknown/release_wasm/workflow_js_runtime.wasm" \
+        "target/release_testprograms/wasm32-unknown-unknown/release_wasm/workflow_js_runtime_component.wasm" \
         "docker.io/getobelisk/workflow-js-runtime:$TAG")
     echo -n $OUTPUT > $OUTPUT_FILE
 fi
