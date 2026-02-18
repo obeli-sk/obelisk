@@ -8,10 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add outbound HTTP host allowlists for activities and webhooks via `allowed_hosts` config field — requests to non-allowed hosts return `HttpRequestDenied` ([#254](https://github.com/obeli-sk/obelisk/pull/254))
+- Add outbound HTTP host allowlists for activities and webhooks via `[[allowed_host]]` table entry — requests to non-allowed hosts return `HttpRequestDenied` ([#254](https://github.com/obeli-sk/obelisk/pull/254)), ([#267](https://github.com/obeli-sk/obelisk/pull/267)
 
-- Add secret placeholder injection via `[[*.secrets]]` config — WASM components receive opaque placeholders instead of real secret values; the runtime replaces placeholders with real values only in requests to approved hosts ([#254](https://github.com/obeli-sk/obelisk/pull/254))
+- Add secret placeholder injection via `secrets` config — WASM components receive opaque placeholders instead of real secret values; the runtime replaces placeholders with real values only in requests to approved hosts ([#254](https://github.com/obeli-sk/obelisk/pull/254)), ([#267](https://github.com/obeli-sk/obelisk/pull/267)
 
+- Add JavaScript support for activities (`[[activity_js]]`) and workflows (`[[workflow_js]]`) — write activities and workflows in JavaScript using the embedded Boa engine compiled to WASM
+
+### Removed
+
+- `retry_on_err` option in activities has been removed and is always on, which was the default already. To skip retrying, return variant containing `permanent`.
 
 ### Notes for next breaking release
 
