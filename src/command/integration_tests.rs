@@ -43,6 +43,9 @@ fn write_test_toml(port: u16) -> (tempfile::TempDir, PathBuf) {
         r#"
 api.listening_addr = "127.0.0.1:{port}"
 
+[wasm.codegen_cache]
+directory = "${{CACHE_DIR}}/codegen-it"
+
 [database.sqlite]
 directory = "{db_dir}"
 
