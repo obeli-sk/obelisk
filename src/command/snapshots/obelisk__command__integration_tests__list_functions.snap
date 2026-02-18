@@ -11,5 +11,8 @@ expression: functions
   },
   {
     "ffqn": "testing:integration/workflows.add-workflow"
+  },
+  {
+    "ffqn": "testing:integration/workflows.add-via-activity"
   }
 ]

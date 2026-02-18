@@ -1,0 +1,98 @@
+---
+source: src/command/integration_tests.rs
+expression: events
+---
+{
+  "events": [
+    {
+      "created_at": "<TIMESTAMP>",
+      "event": {
+        "locked": {
+          "component_id": {
+            "component_type": "workflow",
+            "input_digest": "sha256:<REDACTED>",
+            "name": "test_add_via_activity_workflow"
+          },
+          "deployment_id": "Dep_<REDACTED>",
+          "executor_id": "Exr_<REDACTED>",
+          "lock_expires_at": "<TIMESTAMP>",
+          "retry_config": {
+            "max_retries": null,
+            "retry_exp_backoff": {
+              "nanos": 100000000,
+              "secs": 0
+            }
+          },
+          "run_id": "Run_<REDACTED>"
+        }
+      },
+      "version": 1
+    },
+    {
+      "created_at": "<TIMESTAMP>",
+      "event": {
+        "history_event": {
+          "event": {
+            "join_set_id": "g:1",
+            "type": "join_set_create"
+          }
+        }
+      },
+      "version": 2
+    },
+    {
+      "created_at": "<TIMESTAMP>",
+      "event": {
+        "history_event": {
+          "event": {
+            "join_set_id": "g:1",
+            "request": {
+              "child_execution_id": "E_<REDACTED>",
+              "params": [
+                7,
+                8
+              ],
+              "target_ffqn": "testing:integration/activities.add",
+              "type": "child_execution_request"
+            },
+            "type": "join_set_request"
+          }
+        }
+      },
+      "version": 3
+    },
+    {
+      "created_at": "<TIMESTAMP>",
+      "event": {
+        "history_event": {
+          "event": {
+            "closing": false,
+            "join_set_id": "g:1",
+            "requested_ffqn": null,
+            "run_expires_at": "<TIMESTAMP>",
+            "type": "join_next"
+          }
+        }
+      },
+      "version": 4
+    },
+    {
+      "created_at": "<TIMESTAMP>",
+      "event": {
+        "finished": {
+          "http_client_traces": null,
+          "result": {
+            "ok": {
+              "ok": {
+                "type": "string",
+                "value": "15"
+              }
+            }
+          }
+        }
+      },
+      "version": 5
+    }
+  ],
+  "max_version": 5
+}
