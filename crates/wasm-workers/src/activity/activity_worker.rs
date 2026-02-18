@@ -578,14 +578,52 @@ fn is_permanent_variant(result_err: Option<&WastValWithType>) -> bool {
     }
 }
 
+#[cfg(any(test, feature = "test"))]
+pub mod test {
+    use concepts::{ComponentId, ComponentType, StrVariant, component_id::InputContentDigest};
+    use utils::sha256sum::calculate_sha256_file;
+    use wasmtime::Engine;
+
+    use crate::{
+        RunnableComponent,
+        engines::{EngineConfig, Engines},
+    };
+
+    pub async fn compile_activity(wasm_path: &str) -> (RunnableComponent, ComponentId) {
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm).await
+    }
+
+    #[expect(dead_code)] // falsly positive
+    pub(crate) async fn compile_activity_stub(wasm_path: &str) -> (RunnableComponent, ComponentId) {
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityStub).await
+    }
+
+    pub(crate) async fn compile_activity_with_engine(
+        wasm_path: &str,
+        engine: &Engine,
+        component_type: ComponentType,
+    ) -> (RunnableComponent, ComponentId) {
+        assert!(component_type.is_activity());
+        let input_digest = InputContentDigest(calculate_sha256_file(wasm_path).await.unwrap());
+        let component_id =
+            ComponentId::new(component_type, StrVariant::empty(), input_digest).unwrap();
+        (
+            RunnableComponent::new(wasm_path, engine, component_type).unwrap(),
+            component_id,
+        )
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::activity::activity_worker::test::compile_activity_with_engine;
     use crate::engines::PoolingOptions;
     use crate::engines::{EngineConfig, Engines};
     use crate::http_request_policy::{AllowedHostConfig, HostPattern};
     use assert_matches::assert_matches;
-    use concepts::component_id::InputContentDigest;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
     use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
     use concepts::storage::{DbPool, TimeoutOutcome};
@@ -593,7 +631,7 @@ pub(crate) mod tests {
     use concepts::storage::{Locked, LockedBy, PendingState, PendingStatePendingAt};
     use concepts::time::Now;
     use concepts::time::TokioSleep;
-    use concepts::{ComponentRetryConfig, ComponentType, StrVariant};
+    use concepts::{ComponentRetryConfig, ComponentType};
     use concepts::{ExecutionFailureKind, FinishedExecutionError, SUPPORTED_RETURN_VALUE_OK_EMPTY};
     use concepts::{
         ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue, prefixed_ulid::ExecutorId,
@@ -610,7 +648,6 @@ pub(crate) mod tests {
     use test_utils::env_or_default;
     use test_utils::sim_clock::SimClock;
     use tracing::{debug, info, info_span};
-    use utils::sha256sum::calculate_sha256_file;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -658,31 +695,6 @@ pub(crate) mod tests {
                 replace_in: hashbrown::HashSet::new(),
             }]),
         }
-    }
-
-    pub(crate) async fn compile_activity(wasm_path: &str) -> (RunnableComponent, ComponentId) {
-        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm).await
-    }
-
-    pub(crate) async fn compile_activity_stub(wasm_path: &str) -> (RunnableComponent, ComponentId) {
-        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityStub).await
-    }
-
-    pub(crate) async fn compile_activity_with_engine(
-        wasm_path: &str,
-        engine: &Engine,
-        component_type: ComponentType,
-    ) -> (RunnableComponent, ComponentId) {
-        assert!(component_type.is_activity());
-        let input_digest = InputContentDigest(calculate_sha256_file(wasm_path).await.unwrap());
-        let component_id =
-            ComponentId::new(component_type, StrVariant::empty(), input_digest).unwrap();
-        (
-            RunnableComponent::new(wasm_path, engine, component_type).unwrap(),
-            component_id,
-        )
     }
 
     pub(crate) async fn new_activity_worker(

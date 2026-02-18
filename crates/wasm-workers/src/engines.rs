@@ -106,7 +106,7 @@ pub struct EngineConfig {
 }
 
 impl EngineConfig {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test"))]
     #[must_use]
     pub fn on_demand_testing() -> Self {
         let workspace_dir = PathBuf::from(
@@ -186,7 +186,7 @@ impl Engines {
         Self::configure_common(wasmtime::Config::new(), config)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test"))]
     pub fn get_activity_engine_test(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         Self::get_activity_engine_internal(config)
     }
@@ -195,7 +195,7 @@ impl Engines {
         Self::configure_common(wasmtime::Config::new(), config)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test"))]
     pub fn get_workflow_engine_test(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         Self::get_workflow_engine_internal(config)
     }

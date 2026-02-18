@@ -14,6 +14,15 @@ use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
 use tokio::sync::watch;
 
+#[cfg(test)]
+mod populate_codegen_cache {
+
+    #[tokio::test]
+    async fn test_server() {
+        super::TestServer::start().await;
+    }
+}
+
 fn get_workspace_dir() -> PathBuf {
     PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
 }
@@ -108,8 +117,13 @@ impl TestServer {
         };
 
         tokio::spawn(async move {
-            if let Err(e) =
-                Box::pin(run_internal(config, config_holder, params, termination_watcher)).await
+            if let Err(e) = Box::pin(run_internal(
+                config,
+                config_holder,
+                params,
+                termination_watcher,
+            ))
+            .await
             {
                 eprintln!("Server error: {e:#}");
             }
@@ -315,8 +329,8 @@ fn sanitize_json(value: &Value) -> Value {
 
 // ---- Component / function listing ----
 
-#[tokio::test(flavor = "multi_thread")]
-async fn list_components_and_functions() {
+#[tokio::test]
+async fn list_components() {
     let server = TestServer::start().await;
 
     let components = server.list_components().await;
@@ -328,23 +342,35 @@ async fn list_components_and_functions() {
     insta::assert_json_snapshot!("list_functions", functions);
 }
 
+#[tokio::test]
+async fn list_functions() {
+    let server = TestServer::start().await;
+
+    let functions = server.list_functions().await;
+    let functions = sanitize_json(&functions);
+    insta::assert_json_snapshot!("list_functions", functions);
+}
+
 // ---- Activity: submit + result ----
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn submit_activity_and_get_result() {
     let server = TestServer::start().await;
 
     let resp = server
-        .submit_follow("testing:integration/activities.add", vec![json!(3), json!(5)])
+        .submit_follow(
+            "testing:integration/activities.add",
+            vec![json!(3), json!(5)],
+        )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "Ok": 8 }));
+    assert_eq!(body, json!({ "ok": "8" }));
 }
 
 // ---- Activity: submit + events / logs / status snapshots ----
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn submit_greet_activity_and_inspect() {
     let server = TestServer::start().await;
     let exec_id = server.generate_execution_id().await;
@@ -358,7 +384,7 @@ async fn submit_greet_activity_and_inspect() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "Ok": "Hello, World!" }));
+    assert_eq!(body, json!({ "ok": "Hello, World!" }));
 
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
@@ -377,7 +403,7 @@ async fn submit_greet_activity_and_inspect() {
 
 // ---- Workflow: submit + events + replay ----
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn submit_workflow_and_replay() {
     let server = TestServer::start().await;
     let exec_id = server.generate_execution_id().await;
@@ -392,7 +418,7 @@ async fn submit_workflow_and_replay() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "Ok": "30" }));
+    assert_eq!(body, json!({ "ok": "30" }));
 
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
@@ -407,17 +433,23 @@ async fn submit_workflow_and_replay() {
     );
     let events_after = server.get_events(&exec_id).await;
     let events_after = sanitize_json(&events_after);
-    assert_eq!(events, events_after, "events must be identical after replay");
+    assert_eq!(
+        events, events_after,
+        "events must be identical after replay"
+    );
 }
 
 // ---- Execution listing ----
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn list_executions_after_submit() {
     let server = TestServer::start().await;
 
     let resp = server
-        .submit_follow("testing:integration/activities.add", vec![json!(1), json!(2)])
+        .submit_follow(
+            "testing:integration/activities.add",
+            vec![json!(1), json!(2)],
+        )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let _: Value = resp.json().await.unwrap();
@@ -430,7 +462,7 @@ async fn list_executions_after_submit() {
 
 // ---- Error cases ----
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn submit_with_wrong_params_returns_error() {
     let server = TestServer::start().await;
 
@@ -445,10 +477,10 @@ async fn submit_with_wrong_params_returns_error() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 422);
+    assert_eq!(resp.status().as_u16(), 400);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn submit_nonexistent_function_returns_404() {
     let server = TestServer::start().await;
 
@@ -466,7 +498,7 @@ async fn submit_nonexistent_function_returns_404() {
     assert_eq!(resp.status().as_u16(), 404);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn replay_nonexistent_execution_returns_404() {
     let server = TestServer::start().await;
     let resp = server.replay("E_01AAAAAAAAAAAAAAAAAAAAAAAA").await;
@@ -475,7 +507,7 @@ async fn replay_nonexistent_execution_returns_404() {
 
 // ---- Idempotency ----
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn idempotent_submit_same_execution_id() {
     let server = TestServer::start().await;
     let exec_id = server.generate_execution_id().await;

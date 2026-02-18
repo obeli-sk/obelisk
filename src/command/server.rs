@@ -136,9 +136,9 @@ use wasmtime::Engine;
 const EPOCH_MILLIS: u64 = 10;
 const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
 #[cfg(not(feature = "activity-js-local"))]
-const ACTIVITY_JS_LOCATION: &str = include_str!("../../assets/activity-js-version.txt");
+pub(crate) const ACTIVITY_JS_LOCATION: &str = include_str!("../../assets/activity-js-version.txt");
 #[cfg(not(feature = "workflow-js-local"))]
-const WORKFLOW_JS_LOCATION: &str = include_str!("../../assets/workflow-js-version.txt");
+pub(crate) const WORKFLOW_JS_LOCATION: &str = include_str!("../../assets/workflow-js-version.txt");
 
 pub(crate) type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 
@@ -2359,7 +2359,7 @@ mod tests {
     }
 
     #[rstest]
-    #[tokio::test(flavor = "multi_thread")] // for more performant WASM component compilation
+    #[tokio::test]
     async fn server_verify(
         #[values(
             "obelisk-testing-sqlite-local.toml",

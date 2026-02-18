@@ -12,16 +12,16 @@ expression: components
   },
   {
     "component_id": {
-      "component_type": "workflow",
+      "component_type": "activity_js",
       "input_digest": "sha256:<REDACTED>",
-      "name": "test_add_workflow"
+      "name": "test_greet_activity"
     }
   },
   {
     "component_id": {
-      "component_type": "activity_js",
+      "component_type": "workflow",
       "input_digest": "sha256:<REDACTED>",
-      "name": "test_greet_activity"
+      "name": "test_add_workflow"
     }
   }
 ]

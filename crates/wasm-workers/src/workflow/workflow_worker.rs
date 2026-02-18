@@ -925,25 +925,56 @@ impl Worker for WorkflowWorker {
     }
 }
 
+#[cfg(any(test, feature = "test"))]
+pub mod test {
+    use crate::{
+        RunnableComponent,
+        engines::{EngineConfig, Engines},
+    };
+    use concepts::{ComponentId, ComponentType, StrVariant, component_id::InputContentDigest};
+    use utils::sha256sum::calculate_sha256_file;
+    use wasmtime::Engine;
+
+    pub async fn compile_workflow(wasm_path: &str) -> (RunnableComponent, ComponentId) {
+        let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        compile_workflow_with_engine(wasm_path, &engine).await
+    }
+
+    pub(crate) async fn compile_workflow_with_engine(
+        wasm_path: &str,
+        engine: &Engine,
+    ) -> (RunnableComponent, ComponentId) {
+        let component_id = ComponentId::new(
+            ComponentType::Workflow,
+            StrVariant::empty(),
+            InputContentDigest(calculate_sha256_file(wasm_path).await.unwrap()),
+        )
+        .unwrap();
+        (
+            RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
+            component_id,
+        )
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::activity::activity_worker::test::{compile_activity, compile_activity_stub};
     use crate::activity::activity_worker::tests::{
-        activity_config_allowed_host, compile_activity_stub, new_activity_worker,
+        activity_config_allowed_host, new_activity_worker,
     };
     use crate::activity::activity_worker::tests::{new_activity, new_activity_with_config};
     use crate::activity::cancel_registry::CancelRegistry;
     use crate::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
     use crate::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
+    use crate::workflow::workflow_worker::test::{compile_workflow, compile_workflow_with_engine};
     use crate::{
-        activity::activity_worker::tests::{
-            FIBO_10_INPUT, FIBO_10_OUTPUT, compile_activity, new_activity_fibo,
-        },
+        activity::activity_worker::tests::{FIBO_10_INPUT, FIBO_10_OUTPUT, new_activity_fibo},
         engines::{EngineConfig, Engines},
     };
     use assert_matches::assert_matches;
     use chrono::DateTime;
-    use concepts::component_id::InputContentDigest;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived};
     use concepts::storage::{
         AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, JoinSetResponse, Locked,
@@ -956,7 +987,6 @@ pub(crate) mod tests {
         SupportedFunctionReturnValue,
     };
     use concepts::{
-        ComponentType,
         prefixed_ulid::{ExecutorId, RunId},
         storage::{
             CreateRequest, DbPoolCloseable, PendingState, PendingStateBlockedByJoinSet,
@@ -981,7 +1011,6 @@ pub(crate) mod tests {
     use test_utils::sim_clock::SimClock;
     use tracing::debug;
     use tracing::info_span;
-    use utils::sha256sum::calculate_sha256_file;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{ValKey, WastVal, WastValWithType},
@@ -1025,27 +1054,6 @@ pub(crate) mod tests {
     );
     const FFQN_WORKFLOW_HTTP_GET_SUCCESSFUL: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
     const FFQN_WORKFLOW_HTTP_GET_RESP: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_RESP);
-
-    pub(crate) async fn compile_workflow(wasm_path: &str) -> (RunnableComponent, ComponentId) {
-        let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        compile_workflow_with_engine(wasm_path, &engine).await
-    }
-
-    pub(crate) async fn compile_workflow_with_engine(
-        wasm_path: &str,
-        engine: &Engine,
-    ) -> (RunnableComponent, ComponentId) {
-        let component_id = ComponentId::new(
-            ComponentType::Workflow,
-            StrVariant::empty(),
-            InputContentDigest(calculate_sha256_file(wasm_path).await.unwrap()),
-        )
-        .unwrap();
-        (
-            RunnableComponent::new(wasm_path, engine, component_id.component_type).unwrap(),
-            component_id,
-        )
-    }
 
     pub(crate) async fn compile_workflow_worker(
         wasm_path: &str,

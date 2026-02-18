@@ -487,7 +487,8 @@ fn make_exports_hierarchy(
 mod tests {
     use super::*;
     use crate::RunnableComponent;
-    use crate::activity::activity_worker::tests::{compile_activity, new_activity_fibo};
+    use crate::activity::activity_worker::test::compile_activity;
+    use crate::activity::activity_worker::tests::new_activity_fibo;
     use crate::engines::{EngineConfig, Engines};
     use crate::testing_fn_registry::TestingFnRegistry;
     use crate::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;

@@ -313,7 +313,7 @@ fn make_exports_hierarchy(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activity::activity_worker::tests::compile_activity_with_engine;
+    use crate::activity::activity_worker::test::compile_activity_with_engine;
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
     use concepts::SupportedFunctionReturnValue;

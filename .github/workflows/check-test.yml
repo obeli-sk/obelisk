@@ -25,6 +25,14 @@ defaults:
 jobs:
   ci-test:
     runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - additional: ""
+          - additional: "-F activity-js-local -F workflow-js-local"
+
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
@@ -42,12 +50,13 @@ jobs:
         run: nix develop --command cargo nextest run --workspace --no-run
 
       - name: Populate the codegen cache
-        run: nix develop --command cargo nextest run --workspace --profile ci-test-populate-codegen-cache populate_codegen_cache --test-threads 1
+        run: nix develop --command scripts/test-phase1.sh
         env:
           CI: true
+          ADDITIONAL_FEATURES: "{{ matrix.additional }}"
 
-      - name: cargo test
-        run: nix develop --command cargo nextest run --workspace --profile ${{ github.job }}
+      - name: test
+        run: nix develop --command scripts/test-phase2.sh
         env:
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
           CI: true
@@ -55,6 +64,7 @@ jobs:
           TEST_POSTGRES_USER: "postgres"
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
+          ADDITIONAL_FEATURES: "{{ matrix.additional }}"
 
       - name: Upload test results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
