@@ -564,7 +564,7 @@ pub(crate) async fn verify_config_compile_link(
     Ok((compiled_and_linked, component_source_map))
 }
 
-async fn run_internal(
+pub(crate) async fn run_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: RunParams,
