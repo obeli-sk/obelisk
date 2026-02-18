@@ -50,7 +50,7 @@ jobs:
         run: nix develop --command cargo nextest run --workspace --no-run
 
       - name: Populate the codegen cache
-        run: nix develop --command scripts/test-phase1.sh  --test-threads 1
+        run: nix develop --command scripts/test-phase1.sh
         env:
           CI: true
           ADDITIONAL_FEATURES: "{{ matrix.additional }}"
