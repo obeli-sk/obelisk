@@ -110,6 +110,7 @@ backtrace.ignore_component_digest = true
 # name = "activity_js_fetch_get"
 # location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/fetch.js"
 # ffqn = "test:pkg/ifc.fetch-get"
+# params.inline = ["string"]
 # max_retries = 0
 # [[activity_js.allowed_host]]
 # pattern = "http://localhost:5005" # all https is allowed

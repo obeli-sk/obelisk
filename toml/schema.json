@@ -220,6 +220,10 @@
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
+        "params": {
+          "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to a single `(params: list<string>)` parameter.",
+          "$ref": "#/$defs/ParamsSpec"
+        },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"
         }
@@ -784,6 +788,25 @@
       "description": "Location of a JavaScript source file for JS activities.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported.",
       "type": "string"
     },
+    "JsParamToml": {
+      "description": "A parameter declaration for a JS activity function.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Parameter name (used in WIT metadata).",
+          "type": "string"
+        },
+        "type": {
+          "description": "WIT type string, e.g. `string`, `u32`, `list<string>`, `option<u64>`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    },
     "LockingStrategy": {
       "type": "string",
       "enum": [
@@ -850,6 +873,31 @@
       "additionalProperties": false,
       "required": [
         "enabled"
+      ]
+    },
+    "ParamsSpec": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "default"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "inline": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/JsParamToml"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "inline"
+          ]
+        }
       ]
     },
     "PostgresConfigToml": {

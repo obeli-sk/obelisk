@@ -1866,7 +1866,12 @@ fn prespawn_js_activity(
     )
     .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?;
 
-    let worker = ActivityJsWorkerCompiled::new(inner, activity_js.js_source, activity_js.ffqn);
+    let worker = ActivityJsWorkerCompiled::new(
+        inner,
+        activity_js.js_source,
+        activity_js.ffqn,
+        activity_js.params,
+    );
     Ok(WorkerCompiled::new_js_activity(
         worker,
         activity_js.exec_config,

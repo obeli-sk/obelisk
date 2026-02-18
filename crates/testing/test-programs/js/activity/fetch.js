@@ -1,6 +1,6 @@
-async function fetch_get(params) {
-    console.info("Fetching " + params[0]);
-    const resp = await fetch(params[0]);
+async function fetch_get(url) {
+    console.info("Fetching " + url);
+    const resp = await fetch(url);
     const text = await resp.text();
     return text;
 }

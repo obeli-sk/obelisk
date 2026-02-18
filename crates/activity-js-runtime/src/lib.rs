@@ -17,7 +17,7 @@ impl Guest for Component {
     fn run(
         fn_name: String,
         js_code: String,
-        params_json: String,
+        params_json: Vec<String>,
     ) -> Result<Result<String, String>, JsRuntimeError> {
         activity_js_runtime::execute(&fn_name, &js_code, &params_json)
     }

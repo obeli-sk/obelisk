@@ -31,6 +31,7 @@ pub struct ActivityJsWorkerCompiled<S: Sleep> {
     inner: ActivityWorkerCompiled<S>,
     js_source: String,
     user_ffqn: FunctionFqn,
+    user_params: Vec<ParameterType>,
     user_exports_noext: Vec<FunctionMetadata>,
     user_exports_ext: Vec<FunctionMetadata>,
     user_exports_hierarchy_ext: Vec<PackageIfcFns>,
@@ -41,14 +42,16 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
         inner: ActivityWorkerCompiled<S>,
         js_source: String,
         user_ffqn: FunctionFqn,
+        user_params: Vec<ParameterType>,
     ) -> Self {
-        let fn_metadata = make_fn_metadata(user_ffqn.clone());
+        let fn_metadata = make_fn_metadata(user_ffqn.clone(), &user_params);
         let fn_metadata_ext = make_fn_metadata_ext(&fn_metadata);
         let hierarchy = make_exports_hierarchy(&fn_metadata, &fn_metadata_ext);
         Self {
             inner,
             js_source,
             user_ffqn,
+            user_params,
             user_exports_noext: vec![fn_metadata],
             user_exports_ext: fn_metadata_ext,
             user_exports_hierarchy_ext: hierarchy,
@@ -80,6 +83,7 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
             inner,
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
+            user_params: self.user_params,
             user_exports_noext: self.user_exports_noext,
         }
     }
@@ -90,6 +94,7 @@ pub struct ActivityJsWorker<S: Sleep> {
     js_source: String,
     #[allow(dead_code)] // Will be used for error context in future
     user_ffqn: FunctionFqn,
+    user_params: Vec<ParameterType>,
     user_exports_noext: Vec<FunctionMetadata>,
 }
 
@@ -101,24 +106,24 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
 
     // Return result<string, string> or a WorkerError mapped from `JsRuntimeError`
     async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
-        // Expecting a single parameter of type `list<string>`.
-        assert_eq!(
-            1,
-            ctx.params.len(),
-            "type checked in Params::from_json_values"
-        );
+        // Serialize each user parameter individually as a JSON string.
         let json_params = ctx
             .params
             .as_json_values()
             .expect("params come from database, not wasmtime"); // TODO: Extract ParamsInternal
-        let list_of_strings = json_params.first().expect("checked above");
-        assert!(
-            list_of_strings.is_array(),
-            "params must have been type checked to adhere to `list<string>` when `Params` was constructed"
+        assert_eq!(
+            self.user_params.len(),
+            json_params.len(),
+            "type checked in Params::from_json_values"
         );
-
-        let params_json_str =
-            serde_json::to_string(list_of_strings).expect("serde_json::Value must be serializable");
+        let params_json_list: Vec<serde_json::Value> = json_params
+            .iter()
+            .map(|v| {
+                serde_json::Value::String(
+                    serde_json::to_string(v).expect("serde_json::Value must be serializable"),
+                )
+            })
+            .collect();
 
         // Rewrite context to call
         ctx.ffqn =
@@ -127,14 +132,14 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(self.user_ffqn.function_name.to_string()),
             serde_json::Value::String(self.js_source.clone()),
-            serde_json::Value::String(params_json_str),
+            serde_json::Value::Array(params_json_list),
         ]);
         ctx.params = Params::from_json_values(
             boa_params,
             [
                 &TypeWrapper::String,
                 &TypeWrapper::String,
-                &TypeWrapper::String,
+                &TypeWrapper::List(Box::new(TypeWrapper::String)),
             ]
             .into_iter(),
         )
@@ -261,21 +266,16 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
     }
 }
 
-/// Create the `FunctionMetadata` for the user's function:
-/// `func(params: list<string>) -> result<string, string>`
-fn make_fn_metadata(ffqn: FunctionFqn) -> FunctionMetadata {
-    let param_type = ParameterType {
-        type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
-        name: StrVariant::Static("params"),
-        wit_type: StrVariant::Static("list<string>"),
-    };
+/// Create the `FunctionMetadata` for the user's JS function with the given parameters.
+/// Return type is always `result<string, string>`.
+fn make_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> FunctionMetadata {
     let return_type_wrapper = TypeWrapper::Result {
         ok: Some(Box::new(TypeWrapper::String)),
         err: Some(Box::new(TypeWrapper::String)),
     };
     FunctionMetadata {
         ffqn,
-        parameter_types: ParameterTypes(vec![param_type]),
+        parameter_types: ParameterTypes(params.to_vec()),
         return_type: ReturnType::detect(
             return_type_wrapper,
             StrVariant::Static("result<string, string>"),
@@ -367,7 +367,16 @@ mod tests {
         )
         .unwrap();
 
-        let js_compiled = ActivityJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn);
+        let js_compiled = ActivityJsWorkerCompiled::new(
+            compiled,
+            js_source.to_string(),
+            user_ffqn,
+            vec![ParameterType {
+                type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
+                name: StrVariant::Static("params"),
+                wit_type: StrVariant::Static("list<string>"),
+            }],
+        );
 
         Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
     }
@@ -387,10 +396,90 @@ mod tests {
         .await
     }
 
+    async fn new_js_activity_worker_custom_params(
+        js_source: &str,
+        user_ffqn: FunctionFqn,
+        user_params: Vec<ParameterType>,
+    ) -> Arc<dyn Worker> {
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let cancel_registry = CancelRegistry::new();
+        let (db_forwarder_sender, _) = mpsc::channel(1);
+        let clock_fn: Box<dyn ClockFn> = Now.clone_box();
+
+        let component_id = concepts::ComponentId::new(
+            ComponentType::ActivityJs,
+            StrVariant::Static("test_js"),
+            InputContentDigest(CONTENT_DIGEST_DUMMY),
+        )
+        .unwrap();
+
+        let (wasm_component, _boa_component_id) = compile_activity_with_engine(
+            activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
+            &engine,
+            ComponentType::ActivityJs,
+        )
+        .await;
+
+        let config = super::super::activity_worker::ActivityConfig {
+            component_id,
+            forward_stdout: None,
+            forward_stderr: None,
+            env_vars: Arc::from([]),
+            directories_config: None,
+            fuel: None,
+            allowed_hosts: Arc::from([]),
+        };
+
+        let compiled = super::super::activity_worker::ActivityWorkerCompiled::new_with_config(
+            wasm_component,
+            config,
+            engine,
+            clock_fn,
+            TokioSleep,
+        )
+        .unwrap();
+
+        let js_compiled =
+            ActivityJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn, user_params);
+
+        Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
+    }
+
     fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
         // The user function signature is: func(params: list<string>) -> result<string, string>
         // So we wrap the params in a list
         let params_json: Vec<serde_json::Value> = vec![json!(params)];
+        let component_id = concepts::ComponentId::new(
+            ComponentType::ActivityJs,
+            StrVariant::Static("test_js"),
+            InputContentDigest(CONTENT_DIGEST_DUMMY),
+        )
+        .unwrap();
+        WorkerContext {
+            execution_id: ExecutionId::generate(),
+            metadata: ExecutionMetadata::empty(),
+            ffqn,
+            params: Params::from_json_values_test(params_json),
+            event_history: Vec::new(),
+            responses: Vec::new(),
+            version: Version::new(0),
+            can_be_retried: false,
+            worker_span: info_span!("js_test"),
+            locked_event: Locked {
+                component_id,
+                executor_id: ExecutorId::generate(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                run_id: RunId::generate(),
+                lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
+                retry_config: ComponentRetryConfig::ZERO,
+            },
+        }
+    }
+
+    fn make_worker_context_custom(
+        ffqn: FunctionFqn,
+        params_json: Vec<serde_json::Value>,
+    ) -> WorkerContext {
         let component_id = concepts::ComponentId::new(
             ComponentType::ActivityJs,
             StrVariant::Static("test_js"),
@@ -822,5 +911,107 @@ mod tests {
         let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "sync result: hello");
+    }
+
+    #[tokio::test]
+    async fn js_activity_custom_params_string_and_u32() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet-n-times");
+        let js_source = r#"
+            function greet_n_times(name, count) {
+                let parts = [];
+                for (let i = 0; i < count; i++) {
+                    parts.push("Hello, " + name + "!");
+                }
+                return parts.join(" ");
+            }
+        "#;
+
+        let user_params = vec![
+            ParameterType {
+                type_wrapper: TypeWrapper::String,
+                name: StrVariant::Static("name"),
+                wit_type: StrVariant::Static("string"),
+            },
+            ParameterType {
+                type_wrapper: TypeWrapper::U32,
+                name: StrVariant::Static("count"),
+                wit_type: StrVariant::Static("u32"),
+            },
+        ];
+
+        let worker =
+            new_js_activity_worker_custom_params(js_source, ffqn.clone(), user_params).await;
+        let ctx = make_worker_context_custom(ffqn, vec![json!("World"), json!(3)]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(
+            extract_string(&ok_val.value),
+            "Hello, World! Hello, World! Hello, World!"
+        );
+    }
+
+    #[tokio::test]
+    async fn js_activity_custom_params_no_params() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "no-args");
+        let js_source = r#"
+            function no_args() {
+                return "no args works";
+            }
+        "#;
+
+        let worker = new_js_activity_worker_custom_params(js_source, ffqn.clone(), vec![]).await;
+        let ctx = make_worker_context_custom(ffqn, vec![]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "no args works");
+    }
+
+    #[tokio::test]
+    async fn js_activity_custom_params_list_and_bool() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "format-list");
+        let js_source = r#"
+            function format_list(items, uppercase) {
+                let result = items.join(", ");
+                if (uppercase) {
+                    result = result.toUpperCase();
+                }
+                return result;
+            }
+        "#;
+
+        let user_params = vec![
+            ParameterType {
+                type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
+                name: StrVariant::Static("items"),
+                wit_type: StrVariant::Static("list<string>"),
+            },
+            ParameterType {
+                type_wrapper: TypeWrapper::Bool,
+                name: StrVariant::Static("uppercase"),
+                wit_type: StrVariant::Static("bool"),
+            },
+        ];
+
+        let worker =
+            new_js_activity_worker_custom_params(js_source, ffqn.clone(), user_params).await;
+        let ctx = make_worker_context_custom(
+            ffqn,
+            vec![json!(["apple", "banana", "cherry"]), json!(true)],
+        );
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "APPLE, BANANA, CHERRY");
     }
 }

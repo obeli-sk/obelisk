@@ -1048,6 +1048,11 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
     pub(crate) ffqn: String,
+    /// Custom parameters for the JS function.
+    /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
+    /// If omitted, defaults to a single `(params: list<string>)` parameter.
+    #[serde(default)]
+    pub(crate) params: ParamsSpec,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
@@ -1065,11 +1070,32 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) allowed_host: Vec<AllowedHostToml>,
 }
 
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ParamsSpec {
+    #[default]
+    Default, // `(params: list<string>)`
+    Inline(Vec<JsParamToml>),
+    // TODO: Add a WIT folder location later
+}
+
+/// A parameter declaration for a JS activity function.
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct JsParamToml {
+    /// Parameter name (used in WIT metadata).
+    pub(crate) name: String,
+    /// WIT type string, e.g. `string`, `u32`, `list<string>`, `option<u64>`.
+    #[serde(rename = "type")]
+    pub(crate) wit_type: String,
+}
+
 #[derive(Debug)]
 pub(crate) struct ActivityJsConfigVerified {
     pub(crate) wasm_path: Arc<Path>, // same for all JS activities
     pub(crate) js_source: String,
     pub(crate) ffqn: FunctionFqn,
+    pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
@@ -1095,6 +1121,31 @@ impl ActivityJsComponentConfigToml {
         let ffqn = FunctionFqn::from_str(&self.ffqn)
             .map_err(|e| anyhow!("invalid ffqn `{}`: {e}", self.ffqn))?;
 
+        // Parse custom params or default to `params: list<string>`
+        let parsed_params = match self.params {
+            ParamsSpec::Default => {
+                vec![concepts::ParameterType {
+                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
+                        val_json::type_wrapper::TypeWrapper::String,
+                    )),
+                    name: StrVariant::Static("params"),
+                    wit_type: StrVariant::Static("list<string>"),
+                }]
+            }
+            ParamsSpec::Inline(params) => params
+                .iter()
+                .map(|p| {
+                    let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
+                        .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
+                    Ok(concepts::ParameterType {
+                        type_wrapper: tw,
+                        name: StrVariant::from(p.name.clone()),
+                        wit_type: StrVariant::from(p.wit_type.clone()),
+                    })
+                })
+                .collect::<Result<Vec<_>, anyhow::Error>>()?,
+        };
+
         let js_source = self
             .location
             .read_to_string(
@@ -1104,12 +1155,15 @@ impl ActivityJsComponentConfigToml {
             )
             .await?;
 
-        // Compute content digest from source + ffqn
+        // Compute content digest from source + ffqn + params
         use sha2::{Digest as _, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"activity_js:");
         hasher.update(js_source.as_bytes());
         hasher.update(self.ffqn.as_bytes());
+        for p in &parsed_params {
+            hasher.update(p.wit_type.as_ref().as_bytes());
+        }
         let hash: [u8; 32] = hasher.finalize().into();
         let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
 
@@ -1140,6 +1194,7 @@ impl ActivityJsComponentConfigToml {
             wasm_path,
             js_source,
             ffqn,
+            params: parsed_params,
             activity_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
