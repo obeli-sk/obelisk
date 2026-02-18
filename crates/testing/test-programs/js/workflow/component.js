@@ -4,9 +4,10 @@ function fetch_components() {
     const execId = js.submit(activityFfqn, ["http://localhost:5005/v1/components"]);
     console.log('Submitted execId:', execId);
     const response = js.joinNext();
-    if (response.err !== undefined) {
+    if (!response.ok) {
         throw 'activity failed';
     }
-    console.log('response:', JSON.stringify(response));
-    return "ok";
+    const result = obelisk.getResult(response.id).ok; // is a string
+    console.log('child result:', result);
+    return result;
 }
