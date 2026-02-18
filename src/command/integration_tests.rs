@@ -35,7 +35,7 @@ fn free_port() -> u16 {
 
 /// Write a minimal TOML config to a temp file and return the path.
 /// The config references the JS fixtures from the workspace tree and
-/// places the SQLite database in a unique temp directory.
+/// places the `SQLite` database in a unique temp directory.
 fn write_test_toml(port: u16) -> (tempfile::TempDir, PathBuf) {
     let workspace = get_workspace_dir();
     let db_dir = tempfile::tempdir().unwrap();

@@ -594,7 +594,7 @@ pub mod test {
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm).await
     }
 
-    #[expect(dead_code)] // falsly positive
+    #[allow(dead_code)] // falsly positive
     pub(crate) async fn compile_activity_stub(wasm_path: &str) -> (RunnableComponent, ComponentId) {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityStub).await
