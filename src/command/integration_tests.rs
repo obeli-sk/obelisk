@@ -73,6 +73,15 @@ params.inline = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
+
+[[workflow_js]]
+name = "test_add_via_activity_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/add_via_activity.js"
+ffqn = "testing:integration/workflows.add-via-activity"
+params.inline = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+]
 "#,
         port = port,
         db_dir = db_dir.path().display(),
@@ -437,6 +446,29 @@ async fn submit_workflow_and_replay() {
         events, events_after,
         "events must be identical after replay"
     );
+}
+
+// ---- Workflow: submit activity via join set + getResult ----
+
+#[tokio::test]
+async fn submit_workflow_with_get_result() {
+    let server = TestServer::start().await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/workflows.add-via-activity",
+            vec![json!(7), json!(8)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": "15" }));
+
+    let events = server.get_events(&exec_id).await;
+    let events = sanitize_json(&events);
+    insta::assert_json_snapshot!("workflow_add_via_activity_events", events);
 }
 
 // ---- Execution listing ----
