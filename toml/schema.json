@@ -1410,6 +1410,10 @@
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
+        "params": {
+          "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to a single `(params: list<string>)` parameter.",
+          "$ref": "#/$defs/ParamsSpec"
+        },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"
         }

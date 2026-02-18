@@ -36,6 +36,7 @@ pub struct WorkflowJsWorkerCompiled {
     inner: WorkflowWorkerCompiled,
     js_source: String,
     user_ffqn: FunctionFqn,
+    user_params: Vec<ParameterType>,
     user_exports_noext: Vec<FunctionMetadata>,
     user_exports_ext: Vec<FunctionMetadata>,
     user_exports_hierarchy_ext: Vec<PackageIfcFns>,
@@ -43,14 +44,20 @@ pub struct WorkflowJsWorkerCompiled {
 
 impl WorkflowJsWorkerCompiled {
     #[must_use]
-    pub fn new(inner: WorkflowWorkerCompiled, js_source: String, user_ffqn: FunctionFqn) -> Self {
-        let fn_metadata = make_fn_metadata(user_ffqn.clone());
+    pub fn new(
+        inner: WorkflowWorkerCompiled,
+        js_source: String,
+        user_ffqn: FunctionFqn,
+        user_params: Vec<ParameterType>,
+    ) -> Self {
+        let fn_metadata = make_fn_metadata(user_ffqn.clone(), &user_params);
         let fn_metadata_ext = make_fn_metadata_ext(&fn_metadata);
         let hierarchy = make_exports_hierarchy(&fn_metadata, &fn_metadata_ext);
         Self {
             inner,
             js_source,
             user_ffqn,
+            user_params,
             user_exports_noext: vec![fn_metadata],
             user_exports_ext: fn_metadata_ext,
             user_exports_hierarchy_ext: hierarchy,
@@ -81,6 +88,7 @@ impl WorkflowJsWorkerCompiled {
             inner: linked,
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
+            user_params: self.user_params,
             user_exports_noext: self.user_exports_noext,
         })
     }
@@ -90,6 +98,7 @@ pub struct WorkflowJsWorkerLinked {
     inner: super::workflow_worker::WorkflowWorkerLinked,
     js_source: String,
     user_ffqn: FunctionFqn,
+    user_params: Vec<ParameterType>,
     user_exports_noext: Vec<FunctionMetadata>,
 }
 
@@ -113,6 +122,7 @@ impl WorkflowJsWorkerLinked {
             inner,
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
+            user_params: self.user_params,
             user_exports_noext: self.user_exports_noext,
         }
     }
@@ -122,6 +132,7 @@ pub struct WorkflowJsWorker {
     inner: WorkflowWorker,
     js_source: String,
     user_ffqn: FunctionFqn,
+    user_params: Vec<ParameterType>,
     user_exports_noext: Vec<FunctionMetadata>,
 }
 
@@ -133,24 +144,24 @@ impl Worker for WorkflowJsWorker {
 
     // Return result<string, string> or a WorkerError mapped from `JsRuntimeError`
     async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
-        // Expecting a single parameter of type `list<string>`.
-        assert_eq!(
-            1,
-            ctx.params.len(),
-            "type checked in Params::from_json_values"
-        );
+        // Serialize each user parameter individually as a JSON string.
         let json_params = ctx
             .params
             .as_json_values()
             .expect("params come from database, not wasmtime"); // TODO: Extract ParamsInternal
-        let list_of_strings = json_params.first().expect("checked above");
-        assert!(
-            list_of_strings.is_array(),
-            "params must have been type checked to adhere to `list<string>` when `Params` was constructed"
+        assert_eq!(
+            self.user_params.len(),
+            json_params.len(),
+            "type checked in Params::from_json_values"
         );
-
-        let params_json_str =
-            serde_json::to_string(list_of_strings).expect("serde_json::Value must be serializable");
+        let params_json_list: Vec<serde_json::Value> = json_params
+            .iter()
+            .map(|v| {
+                serde_json::Value::String(
+                    serde_json::to_string(v).expect("serde_json::Value must be serializable"),
+                )
+            })
+            .collect();
 
         // Rewrite context to call workflow-js-runtime
         ctx.ffqn =
@@ -159,14 +170,14 @@ impl Worker for WorkflowJsWorker {
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(self.user_ffqn.function_name.to_string()),
             serde_json::Value::String(self.js_source.clone()),
-            serde_json::Value::String(params_json_str),
+            serde_json::Value::Array(params_json_list),
         ]);
         ctx.params = Params::from_json_values(
             boa_params,
             [
                 &TypeWrapper::String,
                 &TypeWrapper::String,
-                &TypeWrapper::String,
+                &TypeWrapper::List(Box::new(TypeWrapper::String)),
             ]
             .into_iter(),
         )
@@ -357,26 +368,32 @@ impl WorkflowJsWorker {
         let original_params = log.params().clone();
 
         // Build the transformed params for the JS runtime
+        // Serialize each stored parameter individually as a JSON string
         let json_params = original_params
             .as_json_values()
             .expect("params come from database");
-        let list_of_strings = json_params.first().expect("JS workflow has one param");
-        let params_json_str =
-            serde_json::to_string(list_of_strings).expect("serde_json::Value must be serializable");
+        let params_json_list: Vec<serde_json::Value> = json_params
+            .iter()
+            .map(|v| {
+                serde_json::Value::String(
+                    serde_json::to_string(v).expect("serde_json::Value must be serializable"),
+                )
+            })
+            .collect();
 
         let boa_ffqn =
             FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(user_ffqn.function_name.to_string()),
             serde_json::Value::String(js_source),
-            serde_json::Value::String(params_json_str),
+            serde_json::Value::Array(params_json_list),
         ]);
         let transformed_params = Params::from_json_values(
             boa_params,
             [
                 &TypeWrapper::String,
                 &TypeWrapper::String,
-                &TypeWrapper::String,
+                &TypeWrapper::List(Box::new(TypeWrapper::String)),
             ]
             .into_iter(),
         )
@@ -426,21 +443,16 @@ impl WorkflowJsWorker {
     }
 }
 
-/// Create the `FunctionMetadata` for the user's function:
-/// `func(params: list<string>) -> result<string, string>`
-fn make_fn_metadata(ffqn: FunctionFqn) -> FunctionMetadata {
-    let param_type = ParameterType {
-        type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
-        name: StrVariant::Static("params"),
-        wit_type: StrVariant::Static("list<string>"),
-    };
+/// Create the `FunctionMetadata` for the user's JS workflow function with the given parameters.
+/// Return type is always `result<string, string>`.
+fn make_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> FunctionMetadata {
     let return_type_wrapper = TypeWrapper::Result {
         ok: Some(Box::new(TypeWrapper::String)),
         err: Some(Box::new(TypeWrapper::String)),
     };
     FunctionMetadata {
         ffqn,
-        parameter_types: ParameterTypes(vec![param_type]),
+        parameter_types: ParameterTypes(params.to_vec()),
         return_type: ReturnType::detect(
             return_type_wrapper,
             StrVariant::Static("result<string, string>"),
@@ -545,7 +557,16 @@ mod tests {
         )
         .unwrap();
 
-        let js_compiled = WorkflowJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn);
+        let js_compiled = WorkflowJsWorkerCompiled::new(
+            compiled,
+            js_source.to_string(),
+            user_ffqn,
+            vec![ParameterType {
+                type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
+                name: StrVariant::Static("params"),
+                wit_type: StrVariant::Static("list<string>"),
+            }],
+        );
 
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
@@ -759,7 +780,16 @@ mod tests {
         )
         .unwrap();
 
-        let js_compiled = WorkflowJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn);
+        let js_compiled = WorkflowJsWorkerCompiled::new(
+            compiled,
+            js_source.to_string(),
+            user_ffqn,
+            vec![ParameterType {
+                type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
+                name: StrVariant::Static("params"),
+                wit_type: StrVariant::Static("list<string>"),
+            }],
+        );
 
         let linked = js_compiled.link(fn_registry).unwrap();
 
