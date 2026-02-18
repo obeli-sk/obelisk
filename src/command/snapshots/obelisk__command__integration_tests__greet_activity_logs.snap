@@ -1,0 +1,14 @@
+---
+source: src/command/integration_tests.rs
+expression: logs
+---
+[
+  {
+    "created_at": "<TIMESTAMP>",
+    "cursor": 1,
+    "level": "info",
+    "message": "Greeting World",
+    "run_id": "Run_<REDACTED>",
+    "type": "log"
+  }
+]

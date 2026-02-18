@@ -3,3 +3,6 @@ pub(crate) mod execution;
 pub(crate) mod generate;
 pub(crate) mod server;
 pub(crate) mod termination_notifier;
+
+#[cfg(test)]
+mod integration_tests;

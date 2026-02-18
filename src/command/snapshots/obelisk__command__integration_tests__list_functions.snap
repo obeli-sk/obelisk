@@ -1,0 +1,15 @@
+---
+source: src/command/integration_tests.rs
+expression: functions
+---
+[
+  {
+    "ffqn": "testing:integration/activities.add"
+  },
+  {
+    "ffqn": "testing:integration/activities.greet"
+  },
+  {
+    "ffqn": "testing:integration/workflows.add-workflow"
+  }
+]

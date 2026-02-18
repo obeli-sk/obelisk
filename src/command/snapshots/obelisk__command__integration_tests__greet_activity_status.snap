@@ -1,0 +1,19 @@
+---
+source: src/command/integration_tests.rs
+expression: status
+---
+{
+  "component_digest": "sha256:<REDACTED>",
+  "component_type": "activity_js",
+  "created_at": "<TIMESTAMP>",
+  "deployment_id": "Dep_<REDACTED>",
+  "execution_id": "E_<REDACTED>",
+  "ffqn": "testing:integration/activities.greet",
+  "first_scheduled_at": "<TIMESTAMP>",
+  "pending_state": {
+    "finished_at": "<TIMESTAMP>",
+    "result_kind": "ok",
+    "status": "finished",
+    "version": 2
+  }
+}
