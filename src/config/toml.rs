@@ -1152,7 +1152,6 @@ impl ActivityJsComponentConfigToml {
         hasher.update(js_source.as_bytes());
         hasher.update(self.ffqn.as_bytes());
         for p in &parsed_params {
-            hasher.update(p.name.as_ref().as_bytes());
             hasher.update(p.wit_type.as_ref().as_bytes());
         }
         let hash: [u8; 32] = hasher.finalize().into();
