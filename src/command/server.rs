@@ -1567,7 +1567,55 @@ async fn compile_and_verify(
         semaphore::Semaphore::new(permits.try_into().expect("u64 must fit into usize"))
     });
     let parent_span = Span::current();
-    let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = activities_wasm
+    let activity_js_runnable = if let Some(first_activity_js) = activities_js.first() {
+        let engines = engines.clone();
+        let build_semaphore = build_semaphore.clone();
+        let parent_span = parent_span.clone();
+        let wasm_path = first_activity_js.wasm_path.clone();
+        let runnable = tokio::task::spawn_blocking(move || {
+            let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+            let span = info_span!(parent: parent_span, "activity_js_wasm_compile");
+            span.in_scope(|| {
+                debug!("Building activity-js-runtime");
+                let engine = engines.activity_engine.clone();
+                let runnable_component =
+                    RunnableComponent::new(&wasm_path, &engine, ComponentType::ActivityJs)
+                        .expect("FIXME: error handling");
+                runnable_component
+            })
+        })
+        .await
+        .context("panic while compiling activity-js-runtime")?;
+        Some(runnable)
+    } else {
+        None
+    };
+
+    let workflow_js_runnable = if let Some(first_workflow_js) = workflows_js.first() {
+        let engines = engines.clone();
+        let build_semaphore = build_semaphore.clone();
+        let parent_span = parent_span.clone();
+        let wasm_path = first_workflow_js.wasm_path.clone();
+        let runnable = tokio::task::spawn_blocking(move || {
+            let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+            let span = info_span!(parent: parent_span, "workflow_js_wasm_compile");
+            span.in_scope(|| {
+                debug!("Building workflow-js-runtime");
+                let engine = engines.workflow_engine.clone();
+                let runnable_component =
+                    RunnableComponent::new(&wasm_path, &engine, ComponentType::Workflow)
+                        .expect("FIXME: error handling");
+                runnable_component
+            })
+        })
+        .await
+        .context("panic while compiling workflow-js-runtime")?;
+        Some(runnable)
+    } else {
+        None
+    };
+
+    let pre_spawns: Vec<tokio::task::JoinHandle<Result<CompiledComponent, anyhow::Error>>> = activities_wasm
         .into_iter()
         .map(|activity_wasm| {
             let engines = engines.clone();
@@ -1586,15 +1634,16 @@ async fn compile_and_verify(
                 })
             })
         })
-        .chain(activities_js.into_iter().map(|activity_js| {
+        .chain(
+            activities_js.into_iter().map(|activity_js| {
+            // No build_semaphore as the WASM was already compiled.
             let engines = engines.clone();
-            let build_semaphore = build_semaphore.clone();
             let parent_span = parent_span.clone();
+            let activity_js_runnable = activity_js_runnable.clone().expect("must have been filled above");
             tokio::task::spawn_blocking(move || {
-                let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "activity_js_compile", component_id = %activity_js.component_id());
                 span.in_scope(|| {
-                    prespawn_js_activity(activity_js, &engines).map(|(worker, component_config)| {
+                    prespawn_js_activity(activity_js, &engines, activity_js_runnable).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -1653,14 +1702,14 @@ async fn compile_and_verify(
             })
         }))
         .chain(workflows_js.into_iter().map(|workflow_js| {
+            // No build_semaphore as the WASM was already compiled.
             let engines = engines.clone();
-            let build_semaphore = build_semaphore.clone();
             let parent_span = parent_span.clone();
+            let workflow_js_runnable = workflow_js_runnable.clone().expect("must have been filled above");
             tokio::task::spawn_blocking(move || {
-                let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
                 span.in_scope(|| {
-                    prespawn_js_workflow(workflow_js, &engines, workflows_lock_extension_leeway)
+                    prespawn_js_workflow(workflow_js, &engines,workflow_js_runnable, workflows_lock_extension_leeway)
                         .map(|(worker, component_config)| {
                             CompiledComponent::ActivityOrWorkflow {
                                 worker,
@@ -1849,18 +1898,15 @@ fn prespawn_activity(
 fn prespawn_js_activity(
     activity_js: ActivityJsConfigVerified,
     engines: &Engines,
+    runnable_component: RunnableComponent,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::ActivityJs);
-    debug!("Instantiating JS activity");
-    let engine = engines.activity_engine.clone();
-    let runnable_component =
-        RunnableComponent::new(&activity_js.wasm_path, &engine, ComponentType::ActivityJs)?;
 
     let inner = ActivityWorkerCompiled::new_with_config(
         runnable_component,
         activity_js.activity_config,
-        engine,
+        engines.activity_engine.clone(),
         Now.clone_box(),
         TokioSleep,
     )
@@ -1978,14 +2024,12 @@ fn prespawn_workflow(
 fn prespawn_js_workflow(
     workflow_js: WorkflowJsConfigVerified,
     engines: &Engines,
+    runnable_component: RunnableComponent,
     workflows_lock_extension_leeway: Duration,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
-    debug!("Instantiating JS workflow");
     let engine = engines.workflow_engine.clone();
-    let runnable_component =
-        RunnableComponent::new(&workflow_js.wasm_path, &engine, ComponentType::Workflow)?;
 
     let inner = WorkflowWorkerCompiled::new_with_config(
         runnable_component.clone(),
