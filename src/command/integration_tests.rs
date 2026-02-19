@@ -423,6 +423,8 @@ async fn greet_activity_logs() {
         )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
+    // Consume the streamed body to wait for execution to finish.
+    let _: Value = resp.json().await.unwrap();
 
     // Allow log forwarding to flush.
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -446,6 +448,8 @@ async fn greet_activity_status() {
         )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
+    // Consume the streamed body to wait for execution to finish.
+    let _: Value = resp.json().await.unwrap();
 
     let status = server.get_status(&exec_id).await;
     let status = sanitize_json(&status);
