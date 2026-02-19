@@ -30,5 +30,12 @@ expression: components
       "input_digest": "sha256:<REDACTED>",
       "name": "test_add_via_activity_workflow"
     }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_call_activity_workflow"
+    }
   }
 ]
