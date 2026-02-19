@@ -277,9 +277,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let js = join_set_create();
 
         // 2. Submit
-        let exec_id = submit_json(&js, &function, &params_json, config).map_err(|e| {
-            JsNativeError::error().with_message(format!("submit failed: {:?}", e))
-        })?;
+        let exec_id = submit_json(&js, &function, &params_json, config)
+            .map_err(|e| JsNativeError::error().with_message(format!("submit failed: {:?}", e)))?;
 
         // 3. Join next
         let (_response_id, result) = join_next(&js).map_err(|e| {
@@ -294,9 +293,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             // Get the error details
             match get_result_json(&exec_id) {
                 Ok(Err(Some(err_str))) => {
-                    return Err(JsNativeError::error()
-                        .with_message(err_str)
-                        .into());
+                    return Err(JsNativeError::error().with_message(err_str).into());
                 }
                 Ok(Err(None)) => {
                     return Err(JsNativeError::error()
@@ -318,9 +315,9 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                 Ok(parsed)
             }
             Ok(Ok(None)) => Ok(JsValue::null()),
-            Ok(Err(Some(err_str))) => Err(JsNativeError::error()
-                .with_message(err_str)
-                .into()),
+            Ok(Err(Some(err_str))) => {
+                Err(JsNativeError::error().with_message(err_str).into())
+            }
             Ok(Err(None)) => Err(JsNativeError::error()
                 .with_message("child execution failed")
                 .into()),
