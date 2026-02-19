@@ -15,7 +15,7 @@ use std::{path::PathBuf, time::Duration};
 use tokio::sync::watch;
 
 #[cfg(test)]
-mod populate_codegen_cache {
+mod populate_js_codegen_cache {
 
     #[tokio::test]
     async fn test_server() {
