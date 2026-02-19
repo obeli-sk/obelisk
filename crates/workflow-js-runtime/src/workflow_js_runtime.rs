@@ -315,9 +315,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                 Ok(parsed)
             }
             Ok(Ok(None)) => Ok(JsValue::null()),
-            Ok(Err(Some(err_str))) => {
-                Err(JsNativeError::error().with_message(err_str).into())
-            }
+            Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
             Ok(Err(None)) => Err(JsNativeError::error()
                 .with_message("child execution failed")
                 .into()),
