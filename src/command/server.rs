@@ -1567,6 +1567,8 @@ async fn compile_and_verify(
         semaphore::Semaphore::new(permits.try_into().expect("u64 must fit into usize"))
     });
     let parent_span = Span::current();
+
+    // TODO: other components are not compiled in parallel.
     let activity_js_runnable = if let Some(first_activity_js) = activities_js.first() {
         let engines = engines.clone();
         let build_semaphore = build_semaphore.clone();
@@ -1578,9 +1580,8 @@ async fn compile_and_verify(
             span.in_scope(|| {
                 debug!("Building activity-js-runtime");
                 let engine = engines.activity_engine.clone();
-
                 RunnableComponent::new(&wasm_path, &engine, ComponentType::ActivityJs)
-                    .expect("FIXME: error handling")
+                    .context("cannot compile activity-js-runtime")
             })
         })
         .await
@@ -1588,7 +1589,8 @@ async fn compile_and_verify(
         Some(runnable)
     } else {
         None
-    };
+    }
+    .transpose()?;
 
     let workflow_js_runnable = if let Some(first_workflow_js) = workflows_js.first() {
         let engines = engines.clone();
@@ -1601,9 +1603,8 @@ async fn compile_and_verify(
             span.in_scope(|| {
                 debug!("Building workflow-js-runtime");
                 let engine = engines.workflow_engine.clone();
-
                 RunnableComponent::new(&wasm_path, &engine, ComponentType::Workflow)
-                    .expect("FIXME: error handling")
+                    .context("cannot compile workflow-js-runtime")
             })
         })
         .await
@@ -1611,7 +1612,8 @@ async fn compile_and_verify(
         Some(runnable)
     } else {
         None
-    };
+    }
+    .transpose()?;
 
     let pre_spawns: Vec<tokio::task::JoinHandle<Result<CompiledComponent, anyhow::Error>>> = activities_wasm
         .into_iter()
