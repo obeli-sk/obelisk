@@ -1168,7 +1168,7 @@ impl ActivityJsComponentConfigToml {
         let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
 
         let component_id = ComponentId::new(
-            ComponentType::ActivityJs,
+            ComponentType::ActivityWasm,
             StrVariant::from(self.name),
             InputContentDigest(content_digest),
         )?;

@@ -9,7 +9,7 @@ expression: events
       "event": {
         "locked": {
           "component_id": {
-            "component_type": "activity_js",
+            "component_type": "activity_wasm",
             "input_digest": "sha256:<REDACTED>",
             "name": "test_greet_activity"
           },

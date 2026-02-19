@@ -5,14 +5,14 @@ expression: components
 [
   {
     "component_id": {
-      "component_type": "activity_js",
+      "component_type": "activity_wasm",
       "input_digest": "sha256:<REDACTED>",
       "name": "test_add_activity"
     }
   },
   {
     "component_id": {
-      "component_type": "activity_js",
+      "component_type": "activity_wasm",
       "input_digest": "sha256:<REDACTED>",
       "name": "test_greet_activity"
     }

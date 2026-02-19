@@ -342,7 +342,7 @@ mod tests {
         let clock_fn: Box<dyn ClockFn> = Now.clone_box();
 
         let component_id = concepts::ComponentId::new(
-            ComponentType::ActivityJs,
+            ComponentType::ActivityWasm,
             StrVariant::Static("test_js"),
             InputContentDigest(CONTENT_DIGEST_DUMMY),
         )
@@ -352,7 +352,7 @@ mod tests {
         let (wasm_component, _boa_component_id) = compile_activity_with_engine(
             activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
             &engine,
-            ComponentType::ActivityJs,
+            ComponentType::ActivityWasm,
         )
         .await;
 
@@ -407,7 +407,7 @@ mod tests {
         let clock_fn: Box<dyn ClockFn> = Now.clone_box();
 
         let component_id = concepts::ComponentId::new(
-            ComponentType::ActivityJs,
+            ComponentType::ActivityWasm,
             StrVariant::Static("test_js"),
             InputContentDigest(CONTENT_DIGEST_DUMMY),
         )
@@ -416,7 +416,7 @@ mod tests {
         let (wasm_component, _boa_component_id) = compile_activity_with_engine(
             activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
             &engine,
-            ComponentType::ActivityJs,
+            ComponentType::ActivityWasm,
         )
         .await;
 
@@ -450,7 +450,7 @@ mod tests {
         // So we wrap the params in a list
         let params_json: Vec<serde_json::Value> = vec![json!(params)];
         let component_id = concepts::ComponentId::new(
-            ComponentType::ActivityJs,
+            ComponentType::ActivityWasm,
             StrVariant::Static("test_js"),
             InputContentDigest(CONTENT_DIGEST_DUMMY),
         )
@@ -481,7 +481,7 @@ mod tests {
         params_json: Vec<serde_json::Value>,
     ) -> WorkerContext {
         let component_id = concepts::ComponentId::new(
-            ComponentType::ActivityJs,
+            ComponentType::ActivityWasm,
             StrVariant::Static("test_js"),
             InputContentDigest(CONTENT_DIGEST_DUMMY),
         )

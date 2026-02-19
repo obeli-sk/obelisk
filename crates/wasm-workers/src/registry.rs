@@ -161,14 +161,6 @@ impl ComponentConfigRegistry {
                     _ => false,
                 }
             }
-            ComponentType::ActivityJs => {
-                // just logging + wasi for http
-                match import.ffqn.ifc_fqn.namespace() {
-                    "wasi" => true,
-                    "obelisk" => import.ffqn.ifc_fqn.deref() == "obelisk:log/log@1.0.0",
-                    _ => false,
-                }
-            }
             ComponentType::Workflow => {
                 // log + workflow(-support) + types
                 matches!(

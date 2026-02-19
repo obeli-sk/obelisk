@@ -160,7 +160,7 @@ pub(crate) async fn generate_support_wits(
     overwrite: bool,
 ) -> Result<(), anyhow::Error> {
     let files = match component_type {
-        ComponentType::ActivityWasm | ComponentType::ActivityJs => {
+        ComponentType::ActivityWasm => {
             vec![
                 wit::WIT_OBELISK_ACTIVITY_PACKAGE_PROCESS,
                 wit::WIT_OBELISK_LOG_PACKAGE,

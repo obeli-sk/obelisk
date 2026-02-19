@@ -1574,13 +1574,14 @@ async fn compile_and_verify(
         let build_semaphore = build_semaphore.clone();
         let parent_span = parent_span.clone();
         let wasm_path = first_activity_js.wasm_path.clone();
+        let component_type = first_activity_js.component_id().component_type;
         let runnable = tokio::task::spawn_blocking(move || {
             let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
             let span = info_span!(parent: parent_span, "activity_js_wasm_compile");
             span.in_scope(|| {
                 debug!("Building activity-js-runtime");
                 let engine = engines.activity_engine.clone();
-                RunnableComponent::new(&wasm_path, &engine, ComponentType::ActivityJs)
+                RunnableComponent::new(&wasm_path, &engine, component_type)
                     .context("cannot compile activity-js-runtime")
             })
         })
@@ -1901,7 +1902,7 @@ fn prespawn_js_activity(
     runnable_component: RunnableComponent,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
-    assert!(component_id.component_type == ComponentType::ActivityJs);
+    assert!(component_id.component_type == ComponentType::ActivityWasm);
 
     let inner = ActivityWorkerCompiled::new_with_config(
         runnable_component,

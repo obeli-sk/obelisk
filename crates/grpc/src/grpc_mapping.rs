@@ -276,7 +276,6 @@ impl From<ComponentType> for grpc_gen::ComponentType {
             ComponentType::ActivityWasm => grpc_gen::ComponentType::ActivityWasm,
             ComponentType::ActivityStub => grpc_gen::ComponentType::ActivityStub,
             ComponentType::ActivityExternal => grpc_gen::ComponentType::ActivityExternal,
-            ComponentType::ActivityJs => grpc_gen::ComponentType::ActivityJs,
             ComponentType::Workflow => grpc_gen::ComponentType::Workflow,
             ComponentType::WebhookEndpoint => grpc_gen::ComponentType::WebhookEndpoint,
         }
@@ -290,7 +289,6 @@ impl TryFrom<grpc_gen::ComponentType> for ComponentType {
                 "`ComponentType` must be specified",
             )),
             grpc_gen::ComponentType::ActivityWasm => Ok(ComponentType::ActivityWasm),
-            grpc_gen::ComponentType::ActivityJs => Ok(ComponentType::ActivityJs),
             grpc_gen::ComponentType::ActivityStub => Ok(ComponentType::ActivityStub),
             grpc_gen::ComponentType::ActivityExternal => Ok(ComponentType::ActivityExternal),
             grpc_gen::ComponentType::Workflow => Ok(ComponentType::Workflow),
