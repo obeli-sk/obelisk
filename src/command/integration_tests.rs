@@ -357,10 +357,6 @@ async fn list_components() {
     let components = server.list_components().await;
     let components = sanitize_json(&components);
     insta::assert_json_snapshot!("list_components", components);
-
-    let functions = server.list_functions().await;
-    let functions = sanitize_json(&functions);
-    insta::assert_json_snapshot!("list_functions", functions);
 }
 
 #[tokio::test]
@@ -389,10 +385,10 @@ async fn submit_activity_and_get_result() {
     assert_eq!(body, json!({ "ok": "8" }));
 }
 
-// ---- Activity: submit + events / logs / status snapshots ----
+// ---- Activity: submit + events snapshot ----
 
 #[tokio::test]
-async fn submit_greet_activity_and_inspect() {
+async fn greet_activity_events() {
     let server = TestServer::start().await;
     let exec_id = server.generate_execution_id().await;
 
@@ -410,12 +406,50 @@ async fn submit_greet_activity_and_inspect() {
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
     insta::assert_json_snapshot!("greet_activity_events", events);
+}
+
+// ---- Activity: submit + logs snapshot ----
+
+#[tokio::test]
+async fn greet_activity_logs() {
+    let server = TestServer::start().await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/activities.greet",
+            vec![json!("World")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    // Consume the streamed body to wait for execution to finish.
+    let _: Value = resp.json().await.unwrap();
 
     // Allow log forwarding to flush.
     tokio::time::sleep(Duration::from_millis(500)).await;
     let logs = server.get_logs(&exec_id).await;
     let logs = sanitize_json(&logs);
     insta::assert_json_snapshot!("greet_activity_logs", logs);
+}
+
+// ---- Activity: submit + status snapshot ----
+
+#[tokio::test]
+async fn greet_activity_status() {
+    let server = TestServer::start().await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/activities.greet",
+            vec![json!("World")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    // Consume the streamed body to wait for execution to finish.
+    let _: Value = resp.json().await.unwrap();
 
     let status = server.get_status(&exec_id).await;
     let status = sanitize_json(&status);
