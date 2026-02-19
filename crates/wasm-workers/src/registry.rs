@@ -8,6 +8,7 @@ use concepts::PackageIfcFns;
 use concepts::StrVariant;
 use concepts::component_id::InputContentDigest;
 use concepts::storage::LogLevel;
+use indexmap::IndexMap;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -52,9 +53,9 @@ pub struct ComponentConfigRegistry {
 
 #[derive(Default, Debug)]
 struct ComponentConfigRegistryInner {
-    exported_ffqns_ext: hashbrown::HashMap<FunctionFqn, (ComponentId, FunctionMetadata)>,
+    exported_ffqns_ext: IndexMap<FunctionFqn, (ComponentId, FunctionMetadata)>,
     export_hierarchy: Vec<PackageIfcFns>,
-    ids_to_components: hashbrown::HashMap<InputContentDigest, ComponentConfig>,
+    ids_to_components: IndexMap<InputContentDigest, ComponentConfig>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]

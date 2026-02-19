@@ -3210,6 +3210,7 @@ dependencies = [
  "futures-util",
  "hashbrown 0.16.1",
  "http",
+ "insta",
  "itertools",
  "jsonwebtoken",
  "obeli-sk-concepts",

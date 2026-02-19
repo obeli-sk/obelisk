@@ -123,8 +123,8 @@ pub(crate) mod tests {
 
     mod populate_codegen_cache {
         use crate::{
-            activity::activity_worker::tests::compile_activity,
-            workflow::workflow_worker::tests::compile_workflow,
+            activity::activity_worker::test::compile_activity,
+            workflow::workflow_worker::test::compile_workflow,
         };
 
         #[rstest::rstest(wasm_path => [

@@ -80,6 +80,7 @@ impl PathPrefixes {
             bail!("file does not exist: {path:?}")
         }
     }
+
     pub(crate) fn replace_file_prefix_no_verify(&self, input_path: &str) -> String {
         let path =
             if let (Some(project_dirs), Some(base_dirs)) = (&self.project_dirs, &self.base_dirs) {

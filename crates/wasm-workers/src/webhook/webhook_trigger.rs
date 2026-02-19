@@ -1287,7 +1287,8 @@ pub(crate) mod tests {
     pub(crate) mod nosim {
         use super::*;
         use crate::RunnableComponent;
-        use crate::activity::activity_worker::tests::{compile_activity, new_activity_fibo};
+        use crate::activity::activity_worker::test::compile_activity;
+        use crate::activity::activity_worker::tests::new_activity_fibo;
         use crate::activity::cancel_registry::CancelRegistry;
         use crate::engines::{EngineConfig, Engines};
         use crate::http_request_policy::{AllowedHostConfig, HostPattern};
@@ -1296,9 +1297,8 @@ pub(crate) mod tests {
             self, WebhookEndpointCompiled, WebhookEndpointConfig,
         };
         use crate::workflow::workflow_worker::JoinNextBlockingStrategy;
-        use crate::workflow::workflow_worker::tests::{
-            FIBOA_WORKFLOW_FFQN, compile_workflow, new_workflow_fibo,
-        };
+        use crate::workflow::workflow_worker::test::compile_workflow;
+        use crate::workflow::workflow_worker::tests::{FIBOA_WORKFLOW_FFQN, new_workflow_fibo};
         use concepts::component_id::InputContentDigest;
         use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
         use concepts::storage::DbPoolCloseable;
@@ -1634,14 +1634,12 @@ pub(crate) mod tests {
             .await;
 
             let (workflow_runnable, workflow_component_id) =
-                crate::workflow::workflow_worker::tests::compile_workflow(
-                    test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-                )
-                .await;
+                compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                    .await;
 
             let fn_registry =
                 crate::testing_fn_registry::TestingFnRegistry::new_from_components(vec![
-                    crate::activity::activity_worker::tests::compile_activity(
+                    crate::activity::activity_worker::test::compile_activity(
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                     )
                     .await,
@@ -1808,14 +1806,12 @@ pub(crate) mod tests {
             .await;
 
             let (workflow_runnable, workflow_component_id) =
-                crate::workflow::workflow_worker::tests::compile_workflow(
-                    test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-                )
-                .await;
+                compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                    .await;
 
             let fn_registry =
                 crate::testing_fn_registry::TestingFnRegistry::new_from_components(vec![
-                    crate::activity::activity_worker::tests::compile_activity(
+                    crate::activity::activity_worker::test::compile_activity(
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                     )
                     .await,

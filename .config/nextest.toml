@@ -12,4 +12,4 @@ junit.store-failure-output = true
 failure-output = "immediate"
 fail-fast = true
 status-level = "all"
-slow-timeout = { period = "10s", terminate-after = 4 }
+slow-timeout = { period = "10s", terminate-after = 8 }

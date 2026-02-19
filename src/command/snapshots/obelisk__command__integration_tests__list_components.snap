@@ -1,0 +1,34 @@
+---
+source: src/command/integration_tests.rs
+expression: components
+---
+[
+  {
+    "component_id": {
+      "component_type": "activity_js",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_add_activity"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "activity_js",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_greet_activity"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_add_workflow"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_add_via_activity_workflow"
+    }
+  }
+]

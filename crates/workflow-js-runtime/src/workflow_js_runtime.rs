@@ -12,6 +12,7 @@
 use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::JsRuntimeError;
 use crate::generated::obelisk::log::log as obelisk_log;
 use crate::generated::obelisk::types::execution::{ExecutionId, Function, ResponseId};
+use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
     JoinNextTryError, SubmitConfig, get_result_json, join_next, join_next_try, join_set_close,
@@ -23,9 +24,6 @@ use boa_engine::{
     property::Attribute,
 };
 use std::cell::RefCell;
-
-// Use the resource type from generated bindings
-use crate::generated::obelisk::types::join_set::JoinSet;
 
 // Thread-local storage for JoinSets (WASM is single-threaded)
 thread_local! {
