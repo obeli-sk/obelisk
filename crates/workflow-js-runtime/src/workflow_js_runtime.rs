@@ -249,6 +249,93 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
+    // obelisk.call(ffqn, params, [config])
+    // Convenience: createJoinSet → submit → joinNext → getResult → close, return result
+    let call_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+        let ffqn = args
+            .get_or_undefined(0)
+            .as_string()
+            .ok_or_else(|| JsNativeError::typ().with_message("ffqn must be a string"))?
+            .to_std_string_escaped();
+
+        let (ifc_name, fn_name) = parse_ffqn(&ffqn)?;
+        let function = Function {
+            interface_name: ifc_name,
+            function_name: fn_name,
+        };
+
+        let params_val = args.get_or_undefined(1);
+        let params_json = json_stringify(params_val, ctx)?;
+
+        let config = if let Some(cfg_val) = args.get(2) {
+            parse_submit_config(cfg_val, ctx)?
+        } else {
+            None
+        };
+
+        // 1. Create a one-off join set
+        let js = join_set_create();
+
+        // 2. Submit
+        let exec_id = submit_json(&js, &function, &params_json, config).map_err(|e| {
+            JsNativeError::error().with_message(format!("submit failed: {:?}", e))
+        })?;
+
+        // 3. Join next
+        let (_response_id, result) = join_next(&js).map_err(|e| {
+            JsNativeError::error().with_message(format!("join_next failed: {:?}", e))
+        })?;
+
+        // 4. Close the join set
+        join_set_close(js);
+
+        // 5. Check result
+        if result.is_err() {
+            // Get the error details
+            match get_result_json(&exec_id) {
+                Ok(Err(Some(err_str))) => {
+                    return Err(JsNativeError::error()
+                        .with_message(err_str)
+                        .into());
+                }
+                Ok(Err(None)) => {
+                    return Err(JsNativeError::error()
+                        .with_message("child execution failed")
+                        .into());
+                }
+                _ => {
+                    return Err(JsNativeError::error()
+                        .with_message("child execution failed")
+                        .into());
+                }
+            }
+        }
+
+        // 6. Get result
+        match get_result_json(&exec_id) {
+            Ok(Ok(Some(json_str))) => {
+                let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
+                Ok(parsed)
+            }
+            Ok(Ok(None)) => Ok(JsValue::null()),
+            Ok(Err(Some(err_str))) => Err(JsNativeError::error()
+                .with_message(err_str)
+                .into()),
+            Ok(Err(None)) => Err(JsNativeError::error()
+                .with_message("child execution failed")
+                .into()),
+            Err(e) => Err(JsNativeError::error()
+                .with_message(format!("get_result failed: {:?}", e))
+                .into()),
+        }
+    });
+    obelisk.set(
+        js_string!("call"),
+        call_fn.to_js_function(context.realm()),
+        false,
+        context,
+    )?;
+
     // obelisk.getResult(executionId)
     let get_result_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let exec_id_str = args
