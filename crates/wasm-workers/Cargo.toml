@@ -48,7 +48,6 @@ wasmtime.workspace = true
 
 [features]
 test = []
-boa-unstable-workflow = []
 
 [dev-dependencies]
 activity-js-runtime-builder.workspace = true
@@ -57,7 +56,6 @@ db-sqlite = { workspace = true, features = ["tempfile"] }
 db-tests.workspace = true
 executor = { workspace = true, features = ["test"] }
 test-db-macro.workspace = true
-test-programs-adhoc-js-workflow-builder.workspace = true
 test-programs-dir-activity-builder.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-webhook-builder.workspace = true

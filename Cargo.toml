@@ -170,7 +170,6 @@ members = [
     "crates/testing/test-programs/stub/activity/builder",
     "crates/testing/test-programs/stub/workflow",
     "crates/testing/test-programs/stub/workflow/builder",
-    "crates/testing/test-programs/adhoc-js-workflow/builder",
     "crates/activity-js-runtime",
     "crates/activity-js-runtime/builder",
     "crates/workflow-js-runtime",
@@ -208,7 +207,6 @@ test-programs-dir-activity-builder = { path = "crates/testing/test-programs/dir/
 test-programs-fibo-activity-builder = { path = "crates/testing/test-programs/fibo/activity/builder" }
 test-programs-fibo-webhook-builder = { path = "crates/testing/test-programs/fibo/webhook/builder" }
 test-programs-fibo-workflow-builder = { path = "crates/testing/test-programs/fibo/workflow/builder" }
-test-programs-adhoc-js-workflow-builder = { path = "crates/testing/test-programs/adhoc-js-workflow/builder" }
 test-programs-http-get-activity-builder = { path = "crates/testing/test-programs/http/activity/builder" }
 test-programs-http-get-workflow-builder = { path = "crates/testing/test-programs/http/workflow/builder" }
 test-programs-http-get-webhook-builder = { path = "crates/testing/test-programs/http/webhook/builder" }
