@@ -72,12 +72,12 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: junit-report
-          path: target/nextest/${{ github.job }}/junit-${{ matrix.report }}.xml
+          path: target/nextest/${{ github.job }}/${{ matrix.report }}
 
       - name: Report results in GitHub UI
         uses: dorny/test-reporter@b082adf0eced0765477756c2a610396589b8c637
         if: always()
         with:
           name: Rust tests
-          path: target/nextest/${{ github.job }}/junit-${{ matrix.report }}.xml
+          path: target/nextest/${{ github.job }}/${{ matrix.report }}
           reporter: java-junit
