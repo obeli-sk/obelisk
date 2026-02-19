@@ -30,8 +30,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - additional: ""
-          - additional: "-F activity-js-local -F workflow-js-local"
+          - report: junit.xml
+            additional: ""
+          - report: junit-js-local.xml
+            additional: "-F activity-js-local -F workflow-js-local --config junit.path="junit-js-local.xml"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -70,12 +72,12 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: junit-report
-          path: target/nextest/${{ github.job }}/junit.xml
+          path: target/nextest/${{ github.job }}/junit-${{ matrix.report }}.xml
 
       - name: Report results in GitHub UI
         uses: dorny/test-reporter@b082adf0eced0765477756c2a610396589b8c637
         if: always()
         with:
           name: Rust tests
-          path: target/nextest/${{ github.job }}/junit.xml
+          path: target/nextest/${{ github.job }}/junit-${{ matrix.report }}.xml
           reporter: java-junit
