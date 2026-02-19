@@ -33,7 +33,7 @@ jobs:
           - report: junit.xml
             additional: ""
           - report: junit-js-local.xml
-            additional: "-F activity-js-local -F workflow-js-local --config junit.path="junit-js-local.xml"
+            additional: "-F activity-js-local -F workflow-js-local --config junit.path=\"junit-js-local.xml\""
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
