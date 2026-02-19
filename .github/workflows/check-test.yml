@@ -53,7 +53,7 @@ jobs:
         run: nix develop --command scripts/test-phase1.sh
         env:
           CI: true
-          ADDITIONAL_FEATURES: "{{ matrix.additional }}"
+          ADDITIONAL_FEATURES: "${{ matrix.additional }}"
 
       - name: test
         run: nix develop --command scripts/test-phase2.sh
@@ -64,7 +64,7 @@ jobs:
           TEST_POSTGRES_USER: "postgres"
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
-          ADDITIONAL_FEATURES: "{{ matrix.additional }}"
+          ADDITIONAL_FEATURES: "${{ matrix.additional }}"
 
       - name: Upload test results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
