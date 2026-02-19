@@ -151,15 +151,6 @@ pub(crate) mod tests {
             compile_workflow(wasm_path).await;
         }
 
-        #[cfg(feature = "boa-unstable-workflow")]
-        #[rstest::rstest(wasm_path => [
-            test_programs_adhoc_js_workflow_builder::TEST_PROGRAMS_ADHOC_JS_WORKFLOW
-            ])]
-        #[tokio::test]
-        async fn workflow_adhoc(wasm_path: &str) {
-            compile_workflow(wasm_path).await;
-        }
-
         #[rstest::rstest(wasm_path => [
             test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
             ])]

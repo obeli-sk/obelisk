@@ -8,7 +8,6 @@
 │   ├── config/             # Configuration handling
 │   └── server/             # gRPC and HTTP API servers
 ├── crates/
-│   ├── adhoc-js-workflow/  # Ad-hoc JS workflow component (Boa JS engine)
 │   ├── concepts/           # Core types, traits, storage interfaces
 │   ├── db-sqlite/          # SQLite implementation
 │   ├── db-postgres/        # PostgreSQL implementation
@@ -121,17 +120,6 @@ Implementation pattern:
 | REST API | `src/server/web_api_server.rs` |
 | Type conversions (gRPC) | `crates/grpc/src/grpc_mapping.rs` |
 | Test utilities | `crates/testing/test-utils/src/` |
-
-## Ad-hoc JavaScript Workflows
-
-The `crates/adhoc-js-workflow/` crate provides a WASM component that executes JavaScript
-as workflows using the [Boa](https://boajs.dev/) JS engine.
-
-```sh
-cargo build -p adhoc-js-workflow --target wasm32-wasip2 --release
-```
-
-See `crates/adhoc-js-workflow/README.md` for the JavaScript API.
 
 ## Commit Messages
 

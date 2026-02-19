@@ -30,10 +30,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - report: junit.xml
+          - report: junit-default.xml
             additional: ""
           - report: junit-js-local.xml
-            additional: "-F activity-js-local -F workflow-js-local --config junit.path="junit-js-local.xml"
+            additional: "-F activity-js-local -F workflow-js-local"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -68,16 +68,20 @@ jobs:
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
           ADDITIONAL_FEATURES: "${{ matrix.additional }}"
 
+      - name: Rename test report
+        run: mv target/nextest/ci-test/junit.xml target/nextest/ci-test/${{ matrix.report }}
+
       - name: Upload test results
+        if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: junit-report
-          path: target/nextest/${{ github.job }}/junit-${{ matrix.report }}.xml
+          name: ${{ matrix.report }}
+          path: target/nextest/ci-test/${{ matrix.report }}
 
       - name: Report results in GitHub UI
         uses: dorny/test-reporter@b082adf0eced0765477756c2a610396589b8c637
         if: always()
         with:
           name: Rust tests
-          path: target/nextest/${{ github.job }}/junit-${{ matrix.report }}.xml
+          path: target/nextest/ci-test/${{ matrix.report }}
           reporter: java-junit
