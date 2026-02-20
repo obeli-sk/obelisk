@@ -353,7 +353,7 @@ impl WorkflowJsWorker {
             lock_extension: Duration::ZERO,
             subscription_interruption: None,
             component_id,
-            stub_wasi: true,
+            stub_wasi: true, // no harm, stub it in any case
             fuel: None,
         };
 
