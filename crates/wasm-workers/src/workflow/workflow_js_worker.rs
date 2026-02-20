@@ -14,22 +14,22 @@ use concepts::storage::{DbConnection, DbPool, Locked};
 use concepts::time::{ClockFn, ConstClock};
 use concepts::{
     ComponentId, ComponentRetryConfig, ExecutionFailureKind, ExecutionId, ExecutionMetadata,
-    FnName, FinishedExecutionError, FunctionExtension, FunctionFqn, FunctionMetadata,
+    FinishedExecutionError, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
     FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, Params,
     ResultParsingError, ResultParsingErrorFromVal, ReturnType, ReturnTypeNonExtendable,
-    StrVariant, SupportedFunctionReturnValue, SUFFIX_FN_AWAIT_NEXT,
-    SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
+    SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
+    SUFFIX_PKG_SCHEDULE, StrVariant, SupportedFunctionReturnValue,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
 use indexmap::IndexMap;
+use indexmap::indexmap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug};
 use utils::wasm_tools::ExIm;
-use indexmap::indexmap;
 use val_json::type_wrapper::{TypeKey, TypeWrapper};
 use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::Engine;
@@ -642,7 +642,13 @@ fn make_fn_metadata_ext(primary: &FunctionMetadata) -> Vec<FunctionMetadata> {
         submittable: true,
     };
 
-    vec![primary.clone(), fn_submit, fn_await_next, fn_get, fn_schedule]
+    vec![
+        primary.clone(),
+        fn_submit,
+        fn_await_next,
+        fn_get,
+        fn_schedule,
+    ]
 }
 
 /// Build exports hierarchy including extension packages.
