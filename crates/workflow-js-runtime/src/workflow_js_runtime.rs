@@ -208,9 +208,11 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     )?;
 
     // obelisk.randomU64(min, maxExclusive)
+    // JS numbers are f64: inputs are exact up to Number.MAX_SAFE_INTEGER (2^53-1).
+    // Since the return value is always < maxExclusive, it is also within safe range.
     let random_u64_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let min = args.get_or_undefined(0).to_u32(ctx)? as u64;
-        let max = args.get_or_undefined(1).to_u32(ctx)? as u64;
+        let min = args.get_or_undefined(0).to_number(ctx)? as u64;
+        let max = args.get_or_undefined(1).to_number(ctx)? as u64;
         let result = random_u64(min, max);
         Ok(JsValue::from(result))
     });
@@ -222,9 +224,10 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     )?;
 
     // obelisk.randomU64Inclusive(min, max)
+    // Same f64 precision note as randomU64 above: result <= max, so always safe.
     let random_u64_inclusive_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let min = args.get_or_undefined(0).to_u32(ctx)? as u64;
-        let max = args.get_or_undefined(1).to_u32(ctx)? as u64;
+        let min = args.get_or_undefined(0).to_number(ctx)? as u64;
+        let max = args.get_or_undefined(1).to_number(ctx)? as u64;
         let result = random_u64_inclusive(min, max);
         Ok(JsValue::from(result))
     });
