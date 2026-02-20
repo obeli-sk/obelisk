@@ -1757,6 +1757,15 @@ impl EventHistory {
     }
 
     /// Get processed response as JSON result without function type checking.
+    /// Look up the target function FFQN for a child execution.
+    /// Returns `None` if the execution ID was not submitted by this workflow.
+    pub(crate) fn get_child_execution_ffqn(
+        &self,
+        child_execution_id: &ExecutionIdDerived,
+    ) -> Option<&FunctionFqn> {
+        self.index_child_exe_to_ffqn.get(child_execution_id)
+    }
+
     /// Returns `Ok(Some(json))` for Ok values, `Err(Some(json))` for Err values,
     /// or `Ok(None)`/`Err(None)` for unit types.
     pub(crate) fn get_processed_response_json(
