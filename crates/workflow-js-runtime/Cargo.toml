@@ -9,9 +9,9 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+boa_engine = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false }
 serde_json.workspace = true
 wit-bindgen.workspace = true
-boa_engine = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false }
 
 [build-dependencies]
 anyhow.workspace = true

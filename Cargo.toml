@@ -12,8 +12,8 @@ version.workspace = true
 
 [dependencies]
 concepts.workspace = true
-db-sqlite.workspace = true
 db-postgres.workspace = true
+db-sqlite.workspace = true
 executor.workspace = true
 grpc.workspace = true
 utils.workspace = true
@@ -45,22 +45,22 @@ itertools.workspace = true
 jsonwebtoken.workspace = true # Enable rust_crypto features for oci-client's jsonwebtoken dep
 oci-client.workspace = true
 oci-wasm.workspace = true
-rustls.workspace = true # Enable ring crypto provider for rustls (instead of aws-lc-rs)
 prost-wkt-types.workspace = true
 prost.workspace = true
 rand.workspace = true
 reqwest.workspace = true
+rustls.workspace = true # Enable ring crypto provider for rustls (instead of aws-lc-rs)
 schemars.workspace = true
-semver.workspace = true
 secrecy.workspace = true
+semver.workspace = true
 serde_json.workspace = true
 serde_with.workspace = true
 serde.workspace = true
 sha2.workspace = true
 strum.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tokio-stream.workspace = true
-tempfile.workspace = true
 tokio.workspace = true
 toml_edit.workspace = true
 toml.workspace = true
@@ -76,11 +76,11 @@ tonic-web.workspace = true
 tower-http.workspace = true
 tower.workspace = true
 tracing-appender.workspace = true
+tracing-error.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
-tracing-error.workspace = true
-utoipa.workspace = true
 utoipa-axum.workspace = true
+utoipa.workspace = true
 wasmtime.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
@@ -127,33 +127,35 @@ workspace = true
 [workspace]
 resolver = "2"
 members = [
+    "crates/activity-js-runtime",
+    "crates/activity-js-runtime/builder",
     "crates/bench",
-    "crates/testing/component-builder",
     "crates/concepts",
+    "crates/db-common",
     "crates/db-mem",
     "crates/db-postgres",
-    "crates/db-common",
     "crates/db-sqlite",
     "crates/executor",
     "crates/grpc",
-    "crates/testing/db-tests",
+    "crates/testing/component-builder",
     "crates/testing/db-macro",
+    "crates/testing/db-tests",
     "crates/testing/test-programs/dir/activity",
     "crates/testing/test-programs/dir/activity/builder",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
     "crates/testing/test-programs/fibo/webhook",
     "crates/testing/test-programs/fibo/webhook/builder",
-    "crates/testing/test-programs/fibo/workflow",
-    "crates/testing/test-programs/fibo/workflow/builder",
     "crates/testing/test-programs/fibo/workflow-outer",
     "crates/testing/test-programs/fibo/workflow-outer/builder",
+    "crates/testing/test-programs/fibo/workflow",
+    "crates/testing/test-programs/fibo/workflow/builder",
     "crates/testing/test-programs/http/activity",
     "crates/testing/test-programs/http/activity/builder",
-    "crates/testing/test-programs/http/workflow",
-    "crates/testing/test-programs/http/workflow/builder",
     "crates/testing/test-programs/http/webhook",
     "crates/testing/test-programs/http/webhook/builder",
+    "crates/testing/test-programs/http/workflow",
+    "crates/testing/test-programs/http/workflow/builder",
     "crates/testing/test-programs/process/activity",
     "crates/testing/test-programs/process/activity/builder",
     "crates/testing/test-programs/serde/activity",
@@ -170,14 +172,11 @@ members = [
     "crates/testing/test-programs/stub/activity/builder",
     "crates/testing/test-programs/stub/workflow",
     "crates/testing/test-programs/stub/workflow/builder",
-    "crates/activity-js-runtime",
-    "crates/activity-js-runtime/builder",
-    "crates/workflow-js-runtime",
-    "crates/workflow-js-runtime/builder",
     "crates/testing/test-utils",
     "crates/utils",
     "crates/val-json",
     "crates/wasm-workers",
+    "crates/workflow-js-runtime",
 ]
 
 [workspace.package]
@@ -189,6 +188,7 @@ edition = "2024"
 rust-version = "1.91.0"
 
 [workspace.dependencies]
+activity-js-runtime-builder = { path = "crates/activity-js-runtime/builder" }
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.35.4" }
 db-common = { package = "obeli-sk-db-common", path = "crates/db-common", version = "0.35.4" }
 db-mem = { package = "obeli-sk-db-mem", path = "crates/db-mem", version = "0.35.4" }
@@ -197,8 +197,6 @@ db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version
 db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }
 executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.35.4" }
 grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.35.4" }
-activity-js-runtime-builder = { path = "crates/activity-js-runtime/builder" }
-workflow-js-runtime-builder = { path = "crates/workflow-js-runtime/builder" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
     "genrs",
 ] }
@@ -208,8 +206,8 @@ test-programs-fibo-activity-builder = { path = "crates/testing/test-programs/fib
 test-programs-fibo-webhook-builder = { path = "crates/testing/test-programs/fibo/webhook/builder" }
 test-programs-fibo-workflow-builder = { path = "crates/testing/test-programs/fibo/workflow/builder" }
 test-programs-http-get-activity-builder = { path = "crates/testing/test-programs/http/activity/builder" }
-test-programs-http-get-workflow-builder = { path = "crates/testing/test-programs/http/workflow/builder" }
 test-programs-http-get-webhook-builder = { path = "crates/testing/test-programs/http/webhook/builder" }
+test-programs-http-get-workflow-builder = { path = "crates/testing/test-programs/http/workflow/builder" }
 test-programs-process-activity-builder = { path = "crates/testing/test-programs/process/activity/builder" }
 test-programs-serde-activity-builder = { path = "crates/testing/test-programs/serde/activity/builder" }
 test-programs-serde-workflow-builder = { path = "crates/testing/test-programs/serde/workflow/builder" }
@@ -221,14 +219,15 @@ test-utils = { path = "crates/testing/test-utils" }
 utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.35.4" }
 val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.35.4" }
 wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.35.4" }
+workflow-js-runtime-builder = { path = "crates/workflow-js-runtime/builder" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }
-axum-accept = "0.0.5"
-axum-extra = { version = "0.12.5", features = ["query"] }
-axum = { version = "0.8.8", features = ["http2"] }
 arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
+axum = { version = "0.8.8", features = ["http2"] }
+axum-accept = "0.0.5"
+axum-extra = { version = "0.12.5", features = ["query"] }
 base64 = "0.22.1"
 bytes = "1.11.1"
 cargo_metadata = "0.23"
@@ -256,8 +255,8 @@ derive_more = { version = "2.1.1", features = [
     "try_from",
 ] }
 derive-where = "1.6.0"
-divan = { version = "4.3", package = "codspeed-divan-compat" }
 directories = "6.0"
+divan = { version = "4.3", package = "codspeed-divan-compat" }
 docker_credential = "1.3.2"
 futures = { version = "0.3.31", default-features = false }
 futures-concurrency = "7.7.1"
@@ -274,11 +273,11 @@ id-arena = "2.3.0"
 indexmap = { version = "2.13", features = ["serde"] }
 insta = { version = "1.46.3", features = ["json"] }
 itertools = "0.14"
+jsonwebtoken = { version = "10", default-features = false }
 lazy_static = "1.5"
 libc = "0.2.182"
 oci-client = { version = "0.16.0", default-features = false }
 oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
-tokio-postgres = { version = "0.7.16", features = ["with-chrono-0_4", "with-serde_json-1"] }
 prost = "0.14.3"
 prost-wkt-types = "0.7"
 quote = "1"
@@ -293,7 +292,6 @@ rustls = { version = "0.23", default-features = false, features = [
     "std",
     "tls12",
 ] }
-jsonwebtoken = { version = "10", default-features = false }
 route-recognizer = "0.3.1"
 rstest = "0.26"
 rusqlite = { version = "0.38.0", features = [
@@ -302,18 +300,17 @@ rusqlite = { version = "0.38.0", features = [
     "serde_json",
 ] }
 schemars = "1.2.1"
-semver = "1.0.27"
-utoipa = { version = "5.4.0", features = ["chrono"] }
-utoipa-axum = "0.2.0"
 secrecy = "0.10.3"
+semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_with = "3.16.1"
 sha2 = "0.10.9"
-syn = { version = "2", features = ["full"] }
 strum = { version = "0.27.2", features = ["derive"] }
+syn = { version = "2", features = ["full"] }
 tempfile = "3.25"
 thiserror = "2.0"
+tokio-postgres = { version = "0.7.16", features = ["with-chrono-0_4", "with-serde_json-1"] }
 tokio = { version = "1", features = [
     "fs",
     "io-util",
@@ -327,12 +324,12 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.18"
-toml_edit = "0.24.1"
 toml = { version = "0.9.12", features = ["preserve_order"] }
+toml_edit = "0.24.1"
 tonic = { version = "0.14.4", default-features = false }
 tonic-prost = "0.14.4"
-tonic-reflection = "0.14.4"
 tonic-prost-build = "0.14.4"
+tonic-reflection = "0.14.4"
 tonic-web = "0.14.4"
 tower = "0.5.3"
 tower-http = { version = "0.6.8", features = ["trace", "cors"] }
@@ -342,6 +339,8 @@ tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 ulid = { version = "1.2", features = ["serde"] }
 url = "2.5.8"
+utoipa = { version = "5.4.0", features = ["chrono"] }
+utoipa-axum = "0.2.0"
 wiremock = "0.6"
 
 # wasmtime

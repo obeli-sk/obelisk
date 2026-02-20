@@ -9,16 +9,16 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-serde_json.workspace = true
-wit-bindgen.workspace = true
 boa_engine = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false } # https://github.com/boa-dev/boa/pull/4528
-boa_runtime = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false, features = ["fetch"] }
 boa_gc = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0" }
-wstd.workspace = true
+boa_runtime = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false, features = ["fetch"] }
 futures-concurrency.workspace = true
 futures-lite = "2.6.1"
 http.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
+wit-bindgen.workspace = true
+wstd.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
