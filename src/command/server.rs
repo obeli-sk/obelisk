@@ -2045,13 +2045,16 @@ fn prespawn_js_workflow(
         workflow_js.js_source.clone(),
         workflow_js.ffqn.clone(),
         workflow_js.params.clone(),
-    );
+    )
+    .with_context(|| format!("cannot create JS workflow worker for {component_id}"))?;
+    let wit = worker.wit();
     Ok(WorkerCompiled::new_js_workflow(
         worker,
         runnable_component,
         workflow_js.exec_config,
         workflow_js.logs_store_min_level,
         workflows_lock_extension_leeway,
+        wit,
         workflow_js.js_source,
         workflow_js.ffqn,
         workflow_js.params,
@@ -2072,7 +2075,7 @@ enum CompiledWorkerKind {
     ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
     ActivityJs(ActivityJsWorkerCompiled<TokioSleep>),
     Workflow(WorkflowWorkerCompiledWithConfig),
-    WorkflowJs(WorkflowJsWorkerCompiledWithConfig),
+    WorkflowJs(Box<WorkflowJsWorkerCompiledWithConfig>),
 }
 
 struct WorkerCompiled {
@@ -2180,6 +2183,7 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         logs_store_min_level: Option<LogLevel>,
         workflows_lock_extension_leeway: Duration,
+        wit: Option<String>,
         js_source: String,
         user_ffqn: FunctionFqn,
         user_params: Vec<concepts::ParameterType>,
@@ -2191,7 +2195,7 @@ impl WorkerCompiled {
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
             }),
             imports: worker.imported_functions().to_vec(),
-            wit: None,
+            wit,
             workflow_replay_info: Some(WorkflowReplayInfo {
                 runnable_component,
                 logs_store_min_level,
@@ -2204,10 +2208,12 @@ impl WorkerCompiled {
         };
         (
             WorkerCompiled {
-                worker: CompiledWorkerKind::WorkflowJs(WorkflowJsWorkerCompiledWithConfig {
-                    worker,
-                    workflows_lock_extension_leeway,
-                }),
+                worker: CompiledWorkerKind::WorkflowJs(Box::new(
+                    WorkflowJsWorkerCompiledWithConfig {
+                        worker,
+                        workflows_lock_extension_leeway,
+                    },
+                )),
                 exec_config,
                 logs_store_min_level,
             },

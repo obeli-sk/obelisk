@@ -133,6 +133,53 @@ impl WasmComponent {
         })
     }
 
+    /// Create a `WasmComponent` from a WIT string (no WASM binary).
+    /// Used for JS workflows/activities where the user interface is synthesized.
+    pub fn new_from_wit_string(
+        wit: &str,
+        component_type: ComponentType,
+    ) -> Result<Self, DecodeError> {
+        let mut resolve = Resolve::default();
+        let group =
+            wit_parser::UnresolvedPackageGroup::parse(PathBuf::new(), wit).map_err(|source| {
+                DecodeError::new_with_source(format!("cannot parse synthesized WIT: {wit}"), source)
+            })?;
+        let main_pkg_id = resolve.push_group(group).map_err(|source| {
+            DecodeError::new_with_source(
+                format!("cannot push synthesized WIT group: {wit}"),
+                source,
+            )
+        })?;
+        let world_id = resolve
+            .select_world(&[main_pkg_id], None)
+            .map_err(|source| {
+                DecodeError::new_with_source(
+                    "cannot select default world from synthesized WIT".to_string(),
+                    source,
+                )
+            })?;
+        let world = resolve
+            .worlds
+            .get(world_id)
+            .expect("world was found by wit-parser");
+        let exim_lite =
+            Self::create_exim_lite(&resolve, world, has_submittable_exports(component_type))?;
+
+        let exim = ExIm::decode(exim_lite, component_type)?;
+        let (resolve, main_pkg_id) = crate::wit::rebuild_resolve(&exim, resolve, main_pkg_id)
+            .map_err(|err| {
+                DecodeError::new_with_source(
+                    "cannot rebuild resolve from synthesized WIT".to_string(),
+                    err,
+                )
+            })?;
+        Ok(Self {
+            exim,
+            resolve,
+            main_pkg_id,
+        })
+    }
+
     pub fn new_from_wit_folder(
         path: impl AsRef<Path>,
         component_type: ComponentType,
@@ -188,6 +235,11 @@ impl WasmComponent {
 
     pub fn wit(&self) -> Result<String, anyhow::Error> {
         crate::wit::wit(&self.resolve, self.main_pkg_id)
+    }
+
+    #[must_use]
+    pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
+        self.exim.get_exports_hierarchy_ext()
     }
 
     pub fn exported_extension_wits(

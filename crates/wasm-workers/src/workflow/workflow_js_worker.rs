@@ -13,24 +13,20 @@ use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{DbConnection, DbPool, Locked};
 use concepts::time::{ClockFn, ConstClock};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ExecutionFailureKind, ExecutionId, ExecutionMetadata,
-    FinishedExecutionError, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
-    FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, Params,
-    ResultParsingError, ResultParsingErrorFromVal, ReturnType, ReturnTypeNonExtendable,
-    SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
-    SUFFIX_PKG_SCHEDULE, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
+    ExecutionMetadata, FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry,
+    PackageIfcFns, ParameterType, Params, ResultParsingError, ResultParsingErrorFromVal,
+    SupportedFunctionReturnValue,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
-use indexmap::IndexMap;
-use indexmap::indexmap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug};
-use utils::wasm_tools::ExIm;
-use val_json::type_wrapper::{TypeKey, TypeWrapper};
+use utils::wasm_tools::WasmComponent;
+use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::Engine;
 
@@ -40,41 +36,42 @@ pub struct WorkflowJsWorkerCompiled {
     js_source: String,
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
-    user_exports_noext: Vec<FunctionMetadata>,
-    user_exports_ext: Vec<FunctionMetadata>,
-    user_exports_hierarchy_ext: Vec<PackageIfcFns>,
+    /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
+    user_wasm_component: WasmComponent,
 }
 
 impl WorkflowJsWorkerCompiled {
-    #[must_use]
     pub fn new(
         inner: WorkflowWorkerCompiled,
         js_source: String,
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
-    ) -> Self {
-        let fn_metadata = make_fn_metadata(user_ffqn.clone(), &user_params);
-        let fn_metadata_ext = make_fn_metadata_ext(&fn_metadata);
-        let hierarchy = make_exports_hierarchy(&fn_metadata, &fn_metadata_ext);
-        Self {
+    ) -> Result<Self, utils::wasm_tools::DecodeError> {
+        let wit = synthesize_wit(&user_ffqn, &user_params);
+        let user_wasm_component =
+            WasmComponent::new_from_wit_string(&wit, ComponentType::Workflow)?;
+        Ok(Self {
             inner,
             js_source,
             user_ffqn,
             user_params,
-            user_exports_noext: vec![fn_metadata],
-            user_exports_ext: fn_metadata_ext,
-            user_exports_hierarchy_ext: hierarchy,
-        }
+            user_wasm_component,
+        })
+    }
+
+    /// Build primary function metadata using the original FFQN (preserving casing).
+    fn primary_fn_metadata(&self) -> FunctionMetadata {
+        make_primary_fn_metadata(self.user_ffqn.clone(), &self.user_params)
     }
 
     #[must_use]
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
-        &self.user_exports_ext
+        self.user_wasm_component.exported_functions(true)
     }
 
     #[must_use]
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
-        &self.user_exports_hierarchy_ext
+        self.user_wasm_component.exports_hierarchy_ext()
     }
 
     #[must_use]
@@ -82,17 +79,25 @@ impl WorkflowJsWorkerCompiled {
         self.inner.imported_functions()
     }
 
+    /// Return WIT text describing the user interface including extension packages.
+    /// Returns `None` if WIT generation fails (should not happen for valid configs).
+    #[must_use]
+    pub fn wit(&self) -> Option<String> {
+        self.user_wasm_component.wit().ok()
+    }
+
     pub fn link(
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
+        let user_exports_noext = vec![self.primary_fn_metadata()];
         let linked = self.inner.link(fn_registry)?;
         Ok(WorkflowJsWorkerLinked {
             inner: linked,
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
             user_params: self.user_params,
-            user_exports_noext: self.user_exports_noext,
+            user_exports_noext,
         })
     }
 }
@@ -338,7 +343,7 @@ impl WorkflowJsWorker {
         deployment_id: DeploymentId,
         component_id: ComponentId,
         wasmtime_component: wasmtime::component::Component,
-        exim: &ExIm,
+        exim: &utils::wasm_tools::ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
         db_conn: &dyn DbConnection,
@@ -447,243 +452,62 @@ impl WorkflowJsWorker {
 }
 
 /// Create the `FunctionMetadata` for the user's JS workflow function with the given parameters.
+/// Build the primary `FunctionMetadata` for the JS workflow's user-facing function,
+/// preserving the original FFQN casing (used for execution matching).
 /// Return type is always `result<string, string>`.
-fn make_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> FunctionMetadata {
+fn make_primary_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> FunctionMetadata {
     let return_type_wrapper = TypeWrapper::Result {
         ok: Some(Box::new(TypeWrapper::String)),
         err: Some(Box::new(TypeWrapper::String)),
     };
     FunctionMetadata {
         ffqn,
-        parameter_types: ParameterTypes(params.to_vec()),
-        return_type: ReturnType::detect(
+        parameter_types: concepts::ParameterTypes(params.to_vec()),
+        return_type: concepts::ReturnType::detect(
             return_type_wrapper,
-            StrVariant::Static("result<string, string>"),
+            concepts::StrVariant::Static("result<string, string>"),
         ),
         extension: None,
         submittable: true,
     }
 }
 
-/// Generate extension functions (submit, await-next, schedule, get) from the primary function.
-///
-/// Replicates the logic from `ExIm::enrich_exports_with_extensions` for `ComponentType::Workflow`,
-/// adapted for the fixed `result<string, string>` return type of JS workflows.
-fn make_fn_metadata_ext(primary: &FunctionMetadata) -> Vec<FunctionMetadata> {
-    let ifc_fqn = &primary.ffqn.ifc_fqn;
-    let fn_name = &primary.ffqn.function_name;
-
-    let ReturnType::Extendable(return_type) = &primary.return_type else {
-        unreachable!("JS workflow return type result<string, string> must be Extendable");
-    };
-
-    // Shared type definitions (matching enrich_exports_with_extensions)
-    let execution_id_type_wrapper =
-        TypeWrapper::Record(indexmap! {TypeKey::new_kebab("id") => TypeWrapper::String});
-    let delay_id_type_wrapper =
-        TypeWrapper::Record(indexmap! {TypeKey::new_kebab("id") => TypeWrapper::String});
-    let join_set_id_type_wrapper = TypeWrapper::Borrow;
-
-    let return_type_execution_id = ReturnType::NonExtendable(ReturnTypeNonExtendable {
-        type_wrapper: execution_id_type_wrapper.clone(),
-        wit_type: StrVariant::Static("execution-id"),
-    });
-    let param_type_execution_id = ParameterType {
-        type_wrapper: execution_id_type_wrapper.clone(),
-        name: StrVariant::Static("execution-id"),
-        wit_type: StrVariant::Static("execution-id"),
-    };
-    let param_type_join_set = ParameterType {
-        type_wrapper: join_set_id_type_wrapper,
-        name: StrVariant::Static("join-set"),
-        wit_type: StrVariant::Static("borrow<join-set>"),
-    };
-    let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
-        TypeKey::new_kebab("milliseconds") => Some(TypeWrapper::U64),
-        TypeKey::new_kebab("seconds") => Some(TypeWrapper::U64),
-        TypeKey::new_kebab("minutes") => Some(TypeWrapper::U32),
-        TypeKey::new_kebab("hours") => Some(TypeWrapper::U32),
-        TypeKey::new_kebab("days") => Some(TypeWrapper::U32),
-    });
-    let param_type_scheduled_at = ParameterType {
-        type_wrapper: TypeWrapper::Variant(indexmap! {
-            TypeKey::new_kebab("now") => None,
-            TypeKey::new_kebab("at") => Some(TypeWrapper::Record(indexmap! {
-                TypeKey::new_kebab("seconds") => TypeWrapper::U64,
-                TypeKey::new_kebab("nanoseconds") => TypeWrapper::U32,
-            })),
-            TypeKey::new_kebab("in") => Some(duration_type_wrapper),
-        }),
-        name: StrVariant::Static("scheduled-at"),
-        wit_type: StrVariant::Static("schedule-at"),
-    };
-
-    let function_type_wrapper = TypeWrapper::Record(indexmap! {
-        TypeKey::new_kebab("interface-name") => TypeWrapper::String,
-        TypeKey::new_kebab("function-name") => TypeWrapper::String,
-    });
-
-    let response_id = TypeWrapper::Variant(indexmap! {
-        TypeKey::new_kebab("execution-id") => Some(execution_id_type_wrapper.clone()),
-        TypeKey::new_kebab("delay-id") => Some(delay_id_type_wrapper),
-    });
-
-    let function_mismatch_type_wrapper = TypeWrapper::Record(indexmap! {
-        TypeKey::new_kebab("specified-function") => function_type_wrapper.clone(),
-        TypeKey::new_kebab("actual-function") => TypeWrapper::Option(Box::from(function_type_wrapper)),
-        TypeKey::new_kebab("actual-id") => response_id,
-    });
-
-    let await_next_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-        TypeKey::new_kebab("all-processed") => None,
-        TypeKey::new_kebab("function-mismatch") => Some(function_mismatch_type_wrapper.clone()),
-    });
-
-    let get_extension_error_type_wrapper = TypeWrapper::Variant(indexmap! {
-        TypeKey::new_kebab("function-mismatch") => Some(function_mismatch_type_wrapper),
-        TypeKey::new_kebab("not-found-in-processed-responses") => None,
-    });
-
-    // Build extension IFCs
-    let obelisk_ext_ifc = IfcFqnName::from_parts(
-        ifc_fqn.namespace(),
-        &format!("{}{SUFFIX_PKG_EXT}", ifc_fqn.package_name()),
-        ifc_fqn.ifc_name(),
-        ifc_fqn.version(),
-    );
-    let obelisk_schedule_ifc = IfcFqnName::from_parts(
-        ifc_fqn.namespace(),
-        &format!("{}{SUFFIX_PKG_SCHEDULE}", ifc_fqn.package_name()),
-        ifc_fqn.ifc_name(),
-        ifc_fqn.version(),
-    );
-
-    // -submit(join-set, original params) -> execution-id
-    let fn_submit = FunctionMetadata {
-        ffqn: FunctionFqn {
-            ifc_fqn: obelisk_ext_ifc.clone(),
-            function_name: FnName::from(format!("{fn_name}{SUFFIX_FN_SUBMIT}")),
-        },
-        parameter_types: {
-            let mut params = Vec::with_capacity(primary.parameter_types.len() + 1);
-            params.push(param_type_join_set.clone());
-            params.extend_from_slice(&primary.parameter_types.0);
-            ParameterTypes(params)
-        },
-        return_type: return_type_execution_id.clone(),
-        extension: Some(FunctionExtension::Submit),
-        submittable: false,
-    };
-
-    // -await-next(join-set) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>
-    let fn_await_next = FunctionMetadata {
-        ffqn: FunctionFqn {
-            ifc_fqn: obelisk_ext_ifc.clone(),
-            function_name: FnName::from(format!("{fn_name}{SUFFIX_FN_AWAIT_NEXT}")),
-        },
-        parameter_types: ParameterTypes(vec![param_type_join_set]),
-        return_type: {
-            let ok_type_wrapper = TypeWrapper::Tuple(Box::new([
-                execution_id_type_wrapper,
-                TypeWrapper::from(return_type.type_wrapper_tl.clone()),
-            ]));
-            ReturnType::detect(
-                TypeWrapper::Result {
-                    ok: Some(Box::new(ok_type_wrapper)),
-                    err: Some(Box::new(await_next_extension_error_type_wrapper)),
-                },
-                StrVariant::from(format!(
-                    "result<tuple<execution-id, {}>, await-next-extension-error>",
-                    primary.return_type
-                )),
-            )
-        },
-        extension: Some(FunctionExtension::AwaitNext),
-        submittable: false,
-    };
-
-    // -get(execution-id) -> result<result<string, string>, get-extension-error>
-    let fn_get = FunctionMetadata {
-        ffqn: FunctionFqn {
-            ifc_fqn: obelisk_ext_ifc,
-            function_name: FnName::from(format!("{fn_name}{SUFFIX_FN_GET}")),
-        },
-        parameter_types: ParameterTypes(vec![param_type_execution_id]),
-        return_type: ReturnType::detect(
-            TypeWrapper::Result {
-                ok: Some(Box::new(TypeWrapper::from(
-                    return_type.type_wrapper_tl.clone(),
-                ))),
-                err: Some(Box::new(get_extension_error_type_wrapper)),
-            },
-            StrVariant::from(format!(
-                "result<{}, get-extension-error>",
-                return_type.wit_type
-            )),
-        ),
-        extension: Some(FunctionExtension::Get),
-        submittable: false,
-    };
-
-    // -schedule(schedule-at, original params) -> execution-id
-    let fn_schedule = FunctionMetadata {
-        ffqn: FunctionFqn {
-            ifc_fqn: obelisk_schedule_ifc,
-            function_name: FnName::from(format!("{fn_name}{SUFFIX_FN_SCHEDULE}")),
-        },
-        parameter_types: {
-            let mut params = Vec::with_capacity(primary.parameter_types.len() + 1);
-            params.push(param_type_scheduled_at);
-            params.extend_from_slice(&primary.parameter_types.0);
-            ParameterTypes(params)
-        },
-        return_type: return_type_execution_id,
-        extension: Some(FunctionExtension::Schedule),
-        submittable: true,
-    };
-
-    vec![
-        primary.clone(),
-        fn_submit,
-        fn_await_next,
-        fn_get,
-        fn_schedule,
-    ]
+/// Convert an identifier to WIT kebab-case (underscores → hyphens).
+fn to_wit_name(name: &str) -> String {
+    name.replace('_', "-")
 }
 
-/// Build exports hierarchy including extension packages.
-fn make_exports_hierarchy(
-    primary: &FunctionMetadata,
-    all_ext: &[FunctionMetadata],
-) -> Vec<PackageIfcFns> {
-    let mut primary_fns = IndexMap::new();
-    primary_fns.insert(primary.ffqn.function_name.clone(), primary.clone());
+/// Synthesize a WIT string for the JS workflow's user-facing interface.
+///
+/// The generated WIT is parsed by `WasmComponent::new_from_wit_string` which runs
+/// `ExIm::decode` and `rebuild_resolve`, producing the same extension metadata
+/// and printable WIT that standard WASM workflows get.
+fn synthesize_wit(ffqn: &FunctionFqn, params: &[ParameterType]) -> String {
+    let ifc_fqn = &ffqn.ifc_fqn;
+    let namespace = ifc_fqn.namespace();
+    let package_name = ifc_fqn.package_name();
+    let ifc_name = ifc_fqn.ifc_name();
+    let fn_name = to_wit_name(&ffqn.function_name);
 
-    let mut ext_fns: IndexMap<IfcFqnName, IndexMap<FnName, FunctionMetadata>> = IndexMap::new();
-    for fm in all_ext {
-        if fm.extension.is_some() {
-            ext_fns
-                .entry(fm.ffqn.ifc_fqn.clone())
-                .or_default()
-                .insert(fm.ffqn.function_name.clone(), fm.clone());
-        }
-    }
+    let version_suffix = ifc_fqn.version().map_or(String::new(), |v| format!("@{v}"));
 
-    let mut hierarchy = vec![PackageIfcFns {
-        ifc_fqn: primary.ffqn.ifc_fqn.clone(),
-        extension: false,
-        fns: primary_fns,
-    }];
+    let wit_params: Vec<String> = params
+        .iter()
+        .map(|p| format!("{}: {}", to_wit_name(p.name.as_ref()), p.wit_type.as_ref()))
+        .collect();
 
-    for (ifc_fqn, fns) in ext_fns {
-        hierarchy.push(PackageIfcFns {
-            ifc_fqn,
-            extension: true,
-            fns,
-        });
-    }
-
-    hierarchy
+    format!(
+        "package {namespace}:{package_name}{version_suffix};\n\
+         \n\
+         interface {ifc_name} {{\n\
+         \x20   {fn_name}: func({params}) -> result<string, string>;\n\
+         }}\n\
+         \n\
+         world js-workflow {{\n\
+         \x20   export {ifc_name};\n\
+         }}\n",
+        params = wit_params.join(", "),
+    )
 }
 
 #[cfg(test)]
@@ -770,7 +594,8 @@ mod tests {
                 name: StrVariant::Static("params"),
                 wit_type: StrVariant::Static("list<string>"),
             }],
-        );
+        )
+        .unwrap();
 
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
@@ -993,7 +818,8 @@ mod tests {
                 name: StrVariant::Static("params"),
                 wit_type: StrVariant::Static("list<string>"),
             }],
-        );
+        )
+        .unwrap();
 
         let linked = js_compiled.link(fn_registry).unwrap();
 
