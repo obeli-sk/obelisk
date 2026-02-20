@@ -1918,10 +1918,13 @@ fn prespawn_js_activity(
         activity_js.js_source,
         activity_js.ffqn,
         activity_js.params,
-    );
+    )
+    .with_context(|| format!("cannot create JS activity worker for {component_id}"))?;
+    let wit = worker.wit();
     Ok(WorkerCompiled::new_js_activity(
         worker,
         activity_js.exec_config,
+        wit,
         activity_js.logs_store_min_level,
     ))
 }
@@ -2073,7 +2076,7 @@ struct WorkflowJsWorkerCompiledWithConfig {
 
 enum CompiledWorkerKind {
     ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
-    ActivityJs(ActivityJsWorkerCompiled<TokioSleep>),
+    ActivityJs(Box<ActivityJsWorkerCompiled<TokioSleep>>),
     Workflow(WorkflowWorkerCompiledWithConfig),
     WorkflowJs(Box<WorkflowJsWorkerCompiledWithConfig>),
 }
@@ -2114,6 +2117,7 @@ impl WorkerCompiled {
     fn new_js_activity(
         worker: ActivityJsWorkerCompiled<TokioSleep>,
         exec_config: ExecConfig,
+        wit: Option<String>,
         logs_store_min_level: Option<LogLevel>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2123,12 +2127,12 @@ impl WorkerCompiled {
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
             }),
             imports: worker.imported_functions().to_vec(),
-            wit: None,
+            wit,
             workflow_replay_info: None,
         };
         (
             WorkerCompiled {
-                worker: CompiledWorkerKind::ActivityJs(worker),
+                worker: CompiledWorkerKind::ActivityJs(Box::new(worker)),
                 exec_config,
                 logs_store_min_level,
             },
@@ -2264,7 +2268,7 @@ struct WorkflowJsWorkerLinkedWithConfig {
 
 enum LinkedWorkerKind {
     ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
-    ActivityJs(ActivityJsWorkerCompiled<TokioSleep>),
+    ActivityJs(Box<ActivityJsWorkerCompiled<TokioSleep>>),
     Workflow(WorkflowWorkerLinkedWithConfig),
     WorkflowJs(WorkflowJsWorkerLinkedWithConfig),
 }

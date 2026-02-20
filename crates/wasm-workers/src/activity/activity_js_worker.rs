@@ -12,17 +12,16 @@ use async_trait::async_trait;
 use concepts::storage::LogInfoAppendRow;
 use concepts::time::Sleep;
 use concepts::{
-    FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterType, ParameterTypes, Params,
-    ResultParsingError, ResultParsingErrorFromVal, ReturnType, StrVariant,
-    SupportedFunctionReturnValue,
+    ComponentType, FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterType, Params,
+    ResultParsingError, ResultParsingErrorFromVal, SupportedFunctionReturnValue,
 };
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
-use indexmap::IndexMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::debug;
+use utils::wasm_tools::WasmComponent;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
@@ -32,9 +31,8 @@ pub struct ActivityJsWorkerCompiled<S: Sleep> {
     js_source: String,
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
-    user_exports_noext: Vec<FunctionMetadata>,
-    user_exports_ext: Vec<FunctionMetadata>,
-    user_exports_hierarchy_ext: Vec<PackageIfcFns>,
+    /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
+    user_wasm_component: WasmComponent,
 }
 
 impl<S: Sleep> ActivityJsWorkerCompiled<S> {
@@ -43,31 +41,41 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
         js_source: String,
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
-    ) -> Self {
-        let fn_metadata = make_fn_metadata(user_ffqn.clone(), &user_params);
-        let fn_metadata_ext = make_fn_metadata_ext(&fn_metadata);
-        let hierarchy = make_exports_hierarchy(&fn_metadata, &fn_metadata_ext);
-        Self {
+    ) -> Result<Self, utils::wasm_tools::DecodeError> {
+        let wit = synthesize_wit(&user_ffqn, &user_params);
+        let user_wasm_component =
+            WasmComponent::new_from_wit_string(&wit, ComponentType::ActivityWasm)?;
+        Ok(Self {
             inner,
             js_source,
             user_ffqn,
             user_params,
-            user_exports_noext: vec![fn_metadata],
-            user_exports_ext: fn_metadata_ext,
-            user_exports_hierarchy_ext: hierarchy,
-        }
+            user_wasm_component,
+        })
+    }
+
+    /// Build primary function metadata using the original FFQN (preserving casing).
+    fn primary_fn_metadata(&self) -> FunctionMetadata {
+        make_primary_fn_metadata(self.user_ffqn.clone(), &self.user_params)
     }
 
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
-        &self.user_exports_ext
+        self.user_wasm_component.exported_functions(true)
     }
 
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
-        &self.user_exports_hierarchy_ext
+        self.user_wasm_component.exports_hierarchy_ext()
     }
 
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         self.inner.imported_functions()
+    }
+
+    /// Return WIT text describing the user interface including extension packages.
+    /// Returns `None` if WIT generation fails (should not happen for valid configs).
+    #[must_use]
+    pub fn wit(&self) -> Option<String> {
+        self.user_wasm_component.wit().ok()
     }
 
     pub fn into_worker(
@@ -76,6 +84,7 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> ActivityJsWorker<S> {
+        let user_exports_noext = vec![self.primary_fn_metadata()];
         let inner =
             self.inner
                 .into_worker(cancel_registry, log_forwarder_sender, logs_storage_config);
@@ -84,7 +93,7 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
             user_params: self.user_params,
-            user_exports_noext: self.user_exports_noext,
+            user_exports_noext,
         }
     }
 }
@@ -266,48 +275,62 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
     }
 }
 
-/// Create the `FunctionMetadata` for the user's JS function with the given parameters.
+/// Build the primary `FunctionMetadata` for the JS activity's user-facing function,
+/// preserving the original FFQN casing (used for execution matching).
 /// Return type is always `result<string, string>`.
-fn make_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> FunctionMetadata {
+fn make_primary_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> FunctionMetadata {
     let return_type_wrapper = TypeWrapper::Result {
         ok: Some(Box::new(TypeWrapper::String)),
         err: Some(Box::new(TypeWrapper::String)),
     };
     FunctionMetadata {
         ffqn,
-        parameter_types: ParameterTypes(params.to_vec()),
-        return_type: ReturnType::detect(
+        parameter_types: concepts::ParameterTypes(params.to_vec()),
+        return_type: concepts::ReturnType::detect(
             return_type_wrapper,
-            StrVariant::Static("result<string, string>"),
+            concepts::StrVariant::Static("result<string, string>"),
         ),
         extension: None,
         submittable: true,
     }
 }
 
-/// Generate extension functions (submit, await-next, schedule, get) from the primary function.
-/// This reuses the same logic as the `ExIm` decoder in `wasm_tools`.
-fn make_fn_metadata_ext(primary: &FunctionMetadata) -> Vec<FunctionMetadata> {
-    // For now, just return the primary function.
-    // Extension functions will be generated by the ExIm::decode machinery
-    // when the ComponentConfig is registered.
-    // Actually, we need to provide the full set including extensions,
-    // since WorkerCompiled::new_activity reads them from the worker.
-    // Let's just return the primary for now - the registry generates extensions.
-    vec![primary.clone()]
+/// Convert an identifier to WIT kebab-case (underscores → hyphens).
+fn to_wit_name(name: &str) -> String {
+    name.replace('_', "-")
 }
 
-fn make_exports_hierarchy(
-    primary: &FunctionMetadata,
-    _ext: &[FunctionMetadata],
-) -> Vec<PackageIfcFns> {
-    let mut fns = IndexMap::new();
-    fns.insert(primary.ffqn.function_name.clone(), primary.clone());
-    vec![PackageIfcFns {
-        ifc_fqn: primary.ffqn.ifc_fqn.clone(),
-        extension: false,
-        fns,
-    }]
+/// Synthesize a WIT string for the JS activity's user-facing interface.
+///
+/// The generated WIT is parsed by `WasmComponent::new_from_wit_string` which runs
+/// `ExIm::decode` and `rebuild_resolve`, producing the same extension metadata
+/// and printable WIT that standard WASM activities get.
+fn synthesize_wit(ffqn: &FunctionFqn, params: &[ParameterType]) -> String {
+    let ifc_fqn = &ffqn.ifc_fqn;
+    let namespace = ifc_fqn.namespace();
+    let package_name = ifc_fqn.package_name();
+    let ifc_name = ifc_fqn.ifc_name();
+    let fn_name = to_wit_name(&ffqn.function_name);
+
+    let version_suffix = ifc_fqn.version().map_or(String::new(), |v| format!("@{v}"));
+
+    let wit_params: Vec<String> = params
+        .iter()
+        .map(|p| format!("{}: {}", to_wit_name(p.name.as_ref()), p.wit_type.as_ref()))
+        .collect();
+
+    format!(
+        "package {namespace}:{package_name}{version_suffix};\n\
+         \n\
+         interface {ifc_name} {{\n\
+         \x20   {fn_name}: func({params}) -> result<string, string>;\n\
+         }}\n\
+         \n\
+         world js-activity {{\n\
+         \x20   export {ifc_name};\n\
+         }}\n",
+        params = wit_params.join(", "),
+    )
 }
 
 #[cfg(test)]
@@ -376,7 +399,8 @@ mod tests {
                 name: StrVariant::Static("params"),
                 wit_type: StrVariant::Static("list<string>"),
             }],
-        );
+        )
+        .unwrap();
 
         Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
     }
@@ -440,7 +464,8 @@ mod tests {
         .unwrap();
 
         let js_compiled =
-            ActivityJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn, user_params);
+            ActivityJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn, user_params)
+                .unwrap();
 
         Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
     }
