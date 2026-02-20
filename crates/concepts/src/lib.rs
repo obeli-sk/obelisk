@@ -788,13 +788,19 @@ impl SupportedFunctionReturnValue {
             SupportedFunctionReturnValue::Ok { ok: Some(v) } => Ok(Some(Box::new(v.value))),
             SupportedFunctionReturnValue::Err { err: None } => Err(None),
             SupportedFunctionReturnValue::Err { err: Some(v) } => Err(Some(Box::new(v.value))),
-            SupportedFunctionReturnValue::ExecutionError(_) => {
-                Err(Self::execution_error_to_wast_val_err(&get_return_type()))
+            SupportedFunctionReturnValue::ExecutionError(err) => {
+                Err(Self::execution_error_to_wast_val_err(
+                    &get_return_type(),
+                    err.detail.as_deref(),
+                ))
             }
         }
     }
 
-    fn execution_error_to_wast_val_err(ret_type: &TypeWrapperTopLevel) -> Option<Box<WastVal>> {
+    fn execution_error_to_wast_val_err(
+        ret_type: &TypeWrapperTopLevel,
+        detail: Option<&str>,
+    ) -> Option<Box<WastVal>> {
         match ret_type {
             TypeWrapperTopLevel { ok: _, err: None } => None,
             TypeWrapperTopLevel {
@@ -804,14 +810,39 @@ impl SupportedFunctionReturnValue {
                 TypeWrapper::String => Some(Box::new(WastVal::String(
                     EXECUTION_FAILED_STRING_OR_VARIANT.to_string(),
                 ))),
-                TypeWrapper::Variant(variants)
-                    if variants.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT))
-                        == Some(&None) =>
-                {
-                    Some(Box::new(WastVal::Variant(
-                        ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT),
-                        None,
-                    )))
+                TypeWrapper::Variant(variants) => {
+                    let payload_type = variants
+                        .get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT));
+                    match payload_type {
+                        Some(None) => {
+                            // execution-failed (no payload)
+                            Some(Box::new(WastVal::Variant(
+                                ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT),
+                                None,
+                            )))
+                        }
+                        Some(Some(TypeWrapper::Option(inner)))
+                            if matches!(inner.as_ref(), TypeWrapper::String) =>
+                        {
+                            // execution-failed(option<string>)
+                            let payload = detail.map(|s| {
+                                Box::new(WastVal::Option(Some(Box::new(WastVal::String(
+                                    s.to_string(),
+                                )))))
+                            }).unwrap_or_else(|| {
+                                Box::new(WastVal::Option(None))
+                            });
+                            Some(Box::new(WastVal::Variant(
+                                ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT),
+                                Some(payload),
+                            )))
+                        }
+                        _ => {
+                            unreachable!(
+                                "unexpected top-level return type {ret_type:?} cannot be ReturnTypeCompatible"
+                            )
+                        }
+                    }
                 }
                 _ => {
                     unreachable!(
@@ -2017,6 +2048,19 @@ impl<'a> arbitrary::Arbitrary<'a> for JoinSetId {
 }
 
 const EXECUTION_FAILED_STRING_OR_VARIANT: &str = "execution-failed";
+
+/// Check if the `execution-failed` variant payload is compatible.
+/// Accepts no payload (`None`) or `option<string>` payload.
+fn is_execution_failed_payload_compatible(
+    payload: &Option<TypeWrapper>,
+) -> bool {
+    match payload {
+        None => true,
+        Some(TypeWrapper::Option(inner)) => matches!(inner.as_ref(), TypeWrapper::String),
+        _ => false,
+    }
+}
+
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
 )]
@@ -2032,7 +2076,7 @@ impl ReturnType {
     /// * `result<_, string>`
     /// * `result<T, string>`
     /// * `result<T, E>` where T can be `_` and E is a `variant` containing `execution-failed`
-    ///   variant with no associated value.
+    ///   variant with no associated value or `option<string>` associated value.
     ///
     /// Additionally, error variants may optionally include a case containing the word `permanent`
     /// (e.g., `permanent-failure`, `permanent-error`) to signal that the error should not be retried.
@@ -2051,8 +2095,9 @@ impl ReturnType {
                     wit_type,
                 });
             } else if let TypeWrapper::Variant(fields) = err.as_ref()
-                && let Some(None) =
+                && let Some(payload) =
                     fields.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT))
+                && is_execution_failed_payload_compatible(payload)
             {
                 return ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },

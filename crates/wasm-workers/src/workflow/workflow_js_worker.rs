@@ -293,12 +293,23 @@ impl Worker for WorkflowJsWorker {
                                 // This variant is returned when a workflow function fails,
                                 // e.g., when joinNext returns an error from a child execution.
                                 // We propagate this as an ExecutionError.
+                                // Extract optional detail from execution-failed(option<string>)
+                                let detail = payload.as_ref().and_then(|p| match p.as_ref() {
+                                    WastVal::Option(Some(inner)) => {
+                                        if let WastVal::String(s) = inner.as_ref() {
+                                            Some(s.clone())
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    _ => None,
+                                });
                                 Ok(WorkerResultOk::Finished {
                                     retval: SupportedFunctionReturnValue::ExecutionError(
                                         FinishedExecutionError {
                                             kind: ExecutionFailureKind::Uncategorized,
                                             reason: Some("js-runtime execution-failed".to_string()),
-                                            detail: None,
+                                            detail,
                                         },
                                     ),
                                     version,
