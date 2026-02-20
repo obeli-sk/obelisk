@@ -788,12 +788,9 @@ impl SupportedFunctionReturnValue {
             SupportedFunctionReturnValue::Ok { ok: Some(v) } => Ok(Some(Box::new(v.value))),
             SupportedFunctionReturnValue::Err { err: None } => Err(None),
             SupportedFunctionReturnValue::Err { err: Some(v) } => Err(Some(Box::new(v.value))),
-            SupportedFunctionReturnValue::ExecutionError(err) => {
-                Err(Self::execution_error_to_wast_val_err(
-                    &get_return_type(),
-                    err.detail.as_deref(),
-                ))
-            }
+            SupportedFunctionReturnValue::ExecutionError(err) => Err(
+                Self::execution_error_to_wast_val_err(&get_return_type(), err.detail.as_deref()),
+            ),
         }
     }
 
@@ -811,8 +808,8 @@ impl SupportedFunctionReturnValue {
                     EXECUTION_FAILED_STRING_OR_VARIANT.to_string(),
                 ))),
                 TypeWrapper::Variant(variants) => {
-                    let payload_type = variants
-                        .get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT));
+                    let payload_type =
+                        variants.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT));
                     match payload_type {
                         Some(None) => {
                             // execution-failed (no payload)
@@ -825,13 +822,13 @@ impl SupportedFunctionReturnValue {
                             if matches!(inner.as_ref(), TypeWrapper::String) =>
                         {
                             // execution-failed(option<string>)
-                            let payload = detail.map(|s| {
-                                Box::new(WastVal::Option(Some(Box::new(WastVal::String(
-                                    s.to_string(),
-                                )))))
-                            }).unwrap_or_else(|| {
-                                Box::new(WastVal::Option(None))
-                            });
+                            let payload = detail
+                                .map(|s| {
+                                    Box::new(WastVal::Option(Some(Box::new(WastVal::String(
+                                        s.to_string(),
+                                    )))))
+                                })
+                                .unwrap_or_else(|| Box::new(WastVal::Option(None)));
                             Some(Box::new(WastVal::Variant(
                                 ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT),
                                 Some(payload),
@@ -2051,9 +2048,7 @@ const EXECUTION_FAILED_STRING_OR_VARIANT: &str = "execution-failed";
 
 /// Check if the `execution-failed` variant payload is compatible.
 /// Accepts no payload (`None`) or `option<string>` payload.
-fn is_execution_failed_payload_compatible(
-    payload: &Option<TypeWrapper>,
-) -> bool {
+fn is_execution_failed_payload_compatible(payload: Option<&TypeWrapper>) -> bool {
     match payload {
         None => true,
         Some(TypeWrapper::Option(inner)) => matches!(inner.as_ref(), TypeWrapper::String),
@@ -2097,7 +2092,7 @@ impl ReturnType {
             } else if let TypeWrapper::Variant(fields) = err.as_ref()
                 && let Some(payload) =
                     fields.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT))
-                && is_execution_failed_payload_compatible(payload)
+                && is_execution_failed_payload_compatible(payload.as_ref())
             {
                 return ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },
