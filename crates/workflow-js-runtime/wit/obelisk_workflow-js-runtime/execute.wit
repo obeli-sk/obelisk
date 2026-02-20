@@ -4,7 +4,8 @@ interface execute {
 
     variant js-runtime-error {
         /// Must exist to satisfy Obelisk contract.
-        execution-failed,
+        /// Contains optional error detail from the failed child execution.
+        execution-failed(option<string>),
         /// Error when `js-code` could not be evaluated, before actually running the function.
         cannot-declare-function(string),
         /// `js-code` was evaluated, but `fn-name` is not a function.
