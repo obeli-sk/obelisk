@@ -295,11 +295,6 @@ fn make_primary_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> Func
     }
 }
 
-/// Convert an identifier to WIT kebab-case (underscores → hyphens).
-fn to_wit_name(name: &str) -> String {
-    name.replace('_', "-")
-}
-
 /// Synthesize a WIT string for the JS activity's user-facing interface.
 ///
 /// The generated WIT is parsed by `WasmComponent::new_from_wit_string` which runs
@@ -310,13 +305,13 @@ fn synthesize_wit(ffqn: &FunctionFqn, params: &[ParameterType]) -> String {
     let namespace = ifc_fqn.namespace();
     let package_name = ifc_fqn.package_name();
     let ifc_name = ifc_fqn.ifc_name();
-    let fn_name = to_wit_name(&ffqn.function_name);
+    let fn_name = &ffqn.function_name;
 
     let version_suffix = ifc_fqn.version().map_or(String::new(), |v| format!("@{v}"));
 
     let wit_params: Vec<String> = params
         .iter()
-        .map(|p| format!("{}: {}", to_wit_name(p.name.as_ref()), p.wit_type.as_ref()))
+        .map(|p| format!("{}: {}", p.name, p.wit_type.as_ref()))
         .collect();
 
     format!(
@@ -678,7 +673,7 @@ mod tests {
     #[tokio::test]
     async fn js_activity_throwing_object_should_fail_to_typecheck() {
         test_utils::set_up();
-        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "throw_object");
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "throw-object");
         let js_source = r"
             function throw_object() {
                 throw { code: 42, message: 'error' };

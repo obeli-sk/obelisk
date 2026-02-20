@@ -472,11 +472,6 @@ fn make_primary_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> Func
     }
 }
 
-/// Convert an identifier to WIT kebab-case (underscores → hyphens).
-fn to_wit_name(name: &str) -> String {
-    name.replace('_', "-")
-}
-
 /// Synthesize a WIT string for the JS workflow's user-facing interface.
 ///
 /// The generated WIT is parsed by `WasmComponent::new_from_wit_string` which runs
@@ -487,13 +482,13 @@ fn synthesize_wit(ffqn: &FunctionFqn, params: &[ParameterType]) -> String {
     let namespace = ifc_fqn.namespace();
     let package_name = ifc_fqn.package_name();
     let ifc_name = ifc_fqn.ifc_name();
-    let fn_name = to_wit_name(&ffqn.function_name);
+    let fn_name = &ffqn.function_name;
 
     let version_suffix = ifc_fqn.version().map_or(String::new(), |v| format!("@{v}"));
 
     let wit_params: Vec<String> = params
         .iter()
-        .map(|p| format!("{}: {}", to_wit_name(p.name.as_ref()), p.wit_type.as_ref()))
+        .map(|p| format!("{}: {}", p.name, p.wit_type.as_ref()))
         .collect();
 
     format!(
@@ -868,7 +863,7 @@ mod tests {
         let (_guard, db_pool, db_close) = database.set_up().await;
         let sim_clock = SimClock::epoch();
 
-        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test_delay");
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-delay");
         let js_source = r"function test_delay(params) {
             const js = obelisk.createJoinSet();
 
@@ -1061,7 +1056,7 @@ mod tests {
             });
         }";
 
-        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test_all_apis");
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-all-apis");
 
         let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
