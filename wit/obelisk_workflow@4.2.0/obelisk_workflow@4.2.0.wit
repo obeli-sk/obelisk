@@ -115,6 +115,25 @@ interface workflow-support {
     @since(version = 4.1.0)
     join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
 
+    /// Error variants that may occur when calling `stub-json`.
+    @since(version = 4.2.0)
+    variant stub-json-error {
+        /// Cannot parse the execution ID.
+        execution-id-parsing-error(string),
+        /// The target execution was not found or FFQN does not match.
+        not-found,
+        /// Cannot parse the result as JSON.
+        result-parsing-error(string),
+        /// Write conflict — a different result was already stubbed.
+        conflict,
+    }
+
+    /// Write a stub response with a JSON-serialized result for an activity_stub or activity_external execution.
+    /// The `execution-id` must be a derived (child) execution ID.
+    /// The `result-json` is the JSON-serialized return value.
+    @since(version = 4.2.0)
+    stub-json: func(execution-id: execution-id, result-json: string) -> result<_, stub-json-error>;
+
     /// Attempt to process next response without blocking.
     /// Child execution result can be obtained using `-get` extension function using the
     /// returned execution ID.

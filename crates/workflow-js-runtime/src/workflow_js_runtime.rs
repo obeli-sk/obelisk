@@ -17,7 +17,7 @@ use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
     JoinNextTryError, SubmitConfig, get_result_json, join_next, join_next_try, join_set_close,
     join_set_create, join_set_create_named, random_string, random_u64, random_u64_inclusive,
-    schedule_json, sleep, submit_delay, submit_json,
+    schedule_json, sleep, stub_json, submit_delay, submit_json,
 };
 use boa_engine::{
     Context, JsArgs, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source, js_string,
@@ -413,6 +413,32 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     obelisk.set(
         js_string!("schedule"),
         schedule_fn.to_js_function(context.realm()),
+        false,
+        context,
+    )?;
+
+    // obelisk.stub(executionId, result)
+    let stub_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+        let exec_id_str = args
+            .get_or_undefined(0)
+            .as_string()
+            .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
+            .to_std_string_escaped();
+        let exec_id = ExecutionId { id: exec_id_str };
+
+        let result_val = args.get_or_undefined(1);
+        let result_json = json_stringify(result_val, ctx)?;
+
+        match stub_json(&exec_id, &result_json) {
+            Ok(()) => Ok(JsValue::undefined()),
+            Err(e) => Err(JsNativeError::error()
+                .with_message(format!("stub failed: {:?}", e))
+                .into()),
+        }
+    });
+    obelisk.set(
+        js_string!("stub"),
+        stub_fn.to_js_function(context.realm()),
         false,
         context,
     )?;

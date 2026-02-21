@@ -1258,4 +1258,136 @@ mod tests {
         let received = log_storage_recv.recv_many(&mut buffer, 100).await;
         assert_eq!(0, received, "expected no new messages, got {buffer:?}");
     }
+
+    /// Test: JS workflow uses `obelisk.stub()` to stub an activity_stub execution.
+    ///
+    /// This test verifies the `stub-json` WIT function works correctly from JS workflows:
+    /// 1. Submit an activity_stub execution using joinSet.submit()
+    /// 2. Use obelisk.stub(executionId, result) to provide a stubbed response
+    /// 3. Verify the stubbed result is returned via joinNext() and getResult()
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn js_workflow_stub(database: Database) {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let sim_clock = SimClock::epoch();
+
+        // JS code that exercises obelisk.stub() API
+        let js_source = r#"function test_stub(params) {
+            console.log('Testing obelisk.stub()');
+
+            const js = obelisk.createJoinSet();
+
+            /* Submit an activity_stub execution */
+            const ffqn = 'testing:stub-activity/activity.foo';
+            const execId = js.submit(ffqn, ['test-param']);
+            console.log('Submitted activity_stub, execId:', execId);
+
+            /* Stub the response with a success value */
+            obelisk.stub(execId, 'stubbed-result-42');
+            console.log('Stubbed the execution');
+
+            /* Join to get the response */
+            const response = js.joinNext();
+            console.log('joinNext response:', JSON.stringify(response));
+
+            /* Get the result */
+            const result = obelisk.getResult(execId);
+
+            return JSON.stringify({
+                responseType: response.type,
+                responseId: response.id,
+                responseOk: response.ok,
+                result: result
+            });
+        }"#;
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-stub");
+
+        // Register the stub activity component
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, component_id, _runnable_component) = compile_js_workflow_worker(
+            js_source,
+            user_ffqn.clone(),
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry,
+            workflow_engine,
+        )
+        .await;
+
+        let workflow_exec =
+            new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
+
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        let params = Params::from_json_values_test(vec![json!(Vec::<String>::new())]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params,
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        info!("First tick: submit activity, stub response, then block on joinNext");
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        // Check that the workflow is in PendingAt state (scheduled to resume)
+        let pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap()
+            .pending_state;
+        info!("Pending state after step 1: {pending_state:?}");
+
+        info!("Second tick: resume with stubbed response, complete workflow");
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        // The workflow should complete now
+        let res = db_connection
+            .get_finished_result(&execution_id)
+            .await
+            .unwrap();
+        info!("Got result: {res:?}");
+
+        // Verify results
+        let ok_val =
+            assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+        let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
+        let result: serde_json::Value = serde_json::from_str(json_str).unwrap();
+
+        assert_eq!(json!("execution"), result["responseType"]);
+        // The response ID should match the execution ID we submitted
+        assert!(result["responseId"].as_str().is_some());
+        // Stubbed response should indicate success
+        assert_eq!(json!(true), result["responseOk"]);
+        // getResult should return ok with the stubbed value
+        assert_eq!(json!("stubbed-result-42"), result["result"]["ok"]);
+
+        db_close.close().await;
+    }
 }

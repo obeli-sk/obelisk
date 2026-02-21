@@ -76,6 +76,14 @@ enum ChildReturnValue {
         result: Result<(), ()>,
     },
     SubmitDelay,
+    Stub(Result<(), StubError>),
+}
+
+/// Error from the `-stub` extension function.
+/// Mirrors `obelisk:types/execution.{stub-error}` from WIT.
+#[derive(Debug, Clone)]
+pub(crate) enum StubError {
+    Conflict,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -1080,17 +1088,12 @@ impl EventHistory {
                 },
             ) if target_execution_id == found_execution_id && return_value == found_result => {
                 trace!(%target_execution_id, "Matched Stub");
-                let wat_val = match target_result {
-                    Ok(()) => WastVal::Result(Ok(None)),
-                    Err(()) => WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                        ValKey::new_snake("conflict"),
-                        None,
-                    ))))),
+                let result = match target_result {
+                    Ok(()) => Ok(()),
+                    Err(()) => Err(StubError::Conflict),
                 };
                 self.event_history[found_idx].1 = Processed;
-                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                    wat_val,
-                )))
+                Ok(FindMatchingResponse::Found(ChildReturnValue::Stub(result)))
             }
 
             (key, found) => {
@@ -1756,7 +1759,6 @@ impl EventHistory {
         }
     }
 
-    /// Get processed response as JSON result without function type checking.
     /// Returns `Ok(Some(json))` for Ok values, `Err(Some(json))` for Err values,
     /// or `Ok(None)`/`Err(None)` for unit types.
     pub(crate) fn get_processed_response_json(
@@ -2240,7 +2242,7 @@ impl Stub {
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
+    ) -> Result<Result<(), StubError>, WorkflowFunctionError> {
         let value = event_history
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::Stub(self)),
@@ -2249,9 +2251,8 @@ impl Stub {
             )
             .await?;
 
-        let value =
-            assert_matches!(value, ChildReturnValue::WastVal(wast_val) => wast_val.as_val());
-        Ok(value)
+        let result = assert_matches!(value, ChildReturnValue::Stub(result) => result);
+        Ok(result)
     }
 }
 

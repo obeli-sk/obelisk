@@ -2,7 +2,7 @@ use super::caching_db_connection::CachingDbConnection;
 use super::deadline_tracker::DeadlineTracker;
 use super::event_history::{
     ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
-    OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
+    OneOffDelayRequest, Schedule, Stub, StubError, SubmitChildExecution,
 };
 use super::host_exports::v4_1_0::ScheduleAt_4_1_0;
 use super::host_exports::v4_1_0::obelisk::types as types_4_1_0;
@@ -38,7 +38,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug, error, instrument};
-use val_json::wast_val::WastVal;
+use val_json::wast_val::{ValKey, WastVal};
 use wasmtime::component::{Linker, Resource, ResourceType, Val};
 use wasmtime_wasi::{
     ResourceTable, ResourceTableError, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
@@ -484,7 +484,7 @@ impl StubFnCall<'_> {
         )
         .expect("only functions with compatible return types are exported and extended");
 
-        Stub {
+        let stub_result = Stub {
             target_ffqn: target_ffqn.clone(),
             target_execution_id: target_execution_id.clone(),
             parent_id,
@@ -493,7 +493,17 @@ impl StubFnCall<'_> {
             wasm_backtrace,
         }
         .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
-        .await
+        .await?;
+
+        // Convert typed result back to WastVal for the typed extension function return
+        let wast_val = match stub_result {
+            Ok(()) => WastVal::Result(Ok(None)),
+            Err(StubError::Conflict) => WastVal::Result(Err(Some(Box::new(WastVal::Variant(
+                ValKey::new_snake("conflict"),
+                None,
+            ))))),
+        };
+        Ok(wast_val.as_val())
     }
 }
 
@@ -1280,6 +1290,28 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function schedule-json", err))?;
 
+        // stub-json: func(execution-id: execution-id, result-json: string) -> result<_, stub-json-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "stub-json",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (execution_id, result_json): (
+                    types_4_1_0::execution::ExecutionId,
+                    String,
+                )| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let wit_result = host
+                            .stub_json(execution_id, result_json, wasm_backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
+                        Ok((wit_result,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function stub-json", err))?;
+
         // submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id
         inst_workflow_support
             .func_wrap_async(
@@ -1398,23 +1430,25 @@ enum JoinSetCreateError {
 }
 
 pub(crate) mod workflow_support {
-    use super::{Schedule, SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, types_4_1_0};
+    use super::{
+        Schedule, Stub, StubError, SubmitChildExecution, WorkflowCtx, WorkflowFunctionError,
+        types_4_1_0,
+    };
     use crate::workflow::event_history::{JoinNext, JoinNextTry, Persist, SubmitDelay};
     use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextError;
     use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, v4_1_0};
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4_2, JoinSetCreateError};
-    use concepts::ExecutionId;
     use concepts::prefixed_ulid::ExecutionIdDerived;
-    use concepts::storage::HistoryEventScheduleAt;
+    use concepts::storage::{DbErrorRead, HistoryEventScheduleAt};
     use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind, Params};
+    use concepts::{ExecutionId, ReturnType, SupportedFunctionReturnValue};
     use concepts::{FunctionFqn, storage};
     use rand::rngs::StdRng;
     use std::sync::Arc;
     use tracing::trace;
-    #[allow(unused_imports)]
-    use val_json::wast_val::WastVal;
+    use val_json::wast_val_ser::deserialize_value;
     use wasmtime::component::Resource;
 
     impl ExecutionIfcHost for WorkflowCtx {}
@@ -1852,6 +1886,110 @@ pub(crate) mod workflow_support {
             Ok(Ok(types_4_1_0::execution::ExecutionId {
                 id: execution_id.to_string(),
             }))
+        }
+
+        /// Write a stub response with a JSON-serialized result for an `activity_stub` execution.
+        pub(crate) async fn stub_json(
+            &mut self,
+            target_execution_id: types_4_1_0::execution::ExecutionId,
+            result_json: String,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> Result<
+            Result<(), v4_1_0::obelisk::workflow::workflow_support::StubJsonError>,
+            WorkflowFunctionError,
+        > {
+            use v4_1_0::obelisk::workflow::workflow_support::StubJsonError;
+
+            // Parse the execution ID
+            let target_execution_id = match ExecutionId::try_from(target_execution_id) {
+                Ok(ExecutionId::Derived(derived)) => derived,
+                Ok(ExecutionId::TopLevel(_)) => {
+                    return Ok(Err(StubJsonError::ExecutionIdParsingError(
+                        "execution-id must be a derived (child) execution ID, not a top-level one"
+                            .to_string(),
+                    )));
+                }
+                Err(err) => {
+                    return Ok(Err(StubJsonError::ExecutionIdParsingError(format!(
+                        "cannot parse execution-id: {err}"
+                    ))));
+                }
+            };
+
+            let (parent_id, join_set_id) = target_execution_id.split_to_parts();
+
+            // Look up the target function's FFQN
+            let target_ffqn = match self
+                .db_connection
+                .get_create_request(&ExecutionId::Derived(target_execution_id.clone()))
+                .await
+            {
+                Ok(create_req) => create_req.ffqn.clone(),
+                Err(DbErrorRead::NotFound) => return Ok(Err(StubJsonError::NotFound)), // FIXME: depends on current db state, MUST be persisted for deterministic replay
+                Err(db_err) => return Err(WorkflowFunctionError::DbError(db_err.into())), // intermittent error
+            };
+
+            // Get the function metadata to determine the return type
+            let Some((fn_metadata, _fn_component_id)) = self
+                .event_history
+                .fn_registry
+                .get_by_exported_function(&target_ffqn)
+            else {
+                return Ok(Err(StubJsonError::NotFound)); // FIXME: depends on current registry state, MUST be persisted for deterministic replay
+            };
+
+            // Get the return type
+            let ReturnType::Extendable(return_type) = fn_metadata.return_type else {
+                return Ok(Err(StubJsonError::ResultParsingError(
+                    "target function's return type is not extendable".to_string(),
+                )));
+            };
+
+            // Parse the JSON result into a SupportedFunctionReturnValue
+            // The result-json represents the ok-value, same as what get-result-json returns
+            let result = match &return_type.type_wrapper_tl.ok {
+                None => SupportedFunctionReturnValue::Ok { ok: None },
+                Some(ok_type) => {
+                    let json_val: serde_json::Value = match serde_json::from_str(&result_json) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            return Ok(Err(StubJsonError::ResultParsingError(format!(
+                                "cannot parse result-json: {err}"
+                            ))));
+                        }
+                    };
+                    let wast_val_with_type =
+                        match deserialize_value(&json_val, ok_type.as_ref().clone()) {
+                            Ok(v) => v,
+                            Err(err) => {
+                                return Ok(Err(StubJsonError::ResultParsingError(format!(
+                                    "result type checking failed: {err}"
+                                ))));
+                            }
+                        };
+                    SupportedFunctionReturnValue::Ok {
+                        ok: Some(wast_val_with_type),
+                    }
+                }
+            };
+
+            // Apply the stub
+            let called_at = self.clock_fn.now();
+            let stub_result = Stub {
+                target_ffqn,
+                target_execution_id,
+                parent_id,
+                join_set_id,
+                result,
+                wasm_backtrace,
+            }
+            .apply(&mut self.event_history, &mut self.db_connection, called_at)
+            .await?;
+
+            match stub_result {
+                Ok(()) => Ok(Ok(())),
+                Err(StubError::Conflict) => Ok(Err(StubJsonError::Conflict)),
+            }
         }
 
         /// Obtain child execution result as JSON after it has been awaited.
