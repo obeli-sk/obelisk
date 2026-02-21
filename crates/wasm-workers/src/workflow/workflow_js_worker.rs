@@ -91,12 +91,7 @@ impl WorkflowJsWorkerCompiled {
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
             user_params: self.user_params,
-            user_exports_noext: self
-                .user_wasm_component
-                .exported_functions(false)
-                .iter()
-                .cloned()
-                .collect(),
+            user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
         })
     }
 }
