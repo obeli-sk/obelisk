@@ -18,7 +18,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 use tracing_error::SpanTrace;
 use val_json::type_wrapper::{TypeKey, TypeWrapper};
 use wit_component::{ComponentEncoder, WitPrinter};
-use wit_parser::{InterfaceId, PackageId, Resolve, World, WorldKey, decoding::DecodedWasm};
+use wit_parser::{InterfaceId, PackageId, Param, Resolve, World, WorldKey, decoding::DecodedWasm};
 
 #[derive(derive_more::Debug, Clone)]
 pub struct WasmComponent {
@@ -931,7 +931,12 @@ fn populate_ifcs_with_compatible_fns(
                         FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.clone()));
                     let parameter_types = ParameterTypes({
                         let mut params = Vec::new();
-                        for (param_name, param_ty) in &function.params {
+                        for Param {
+                            name: param_name,
+                            ty: param_ty,
+                            span: _,
+                        } in &function.params
+                        {
                             let mut printer = WitPrinter::default();
                             let item = ParameterType {
                                 type_wrapper: match TypeWrapper::from_wit_parser_type(
