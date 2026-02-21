@@ -8,8 +8,9 @@ use std::path::PathBuf;
 use tracing::{error, warn};
 use wit_component::WitPrinter;
 use wit_parser::{
-    Function, FunctionKind, Handle, Interface, InterfaceId, PackageId, PackageName, Resolve,
-    Stability, Type, TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup, WorldItem, WorldKey,
+    Function, FunctionKind, Handle, Interface, InterfaceId, PackageId, PackageName, Param, Resolve,
+    Span, Stability, Type, TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup, WorldItem,
+    WorldKey,
 };
 
 const OBELISK_TYPES_VERSION_MAJOR: u64 = 4;
@@ -99,6 +100,7 @@ pub(crate) fn rebuild_resolve(
                 WorldItem::Interface {
                     id: ifc_id,
                     stability: Stability::Unknown,
+                    span: Span::default(),
                 },
             )
         }));
@@ -177,6 +179,7 @@ fn add_extended_interfaces(
             owner: TypeOwner::Interface(execution_ifc_id),
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
+            span: Span::default(),
         })
     };
     // obelisk:types/execution@VERSION.{join-set}
@@ -192,6 +195,7 @@ fn add_extended_interfaces(
             owner: TypeOwner::Interface(join_set_ifc_id),
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
+            span: Span::default(),
         });
         // Create a Handle::Borrow to the reference.
         let type_id_join_set_id_borrow_handle = resolve.types.alloc(TypeDef {
@@ -200,6 +204,7 @@ fn add_extended_interfaces(
             owner: TypeOwner::Interface(join_set_ifc_id),
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
+            span: Span::default(),
         });
         (type_id_join_set_id, type_id_join_set_id_borrow_handle)
     };
@@ -216,6 +221,7 @@ fn add_extended_interfaces(
             owner: TypeOwner::Interface(execution_ifc_id),
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
+            span: Span::default(),
         })
     };
     // obelisk:types/execution.{get-extension-error}
@@ -231,6 +237,7 @@ fn add_extended_interfaces(
             owner: TypeOwner::Interface(execution_ifc_id),
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
+            span: Span::default(),
         })
     };
     // obelisk:types/execution.{stub-error}
@@ -246,6 +253,7 @@ fn add_extended_interfaces(
             owner: TypeOwner::Interface(execution_ifc_id),
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
+            span: Span::default(),
         })
     };
     let type_id_await_next_err_part = type_id_await_next_extension_error;
@@ -262,6 +270,7 @@ fn add_extended_interfaces(
             owner: TypeOwner::Interface(execution_ifc_id),
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
+            span: Span::default(),
         })
     };
 
@@ -325,6 +334,8 @@ fn add_extended_interfaces(
                 docs: wit_parser::Docs::default(),
                 stability: Stability::default(),
                 package: Some(pkg_id),
+                span: Span::default(),
+                clone_of: None,
             };
             for (fn_name, fn_meta) in fns {
                 let (prefix, fn_ext) = fn_meta.split_extension().expect("filtered by ext package");
@@ -335,10 +346,11 @@ fn add_extended_interfaces(
                     FunctionExtension::Submit => {
                         // -submit: func(join-set: borrow<join-set>, <params>) -> execution-id;
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
-                        let mut params = vec![(
-                            generate_param_name("join-set", &original_fn.params),
-                            Type::Id(type_id_join_set_id_borrow_handle),
-                        )];
+                        let mut params = vec![Param {
+                            name: generate_param_name("join-set", &original_fn.params),
+                            ty: Type::Id(type_id_join_set_id_borrow_handle),
+                            span: Span::default(),
+                        }];
                         params.extend_from_slice(&original_fn.params);
 
                         (params, Some(Type::Id(type_id_execution_id)))
@@ -347,10 +359,11 @@ fn add_extended_interfaces(
                         // -await-next: func(join-set: borrow<join-set>) ->
                         //  result<tuple<execution-id, return-type>, await-next-extension-error>;
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
-                        let params = vec![(
-                            "join-set".to_string(),
-                            Type::Id(type_id_join_set_id_borrow_handle),
-                        )];
+                        let params = vec![Param {
+                            name: "join-set".to_string(),
+                            ty: Type::Id(type_id_join_set_id_borrow_handle),
+                            span: Span::default(),
+                        }];
                         let result = {
                             let actual_return_type_id = &original_fn.result.expect(
                                 "all ExImLite exported functions must have their return type validated");
@@ -365,6 +378,7 @@ fn add_extended_interfaces(
                                 owner: TypeOwner::None,
                                 docs: wit_parser::Docs::default(),
                                 stability: wit_parser::Stability::default(),
+                                span: Span::default(),
                             });
                             let type_id_result = resolve.types.alloc(TypeDef {
                                 name: None,
@@ -375,6 +389,7 @@ fn add_extended_interfaces(
                                 owner: TypeOwner::None,
                                 docs: wit_parser::Docs::default(),
                                 stability: wit_parser::Stability::default(),
+                                span: Span::default(),
                             });
                             Some(Type::Id(type_id_result))
                         };
@@ -385,10 +400,11 @@ fn add_extended_interfaces(
                         assert_eq!(pkg_ext, PackageExtension::ObeliskSchedule);
                         let schedule_at_param_name =
                             generate_param_name("schedule-at", &original_fn.params);
-                        let mut params = vec![(
-                            schedule_at_param_name.clone(),
-                            Type::Id(type_id_schedule_at),
-                        )];
+                        let mut params = vec![Param {
+                            name: schedule_at_param_name.clone(),
+                            ty: Type::Id(type_id_schedule_at),
+                            span: Span::default(),
+                        }];
                         params.extend_from_slice(&original_fn.params);
                         let result = Some(Type::Id(type_id_execution_id));
                         (params, result)
@@ -396,8 +412,11 @@ fn add_extended_interfaces(
                     FunctionExtension::Stub => {
                         // -stub: func(execution_id: execution-id, original retval) -> result<_, stub-error>;
                         assert_eq!(pkg_ext, PackageExtension::ObeliskStub);
-                        let mut params =
-                            vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
+                        let mut params = vec![Param {
+                            name: "execution-id".to_string(),
+                            ty: Type::Id(type_id_execution_id),
+                            span: Span::default(),
+                        }];
                         let Some(return_type) = &original_fn.result else {
                             unreachable!(
                                 "return types of exported functions are validated in ExImLite"
@@ -409,8 +428,13 @@ fn add_extended_interfaces(
                             owner: TypeOwner::None,
                             docs: wit_parser::Docs::default(),
                             stability: wit_parser::Stability::default(),
+                            span: Span::default(),
                         }));
-                        params.push(("execution-result".to_string(), return_type_id));
+                        params.push(Param {
+                            name: "execution-result".to_string(),
+                            ty: return_type_id,
+                            span: Span::default(),
+                        });
 
                         let result = {
                             let type_id_result = resolve.types.alloc(TypeDef {
@@ -422,6 +446,7 @@ fn add_extended_interfaces(
                                 owner: TypeOwner::None,
                                 docs: wit_parser::Docs::default(),
                                 stability: wit_parser::Stability::default(),
+                                span: Span::default(),
                             });
                             Some(Type::Id(type_id_result))
                         };
@@ -430,8 +455,11 @@ fn add_extended_interfaces(
                     FunctionExtension::Get => {
                         // -get(execution-id) -> result<originalreturn type, get-extension-error>
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
-                        let params =
-                            vec![("execution-id".to_string(), Type::Id(type_id_execution_id))];
+                        let params = vec![Param {
+                            name: "execution-id".to_string(),
+                            ty: Type::Id(type_id_execution_id),
+                            span: Span::default(),
+                        }];
                         let result = Some(Type::Id(resolve.types.alloc(TypeDef {
                             name: None,
                             kind: TypeDefKind::Result(wit_parser::Result_ {
@@ -441,6 +469,7 @@ fn add_extended_interfaces(
                             owner: TypeOwner::None,
                             docs: wit_parser::Docs::default(),
                             stability: wit_parser::Stability::default(),
+                            span: Span::default(),
                         })));
                         (params, result)
                     }
@@ -452,6 +481,7 @@ fn add_extended_interfaces(
                     result,
                     docs: wit_parser::Docs::default(),
                     stability: Stability::default(),
+                    span: Span::default(),
                 };
                 ifc.functions.insert(fn_name.to_string(), wit_fun);
             }
@@ -504,9 +534,11 @@ fn replace_obelisk_types(wit: &str) -> String {
     wit
 }
 
-fn generate_param_name(param_name: &str, params: &[(String, Type)]) -> String {
-    let orig_param_names: hashbrown::HashSet<&str> =
-        params.iter().map(|(name, _)| name.as_str()).collect();
+fn generate_param_name(param_name: &str, params: &[Param]) -> String {
+    let orig_param_names: hashbrown::HashSet<&str> = params
+        .iter()
+        .map(|Param { name, .. }| name.as_str())
+        .collect();
     if orig_param_names.contains(param_name) {
         for my_char in 'a'..='z' {
             let name = format!("{param_name}-{my_char}");
@@ -541,6 +573,7 @@ fn copy_or_refer_original_types(
                     owner: TypeOwner::Interface(orig_ifc_id),
                     docs: wit_parser::Docs::default(),
                     stability: wit_parser::Stability::default(),
+                    span: Span::default(),
                 })
             }
         };

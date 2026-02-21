@@ -324,8 +324,8 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.18"
-toml = { version = "0.9.12", features = ["preserve_order"] }
-toml_edit = "0.24.1"
+toml = { version = "1.0.3", features = ["preserve_order"] }
+toml_edit = "0.25.3"
 tonic = { version = "0.14.5", default-features = false }
 tonic-prost = "0.14.5"
 tonic-prost-build = "0.14.5"
@@ -350,15 +350,15 @@ wasmtime-wasi-io = "41.0.3"
 wasmtime-wasi-http = "41.0.3"
 wasmtime-environ = "41.0.3"
 # wasm-tools
-wast = "244.0.0"
-wit-parser = "0.244.0"
-wasmparser = "0.244.0"
-wit-component = "0.244.0"
+wast = "245.0.1"
+wit-parser = "0.245.1"
+wasmparser = "0.245.1"
+wit-component = "0.245.1"
 
 # testing components
 wasip2 = "1.0.2"
-wit-bindgen = "0.52.0"
-wit-bindgen-rust = "0.52.0"
+wit-bindgen = "0.53.1"
+wit-bindgen-rust = "0.53.1"
 wstd = { git = "https://github.com/tomasol/wstd.git", rev = "02ce897" }
 
 # otlp

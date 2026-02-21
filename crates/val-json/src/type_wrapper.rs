@@ -401,7 +401,7 @@ impl TypeWrapper {
                         TypeWrapper::from_wit_parser_type(resolve, inner)?,
                     ))),
                     TypeDefKind::Map(_, _) => Err(TypeConversionError::UnsupportedType("Map")),
-                    TypeDefKind::FixedSizeList(_inner, _size) => {
+                    TypeDefKind::FixedLengthList(_inner, _size) => {
                         Err(TypeConversionError::UnsupportedType("FixedSizeList"))
                     }
                     TypeDefKind::Type(inner) => TypeWrapper::from_wit_parser_type(resolve, inner),
