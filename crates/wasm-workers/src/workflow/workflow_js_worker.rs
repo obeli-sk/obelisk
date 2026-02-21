@@ -13,20 +13,19 @@ use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{DbConnection, DbPool, Locked};
 use concepts::time::{ClockFn, ConstClock};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ExecutionFailureKind, ExecutionId, ExecutionMetadata,
-    FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry, PackageIfcFns,
-    ParameterType, ParameterTypes, Params, ResultParsingError, ResultParsingErrorFromVal,
-    ReturnType, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
+    ExecutionMetadata, FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry,
+    PackageIfcFns, ParameterType, Params, ResultParsingError, ResultParsingErrorFromVal,
+    SupportedFunctionReturnValue,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
-use indexmap::IndexMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug};
-use utils::wasm_tools::ExIm;
+use utils::wasm_tools::WasmComponent;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::Engine;
@@ -37,46 +36,49 @@ pub struct WorkflowJsWorkerCompiled {
     js_source: String,
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
-    user_exports_noext: Vec<FunctionMetadata>,
-    user_exports_ext: Vec<FunctionMetadata>,
-    user_exports_hierarchy_ext: Vec<PackageIfcFns>,
+    /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
+    user_wasm_component: WasmComponent,
 }
 
 impl WorkflowJsWorkerCompiled {
-    #[must_use]
     pub fn new(
         inner: WorkflowWorkerCompiled,
         js_source: String,
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
-    ) -> Self {
-        let fn_metadata = make_fn_metadata(user_ffqn.clone(), &user_params);
-        let fn_metadata_ext = make_fn_metadata_ext(&fn_metadata);
-        let hierarchy = make_exports_hierarchy(&fn_metadata, &fn_metadata_ext);
-        Self {
+    ) -> Result<Self, utils::wasm_tools::DecodeError> {
+        let wit = synthesize_wit(&user_ffqn, &user_params);
+        let user_wasm_component =
+            WasmComponent::new_from_wit_string(&wit, ComponentType::Workflow)?;
+        Ok(Self {
             inner,
             js_source,
             user_ffqn,
             user_params,
-            user_exports_noext: vec![fn_metadata],
-            user_exports_ext: fn_metadata_ext,
-            user_exports_hierarchy_ext: hierarchy,
-        }
+            user_wasm_component,
+        })
     }
 
     #[must_use]
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
-        &self.user_exports_ext
+        self.user_wasm_component.exported_functions(true)
     }
 
     #[must_use]
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
-        &self.user_exports_hierarchy_ext
+        self.user_wasm_component.exports_hierarchy_ext()
     }
 
     #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         self.inner.imported_functions()
+    }
+
+    /// Return WIT text describing the user interface including extension packages.
+    /// Returns `None` if WIT generation fails (should not happen for valid configs).
+    #[must_use]
+    pub fn wit(&self) -> Option<String> {
+        self.user_wasm_component.wit().ok()
     }
 
     pub fn link(
@@ -89,7 +91,7 @@ impl WorkflowJsWorkerCompiled {
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
             user_params: self.user_params,
-            user_exports_noext: self.user_exports_noext,
+            user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
         })
     }
 }
@@ -335,7 +337,7 @@ impl WorkflowJsWorker {
         deployment_id: DeploymentId,
         component_id: ComponentId,
         wasmtime_component: wasmtime::component::Component,
-        exim: &ExIm,
+        exim: &utils::wasm_tools::ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
         db_conn: &dyn DbConnection,
@@ -443,44 +445,37 @@ impl WorkflowJsWorker {
     }
 }
 
-/// Create the `FunctionMetadata` for the user's JS workflow function with the given parameters.
-/// Return type is always `result<string, string>`.
-fn make_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> FunctionMetadata {
-    let return_type_wrapper = TypeWrapper::Result {
-        ok: Some(Box::new(TypeWrapper::String)),
-        err: Some(Box::new(TypeWrapper::String)),
-    };
-    FunctionMetadata {
-        ffqn,
-        parameter_types: ParameterTypes(params.to_vec()),
-        return_type: ReturnType::detect(
-            return_type_wrapper,
-            StrVariant::Static("result<string, string>"),
-        ),
-        extension: None,
-        submittable: true,
-    }
-}
+/// Synthesize a WIT string for the JS workflow's user-facing interface.
+///
+/// The generated WIT is parsed by `WasmComponent::new_from_wit_string` which runs
+/// `ExIm::decode` and `rebuild_resolve`, producing the same extension metadata
+/// and printable WIT that standard WASM workflows get.
+fn synthesize_wit(ffqn: &FunctionFqn, params: &[ParameterType]) -> String {
+    let ifc_fqn = &ffqn.ifc_fqn;
+    let namespace = ifc_fqn.namespace();
+    let package_name = ifc_fqn.package_name();
+    let ifc_name = ifc_fqn.ifc_name();
+    let fn_name = &ffqn.function_name;
 
-/// Generate extension functions (submit, await-next, schedule, get) from the primary function.
-fn make_fn_metadata_ext(primary: &FunctionMetadata) -> Vec<FunctionMetadata> {
-    // For now, just return the primary function.
-    // Extension functions will be generated by the ExIm::decode machinery
-    // when the ComponentConfig is registered.
-    vec![primary.clone()]
-}
+    let version_suffix = ifc_fqn.version().map_or(String::new(), |v| format!("@{v}"));
 
-fn make_exports_hierarchy(
-    primary: &FunctionMetadata,
-    _ext: &[FunctionMetadata],
-) -> Vec<PackageIfcFns> {
-    let mut fns = IndexMap::new();
-    fns.insert(primary.ffqn.function_name.clone(), primary.clone());
-    vec![PackageIfcFns {
-        ifc_fqn: primary.ffqn.ifc_fqn.clone(),
-        extension: false,
-        fns,
-    }]
+    let wit_params: Vec<String> = params
+        .iter()
+        .map(|p| format!("{}: {}", p.name, p.wit_type.as_ref()))
+        .collect();
+
+    format!(
+        "package {namespace}:{package_name}{version_suffix};\n\
+         \n\
+         interface {ifc_name} {{\n\
+         \x20   {fn_name}: func({params}) -> result<string, string>;\n\
+         }}\n\
+         \n\
+         world js-workflow {{\n\
+         \x20   export {ifc_name};\n\
+         }}\n",
+        params = wit_params.join(", "),
+    )
 }
 
 #[cfg(test)]
@@ -567,7 +562,8 @@ mod tests {
                 name: StrVariant::Static("params"),
                 wit_type: StrVariant::Static("list<string>"),
             }],
-        );
+        )
+        .unwrap();
 
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
@@ -790,7 +786,8 @@ mod tests {
                 name: StrVariant::Static("params"),
                 wit_type: StrVariant::Static("list<string>"),
             }],
-        );
+        )
+        .unwrap();
 
         let linked = js_compiled.link(fn_registry).unwrap();
 
@@ -839,7 +836,7 @@ mod tests {
         let (_guard, db_pool, db_close) = database.set_up().await;
         let sim_clock = SimClock::epoch();
 
-        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test_delay");
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-delay");
         let js_source = r"function test_delay(params) {
             const js = obelisk.createJoinSet();
 
@@ -1032,7 +1029,7 @@ mod tests {
             });
         }";
 
-        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test_all_apis");
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-all-apis");
 
         let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
