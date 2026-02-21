@@ -1259,12 +1259,12 @@ mod tests {
         assert_eq!(0, received, "expected no new messages, got {buffer:?}");
     }
 
-    /// Test: JS workflow uses `obelisk.stub()` to stub an activity_stub execution.
+    /// Test: JS workflow uses `obelisk.stub()` to stub an `activity_stub` execution.
     ///
     /// This test verifies the `stub-json` WIT function works correctly from JS workflows:
-    /// 1. Submit an activity_stub execution using joinSet.submit()
+    /// 1. Submit an `activity_stub` execution using `joinSet.submit()`
     /// 2. Use obelisk.stub(executionId, result) to provide a stubbed response
-    /// 3. Verify the stubbed result is returned via joinNext() and getResult()
+    /// 3. Verify the stubbed result is returned via `joinNext()` and `getResult()`
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
@@ -1276,7 +1276,7 @@ mod tests {
         let sim_clock = SimClock::epoch();
 
         // JS code that exercises obelisk.stub() API
-        let js_source = r#"function test_stub(params) {
+        let js_source = r"function test_stub(params) {
             console.log('Testing obelisk.stub()');
 
             const js = obelisk.createJoinSet();
@@ -1303,7 +1303,7 @@ mod tests {
                 responseOk: response.ok,
                 result: result
             });
-        }"#;
+        }";
 
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-stub");
 
