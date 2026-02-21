@@ -54,11 +54,6 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
         })
     }
 
-    /// Build primary function metadata using the original FFQN (preserving casing).
-    fn primary_fn_metadata(&self) -> FunctionMetadata {
-        make_primary_fn_metadata(self.user_ffqn.clone(), &self.user_params)
-    }
-
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
         self.user_wasm_component.exported_functions(true)
     }
@@ -84,7 +79,6 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> ActivityJsWorker<S> {
-        let user_exports_noext = vec![self.primary_fn_metadata()];
         let inner =
             self.inner
                 .into_worker(cancel_registry, log_forwarder_sender, logs_storage_config);
@@ -93,7 +87,12 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
             user_params: self.user_params,
-            user_exports_noext,
+            user_exports_noext: self
+                .user_wasm_component
+                .exported_functions(false)
+                .iter()
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -272,26 +271,6 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
 
             other => unreachable!("unexpected SupportedFunctionReturnValue: {other:?}"),
         }
-    }
-}
-
-/// Build the primary `FunctionMetadata` for the JS activity's user-facing function,
-/// preserving the original FFQN casing (used for execution matching).
-/// Return type is always `result<string, string>`.
-fn make_primary_fn_metadata(ffqn: FunctionFqn, params: &[ParameterType]) -> FunctionMetadata {
-    let return_type_wrapper = TypeWrapper::Result {
-        ok: Some(Box::new(TypeWrapper::String)),
-        err: Some(Box::new(TypeWrapper::String)),
-    };
-    FunctionMetadata {
-        ffqn,
-        parameter_types: concepts::ParameterTypes(params.to_vec()),
-        return_type: concepts::ReturnType::detect(
-            return_type_wrapper,
-            concepts::StrVariant::Static("result<string, string>"),
-        ),
-        extension: None,
-        submittable: true,
     }
 }
 
