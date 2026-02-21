@@ -424,11 +424,12 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             .as_string()
             .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
             .to_std_string_escaped();
+        let exec_id = ExecutionId { id: exec_id_str };
 
         let result_val = args.get_or_undefined(1);
         let result_json = json_stringify(result_val, ctx)?;
 
-        match stub_json(&exec_id_str, &result_json) {
+        match stub_json(&exec_id, &result_json) {
             Ok(()) => Ok(JsValue::undefined()),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("stub failed: {:?}", e))
