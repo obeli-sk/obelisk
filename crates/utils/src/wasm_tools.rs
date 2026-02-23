@@ -556,7 +556,6 @@ impl ExIm {
         // stub-error
         let stub_error_type_wrapper = TypeWrapper::Variant(indexmap! {
             TypeKey::new_kebab("execution-not-found") => None,
-            TypeKey::new_kebab("wrong-ffqn") => None,
             TypeKey::new_kebab("type-check-error") => Some(TypeWrapper::String),
             TypeKey::new_kebab("conflict") => None,
         });

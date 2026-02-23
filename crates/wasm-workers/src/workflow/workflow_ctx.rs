@@ -1472,7 +1472,7 @@ pub(crate) mod workflow_support {
     use concepts::{FunctionFqn, storage};
     use rand::rngs::StdRng;
     use std::sync::Arc;
-    use tracing::{error, instrument, trace, warn};
+    use tracing::{error, instrument, trace};
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val_ser::deserialize_value;
     use wasmtime::component::Resource;
@@ -1946,7 +1946,9 @@ pub(crate) mod workflow_support {
                 .get_by_exported_function(&target_ffqn)
             else {
                 return Ok((
-                    StubIntent::Err(StubIntentErr::WrongFfqn),
+                    StubIntent::Err(StubIntentErr::TypeCheckError(format!(
+                        "function {target_ffqn} not found in registry"
+                    ))),
                     StubParams {
                         target_execution_id,
                         retval_hash: StubRetVal::Untyped(retval).hash(),
@@ -1955,12 +1957,11 @@ pub(crate) mod workflow_support {
             };
 
             if fn_component_id.component_type != ComponentType::ActivityStub {
-                warn!(
-                    "Cannot stub an execution of type {}",
-                    fn_component_id.component_type
-                );
                 return Ok((
-                    StubIntent::Err(StubIntentErr::WrongFfqn),
+                    StubIntent::Err(StubIntentErr::TypeCheckError(format!(
+                        "cannot stub an execution of type {}",
+                        fn_component_id.component_type
+                    ))),
                     StubParams {
                         target_execution_id,
                         retval_hash: StubRetVal::Untyped(retval).hash(),
@@ -1970,12 +1971,13 @@ pub(crate) mod workflow_support {
 
             // Get the return type
             let ReturnType::Extendable(return_type) = fn_metadata.return_type else {
-                // Database contains invalid data
                 error!(
                     "Database contains execution with a non-extendable return type {fn_component_id} {fn_metadata:?}",
                 );
                 return Ok((
-                    StubIntent::Err(StubIntentErr::WrongFfqn),
+                    StubIntent::Err(StubIntentErr::TypeCheckError(
+                        "target function's return type is not extendable".to_string(),
+                    )),
                     StubParams {
                         target_execution_id,
                         retval_hash: StubRetVal::Untyped(retval).hash(),

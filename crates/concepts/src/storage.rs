@@ -620,8 +620,6 @@ pub enum StubRetValHashParseError {
 pub enum StubError {
     #[error("execution not found")]
     ExecutionNotFound,
-    #[error("wrong ffqn")]
-    WrongFfqn,
     #[error("type check error: {0}")]
     TypeCheckError(String),
     #[error("conflict")]

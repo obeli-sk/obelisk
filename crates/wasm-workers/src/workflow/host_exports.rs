@@ -328,7 +328,6 @@ impl From<StubError> for StubJsonError {
     fn from(value: StubError) -> StubJsonError {
         match value {
             StubError::ExecutionNotFound => StubJsonError::ExecutionNotFound,
-            StubError::WrongFfqn => StubJsonError::WrongFfqn,
             StubError::TypeCheckError(reason) => StubJsonError::TypeCheckError(reason),
             StubError::Conflict => StubJsonError::Conflict,
         }
@@ -341,7 +340,6 @@ pub(crate) fn stub_result_to_wast_val(stub_result: Result<(), StubError>) -> Was
         Err(err) => {
             let (variant, payload) = match err {
                 StubError::ExecutionNotFound => ("execution-not-found", None),
-                StubError::WrongFfqn => ("wrong-ffqn", None),
                 StubError::Conflict => ("conflict", None),
                 StubError::TypeCheckError(reason) => {
                     ("type-check-error", Some(Box::new(WastVal::String(reason))))

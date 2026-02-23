@@ -2258,14 +2258,12 @@ pub(crate) enum StubIntent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StubIntentErr {
     ExecutionNotFound,      // results in `StubError::ExecutionNotFound`
-    WrongFfqn,              // results in `StubError::WrongFfqn`
     TypeCheckError(String), // results in `StubError::TypeCheckError`
 }
 impl From<StubIntentErr> for StubError {
     fn from(value: StubIntentErr) -> StubError {
         match value {
             StubIntentErr::ExecutionNotFound => StubError::ExecutionNotFound,
-            StubIntentErr::WrongFfqn => StubError::WrongFfqn,
             StubIntentErr::TypeCheckError(reason) => StubError::TypeCheckError(reason),
         }
     }
