@@ -1,9 +1,11 @@
+use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::StubJsonError;
 use assert_matches::assert_matches;
 use chrono::DateTime;
 use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::HistoryEventScheduleAt;
+use concepts::storage::StubError;
 use indexmap::indexmap;
 use std::ops::Deref as _;
 use std::time::Duration;
@@ -320,4 +322,35 @@ pub(crate) fn ffqn_into_wast_val(ffqn: &FunctionFqn) -> WastVal {
         ValKey::new_snake("interface_name") => WastVal::String(ffqn.ifc_fqn.to_string()),
         ValKey::new_snake("function_name") => WastVal::String(ffqn.function_name.to_string()),
     })
+}
+
+impl From<StubError> for StubJsonError {
+    fn from(value: StubError) -> StubJsonError {
+        match value {
+            StubError::ExecutionNotFound => StubJsonError::ExecutionNotFound,
+            StubError::WrongFfqn => StubJsonError::WrongFfqn,
+            StubError::TypeCheckError(reason) => StubJsonError::TypeCheckError(reason),
+            StubError::Conflict => StubJsonError::Conflict,
+        }
+    }
+}
+
+pub(crate) fn stub_result_to_wast_val(stub_result: Result<(), StubError>) -> WastVal {
+    match stub_result {
+        Ok(()) => WastVal::Result(Ok(None)),
+        Err(err) => {
+            let (variant, payload) = match err {
+                StubError::ExecutionNotFound => ("execution-not-found", None),
+                StubError::WrongFfqn => ("wrong-ffqn", None),
+                StubError::Conflict => ("conflict", None),
+                StubError::TypeCheckError(reason) => {
+                    ("type-check-error", Some(Box::new(WastVal::String(reason))))
+                }
+            };
+            WastVal::Result(Err(Some(Box::new(WastVal::Variant(
+                ValKey::new_snake(variant.to_string()),
+                payload,
+            )))))
+        }
+    }
 }

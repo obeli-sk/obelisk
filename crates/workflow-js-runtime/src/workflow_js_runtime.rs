@@ -858,14 +858,17 @@ fn parse_duration(value: &JsValue, ctx: &mut Context) -> JsResult<Duration> {
 /// Convert JS value to JSON string.
 fn json_stringify(value: &JsValue, ctx: &mut Context) -> JsResult<String> {
     // Use built-in JSON.stringify
-    let json = ctx.global_object().get(js_string!("JSON"), ctx)?;
-    let json_obj = json
-        .as_object()
-        .ok_or_else(|| JsNativeError::error().with_message("JSON global not found"))?;
-    let stringify = json_obj.get(js_string!("stringify"), ctx)?;
+    let json = ctx
+        .global_object()
+        .get(js_string!("JSON"), ctx)
+        .expect("global JSON object must be found");
+    let json_obj = json.as_object().expect("JSON global must be an object");
+    let stringify = json_obj
+        .get(js_string!("stringify"), ctx)
+        .expect("stringify must exist on JSON object");
     let stringify_fn = stringify
         .as_callable()
-        .ok_or_else(|| JsNativeError::error().with_message("JSON.stringify not callable"))?;
+        .expect("JSON.stringify must be callable");
 
     let result = stringify_fn.call(&json, &[value.clone()], ctx)?;
 

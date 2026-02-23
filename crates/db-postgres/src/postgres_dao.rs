@@ -65,7 +65,7 @@ mod ddl {
 
     pub const ADMIN_DB_NAME: &str = "postgres";
 
-    pub const T_METADATA_EXPECTED_SCHEMA_VERSION: i32 = 2;
+    pub const T_METADATA_EXPECTED_SCHEMA_VERSION: i32 = 3;
 
     // T_METADATA
     pub const CREATE_TABLE_T_METADATA: &str = r"
@@ -2140,12 +2140,7 @@ async fn append(
     {
         debug!("Execution is already finished");
         return Err(DbErrorWrite::NonRetriable(
-            DbErrorWriteNonRetriable::IllegalState {
-                reason: "already finished".into(),
-                context: SpanTrace::capture(),
-                source: None,
-                loc: Location::caller(),
-            },
+            DbErrorWriteNonRetriable::AlreadyFinished,
         ));
     }
 

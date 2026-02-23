@@ -1287,7 +1287,7 @@ mod tests {
             console.log('Submitted activity_stub, execId:', execId);
 
             /* Stub the response with a success value */
-            obelisk.stub(execId, 'stubbed-result-42');
+            obelisk.stub(execId, {'ok': 'stubbed-result-42'});
             console.log('Stubbed the execution');
 
             /* Join to get the response */

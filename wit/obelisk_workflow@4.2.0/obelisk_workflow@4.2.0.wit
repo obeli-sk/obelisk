@@ -120,10 +120,12 @@ interface workflow-support {
     variant stub-json-error {
         /// Cannot parse the execution ID.
         execution-id-parsing-error(string),
-        /// The target execution was not found or FFQN does not match.
-        not-found,
-        /// Cannot parse the result as JSON.
-        result-parsing-error(string),
+        /// The target execution was not found.
+        execution-not-found,
+        /// FFQN of the execution is not registered or it does not belong to a stub activity component.
+        wrong-ffqn,
+        /// supplied return value does not type check.
+        type-check-error(string),
         /// Write conflict — a different result was already stubbed.
         conflict,
     }

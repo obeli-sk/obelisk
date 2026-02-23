@@ -520,10 +520,35 @@ pub enum HistoryEvent {
     #[display("Stub({target_execution_id})")]
     Stub {
         target_execution_id: ExecutionIdDerived,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::SUPPORTED_RETURN_VALUE_OK_EMPTY))]
-        result: SupportedFunctionReturnValue, // Only stored for nondeterminism checks. TODO: Consider using a hashed value.
-        persist_result: Result<(), ()>, // Does the row (target_execution_id,Version:1) match the proposed `result`?
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StubRetVal::Typed(crate::SUPPORTED_RETURN_VALUE_OK_EMPTY)))]
+        retval: StubRetVal,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(())))]
+        persist_result: Result<(), StubError>,
     },
+}
+
+// Only stored for nondeterminism checks.
+// TODO: Consider using a hashed value.
+#[derive(derive_more::Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StubRetVal {
+    Typed(SupportedFunctionReturnValue),
+    Untyped(String),
+}
+
+/// Error from the `-stub` extension function.
+/// Mirrors `obelisk:types/execution.{stub-error}` from WIT.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StubError {
+    #[error("execution not found")]
+    ExecutionNotFound,
+    #[error("wrong ffqn")]
+    WrongFfqn,
+    #[error("type check error: {0}")]
+    TypeCheckError(String),
+    #[error("conflict")]
+    Conflict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize)]
@@ -660,6 +685,8 @@ pub enum DbErrorWriteNonRetriable {
     ValidationFailed(StrVariant),
     #[error("conflict")]
     Conflict,
+    #[error("already finished")]
+    AlreadyFinished,
     #[error("illegal state: {reason}")]
     IllegalState {
         reason: StrVariant,

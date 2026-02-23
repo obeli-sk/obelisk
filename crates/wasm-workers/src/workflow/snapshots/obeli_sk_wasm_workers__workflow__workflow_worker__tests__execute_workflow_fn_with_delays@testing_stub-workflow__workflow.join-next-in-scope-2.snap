@@ -143,9 +143,11 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "event": {
             "type": "stub",
             "target_execution_id": "E_00000000000000000000000000.n:b_1",
-            "result": {
-              "err": {
-                "err": null
+            "retval": {
+              "typed": {
+                "err": {
+                  "err": null
+                }
               }
             },
             "persist_result": {

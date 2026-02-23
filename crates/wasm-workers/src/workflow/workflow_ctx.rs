@@ -2,7 +2,7 @@ use super::caching_db_connection::CachingDbConnection;
 use super::deadline_tracker::DeadlineTracker;
 use super::event_history::{
     ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
-    OneOffDelayRequest, Schedule, Stub, StubError, SubmitChildExecution,
+    OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
 };
 use super::host_exports::v4_1_0::ScheduleAt_4_1_0;
 use super::host_exports::v4_1_0::obelisk::types as types_4_1_0;
@@ -14,16 +14,16 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
-use crate::workflow::event_history::JoinSetCreate;
+use crate::workflow::event_history::{JoinSetCreate, StubIntent, StubIntentErr, StubParams};
 use crate::workflow::host_exports::v4_1_0::{self, DelayId_4_1_0, ExecutionId_4_1_0};
-use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB};
+use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB, stub_result_to_wast_val};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutionIdDerived};
-use concepts::storage::HistoryEvent;
 use concepts::storage::{
-    self, DbErrorWrite, HistoryEventScheduleAt, Locked, LogLevel, ResponseWithCursor, Version,
-    WasmBacktrace,
+    self, DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, Locked, LogLevel, ResponseWithCursor,
+    Version, WasmBacktrace,
 };
+use concepts::storage::{HistoryEvent, StubRetVal};
 use concepts::time::ClockFn;
 use concepts::{
     ComponentId, ExecutionId, FunctionMetadata, FunctionRegistry, IfcFqnName, InvalidNameError,
@@ -38,7 +38,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug, error, instrument};
-use val_json::wast_val::{ValKey, WastVal};
+use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, ResourceType, Val};
 use wasmtime_wasi::{
     ResourceTable, ResourceTableError, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
@@ -405,8 +405,6 @@ pub(crate) struct StubFnCall<'a> {
     target_ffqn: FunctionFqn,
     target_execution_id: ExecutionIdDerived,
     target_return_type: ReturnTypeExtendable,
-    parent_id: ExecutionId,
-    join_set_id: JoinSetId,
     #[debug(skip)]
     return_value: &'a wasmtime::component::Val,
     #[debug(skip)]
@@ -446,7 +444,6 @@ impl StubFnCall<'_> {
             }
         };
 
-        let (parent_id, join_set_id) = target_execution_id.split_to_parts();
         let ReturnType::Extendable(target_return_type) = target_fn_metadata.return_type else {
             unreachable!("only functions with compatible return types are exported and extended")
         };
@@ -455,11 +452,42 @@ impl StubFnCall<'_> {
             target_ffqn,
             target_execution_id,
             target_return_type,
-            parent_id,
-            join_set_id,
             return_value,
             wasm_backtrace,
         })
+    }
+
+    async fn get_stub_intent(
+        ctx: &mut WorkflowCtx,
+        target_execution_id: ExecutionIdDerived,
+        target_ffqn: &FunctionFqn,
+        retval: SupportedFunctionReturnValue,
+        called_at: DateTime<Utc>,
+    ) -> Result<StubIntent, DbErrorWrite> {
+        // Flush the cache before getting the stub's create request, because it might be this execution's child.
+        // TODO(perf): Just search cache + db instead.
+        ctx.db_connection
+            .flush_non_blocking_event_cache(called_at)
+            .await?;
+        match ctx
+            .db_connection
+            .get_create_request(&ExecutionId::Derived(target_execution_id))
+            .await
+        {
+            Ok(create_req) if *target_ffqn == create_req.ffqn => {
+                // If this is replay, retval must match the original.
+                // Otherwise, we assume the parent workflow and this stub writer share the
+                // same WIT definition, meaning type checking is done by wasmtime.
+                // TODO: Check if this assumption can be broken.
+                Ok(StubIntent::StubTypeChecked(retval))
+            }
+            Ok(create_req) => Ok(StubIntent::Err(StubIntentErr::TypeCheckError(format!(
+                "ffqn mismatch, code stubs {target_ffqn}, but execution was created with {}",
+                create_req.ffqn
+            )))),
+            Err(DbErrorRead::NotFound) => Ok(StubIntent::Err(StubIntentErr::ExecutionNotFound)),
+            Err(err) => Err(err.into()), // intermittent error
+        }
     }
 
     // -stub is called
@@ -472,38 +500,34 @@ impl StubFnCall<'_> {
             target_ffqn,
             target_execution_id,
             target_return_type,
-            parent_id,
-            join_set_id,
             return_value,
             wasm_backtrace,
         } = self;
 
-        let return_value = SupportedFunctionReturnValue::from_val_and_type_wrapper_tl(
+        let retval = SupportedFunctionReturnValue::from_val_and_type_wrapper_tl(
             return_value.clone(),
             target_return_type.type_wrapper_tl,
         )
         .expect("only functions with compatible return types are exported and extended");
 
-        let stub_result = Stub {
-            target_ffqn: target_ffqn.clone(),
+        let params = StubParams {
             target_execution_id: target_execution_id.clone(),
-            parent_id,
-            join_set_id,
-            result: return_value,
+            retval: StubRetVal::Typed(retval.clone()),
+        };
+        let intent =
+            Self::get_stub_intent(ctx, target_execution_id, &target_ffqn, retval, called_at)
+                .await
+                .map_err(WorkflowFunctionError::DbError)?;
+
+        let stub_result = Stub {
+            intent,
+            params,
             wasm_backtrace,
         }
         .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
         .await?;
 
-        // Convert typed result back to WastVal for the typed extension function return
-        let wast_val = match stub_result {
-            Ok(()) => WastVal::Result(Ok(None)),
-            Err(StubError::Conflict) => WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                ValKey::new_snake("conflict"),
-                None,
-            ))))),
-        };
-        Ok(wast_val.as_val())
+        Ok(stub_result_to_wast_val(stub_result).as_val())
     }
 }
 
@@ -1431,23 +1455,25 @@ enum JoinSetCreateError {
 
 pub(crate) mod workflow_support {
     use super::{
-        Schedule, Stub, StubError, SubmitChildExecution, WorkflowCtx, WorkflowFunctionError,
-        types_4_1_0,
+        Schedule, Stub, SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, types_4_1_0,
     };
-    use crate::workflow::event_history::{JoinNext, JoinNextTry, Persist, SubmitDelay};
+    use crate::workflow::event_history::{
+        JoinNext, JoinNextTry, Persist, StubIntent, StubIntentErr, StubParams, SubmitDelay,
+    };
     use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextError;
     use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, v4_1_0};
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4_2, JoinSetCreateError};
     use concepts::prefixed_ulid::ExecutionIdDerived;
-    use concepts::storage::{DbErrorRead, HistoryEventScheduleAt};
-    use concepts::{CHARSET_ALPHANUMERIC, JoinSetId, JoinSetKind, Params};
+    use concepts::storage::{DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, StubRetVal};
+    use concepts::{CHARSET_ALPHANUMERIC, ComponentType, JoinSetId, JoinSetKind, Params};
     use concepts::{ExecutionId, ReturnType, SupportedFunctionReturnValue};
     use concepts::{FunctionFqn, storage};
     use rand::rngs::StdRng;
     use std::sync::Arc;
-    use tracing::trace;
+    use tracing::{error, instrument, trace, warn};
+    use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val_ser::deserialize_value;
     use wasmtime::component::Resource;
 
@@ -1888,11 +1914,123 @@ pub(crate) mod workflow_support {
             }))
         }
 
+        #[instrument(skip_all, fields(%target_execution_id))]
+        async fn get_stub_intent_and_params(
+            &mut self,
+            target_execution_id: ExecutionIdDerived,
+            retval: String,
+        ) -> Result<(StubIntent, StubParams), DbErrorWrite> {
+            // Look up the target function's FFQN
+            let target_ffqn = match self
+                .db_connection
+                .get_create_request(&ExecutionId::Derived(target_execution_id.clone()))
+                .await
+            {
+                Ok(create_req) => create_req.ffqn.clone(),
+                Err(DbErrorRead::NotFound) => {
+                    return Ok((
+                        StubIntent::Err(StubIntentErr::ExecutionNotFound),
+                        StubParams {
+                            target_execution_id: target_execution_id,
+                            retval: StubRetVal::Untyped(retval),
+                        },
+                    ));
+                }
+                Err(db_err) => return Err(db_err.into()), // intermittent error
+            };
+
+            // Get the function metadata to determine the return type
+            let Some((fn_metadata, fn_component_id)) = self
+                .event_history
+                .fn_registry
+                .get_by_exported_function(&target_ffqn)
+            else {
+                return Ok((
+                    StubIntent::Err(StubIntentErr::WrongFfqn),
+                    StubParams {
+                        target_execution_id: target_execution_id,
+                        retval: StubRetVal::Untyped(retval),
+                    },
+                ));
+            };
+
+            if fn_component_id.component_type != ComponentType::ActivityStub {
+                warn!(
+                    "Cannot stub an execution of type {}",
+                    fn_component_id.component_type
+                );
+                return Ok((
+                    StubIntent::Err(StubIntentErr::WrongFfqn),
+                    StubParams {
+                        target_execution_id: target_execution_id,
+                        retval: StubRetVal::Untyped(retval),
+                    },
+                ));
+            }
+
+            // Get the return type
+            let ReturnType::Extendable(return_type) = fn_metadata.return_type else {
+                // Database contains invalid data
+                error!(
+                    "Database contains execution with a non-extendable return type {fn_component_id} {fn_metadata:?}",
+                );
+                return Ok((
+                    StubIntent::Err(StubIntentErr::WrongFfqn),
+                    StubParams {
+                        target_execution_id: target_execution_id,
+                        retval: StubRetVal::Untyped(retval),
+                    },
+                ));
+            };
+
+            // Parse the JSON result into a SupportedFunctionReturnValue
+            let retval_parsed = {
+                let retval_parsed = match serde_json::from_str(&retval) {
+                    Ok(ok) => ok,
+                    Err(err) => {
+                        return Ok((
+                            StubIntent::Err(StubIntentErr::TypeCheckError(format!(
+                                "cannot parse stubbed return value: {err}"
+                            ))),
+                            StubParams {
+                                target_execution_id: target_execution_id,
+                                retval: StubRetVal::Untyped(retval),
+                            },
+                        ));
+                    }
+                };
+                let type_wrapper = TypeWrapper::from(return_type.type_wrapper_tl);
+                let retval_parsed = match deserialize_value(&retval_parsed, type_wrapper) {
+                    Ok(ok) => ok,
+                    Err(err) => {
+                        return Ok((
+                            StubIntent::Err(StubIntentErr::TypeCheckError(format!(
+                                "cannot type check stubbed return value: {err}"
+                            ))),
+                            StubParams {
+                                target_execution_id: target_execution_id,
+                                retval: StubRetVal::Untyped(retval),
+                            },
+                        ));
+                    }
+                };
+                SupportedFunctionReturnValue::from_wast_val_with_type(retval_parsed)
+                    .expect("checked that ffqn is no-ext, return type must be compatible")
+            };
+            Ok((
+                StubIntent::StubTypeChecked(retval_parsed),
+                StubParams {
+                    target_execution_id: target_execution_id,
+                    retval: StubRetVal::Untyped(retval),
+                },
+            ))
+        }
+
         /// Write a stub response with a JSON-serialized result for an `activity_stub` execution.
         pub(crate) async fn stub_json(
             &mut self,
             target_execution_id: types_4_1_0::execution::ExecutionId,
-            result_json: String,
+            retval: String,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<
             Result<(), v4_1_0::obelisk::workflow::workflow_support::StubJsonError>,
@@ -1901,6 +2039,7 @@ pub(crate) mod workflow_support {
             use v4_1_0::obelisk::workflow::workflow_support::StubJsonError;
 
             // Parse the execution ID
+            // Error is not persisted, as it is not dependent on state in db or fn registry.
             let target_execution_id = match ExecutionId::try_from(target_execution_id) {
                 Ok(ExecutionId::Derived(derived)) => derived,
                 Ok(ExecutionId::TopLevel(_)) => {
@@ -1916,71 +2055,16 @@ pub(crate) mod workflow_support {
                 }
             };
 
-            let (parent_id, join_set_id) = target_execution_id.split_to_parts();
-
-            // Look up the target function's FFQN
-            let target_ffqn = match self
-                .db_connection
-                .get_create_request(&ExecutionId::Derived(target_execution_id.clone()))
+            let (intent, params) = self
+                .get_stub_intent_and_params(target_execution_id, retval)
                 .await
-            {
-                Ok(create_req) => create_req.ffqn.clone(),
-                Err(DbErrorRead::NotFound) => return Ok(Err(StubJsonError::NotFound)), // FIXME: depends on current db state, MUST be persisted for deterministic replay
-                Err(db_err) => return Err(WorkflowFunctionError::DbError(db_err.into())), // intermittent error
-            };
-
-            // Get the function metadata to determine the return type
-            let Some((fn_metadata, _fn_component_id)) = self
-                .event_history
-                .fn_registry
-                .get_by_exported_function(&target_ffqn)
-            else {
-                return Ok(Err(StubJsonError::NotFound)); // FIXME: depends on current registry state, MUST be persisted for deterministic replay
-            };
-
-            // Get the return type
-            let ReturnType::Extendable(return_type) = fn_metadata.return_type else {
-                return Ok(Err(StubJsonError::ResultParsingError(
-                    "target function's return type is not extendable".to_string(),
-                )));
-            };
-
-            // Parse the JSON result into a SupportedFunctionReturnValue
-            // The result-json represents the ok-value, same as what get-result-json returns
-            let result = match &return_type.type_wrapper_tl.ok {
-                None => SupportedFunctionReturnValue::Ok { ok: None },
-                Some(ok_type) => {
-                    let json_val: serde_json::Value = match serde_json::from_str(&result_json) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            return Ok(Err(StubJsonError::ResultParsingError(format!(
-                                "cannot parse result-json: {err}"
-                            ))));
-                        }
-                    };
-                    let wast_val_with_type =
-                        match deserialize_value(&json_val, ok_type.as_ref().clone()) {
-                            Ok(v) => v,
-                            Err(err) => {
-                                return Ok(Err(StubJsonError::ResultParsingError(format!(
-                                    "result type checking failed: {err}"
-                                ))));
-                            }
-                        };
-                    SupportedFunctionReturnValue::Ok {
-                        ok: Some(wast_val_with_type),
-                    }
-                }
-            };
+                .map_err(WorkflowFunctionError::DbError)?;
 
             // Apply the stub
             let called_at = self.clock_fn.now();
             let stub_result = Stub {
-                target_ffqn,
-                target_execution_id,
-                parent_id,
-                join_set_id,
-                result,
+                intent,
+                params,
                 wasm_backtrace,
             }
             .apply(&mut self.event_history, &mut self.db_connection, called_at)
@@ -1988,7 +2072,7 @@ pub(crate) mod workflow_support {
 
             match stub_result {
                 Ok(()) => Ok(Ok(())),
-                Err(StubError::Conflict) => Ok(Err(StubJsonError::Conflict)),
+                Err(err) => Ok(Err(StubJsonError::from(err))),
             }
         }
 

@@ -137,7 +137,7 @@ impl TestServer {
             suppress_type_checking_errors: false,
         };
 
-        tokio::spawn(async move {
+        let server_handle = tokio::spawn(async move {
             if let Err(e) = Box::pin(run_internal(
                 config,
                 config_holder,
@@ -156,6 +156,10 @@ impl TestServer {
         // Poll until the server is ready.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
         loop {
+            if server_handle.is_finished() {
+                server_handle.await.unwrap();
+                unreachable!("server must have panicked")
+            }
             match client
                 .get(format!("{base_url}/v1/functions"))
                 .header("Accept", "application/json")

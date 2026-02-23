@@ -55,17 +55,11 @@ impl CombinedState {
         self.corresponding_version.increment()
     }
 
-    #[track_caller]
     pub fn get_next_version_fail_if_finished(&self) -> Result<Version, DbErrorWrite> {
         if self.execution_with_state.pending_state.is_finished() {
             debug!("Execution is already finished");
             return Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::IllegalState {
-                    reason: "already finished".into(),
-                    context: SpanTrace::capture(),
-                    source: None,
-                    loc: Location::caller(),
-                },
+                DbErrorWriteNonRetriable::AlreadyFinished,
             ));
         }
         Ok(self.corresponding_version.increment())

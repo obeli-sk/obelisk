@@ -40,6 +40,8 @@ use concepts::storage::Locked;
 use concepts::storage::PersistKind;
 use concepts::storage::ResponseCursor;
 use concepts::storage::ResponseWithCursor;
+use concepts::storage::StubError;
+use concepts::storage::StubRetVal;
 use concepts::storage::TimeoutOutcome;
 use concepts::storage::{
     AppendRequest, CreateRequest, ExecutionRequest, JoinSetResponse, JoinSetResponseEvent, Version,
@@ -77,13 +79,6 @@ enum ChildReturnValue {
     },
     SubmitDelay,
     Stub(Result<(), StubError>),
-}
-
-/// Error from the `-stub` extension function.
-/// Mirrors `obelisk:types/execution.{stub-error}` from WIT.
-#[derive(Debug, Clone)]
-pub(crate) enum StubError {
-    Conflict,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -1077,23 +1072,21 @@ impl EventHistory {
             }
 
             (
-                DeterministicKey::Stub {
-                    target_execution_id,
-                    return_value,
-                },
+                DeterministicKey::Stub { intent, params },
                 HistoryEvent::Stub {
                     target_execution_id: found_execution_id,
-                    result: found_result,
-                    persist_result: target_result,
+                    retval: found_retval,
+                    persist_result: found_result,
                 },
-            ) if target_execution_id == found_execution_id && return_value == found_result => {
-                trace!(%target_execution_id, "Matched Stub");
-                let result = match target_result {
-                    Ok(()) => Ok(()),
-                    Err(()) => Err(StubError::Conflict),
-                };
+            ) if params.target_execution_id == *found_execution_id
+                && params.retval == *found_retval =>
+            {
+                trace!(target_execution_id = %params.target_execution_id, "Matched Stub");
+                let found_result = found_result.clone();
                 self.event_history[found_idx].1 = Processed;
-                Ok(FindMatchingResponse::Found(ChildReturnValue::Stub(result)))
+                Ok(FindMatchingResponse::Found(ChildReturnValue::Stub(
+                    found_result,
+                )))
             }
 
             (key, found) => {
@@ -1320,118 +1313,143 @@ impl EventHistory {
             }
 
             EventCallNonBlocking::Stub(Stub {
-                target_ffqn,
-                target_execution_id,
-                parent_id,
-                join_set_id,
-                result,
+                // target_ffqn,
+                // target_execution_id,
+                // parent_id,
+                // join_set_id,
+                // stub_retval,
+                intent,
+                params,
                 wasm_backtrace,
             }) => {
                 // Cannot be cacheable as we need the result now.
                 // Idempotently attempt to write to target_execution_id.
                 // The idempotent write is needed to avoid race with stub requests originating from remote systems.
-                debug!(%target_execution_id, "StubRequest: Flushing and appending");
-
-                // Flush the cache before getting the stub's create request, because it might be this execution's child.
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
-                // Check that the execution exists and FFQN matches.
-                if target_ffqn
-                    != db_connection
-                        .get_create_request(&ExecutionId::Derived(target_execution_id.clone()))
-                        .await?
-                        .ffqn
-                {
-                    return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::ValidationFailed("ffqn mismatch".into()),
-                    ));
-                }
-                let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
-                // Attempt to write to target_execution_id and its parent, ignoring the possible conflict error on this tx
-                let write_attempt = {
-                    let finished_req = AppendRequest {
-                        created_at: called_at,
-                        event: ExecutionRequest::Finished {
-                            result: result.clone(),
-                            http_client_traces: None,
-                        },
-                    };
-                    db_connection
-                        .append_batch_respond_to_parent(
-                            AppendEventsToExecution {
-                                execution_id: ExecutionId::Derived(target_execution_id.clone()),
-                                version: stub_finished_version.clone(),
-                                batch: vec![finished_req],
-                            },
-                            AppendResponseToExecution {
-                                parent_execution_id: parent_id,
-                                created_at: called_at,
-                                join_set_id,
-                                child_execution_id: target_execution_id.clone(),
-                                finished_version: stub_finished_version.clone(),
-                                result: result.clone(),
-                            },
-                            called_at,
-                        )
-                        .await
-                };
-                debug!(%target_ffqn, %target_execution_id, "Executed append_batch_respond_to_parent: {write_attempt:?}");
-                // The server might crash at this point, and restart processing.
-                let persist_result = match write_attempt {
-                    Ok(_) => Ok(()),
-                    Err(err) => {
-                        // TODO: check error == conflict
-                        info!(%target_ffqn, %target_execution_id,
-                            "append_batch_respond_to_parent was not successful, checking execution result - {err:?}"
-                        );
-                        // In case of conflict, select row (target_execution_id, version:1)
-                        let found = db_connection
-                            .get_execution_event(
-                                &ExecutionId::Derived(target_execution_id.clone()),
-                                &stub_finished_version,
+                debug!(target_execution_id = %params.target_execution_id, "StubRequest: Flushing and appending");
+                match intent {
+                    StubIntent::Err(err) => {
+                        let event = HistoryEvent::Stub {
+                            target_execution_id: params.target_execution_id,
+                            retval: params.retval,
+                            persist_result: Err(err.into()),
+                        };
+                        let history_event = (event.clone(), db_connection.version.clone());
+                        let history_event_req = AppendRequest {
+                            created_at: called_at,
+                            event: ExecutionRequest::HistoryEvent { event },
+                        };
+                        db_connection
+                            .append_batch(
+                                called_at,
+                                vec![history_event_req],
+                                db_connection.execution_id.clone(),
+                                wasm_backtrace,
+                                &self.locked_event.component_id,
                             )
-                            .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
-                        match found.event {
-                            ExecutionRequest::Finished {
-                                result: found_result,
-                                ..
-                            } if result == found_result => Ok(()),
-                            ExecutionRequest::Finished { .. } => {
-                                info!(%target_ffqn, %target_execution_id, "Different value found in stubbed execution's finished event");
-                                Err(())
-                            }
-                            other => {
-                                info!(%target_ffqn, %target_execution_id,
-                                    "Unexpected execution event at stubbed execution - {other:?}"
-                                );
-                                Err(())
-                            }
-                        }
+                            .await?;
+                        Ok(history_event)
                     }
-                };
-
-                // Second write tx: Append the HistoryEvent with target_result.
-                let event = HistoryEvent::Stub {
-                    target_execution_id: target_execution_id.clone(),
-                    result,
-                    persist_result,
-                };
-                let history_event = (event.clone(), db_connection.version.clone());
-                let history_event_req = AppendRequest {
-                    created_at: called_at,
-                    event: ExecutionRequest::HistoryEvent { event },
-                };
-                db_connection
-                    .append_batch(
-                        called_at,
-                        vec![history_event_req],
-                        db_connection.execution_id.clone(),
-                        wasm_backtrace,
-                        &self.locked_event.component_id,
-                    )
-                    .await?;
-                Ok(history_event)
+                    StubIntent::StubTypeChecked(retval_intent) => {
+                        let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
+                        let (parent_id, join_set_id) = params.target_execution_id.split_to_parts();
+                        // Attempt to write to target_execution_id and its parent, ignoring the possible conflict error on this tx
+                        let write_attempt = {
+                            let finished_req = AppendRequest {
+                                created_at: called_at,
+                                event: ExecutionRequest::Finished {
+                                    result: retval_intent.clone(),
+                                    http_client_traces: None,
+                                },
+                            };
+                            db_connection
+                                .append_batch_respond_to_parent(
+                                    AppendEventsToExecution {
+                                        execution_id: ExecutionId::Derived(
+                                            params.target_execution_id.clone(),
+                                        ),
+                                        version: stub_finished_version.clone(),
+                                        batch: vec![finished_req],
+                                    },
+                                    AppendResponseToExecution {
+                                        parent_execution_id: parent_id,
+                                        created_at: called_at,
+                                        join_set_id,
+                                        child_execution_id: params.target_execution_id.clone(),
+                                        finished_version: stub_finished_version.clone(),
+                                        result: retval_intent.clone(),
+                                    },
+                                    called_at,
+                                )
+                                .await
+                        };
+                        debug!(target_execution_id = %params.target_execution_id, "Executed append_batch_respond_to_parent: {write_attempt:?}");
+                        // The server might crash at this point, and restart processing.
+                        let persist_result = match write_attempt {
+                            Ok(_) => Ok(()),
+                            Err(DbErrorWrite::NonRetriable(
+                                DbErrorWriteNonRetriable::AlreadyFinished,
+                            )) => {
+                                info!(target_execution_id = %params.target_execution_id,
+                                    "Got conflict while appending Finished event for stubbed execution"
+                                );
+                                // In case of conflict, select row (target_execution_id, version:1)
+                                let found = db_connection
+                                    .get_execution_event(
+                                        &ExecutionId::Derived(params.target_execution_id.clone()),
+                                        &stub_finished_version,
+                                    )
+                                    .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
+                                match found.event {
+                                    ExecutionRequest::Finished {
+                                        result: found_result,
+                                        ..
+                                    } if retval_intent == found_result => Ok(()),
+                                    ExecutionRequest::Finished { .. } => {
+                                        info!(
+                                            target_execution_id = %params.target_execution_id,
+                                            "Different value found in stubbed execution's finished event"
+                                        );
+                                        Err(StubError::Conflict)
+                                    }
+                                    other => {
+                                        info!(target_execution_id = %params.target_execution_id,
+                                            "Unexpected execution event at stubbed execution - {other:?}"
+                                        );
+                                        Err(StubError::Conflict)
+                                    }
+                                }
+                            }
+                            Err(DbErrorWrite::NonRetriable(other_non_retriable)) => {
+                                info!(target_execution_id = %params.target_execution_id,
+                                    "Got nonretriable error appending Finished event for stubbed execution: {other_non_retriable:?}"
+                                );
+                                Err(StubError::Conflict)
+                            }
+                            Err(db_error_write) => return Err(db_error_write), // intermittent db error
+                        };
+                        // Second write tx: Append the HistoryEvent with target_result.
+                        let event = HistoryEvent::Stub {
+                            target_execution_id: params.target_execution_id.clone(),
+                            retval: params.retval.clone(),
+                            persist_result,
+                        };
+                        let history_event = (event.clone(), db_connection.version.clone());
+                        let history_event_req = AppendRequest {
+                            created_at: called_at,
+                            event: ExecutionRequest::HistoryEvent { event },
+                        };
+                        db_connection
+                            .append_batch(
+                                called_at,
+                                vec![history_event_req],
+                                db_connection.execution_id.clone(),
+                                wasm_backtrace,
+                                &self.locked_event.component_id,
+                            )
+                            .await?;
+                        Ok(history_event)
+                    }
+                }
             }
 
             EventCallNonBlocking::JoinNextTry(JoinNextTry {
@@ -2224,15 +2242,41 @@ impl Schedule {
     }
 }
 
+#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StubParams {
+    pub(crate) target_execution_id: ExecutionIdDerived,
+    #[debug(skip)]
+    pub(crate) retval: StubRetVal,
+}
+
+// Current database and fn registry depentent intent
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StubIntent {
+    Err(StubIntentErr),
+    StubTypeChecked(SupportedFunctionReturnValue), // can result in `Ok(())` or `StubError::Conflict`
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StubIntentErr {
+    ExecutionNotFound,      // results in `StubError::ExecutionNotFound`
+    WrongFfqn,              // results in `StubError::WrongFfqn`
+    TypeCheckError(String), // results in `StubError::TypeCheckError`
+}
+impl From<StubIntentErr> for StubError {
+    fn from(value: StubIntentErr) -> StubError {
+        match value {
+            StubIntentErr::ExecutionNotFound => StubError::ExecutionNotFound,
+            StubIntentErr::WrongFfqn => StubError::WrongFfqn,
+            StubIntentErr::TypeCheckError(reason) => StubError::TypeCheckError(reason),
+        }
+    }
+}
+
 // -stub: func(execution-id: execution-id, return-value: result<?>) -> result<_, stub-error>
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct Stub {
-    pub(crate) target_ffqn: FunctionFqn,
-    pub(crate) target_execution_id: ExecutionIdDerived,
-    pub(crate) parent_id: ExecutionId,
-    pub(crate) join_set_id: JoinSetId,
-    #[debug(skip)]
-    pub(crate) result: SupportedFunctionReturnValue, // stubbed return value
+    pub(crate) intent: StubIntent,
+    pub(crate) params: StubParams,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
@@ -2681,10 +2725,10 @@ enum DeterministicKey {
         schedule_at: HistoryEventScheduleAt,
     },
 
-    #[display("Stub({target_execution_id})")]
+    #[display("Stub({})", params.target_execution_id)]
     Stub {
-        target_execution_id: ExecutionIdDerived,
-        return_value: SupportedFunctionReturnValue,
+        intent: StubIntent,
+        params: StubParams,
     },
 }
 
@@ -2815,13 +2859,9 @@ impl EventCallNonBlocking {
                 target_execution_id: execution_id.clone(),
                 schedule_at: *schedule_at,
             },
-            EventCallNonBlocking::Stub(Stub {
-                target_execution_id,
-                result: return_value,
-                ..
-            }) => DeterministicKey::Stub {
-                target_execution_id: target_execution_id.clone(),
-                return_value: return_value.clone(),
+            EventCallNonBlocking::Stub(Stub { intent, params, .. }) => DeterministicKey::Stub {
+                intent: intent.clone(),
+                params: params.clone(),
             },
             EventCallNonBlocking::JoinNextTry(JoinNextTry { join_set_id, .. }) => {
                 DeterministicKey::JoinNextTry {
@@ -2846,13 +2886,15 @@ mod tests {
     use crate::workflow::deadline_tracker::deadline_tracker_factory_test;
     use crate::workflow::event_history::{
         ApplyError, AwaitNextExtensionError, ChildReturnValue, JoinNextRequestingFfqn, JoinNextTry,
-        JoinNextTryError, JoinSetCreate, Schedule, Stub, SubmitDelay,
+        JoinNextTryError, JoinSetCreate, Schedule, Stub, StubIntent, StubParams, SubmitDelay,
     };
     use crate::workflow::host_exports::response_id::ResponseId;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
-    use concepts::storage::{CreateRequest, DbConnectionTest, HistoryEventScheduleAt, Locked};
+    use concepts::storage::{
+        CreateRequest, DbConnectionTest, HistoryEventScheduleAt, Locked, StubRetVal,
+    };
     use concepts::storage::{
         DbConnection, DbPoolCloseable, JoinSetResponse, JoinSetResponseEvent, Version,
     };
@@ -2866,6 +2908,7 @@ mod tests {
     use rstest::rstest;
     use std::sync::Arc;
     use std::time::Duration;
+    use test_db_macro::expand_enum_database;
     use test_utils::sim_clock::SimClock;
     use tracing::{info, info_span};
     use val_json::type_wrapper::TypeWrapper;
@@ -3357,11 +3400,11 @@ mod tests {
             event_history
                 .apply(
                     EventCall::NonBlocking(EventCallNonBlocking::Stub(Stub {
-                        target_ffqn: MOCK_FFQN,
-                        target_execution_id: child_execution_id.clone(),
-                        parent_id: execution_id.clone(),
-                        join_set_id: join_set_id.clone(),
-                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                        intent: StubIntent::StubTypeChecked(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                        params: StubParams {
+                            target_execution_id: child_execution_id.clone(),
+                            retval: StubRetVal::Typed(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                        },
                         wasm_backtrace: None,
                     })),
                     &mut caching_db_connection,
@@ -3406,12 +3449,14 @@ mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database] // DB Conflict must be tested for each database
+    #[rstest]
     #[tokio::test]
     // Two executions are setting the same stub value to the target activity_stub.
-    async fn stubbing_many_times_with_same_value_should_be_ok() {
+    async fn stubbing_many_times_with_same_value_should_be_ok(db: Database) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = db.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
         let db_connection = db_connection.as_ref();
 
@@ -3449,11 +3494,11 @@ mod tests {
                 event_history
                     .apply(
                         EventCall::NonBlocking(EventCallNonBlocking::Stub(Stub {
-                            target_ffqn: MOCK_FFQN,
-                            target_execution_id: target_activity_stub.clone(),
-                            parent_id: execution_id.clone(),
-                            join_set_id: join_set_id.clone(),
-                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            intent: StubIntent::StubTypeChecked(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                            params: StubParams {
+                                target_execution_id: target_activity_stub.clone(),
+                                retval: StubRetVal::Typed(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                            },
                             wasm_backtrace: None,
                         })),
                         &mut caching_db_connection,
@@ -3489,11 +3534,11 @@ mod tests {
                 event_history
                     .apply(
                         EventCall::NonBlocking(EventCallNonBlocking::Stub(Stub {
-                            target_ffqn: MOCK_FFQN,
-                            target_execution_id: target_activity_stub.clone(),
-                            parent_id: execution_id.clone(),
-                            join_set_id: join_set_id.clone(),
-                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            intent: StubIntent::StubTypeChecked(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                            params: StubParams {
+                                target_execution_id: target_activity_stub.clone(),
+                                retval: StubRetVal::Typed(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                            },
                             wasm_backtrace: None,
                         })),
                         &mut caching_db_connection,
