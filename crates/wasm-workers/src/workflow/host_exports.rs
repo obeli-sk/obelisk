@@ -348,7 +348,7 @@ pub(crate) fn stub_result_to_wast_val(stub_result: Result<(), StubError>) -> Was
                 }
             };
             WastVal::Result(Err(Some(Box::new(WastVal::Variant(
-                ValKey::new_snake(variant.to_string()),
+                ValKey::from_kebab(variant),
                 payload,
             )))))
         }

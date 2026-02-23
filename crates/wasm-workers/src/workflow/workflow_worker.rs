@@ -3102,6 +3102,19 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
+    async fn stub_not_found(db: db_tests::Database) {
+        execute_workflow_fn_with_single_delay(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::STUB_NOT_FOUND),
+            None,
+            db,
+        )
+        .await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
     async fn invoke_expect_execution_error(db: db_tests::Database) {
         const FFQN_WORKFLOW_STUB: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::INVOKE_EXPECT_EXECUTION_ERROR,

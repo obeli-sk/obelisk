@@ -2,7 +2,7 @@ use generated::export;
 use generated::exports::testing::stub_workflow::workflow::Guest;
 use generated::obelisk::log::log;
 use generated::obelisk::types::execution::{
-    AwaitNextExtensionError, ExecutionId, GetExtensionError, ResponseId,
+    AwaitNextExtensionError, ExecutionId, GetExtensionError, ResponseId, StubError,
 };
 use generated::obelisk::types::time::{Duration, ScheduleAt};
 use generated::obelisk::workflow::workflow_support::join_set_create_named;
@@ -101,6 +101,15 @@ impl Guest for Component {
     fn invoke_expect_execution_error() -> Result<(), ()> {
         let res = activity::noret();
         res.unwrap_err();
+        Ok(())
+    }
+
+    fn stub_not_found() -> Result<(), ()> {
+        let fake_execution_id = ExecutionId {
+            id: "E_00000000000000000000000000.n:fake_1".to_string(),
+        };
+        let result = activity_stub::foo_stub(&fake_execution_id, Ok("stubbed value"));
+        assert!(matches!(result, Err(StubError::ExecutionNotFound)));
         Ok(())
     }
 }

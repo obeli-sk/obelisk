@@ -261,6 +261,8 @@ package testing:stub-workflow {
     join-next-in-scope: func() -> result;
 
     invoke-expect-execution-error: func() -> result;
+
+    stub-not-found: func() -> result;
   }
 }
 
@@ -330,6 +332,12 @@ package testing:stub-workflow-obelisk-ext {
     invoke-expect-execution-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
     invoke-expect-execution-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+
+    stub-not-found-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+    stub-not-found-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+
+    stub-not-found-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
   }
 }
 
@@ -358,5 +366,7 @@ package testing:stub-workflow-obelisk-schedule {
     join-next-in-scope-schedule: func(schedule-at: schedule-at) -> execution-id;
 
     invoke-expect-execution-error-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+    stub-not-found-schedule: func(schedule-at: schedule-at) -> execution-id;
   }
 }

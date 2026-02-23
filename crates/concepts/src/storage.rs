@@ -950,7 +950,7 @@ pub trait DbExecutor: Send + Sync {
     ) -> Result<LockedExecution, DbErrorWrite>;
 
     /// Append a single event to an existing execution log.
-    /// The request cannot contain `ExecutionEventInner::Created`.
+    /// The request cannot contain [`ExecutionRequest::Created`].
     async fn append(
         &self,
         execution_id: ExecutionId,
@@ -959,7 +959,7 @@ pub trait DbExecutor: Send + Sync {
     ) -> Result<AppendResponse, DbErrorWrite>;
 
     /// Append a batch of events to an existing execution log, and append a response to a parent execution.
-    /// The batch cannot contain `ExecutionEventInner::Created`.
+    /// The batch cannot contain [`ExecutionRequest::Created`].
     async fn append_batch_respond_to_parent(
         &self,
         events: AppendEventsToExecution,
@@ -1298,7 +1298,7 @@ pub trait DbConnection: DbExecutor {
     ) -> Result<AppendDelayResponseOutcome, DbErrorWrite>;
 
     /// Append a batch of events to an existing execution log, and append a response to a parent execution.
-    /// The batch cannot contain `ExecutionEventInner::Created`.
+    /// The batch cannot contain [`ExecutionRequest::Created`].
     async fn append_batch(
         &self,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
@@ -1308,11 +1308,11 @@ pub trait DbConnection: DbExecutor {
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     /// Append one or more events to the parent execution log, and create zero or more child execution logs.
-    /// The batch cannot contain `ExecutionEventInner::Created`.
+    /// The batch cannot contain [`ExecutionRequest::Created`].
     async fn append_batch_create_new_execution(
         &self,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
-        batch: Vec<AppendRequest>,   // must not contain `ExecutionEventInner::Created` events
+        batch: Vec<AppendRequest>,   // must not contain [`ExecutionRequest::Created`] events
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
