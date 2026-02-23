@@ -1931,7 +1931,7 @@ pub(crate) mod workflow_support {
                     return Ok((
                         StubIntent::Err(StubIntentErr::ExecutionNotFound),
                         StubParams {
-                            target_execution_id: target_execution_id,
+                            target_execution_id,
                             retval: StubRetVal::Untyped(retval),
                         },
                     ));
@@ -1948,7 +1948,7 @@ pub(crate) mod workflow_support {
                 return Ok((
                     StubIntent::Err(StubIntentErr::WrongFfqn),
                     StubParams {
-                        target_execution_id: target_execution_id,
+                        target_execution_id,
                         retval: StubRetVal::Untyped(retval),
                     },
                 ));
@@ -1962,7 +1962,7 @@ pub(crate) mod workflow_support {
                 return Ok((
                     StubIntent::Err(StubIntentErr::WrongFfqn),
                     StubParams {
-                        target_execution_id: target_execution_id,
+                        target_execution_id,
                         retval: StubRetVal::Untyped(retval),
                     },
                 ));
@@ -1977,7 +1977,7 @@ pub(crate) mod workflow_support {
                 return Ok((
                     StubIntent::Err(StubIntentErr::WrongFfqn),
                     StubParams {
-                        target_execution_id: target_execution_id,
+                        target_execution_id,
                         retval: StubRetVal::Untyped(retval),
                     },
                 ));
@@ -1993,7 +1993,7 @@ pub(crate) mod workflow_support {
                                 "cannot parse stubbed return value: {err}"
                             ))),
                             StubParams {
-                                target_execution_id: target_execution_id,
+                                target_execution_id,
                                 retval: StubRetVal::Untyped(retval),
                             },
                         ));
@@ -2008,7 +2008,7 @@ pub(crate) mod workflow_support {
                                 "cannot type check stubbed return value: {err}"
                             ))),
                             StubParams {
-                                target_execution_id: target_execution_id,
+                                target_execution_id,
                                 retval: StubRetVal::Untyped(retval),
                             },
                         ));
@@ -2020,7 +2020,7 @@ pub(crate) mod workflow_support {
             Ok((
                 StubIntent::StubTypeChecked(retval_parsed),
                 StubParams {
-                    target_execution_id: target_execution_id,
+                    target_execution_id,
                     retval: StubRetVal::Untyped(retval),
                 },
             ))

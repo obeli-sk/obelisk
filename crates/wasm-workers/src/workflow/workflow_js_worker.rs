@@ -1419,14 +1419,14 @@ mod tests {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r#"function test_stub_not_found(params) {
+        let js_source = r"function test_stub_not_found(params) {
             try {
                 obelisk.stub('E_00000000000000000000000000.n:fake_1', {'ok': 'x'});
                 return JSON.stringify({ error: 'expected-error-but-got-none' });
             } catch (e) {
                 return JSON.stringify({ errorType: 'stub-error', errorMessage: e.message });
             }
-        }"#;
+        }";
 
         let harness = StubTestHarness::new(db_pool, js_source, "test-stub-not-found").await;
         harness.tick().await;
@@ -1507,7 +1507,7 @@ mod tests {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r#"function test_stub_conflict(params) {
+        let js_source = r"function test_stub_conflict(params) {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'ok': 'first-value'});
@@ -1524,16 +1524,23 @@ mod tests {
                     result: result
                 });
             }
-        }"#;
+        }";
 
         let harness = StubTestHarness::new(db_pool, js_source, "test-stub-conflict").await;
         harness.tick().await;
         harness.tick().await;
 
         let result = harness.get_result_json().await;
-        assert_eq!(json!(true), result["conflictDetected"], "Expected conflict, got: {result}");
+        assert_eq!(
+            json!(true),
+            result["conflictDetected"],
+            "Expected conflict, got: {result}"
+        );
         let error_msg = result["errorMessage"].as_str().unwrap();
-        assert!(error_msg.contains("Conflict"), "Expected 'Conflict' in error, got: {error_msg}");
+        assert!(
+            error_msg.contains("Conflict"),
+            "Expected 'Conflict' in error, got: {error_msg}"
+        );
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("first-value"), result["result"]["ok"]);
 
