@@ -41,7 +41,7 @@ use concepts::storage::PersistKind;
 use concepts::storage::ResponseCursor;
 use concepts::storage::ResponseWithCursor;
 use concepts::storage::StubError;
-use concepts::storage::StubRetVal;
+use concepts::storage::StubRetValHash;
 use concepts::storage::TimeoutOutcome;
 use concepts::storage::{
     AppendRequest, CreateRequest, ExecutionRequest, JoinSetResponse, JoinSetResponseEvent, Version,
@@ -1075,11 +1075,11 @@ impl EventHistory {
                 DeterministicKey::Stub { intent, params },
                 HistoryEvent::Stub {
                     target_execution_id: found_execution_id,
-                    retval: found_retval,
+                    retval_hash: found_retval_hash,
                     persist_result: found_result,
                 },
             ) if params.target_execution_id == *found_execution_id
-                && params.retval == *found_retval =>
+                && params.retval_hash == *found_retval_hash =>
             {
                 trace!(target_execution_id = %params.target_execution_id, "Matched Stub");
                 let found_result = found_result.clone();
@@ -1330,7 +1330,7 @@ impl EventHistory {
                     StubIntent::Err(err) => {
                         let event = HistoryEvent::Stub {
                             target_execution_id: params.target_execution_id,
-                            retval: params.retval,
+                            retval_hash: params.retval_hash,
                             persist_result: Err(err.into()),
                         };
                         let history_event = (event.clone(), db_connection.version.clone());
@@ -1430,7 +1430,7 @@ impl EventHistory {
                         // Second write tx: Append the HistoryEvent with target_result.
                         let event = HistoryEvent::Stub {
                             target_execution_id: params.target_execution_id.clone(),
-                            retval: params.retval.clone(),
+                            retval_hash: params.retval_hash.clone(),
                             persist_result,
                         };
                         let history_event = (event.clone(), db_connection.version.clone());
@@ -2245,8 +2245,7 @@ impl Schedule {
 #[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StubParams {
     pub(crate) target_execution_id: ExecutionIdDerived,
-    #[debug(skip)]
-    pub(crate) retval: StubRetVal,
+    pub(crate) retval_hash: StubRetValHash,
 }
 
 // Current database and fn registry depentent intent
@@ -2671,7 +2670,6 @@ impl EventCallBlocking {
 /// One `EventCall` can be represented as multiple `DeterministicKey`-s.
 /// One `DeterministicKey` corresponds to one `HistoryEvent`.
 #[derive(derive_more::Debug, Clone, derive_more::Display)]
-#[expect(clippy::large_enum_variant)] // TODO: StubParams should only persist hash of the return value
 enum DeterministicKey {
     #[display("Persist({kind})")]
     Persist {
@@ -3404,7 +3402,7 @@ mod tests {
                         intent: StubIntent::StubTypeChecked(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                         params: StubParams {
                             target_execution_id: child_execution_id.clone(),
-                            retval: StubRetVal::Typed(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                            retval_hash: StubRetVal::Typed(SUPPORTED_RETURN_VALUE_OK_EMPTY).hash(),
                         },
                         wasm_backtrace: None,
                     })),
@@ -3498,7 +3496,8 @@ mod tests {
                             intent: StubIntent::StubTypeChecked(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                             params: StubParams {
                                 target_execution_id: target_activity_stub.clone(),
-                                retval: StubRetVal::Typed(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                                retval_hash: StubRetVal::Typed(SUPPORTED_RETURN_VALUE_OK_EMPTY)
+                                    .hash(),
                             },
                             wasm_backtrace: None,
                         })),
@@ -3538,7 +3537,8 @@ mod tests {
                             intent: StubIntent::StubTypeChecked(SUPPORTED_RETURN_VALUE_OK_EMPTY),
                             params: StubParams {
                                 target_execution_id: target_activity_stub.clone(),
-                                retval: StubRetVal::Typed(SUPPORTED_RETURN_VALUE_OK_EMPTY),
+                                retval_hash: StubRetVal::Typed(SUPPORTED_RETURN_VALUE_OK_EMPTY)
+                                    .hash(),
                             },
                             wasm_backtrace: None,
                         })),

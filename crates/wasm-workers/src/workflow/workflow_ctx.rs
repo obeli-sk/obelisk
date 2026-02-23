@@ -512,7 +512,7 @@ impl StubFnCall<'_> {
 
         let params = StubParams {
             target_execution_id: target_execution_id.clone(),
-            retval: StubRetVal::Typed(retval.clone()),
+            retval_hash: StubRetVal::Typed(retval.clone()).hash(),
         };
         let intent =
             Self::get_stub_intent(ctx, target_execution_id, &target_ffqn, retval, called_at)
@@ -1932,7 +1932,7 @@ pub(crate) mod workflow_support {
                         StubIntent::Err(StubIntentErr::ExecutionNotFound),
                         StubParams {
                             target_execution_id,
-                            retval: StubRetVal::Untyped(retval),
+                            retval_hash: StubRetVal::Untyped(retval).hash(),
                         },
                     ));
                 }
@@ -1949,7 +1949,7 @@ pub(crate) mod workflow_support {
                     StubIntent::Err(StubIntentErr::WrongFfqn),
                     StubParams {
                         target_execution_id,
-                        retval: StubRetVal::Untyped(retval),
+                        retval_hash: StubRetVal::Untyped(retval).hash(),
                     },
                 ));
             };
@@ -1963,7 +1963,7 @@ pub(crate) mod workflow_support {
                     StubIntent::Err(StubIntentErr::WrongFfqn),
                     StubParams {
                         target_execution_id,
-                        retval: StubRetVal::Untyped(retval),
+                        retval_hash: StubRetVal::Untyped(retval).hash(),
                     },
                 ));
             }
@@ -1978,7 +1978,7 @@ pub(crate) mod workflow_support {
                     StubIntent::Err(StubIntentErr::WrongFfqn),
                     StubParams {
                         target_execution_id,
-                        retval: StubRetVal::Untyped(retval),
+                        retval_hash: StubRetVal::Untyped(retval).hash(),
                     },
                 ));
             };
@@ -1994,7 +1994,7 @@ pub(crate) mod workflow_support {
                             ))),
                             StubParams {
                                 target_execution_id,
-                                retval: StubRetVal::Untyped(retval),
+                                retval_hash: StubRetVal::Untyped(retval).hash(),
                             },
                         ));
                     }
@@ -2009,7 +2009,7 @@ pub(crate) mod workflow_support {
                             ))),
                             StubParams {
                                 target_execution_id,
-                                retval: StubRetVal::Untyped(retval),
+                                retval_hash: StubRetVal::Untyped(retval).hash(),
                             },
                         ));
                     }
@@ -2021,7 +2021,7 @@ pub(crate) mod workflow_support {
                 StubIntent::StubTypeChecked(retval_parsed),
                 StubParams {
                     target_execution_id,
-                    retval: StubRetVal::Untyped(retval),
+                    retval_hash: StubRetVal::Untyped(retval).hash(),
                 },
             ))
         }
