@@ -23,6 +23,7 @@ use chrono::{DateTime, Utc};
 use http_client_trace::HttpClientTrace;
 use serde::Deserialize;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::panic::Location;
@@ -520,10 +521,111 @@ pub enum HistoryEvent {
     #[display("Stub({target_execution_id})")]
     Stub {
         target_execution_id: ExecutionIdDerived,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::SUPPORTED_RETURN_VALUE_OK_EMPTY))]
-        result: SupportedFunctionReturnValue, // Only stored for nondeterminism checks. TODO: Consider using a hashed value.
-        persist_result: Result<(), ()>, // Does the row (target_execution_id,Version:1) match the proposed `result`?
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StubRetVal::Typed(crate::SUPPORTED_RETURN_VALUE_OK_EMPTY).hash()))]
+        retval_hash: StubRetValHash,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(())))]
+        persist_result: Result<(), StubError>,
     },
+}
+
+/// Stub return value - only used during processing, not stored in history.
+#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(any(test, feature = "test"), derive(Serialize, Deserialize))]
+#[cfg_attr(any(test, feature = "test"), serde(rename_all = "snake_case"))]
+pub enum StubRetVal {
+    Typed(SupportedFunctionReturnValue),
+    Untyped(String),
+}
+
+impl StubRetVal {
+    /// Compute a stable hash of the return value for determinism checks.
+    #[must_use]
+    pub fn hash(&self) -> StubRetValHash {
+        const STUB_RETVAL_HASH_VERSION: u8 = 1;
+        let mut hasher = Sha256::default();
+
+        match self {
+            StubRetVal::Typed(val) => {
+                hasher.update(b"T|");
+                // Serialize to JSON for stable hashing
+                let json = serde_json::to_string(val)
+                    .expect("SupportedFunctionReturnValue is always serializable");
+                hasher.update(json.as_bytes());
+            }
+            StubRetVal::Untyped(s) => {
+                hasher.update(b"U|");
+                hasher.update(s.as_bytes());
+            }
+        }
+
+        let hash_bytes = hasher.finalize();
+        let mut result = [0u8; 33];
+        result[0] = STUB_RETVAL_HASH_VERSION;
+        result[1..].copy_from_slice(&hash_bytes);
+
+        StubRetValHash(result)
+    }
+}
+
+/// Hash of a stub return value, stored in history for determinism checks.
+/// Format: 1 byte version + 32 bytes SHA-256 hash.
+#[derive(Clone, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr)]
+pub struct StubRetValHash([u8; 33]);
+
+impl Display for StubRetValHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for b in self.0 {
+            write!(f, "{b:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Debug for StubRetValHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl std::str::FromStr for StubRetValHash {
+    type Err = StubRetValHashParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() != 66 {
+            // 33 bytes * 2 hex chars = 66
+            return Err(StubRetValHashParseError::InvalidLength(s.len()));
+        }
+        let mut bytes = [0u8; 33];
+        for i in 0..33 {
+            let chunk = &s[i * 2..i * 2 + 2];
+            bytes[i] =
+                u8::from_str_radix(chunk, 16).map_err(|_| StubRetValHashParseError::InvalidHex)?;
+        }
+        Ok(StubRetValHash(bytes))
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StubRetValHashParseError {
+    #[error("invalid length: expected 66 hex chars, got {0}")]
+    InvalidLength(usize),
+    #[error("invalid hex character")]
+    InvalidHex,
+}
+
+/// Error from the `-stub` extension function.
+/// Mirrors `obelisk:types/execution.{stub-error}` from WIT.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StubError {
+    #[error("execution not found")]
+    ExecutionNotFound,
+    #[error("wrong ffqn")]
+    WrongFfqn,
+    #[error("type check error: {0}")]
+    TypeCheckError(String),
+    #[error("conflict")]
+    Conflict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize)]
@@ -660,6 +762,8 @@ pub enum DbErrorWriteNonRetriable {
     ValidationFailed(StrVariant),
     #[error("conflict")]
     Conflict,
+    #[error("already finished")]
+    AlreadyFinished,
     #[error("illegal state: {reason}")]
     IllegalState {
         reason: StrVariant,
@@ -2228,5 +2332,101 @@ mod tests {
             !json.contains("found_response"),
             "should not contain old field, got: {json}"
         );
+    }
+
+    mod stub_retval_hash {
+        use super::super::{StubRetVal, StubRetValHash};
+        use crate::SupportedFunctionReturnValue;
+        use val_json::type_wrapper::TypeWrapper;
+        use val_json::wast_val::{WastVal, WastValWithType};
+
+        #[test]
+        fn typed_variant_hash_is_stable() {
+            let retval = StubRetVal::Typed(SupportedFunctionReturnValue::Ok {
+                ok: Some(WastValWithType {
+                    r#type: TypeWrapper::String,
+                    value: WastVal::String("hello".into()),
+                }),
+            });
+            let hash = retval.hash();
+            // Hash should start with version byte 0x01
+            assert_eq!(hash.to_string().chars().take(2).collect::<String>(), "01");
+            // Hash should be 66 hex characters (33 bytes * 2)
+            assert_eq!(hash.to_string().len(), 66);
+        }
+
+        #[test]
+        fn untyped_variant_hash_is_stable() {
+            let retval = StubRetVal::Untyped(r#"{"ok": "hello"}"#.to_string());
+            let hash = retval.hash();
+            // Hash should start with version byte 0x01
+            assert_eq!(hash.to_string().chars().take(2).collect::<String>(), "01");
+            // Hash should be 66 hex characters (33 bytes * 2)
+            assert_eq!(hash.to_string().len(), 66);
+        }
+
+        #[test]
+        fn different_values_produce_different_hashes() {
+            let typed1 = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
+            let typed2 = StubRetVal::Typed(SupportedFunctionReturnValue::Err { err: None });
+            let untyped1 = StubRetVal::Untyped("value1".to_string());
+            let untyped2 = StubRetVal::Untyped("value2".to_string());
+
+            let hashes: Vec<_> = [typed1, typed2, untyped1, untyped2]
+                .into_iter()
+                .map(|r| r.hash().to_string())
+                .collect();
+
+            // All hashes should be unique
+            for (i, h1) in hashes.iter().enumerate() {
+                for h2 in hashes.iter().skip(i + 1) {
+                    assert_ne!(h1, h2, "hashes should be different");
+                }
+            }
+        }
+
+        #[test]
+        fn same_values_produce_same_hashes() {
+            let retval1 = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
+            let retval2 = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
+            assert_eq!(retval1.hash(), retval2.hash());
+
+            let untyped1 = StubRetVal::Untyped("test".to_string());
+            let untyped2 = StubRetVal::Untyped("test".to_string());
+            assert_eq!(untyped1.hash(), untyped2.hash());
+        }
+
+        #[test]
+        fn hash_serialization_roundtrip() {
+            let retval = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
+            let hash = retval.hash();
+
+            let serialized = serde_json::to_string(&hash).unwrap();
+            let deserialized: StubRetValHash = serde_json::from_str(&serialized).unwrap();
+
+            assert_eq!(hash, deserialized);
+        }
+
+        #[test]
+        fn hash_display_and_fromstr_roundtrip() {
+            let retval = StubRetVal::Untyped("test value".to_string());
+            let hash = retval.hash();
+
+            let display = hash.to_string();
+            let parsed: StubRetValHash = display.parse().unwrap();
+
+            assert_eq!(hash, parsed);
+        }
+
+        #[test]
+        fn typed_and_untyped_with_same_content_produce_different_hashes() {
+            // Even if the JSON content is the same, Typed vs Untyped should hash differently
+            let typed = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
+            let json_of_typed =
+                serde_json::to_string(&SupportedFunctionReturnValue::Ok { ok: None }).unwrap();
+            let untyped = StubRetVal::Untyped(json_of_typed);
+
+            assert_ne!(typed.hash(), untyped.hash());
+        }
     }
 }

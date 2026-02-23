@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS t_metadata (
     created_at TEXT NOT NULL
 ) STRICT
 ";
-const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 6;
+const T_METADATA_EXPECTED_SCHEMA_VERSION: u32 = 7;
 
 /// Stores execution history. Append only.
 const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
@@ -2249,12 +2249,7 @@ impl SqlitePool {
         {
             debug!("Execution is already finished");
             return Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::IllegalState {
-                    reason: "already finished".into(),
-                    context: SpanTrace::capture(),
-                    source: None,
-                    loc: Location::caller(),
-                },
+                DbErrorWriteNonRetriable::AlreadyFinished,
             ));
         }
 

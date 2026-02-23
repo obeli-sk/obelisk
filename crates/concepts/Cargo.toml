@@ -25,7 +25,7 @@ fxhash.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true
 opentelemetry.workspace = true
-sha2 = { optional = true, workspace = true }
+sha2.workspace = true
 tokio-postgres = { optional = true, workspace = true }
 rand.workspace = true
 rusqlite = { optional = true, workspace = true }
@@ -48,8 +48,8 @@ rstest.workspace = true
 
 [features]
 test = []
-rusqlite = ["dep:rusqlite", "dep:sha2"]
-postgres = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:sha2"]
+rusqlite = ["dep:rusqlite"]
+postgres = ["dep:tokio-postgres", "dep:deadpool-postgres"]
 
 [lints]
 workspace = true

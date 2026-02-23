@@ -689,15 +689,20 @@ impl SupportedFunctionReturnValue {
             .map_err(ResultParsingError::ResultParsingErrorFromVal)
     }
 
+    /// Convert an already type-checked value to suppoprted return value.
+    /// Return error if the type does not conform to `TypeWrapperTopLevel`.
     #[expect(clippy::result_unit_err)]
     pub fn from_wast_val_with_type(
         value: WastValWithType,
     ) -> Result<SupportedFunctionReturnValue, ()> {
         match value {
+            // `result<_, ?>` + `{"ok": null}`
             WastValWithType {
                 r#type: TypeWrapper::Result { ok: None, err: _ },
                 value: WastVal::Result(Ok(None)),
             } => Ok(SupportedFunctionReturnValue::Ok { ok: None }),
+
+            // `result<T, ?>` + `{"ok": !null}`
             WastValWithType {
                 r#type:
                     TypeWrapper::Result {
@@ -711,10 +716,14 @@ impl SupportedFunctionReturnValue {
                     value: *value,
                 }),
             }),
+
+            // `result<?, _>` + `{"err": null}`
             WastValWithType {
                 r#type: TypeWrapper::Result { ok: _, err: None },
                 value: WastVal::Result(Err(None)),
             } => Ok(SupportedFunctionReturnValue::Err { err: None }),
+
+            // `result<?, E>` + `{"err": !null}`
             WastValWithType {
                 r#type:
                     TypeWrapper::Result {
@@ -728,6 +737,7 @@ impl SupportedFunctionReturnValue {
                     value: *value,
                 }),
             }),
+
             _ => Err(()),
         }
     }

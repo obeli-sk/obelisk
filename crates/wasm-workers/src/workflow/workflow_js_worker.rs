@@ -492,8 +492,9 @@ mod tests {
     use concepts::component_id::{CONTENT_DIGEST_DUMMY, InputContentDigest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutorId, RunId};
     use concepts::storage::{
-        CreateRequest, DbPool, DbPoolCloseable, JoinSetResponse, Locked, PendingState,
-        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind, Version,
+        CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable, JoinSetResponse, Locked,
+        PendingState, PendingStateFinished, PendingStateFinishedError,
+        PendingStateFinishedResultKind, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
@@ -834,24 +835,13 @@ mod tests {
     async fn js_workflow_join_next_try_found(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
-        let sim_clock = SimClock::epoch();
 
-        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-delay");
         let js_source = r"function test_delay(params) {
             const js = obelisk.createJoinSet();
-
-            /* Submit a short delay */
             const delayId = js.submitDelay({ milliseconds: 10 });
-
-            /* Wait for it to expire using sleep */
             obelisk.sleep({ milliseconds: 20 });
-
-            /* Now joinNextTry should find the response */
             const response = js.joinNextTry();
-
-            /* After processing, joinNextTry should return allProcessed */
             const afterResponse = js.joinNextTry();
-
             return JSON.stringify({
                 responseType: response.type,
                 responseOk: response.ok,
@@ -859,70 +849,13 @@ mod tests {
             });
         }";
 
-        let fn_registry: Arc<dyn FunctionRegistry> =
-            TestingFnRegistry::new_from_components(Vec::new());
-        let workflow_engine =
-            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let (worker, component_id, _runnable_component) = compile_js_workflow_worker(
-            js_source,
-            user_ffqn.clone(),
-            db_pool.clone(),
-            sim_clock.clone_box(),
-            fn_registry,
-            workflow_engine,
-        )
-        .await;
+        let harness =
+            JsWorkflowTestHarness::with_no_activities(db_pool, js_source, "test-delay").await;
+        harness.tick().await; // blocks on sleep
+        harness.advance_time(Duration::from_millis(30)).await;
+        harness.tick().await; // completes
 
-        let workflow_exec =
-            new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
-
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection_test().await.unwrap();
-
-        let params = Params::from_json_values_test(vec![json!(Vec::<String>::new())]);
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: user_ffqn.clone(),
-                params,
-                parent: None,
-                metadata: ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                component_id,
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
-
-        // Run until blocked by sleep
-        workflow_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-
-        // Move time forward to expire the sleep
-        sim_clock.move_time_forward(Duration::from_millis(30));
-        expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
-            .await
-            .unwrap();
-
-        // Resume workflow - should complete
-        workflow_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-
-        let res = db_connection
-            .get_finished_result(&execution_id)
-            .await
-            .unwrap();
-
-        let ok_val =
-            assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
-        let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
-        let result: serde_json::Value = serde_json::from_str(json_str).unwrap();
-
+        let result = harness.get_result_json().await;
         assert_eq!(json!("delay"), result["responseType"]);
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("allProcessed"), result["afterStatus"]);
@@ -1259,134 +1192,338 @@ mod tests {
         assert_eq!(0, received, "expected no new messages, got {buffer:?}");
     }
 
+    // ==================== JS Workflow test harness ====================
+
+    /// What activities to register for the test.
+    enum TestActivities {
+        None,
+        Stub,
+    }
+
+    /// Helper for running JS workflow tests with reduced boilerplate.
+    struct JsWorkflowTestHarness {
+        workflow_exec: ExecTask,
+        execution_id: ExecutionId,
+        db_connection: Box<dyn DbConnectionTest>,
+        sim_clock: SimClock,
+    }
+
+    impl JsWorkflowTestHarness {
+        /// Create harness with stub activity registered.
+        async fn with_stub_activity(
+            db_pool: Arc<dyn DbPool>,
+            js_source: &str,
+            fn_name: &'static str,
+        ) -> Self {
+            Self::new(db_pool, js_source, fn_name, TestActivities::Stub).await
+        }
+
+        /// Create harness with no activities registered.
+        async fn with_no_activities(
+            db_pool: Arc<dyn DbPool>,
+            js_source: &str,
+            fn_name: &'static str,
+        ) -> Self {
+            Self::new(db_pool, js_source, fn_name, TestActivities::None).await
+        }
+
+        async fn new(
+            db_pool: Arc<dyn DbPool>,
+            js_source: &str,
+            fn_name: &'static str,
+            activities: TestActivities,
+        ) -> Self {
+            use crate::activity::activity_worker::test::compile_activity_stub;
+
+            let sim_clock = SimClock::epoch();
+            let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", fn_name);
+
+            let components = match activities {
+                TestActivities::None => vec![],
+                TestActivities::Stub => vec![
+                    compile_activity_stub(
+                        test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,
+                    )
+                    .await,
+                ],
+            };
+            let fn_registry: Arc<dyn FunctionRegistry> =
+                TestingFnRegistry::new_from_components(components);
+
+            let workflow_engine =
+                Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+            let (worker, component_id, _runnable_component) = compile_js_workflow_worker(
+                js_source,
+                user_ffqn.clone(),
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                fn_registry,
+                workflow_engine,
+            )
+            .await;
+
+            let workflow_exec =
+                new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
+
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            let db_connection = db_pool.connection_test().await.unwrap();
+
+            let params = Params::from_json_values_test(vec![json!(Vec::<String>::new())]);
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id: execution_id.clone(),
+                    ffqn: user_ffqn,
+                    params,
+                    parent: None,
+                    metadata: ExecutionMetadata::empty(),
+                    scheduled_at: created_at,
+                    component_id,
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                })
+                .await
+                .unwrap();
+
+            Self {
+                workflow_exec,
+                execution_id,
+                db_connection,
+                sim_clock,
+            }
+        }
+
+        async fn tick(&self) {
+            self.workflow_exec
+                .tick_test_await(self.sim_clock.now(), RunId::generate())
+                .await;
+        }
+
+        /// Move time forward and process expired timers.
+        async fn advance_time(&self, duration: Duration) {
+            self.sim_clock.move_time_forward(duration);
+            expired_timers_watcher::tick_test(self.db_connection.as_ref(), self.sim_clock.now())
+                .await
+                .unwrap();
+        }
+
+        async fn get_result_json(&self) -> serde_json::Value {
+            let res = self
+                .db_connection
+                .get_finished_result(&self.execution_id)
+                .await
+                .unwrap();
+            let ok_val =
+                assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
+            serde_json::from_str(json_str).unwrap()
+        }
+    }
+
+    // ==================== Workflow tests ====================
+
     /// Test: JS workflow uses `obelisk.stub()` to stub an `activity_stub` execution.
-    ///
-    /// This test verifies the `stub-json` WIT function works correctly from JS workflows:
-    /// 1. Submit an `activity_stub` execution using `joinSet.submit()`
-    /// 2. Use obelisk.stub(executionId, result) to provide a stubbed response
-    /// 3. Verify the stubbed result is returned via `joinNext()` and `getResult()`
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
     async fn js_workflow_stub(database: Database) {
-        use crate::activity::activity_worker::test::compile_activity_stub;
-
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
-        let sim_clock = SimClock::epoch();
 
-        // JS code that exercises obelisk.stub() API
         let js_source = r"function test_stub(params) {
-            console.log('Testing obelisk.stub()');
-
             const js = obelisk.createJoinSet();
-
-            /* Submit an activity_stub execution */
-            const ffqn = 'testing:stub-activity/activity.foo';
-            const execId = js.submit(ffqn, ['test-param']);
-            console.log('Submitted activity_stub, execId:', execId);
-
-            /* Stub the response with a success value */
-            obelisk.stub(execId, 'stubbed-result-42');
-            console.log('Stubbed the execution');
-
-            /* Join to get the response */
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            obelisk.stub(execId, {'ok': 'stubbed-result-42'});
             const response = js.joinNext();
-            console.log('joinNext response:', JSON.stringify(response));
-
-            /* Get the result */
             const result = obelisk.getResult(execId);
-
             return JSON.stringify({
                 responseType: response.type,
-                responseId: response.id,
                 responseOk: response.ok,
                 result: result
             });
         }";
 
-        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-stub");
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub").await;
+        harness.tick().await; // submit, stub, block on joinNext
+        harness.tick().await; // resume, complete
 
-        // Register the stub activity component
-        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
-            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
-                .await,
-        ]);
-
-        let workflow_engine =
-            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let (worker, component_id, _runnable_component) = compile_js_workflow_worker(
-            js_source,
-            user_ffqn.clone(),
-            db_pool.clone(),
-            sim_clock.clone_box(),
-            fn_registry,
-            workflow_engine,
-        )
-        .await;
-
-        let workflow_exec =
-            new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
-
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection_test().await.unwrap();
-
-        let params = Params::from_json_values_test(vec![json!(Vec::<String>::new())]);
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: user_ffqn.clone(),
-                params,
-                parent: None,
-                metadata: ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                component_id,
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
-
-        info!("First tick: submit activity, stub response, then block on joinNext");
-        workflow_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-
-        // Check that the workflow is in PendingAt state (scheduled to resume)
-        let pending_state = db_connection
-            .get_pending_state(&execution_id)
-            .await
-            .unwrap()
-            .pending_state;
-        info!("Pending state after step 1: {pending_state:?}");
-
-        info!("Second tick: resume with stubbed response, complete workflow");
-        workflow_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-
-        // The workflow should complete now
-        let res = db_connection
-            .get_finished_result(&execution_id)
-            .await
-            .unwrap();
-        info!("Got result: {res:?}");
-
-        // Verify results
-        let ok_val =
-            assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
-        let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
-        let result: serde_json::Value = serde_json::from_str(json_str).unwrap();
-
+        let result = harness.get_result_json().await;
         assert_eq!(json!("execution"), result["responseType"]);
-        // The response ID should match the execution ID we submitted
-        assert!(result["responseId"].as_str().is_some());
-        // Stubbed response should indicate success
         assert_eq!(json!(true), result["responseOk"]);
-        // getResult should return ok with the stubbed value
         assert_eq!(json!("stubbed-result-42"), result["result"]["ok"]);
+
+        db_close.close().await;
+    }
+
+    /// Test: Stub with error response (`result<string>` has no error type, so err is null).
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn js_workflow_stub_with_error(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"function test_stub_err(params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            obelisk.stub(execId, {'err': null}); // result<string> has no error type
+            const response = js.joinNext();
+            const result = obelisk.getResult(execId);
+            return JSON.stringify({ responseOk: response.ok, result: result });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-err").await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!(false), result["responseOk"]);
+        assert_eq!(json!(null), result["result"]["err"]);
+
+        db_close.close().await;
+    }
+
+    /// Test: Stub non-existent execution returns error.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn js_workflow_stub_execution_not_found(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"function test_stub_not_found(params) {
+            try {
+                obelisk.stub('E_00000000000000000000000000.n:fake_1', {'ok': 'x'});
+                return JSON.stringify({ error: 'expected-error-but-got-none' });
+            } catch (e) {
+                return JSON.stringify({ errorType: 'stub-error', errorMessage: e.message });
+            }
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-not-found")
+                .await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!("stub-error"), result["errorType"]);
+        let error_msg = result["errorMessage"].as_str().unwrap();
+        assert!(
+            error_msg.contains("NotFound") || error_msg.contains("ExecutionNotFound"),
+            "Expected 'NotFound' in error message, got: {error_msg}"
+        );
+
+        db_close.close().await;
+    }
+
+    /// Test: Stubbing the same value twice succeeds (idempotent).
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn js_workflow_stub_same_value_twice(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"function test_stub_twice(params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            obelisk.stub(execId, {'ok': 'same-value'});
+            obelisk.stub(execId, {'ok': 'same-value'}); // same value - should succeed
+            const response = js.joinNext();
+            const result = obelisk.getResult(execId);
+            return JSON.stringify({ responseOk: response.ok, result: result });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-twice").await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!(true), result["responseOk"]);
+        assert_eq!(json!("same-value"), result["result"]["ok"]);
+
+        db_close.close().await;
+    }
+
+    /// Test: Stub `noret` function (returns `result` with no ok/err payloads).
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn js_workflow_stub_noret(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"function test_stub_noret(params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.noret', []);
+            obelisk.stub(execId, {'ok': null}); // result has no payload
+            const response = js.joinNext();
+            const result = obelisk.getResult(execId);
+            return JSON.stringify({ responseOk: response.ok, result: result });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-noret").await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!(true), result["responseOk"]);
+        assert_eq!(json!(null), result["result"]["ok"]);
+
+        db_close.close().await;
+    }
+
+    /// Test: Stub conflict - second stub with different value must fail.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn js_workflow_stub_conflict(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"function test_stub_conflict(params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            obelisk.stub(execId, {'ok': 'first-value'});
+            try {
+                obelisk.stub(execId, {'ok': 'different-value'}); // must fail
+                return JSON.stringify({ error: 'expected-conflict-but-stub-succeeded' });
+            } catch (e) {
+                const response = js.joinNext();
+                const result = obelisk.getResult(execId);
+                return JSON.stringify({
+                    conflictDetected: true,
+                    errorMessage: e.message,
+                    responseOk: response.ok,
+                    result: result
+                });
+            }
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-conflict")
+                .await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(
+            json!(true),
+            result["conflictDetected"],
+            "Expected conflict, got: {result}"
+        );
+        let error_msg = result["errorMessage"].as_str().unwrap();
+        assert!(
+            error_msg.contains("Conflict"),
+            "Expected 'Conflict' in error, got: {error_msg}"
+        );
+        assert_eq!(json!(true), result["responseOk"]);
+        assert_eq!(json!("first-value"), result["result"]["ok"]);
 
         db_close.close().await;
     }

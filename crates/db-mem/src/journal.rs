@@ -12,9 +12,7 @@ use concepts::{ComponentId, JoinSetId};
 use concepts::{ExecutionId, ExecutionMetadata};
 use concepts::{FunctionFqn, Params};
 use std::cmp::max;
-use std::panic::Location;
 use tokio::sync::oneshot;
-use tracing_error::SpanTrace;
 
 #[derive(Debug)]
 pub(crate) struct ExecutionJournal {
@@ -127,12 +125,7 @@ impl ExecutionJournal {
         assert_eq!(self.version(), appending_version);
         if self.pending_state.is_finished() {
             return Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::IllegalState {
-                    reason: "already finished".into(),
-                    context: SpanTrace::capture(),
-                    source: None,
-                    loc: Location::caller(),
-                },
+                DbErrorWriteNonRetriable::AlreadyFinished,
             ));
         }
 

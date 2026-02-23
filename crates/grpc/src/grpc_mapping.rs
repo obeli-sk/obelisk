@@ -743,7 +743,7 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                                 },
                             }),
                         }),
-                        HistoryEvent::Stub {  target_execution_id, persist_result: target_result, .. } => history_event::Event::Stub(history_event::Stub {
+                        HistoryEvent::Stub { target_execution_id, persist_result: target_result, .. } => history_event::Event::Stub(history_event::Stub {
                             execution_id: Some(ExecutionId::Derived(target_execution_id).into()),
                             success: target_result.is_ok()
                         }),

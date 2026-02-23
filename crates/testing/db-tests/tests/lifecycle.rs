@@ -220,12 +220,10 @@ async fn append_after_finish_should_not_be_possible(
             .await
             .unwrap_err();
 
-        let msg = assert_matches!(
+        assert_matches!(
             err,
-            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState{reason, ..})
-            => reason
+            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)
         );
-        assert_eq!("already finished", msg.as_ref());
     }
     drop(db_connection);
     db_close.close().await;
@@ -2115,8 +2113,10 @@ async fn pause_finished_execution_should_fail(database: Database) {
         .pause_execution(&execution_id, sim_clock.now())
         .await
         .unwrap_err();
-    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
-    assert_eq!("already finished", reason.as_ref());
+    assert_matches!(
+        err,
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)
+    );
 
     drop(api_conn);
     drop(db_connection);

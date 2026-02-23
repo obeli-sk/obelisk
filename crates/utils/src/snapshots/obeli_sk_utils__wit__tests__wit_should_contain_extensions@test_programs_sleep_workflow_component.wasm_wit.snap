@@ -119,6 +119,12 @@ package obelisk:types@4.1.0 {
     /// Error variants that may occur when calling `-stub` extension functions.
     @since(version = 3.0.0)
     variant stub-error {
+      /// execution was not found.
+      execution-not-found,
+      /// FFQN of the execution is not registered or it does not belong to a stub activity component.
+      wrong-ffqn,
+      /// supplied return value does not type check.
+      type-check-error(string),
       /// Conflict can happen when a second writer attempts to stub a value, while the
       /// value is not equal to the already stubbed value.
       conflict,
