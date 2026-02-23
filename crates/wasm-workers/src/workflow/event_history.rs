@@ -2671,6 +2671,7 @@ impl EventCallBlocking {
 /// One `EventCall` can be represented as multiple `DeterministicKey`-s.
 /// One `DeterministicKey` corresponds to one `HistoryEvent`.
 #[derive(derive_more::Debug, Clone, derive_more::Display)]
+#[expect(clippy::large_enum_variant)] // TODO: StubParams should only persist hash of the return value
 enum DeterministicKey {
     #[display("Persist({kind})")]
     Persist {

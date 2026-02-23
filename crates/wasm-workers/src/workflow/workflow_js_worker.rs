@@ -1240,10 +1240,12 @@ mod tests {
 
             let components = match activities {
                 TestActivities::None => vec![],
-                TestActivities::Stub => vec![compile_activity_stub(
-                    test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,
-                )
-                .await],
+                TestActivities::Stub => vec![
+                    compile_activity_stub(
+                        test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,
+                    )
+                    .await,
+                ],
             };
             let fn_registry: Arc<dyn FunctionRegistry> =
                 TestingFnRegistry::new_from_components(components);
@@ -1342,7 +1344,8 @@ mod tests {
             });
         }";
 
-        let harness = JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub").await;
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub").await;
         harness.tick().await; // submit, stub, block on joinNext
         harness.tick().await; // resume, complete
 
@@ -1371,7 +1374,8 @@ mod tests {
             return JSON.stringify({ responseOk: response.ok, result: result });
         }";
 
-        let harness = JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-err").await;
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-err").await;
         harness.tick().await;
         harness.tick().await;
 
@@ -1399,7 +1403,9 @@ mod tests {
             }
         }";
 
-        let harness = JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-not-found").await;
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-not-found")
+                .await;
         harness.tick().await;
 
         let result = harness.get_result_json().await;
@@ -1431,7 +1437,8 @@ mod tests {
             return JSON.stringify({ responseOk: response.ok, result: result });
         }";
 
-        let harness = JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-twice").await;
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-twice").await;
         harness.tick().await;
         harness.tick().await;
 
@@ -1459,7 +1466,8 @@ mod tests {
             return JSON.stringify({ responseOk: response.ok, result: result });
         }";
 
-        let harness = JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-noret").await;
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-noret").await;
         harness.tick().await;
         harness.tick().await;
 
@@ -1497,7 +1505,9 @@ mod tests {
             }
         }";
 
-        let harness = JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-conflict").await;
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "test-stub-conflict")
+                .await;
         harness.tick().await;
         harness.tick().await;
 
