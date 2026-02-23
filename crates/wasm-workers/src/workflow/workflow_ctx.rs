@@ -477,8 +477,8 @@ impl StubFnCall<'_> {
             Ok(create_req) if *target_ffqn == create_req.ffqn => {
                 // If this is replay, retval must match the original.
                 // Otherwise, we assume the parent workflow and this stub writer share the
-                // same WIT definition, meaning type checking is done by wasmtime.
-                // TODO: Check if this assumption can be broken.
+                // same WIT definition, meaning type checking is done at server startup.
+                // `stub-json` must do its own type checking before this call.
                 Ok(StubIntent::StubTypeChecked(retval))
             }
             Ok(create_req) => Ok(StubIntent::Err(StubIntentErr::TypeCheckError(format!(
