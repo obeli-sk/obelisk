@@ -74,7 +74,10 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "target_ffqn": "testing:stub-activity/activity.foo",
               "params": [
                 "some param"
-              ]
+              ],
+              "result": {
+                "Ok": null
+              }
             }
           }
         }

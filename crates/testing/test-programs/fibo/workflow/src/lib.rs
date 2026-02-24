@@ -123,7 +123,7 @@ impl Guest for Component {
 
         // Test 1: Invalid JSON syntax
         match submit_json(&join_set, &function, "not valid json", None) {
-            Err(SubmitJsonError::ParamsParsingError(msg)) => {
+            Err(SubmitJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("cannot parse params as JSON array") {
                     return Err(format!("unexpected error message: {msg}"));
                 }
@@ -134,7 +134,7 @@ impl Guest for Component {
 
         // Test 2: Valid JSON but not an array
         match submit_json(&join_set, &function, "42", None) {
-            Err(SubmitJsonError::ParamsParsingError(msg)) => {
+            Err(SubmitJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("params must be a json array") {
                     return Err(format!("unexpected error message: {msg}"));
                 }
@@ -145,7 +145,7 @@ impl Guest for Component {
 
         // Test 3: Valid JSON array but wrong type
         match submit_json(&join_set, &function, r#"["not a number"]"#, None) {
-            Err(SubmitJsonError::ParamsParsingError(msg)) => {
+            Err(SubmitJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("type checking failed") {
                     return Err(format!("unexpected error message: {msg}"));
                 }
@@ -244,7 +244,7 @@ impl Guest for Component {
 
         // Test 3: Schedule with malformed JSON params -> ParamsParsingError
         match schedule_json(ScheduleAt::Now, &function, "not valid json", None) {
-            Err(ScheduleJsonError::ParamsParsingError(msg)) => {
+            Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("cannot parse params as JSON array") {
                     return Err(format!("3: unexpected error message: {msg}"));
                 }
@@ -255,7 +255,7 @@ impl Guest for Component {
 
         // Test 4: Schedule with valid JSON but not an array
         match schedule_json(ScheduleAt::Now, &function, "42", None) {
-            Err(ScheduleJsonError::ParamsParsingError(msg)) => {
+            Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if msg.contains("4: params must be a json array") {
                     return Err(format!("4: unexpected error message: {msg}"));
                 }
@@ -266,7 +266,7 @@ impl Guest for Component {
 
         // Test 5: Schedule with valid JSON but not the expected types
         match schedule_json(ScheduleAt::Now, &function, r#"["42"]"#, None) {
-            Err(ScheduleJsonError::ParamsParsingError(msg)) => {
+            Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if !msg.starts_with(
                     "params type checking failed: parameters cannot be deserialized: cannot parse 1-th parameter - \
                     `invalid type: string \"42\", expected value matching \"u8\"")

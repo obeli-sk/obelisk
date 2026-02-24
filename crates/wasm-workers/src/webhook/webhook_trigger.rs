@@ -576,6 +576,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
                     schedule_at,
+                    result: Ok(()),
                 };
                 let schedule_at = schedule_at.as_date_time(created_at).map_err(|_err| {
                     WebhookEndpointFunctionError::UncategorizedError("schedule-at conversion error")
@@ -668,6 +669,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
                             child_execution_id: child_execution_id.clone(),
                             target_ffqn: ffqn.clone(),
                             params: params.clone(),
+                            result: Ok(()),
                         },
                     },
                 },

@@ -177,13 +177,13 @@ package obelisk:workflow@4.2.0 {
     variant submit-json-error {
       ffqn-parsing-error(string),
       function-not-found,
-      params-parsing-error(string),
+      type-check-error(string),
     }
 
     variant schedule-json-error {
       ffqn-parsing-error(string),
       function-not-found,
-      params-parsing-error(string),
+      type-check-error(string),
     }
 
     variant get-result-json-error {

@@ -1787,6 +1787,7 @@ async fn test_append_response_with_same_child_id_twice_should_fail(database: Dat
         child_execution_id: child_execution_id.clone(),
         target_ffqn: SOME_FFQN,
         params: Params::empty(),
+        result: Ok(()),
     };
     let response = JoinSetResponse::ChildExecutionFinished {
         child_execution_id,
@@ -2333,6 +2334,7 @@ async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(d
                             child_execution_id: child_execution_id.clone(),
                             target_ffqn: SOME_FFQN,
                             params: Params::empty(),
+                            result: Ok(()),
                         },
                     },
                 },

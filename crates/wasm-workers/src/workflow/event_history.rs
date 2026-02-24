@@ -4,7 +4,6 @@ use super::deadline_tracker::DeadlineTracker;
 use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
 use super::host_exports::execution_id_derived_into_wast_val;
-use super::host_exports::execution_id_into_wast_val;
 use super::host_exports::v4_1_0::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
@@ -31,6 +30,7 @@ use concepts::storage;
 use concepts::storage::AppendEventsToExecution;
 use concepts::storage::AppendResponseToExecution;
 use concepts::storage::BacktraceInfo;
+use concepts::storage::ChildExecutionRequestError;
 use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbErrorReadWithTimeout;
 use concepts::storage::DbErrorWrite;
@@ -40,6 +40,7 @@ use concepts::storage::Locked;
 use concepts::storage::PersistKind;
 use concepts::storage::ResponseCursor;
 use concepts::storage::ResponseWithCursor;
+use concepts::storage::ScheduleRequestError;
 use concepts::storage::StubError;
 use concepts::storage::StubRetValHash;
 use concepts::storage::TimeoutOutcome;
@@ -79,6 +80,8 @@ enum ChildReturnValue {
     },
     SubmitDelay,
     Stub(Result<(), StubError>),
+    Schedule(Result<(), ScheduleRequestError>),
+    SubmitChild(Result<(), ChildExecutionRequestError>),
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -739,6 +742,7 @@ impl EventHistory {
                             child_execution_id,
                             target_ffqn: stored_target_ffqn,
                             params: stored_params,
+                            result: found_result,
                         },
                 },
             ) if *join_set_id == *found_join_set_id
@@ -746,13 +750,16 @@ impl EventHistory {
                 && target_ffqn == stored_target_ffqn
                 && params == stored_params =>
             {
-                trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
-                self.index_child_exe_to_ffqn
-                    .insert(child_execution_id.clone(), target_ffqn.clone());
+                trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest, result: {found_result:?}");
+                let found_result = found_result.clone();
+                // Only add to index if the result was Ok (child was actually created)
+                if found_result.is_ok() {
+                    self.index_child_exe_to_ffqn
+                        .insert(child_execution_id.clone(), target_ffqn.clone());
+                }
                 self.event_history[found_idx].1 = Processed;
-                // if this is a [`EventCall::StartAsync`] , return execution id
-                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                    execution_id_derived_into_wast_val(execution_id),
+                Ok(FindMatchingResponse::Found(ChildReturnValue::SubmitChild(
+                    found_result,
                 )))
             }
 
@@ -1058,16 +1065,17 @@ impl EventHistory {
                 HistoryEvent::Schedule {
                     execution_id: found_execution_id,
                     schedule_at: found_schedule_at,
-                    ..
+                    result: found_result,
                 },
             ) if *target_execution_id == *found_execution_id
                 && schedule_at == found_schedule_at =>
             {
-                trace!(%target_execution_id, "Matched Schedule");
+                trace!(%target_execution_id, "Matched Schedule, result: {:?}", found_result);
+                // Clone the result before mutating self
+                let found_result = found_result.clone();
                 self.event_history[found_idx].1 = Processed;
-                // return execution id
-                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                    execution_id_into_wast_val(target_execution_id),
+                Ok(FindMatchingResponse::Found(ChildReturnValue::Schedule(
+                    found_result,
                 )))
             }
 
@@ -1167,20 +1175,42 @@ impl EventHistory {
 
             EventCallNonBlocking::SubmitChildExecution(SubmitChildExecution {
                 target_ffqn,
-                fn_component_id,
                 join_set_id,
                 child_execution_id,
-                params,
+                intent,
                 wasm_backtrace,
             }) => {
-                // Cacheable event.
-                debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
+                // Handle intent: create result and optionally child_req based on intent
+                let (result, params, maybe_child_req) = match intent {
+                    SubmitChildIntent::Ok {
+                        fn_component_id,
+                        params,
+                    } => {
+                        let child_req = CreateRequest {
+                            created_at: called_at,
+                            execution_id: ExecutionId::Derived(child_execution_id.clone()),
+                            ffqn: target_ffqn.clone(),
+                            params: params.clone(),
+                            parent: Some((db_connection.execution_id.clone(), join_set_id.clone())),
+                            metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
+                            scheduled_at: called_at,
+                            component_id: fn_component_id,
+                            deployment_id: self.deployment_id,
+                            scheduled_by: None,
+                        };
+                        (Ok(()), params, Some(child_req))
+                    }
+                    SubmitChildIntent::Err(err) => (Err(err), Params::empty(), None),
+                };
+
+                debug!(%child_execution_id, %join_set_id, "SubmitChildExecution: appending, has_child_req: {}", maybe_child_req.is_some());
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
                         target_ffqn: target_ffqn.clone(),
-                        params: params.clone(),
+                        params,
+                        result,
                     },
                 };
                 let history_event = (event.clone(), db_connection.version.clone());
@@ -1188,34 +1218,38 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
-                let child_req = CreateRequest {
-                    created_at: called_at,
-                    execution_id: ExecutionId::Derived(child_execution_id),
-                    ffqn: target_ffqn,
-                    params,
-                    parent: Some((db_connection.execution_id.clone(), join_set_id)),
-                    metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
-                    scheduled_at: called_at,
-                    component_id: fn_component_id,
-                    deployment_id: self.deployment_id,
-                    scheduled_by: None,
-                };
-                let cacheable_event = CacheableDbEvent::SubmitChildExecution {
-                    request: append_req,
-                    version: db_connection.version.clone(),
-                    child_req,
-                    backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
-                        execution_id: db_connection.execution_id.clone(),
-                        component_id: self.locked_event.component_id.clone(),
-                        wasm_backtrace,
-                        version_min_including: db_connection.version.clone(),
-                        version_max_excluding: Version::new(db_connection.version.0 + 1),
-                    }),
-                };
 
-                db_connection
-                    .append_non_blocking(cacheable_event, called_at)
-                    .await?;
+                let backtrace = wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+                    execution_id: db_connection.execution_id.clone(),
+                    component_id: self.locked_event.component_id.clone(),
+                    wasm_backtrace,
+                    version_min_including: db_connection.version.clone(),
+                    version_max_excluding: Version::new(db_connection.version.0 + 1),
+                });
+
+                // If we have a child_req, use SubmitChildExecution event; otherwise just persist the history event
+                if let Some(child_req) = maybe_child_req {
+                    let cacheable_event = CacheableDbEvent::SubmitChildExecution {
+                        request: append_req,
+                        version: db_connection.version.clone(),
+                        child_req,
+                        backtrace,
+                    };
+                    db_connection
+                        .append_non_blocking(cacheable_event, called_at)
+                        .await?;
+                } else {
+                    // Error case: only persist the history event, no child creation
+                    let cacheable_event = CacheableDbEvent::SubmitChildExecutionError {
+                        request: append_req,
+                        version: db_connection.version.clone(),
+                        backtrace,
+                    };
+                    db_connection
+                        .append_non_blocking(cacheable_event, called_at)
+                        .await?;
+                }
+
                 Ok(history_event)
             }
 
@@ -1264,14 +1298,36 @@ impl EventHistory {
                 scheduled_at_if_new,
                 execution_id: new_execution_id,
                 ffqn,
-                fn_component_id,
-                params,
+                intent,
                 wasm_backtrace,
             }) => {
-                // Cacheable event.
+                // Handle intent: create result and optionally child_req based on intent
+                let (result, maybe_child_req) = match intent {
+                    ScheduleIntent::Ok {
+                        fn_component_id,
+                        params,
+                    } => {
+                        let child_req = CreateRequest {
+                            created_at: called_at,
+                            execution_id: new_execution_id.clone(),
+                            metadata: ExecutionMetadata::from_linked_span(&self.worker_span),
+                            ffqn,
+                            params,
+                            parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
+                            scheduled_at: scheduled_at_if_new,
+                            component_id: fn_component_id,
+                            deployment_id: self.deployment_id,
+                            scheduled_by: Some(db_connection.execution_id.clone()),
+                        };
+                        (Ok(()), Some(child_req))
+                    }
+                    ScheduleIntent::Err(err) => (Err(err), None),
+                };
+
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
                     schedule_at,
+                    result,
                 };
 
                 let history_event = (event.clone(), db_connection.version.clone());
@@ -1279,35 +1335,38 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                     created_at: called_at,
                 };
-                debug!(%new_execution_id, "ScheduleRequest: appending");
-                let child_req = CreateRequest {
-                    created_at: called_at,
-                    execution_id: new_execution_id,
-                    metadata: ExecutionMetadata::from_linked_span(&self.worker_span),
-                    ffqn,
-                    params,
-                    parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                    scheduled_at: scheduled_at_if_new,
-                    component_id: fn_component_id,
-                    deployment_id: self.deployment_id,
-                    scheduled_by: Some(db_connection.execution_id.clone()),
-                };
-                let non_blocking_event = CacheableDbEvent::Schedule {
-                    request: append_req,
-                    version: db_connection.version.clone(),
-                    child_req,
-                    backtrace: wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
-                        execution_id: db_connection.execution_id.clone(),
-                        component_id: self.locked_event.component_id.clone(),
-                        wasm_backtrace,
-                        version_min_including: db_connection.version.clone(),
-                        version_max_excluding: Version::new(db_connection.version.0 + 1),
-                    }),
-                };
+                debug!(%new_execution_id, "ScheduleRequest: appending, has_child_req: {}", maybe_child_req.is_some());
 
-                db_connection
-                    .append_non_blocking(non_blocking_event, called_at)
-                    .await?;
+                let backtrace = wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
+                    execution_id: db_connection.execution_id.clone(),
+                    component_id: self.locked_event.component_id.clone(),
+                    wasm_backtrace,
+                    version_min_including: db_connection.version.clone(),
+                    version_max_excluding: Version::new(db_connection.version.0 + 1),
+                });
+
+                // If we have a child_req, use Schedule event; otherwise just persist the history event
+                if let Some(child_req) = maybe_child_req {
+                    let non_blocking_event = CacheableDbEvent::Schedule {
+                        request: append_req,
+                        version: db_connection.version.clone(),
+                        child_req,
+                        backtrace,
+                    };
+                    db_connection
+                        .append_non_blocking(non_blocking_event, called_at)
+                        .await?;
+                } else {
+                    // Error case: only persist the history event, no child creation
+                    let non_blocking_event = CacheableDbEvent::ScheduleError {
+                        request: append_req,
+                        version: db_connection.version.clone(),
+                        backtrace,
+                    };
+                    db_connection
+                        .append_non_blocking(non_blocking_event, called_at)
+                        .await?;
+                }
 
                 Ok(history_event)
             }
@@ -1612,6 +1671,7 @@ impl EventHistory {
                         child_execution_id: child_execution_id.clone(),
                         target_ffqn: ffqn.clone(),
                         params: params.clone(),
+                        result: Ok(()),
                     },
                 };
                 version = version.increment();
@@ -2113,28 +2173,34 @@ impl JoinSetCreate {
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct SubmitChildExecution {
     pub(crate) target_ffqn: FunctionFqn,
-    pub(crate) fn_component_id: ComponentId,
     pub(crate) join_set_id: JoinSetId,
     pub(crate) child_execution_id: ExecutionIdDerived,
-    #[debug(skip)]
-    pub(crate) params: Params,
+    pub(crate) intent: SubmitChildIntent,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl SubmitChildExecution {
+    /// Apply the submit child execution event and return the stored result.
+    /// Returns `Ok(Ok(execution_id_val))` on success, or `Ok(Err(error))` on stored error.
     pub(crate) async fn apply(
         self,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<Val /* ExecutionId */, WorkflowFunctionError> {
+    ) -> Result<Result<(), ChildExecutionRequestError>, WorkflowFunctionError> {
         assert!(
             self.join_set_id.kind != JoinSetKind::OneOff,
             "one-off join set cannot be constructed outside of OneOff*Request"
         );
         let join_set_id = self.join_set_id.clone();
         let child_execution_id = self.child_execution_id.clone();
-        let component_type = self.fn_component_id.component_type;
+        // Get component_type from intent if Ok
+        let component_type = match &self.intent {
+            SubmitChildIntent::Ok {
+                fn_component_id, ..
+            } => Some(fn_component_id.component_type),
+            SubmitChildIntent::Err(_) => None,
+        };
         let value = event_history
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::SubmitChildExecution(self)),
@@ -2142,24 +2208,27 @@ impl SubmitChildExecution {
                 called_at,
             )
             .await?;
-        // TODO: return void, execution id is already known at this point
-        let value =
-            assert_matches!(value, ChildReturnValue::WastVal(wast_val) => wast_val.as_val());
+        let result = assert_matches!(value, ChildReturnValue::SubmitChild(result) => result);
 
-        event_history
-            .index_join_set_to_unawaited_requests
-            .get_mut(&join_set_id)
-            .ok_or_else(|| {
-                WorkflowFunctionError::ConstraintViolation(
-                    format!("not found in open join sets: `{join_set_id}`").into(),
-                )
-            })?
-            .insert(
-                ResponseId::ChildExecutionId(child_execution_id),
-                component_type,
-            );
+        // Only update the index if the result was Ok (child was actually created)
+        if result.is_ok()
+            && let Some(component_type) = component_type
+        {
+            event_history
+                .index_join_set_to_unawaited_requests
+                .get_mut(&join_set_id)
+                .ok_or_else(|| {
+                    WorkflowFunctionError::ConstraintViolation(
+                        format!("not found in open join sets: `{join_set_id}`").into(),
+                    )
+                })?
+                .insert(
+                    ResponseId::ChildExecutionId(child_execution_id),
+                    component_type,
+                );
+        }
 
-        Ok(value)
+        Ok(result)
     }
 }
 
@@ -2216,19 +2285,19 @@ pub(crate) struct Schedule {
     pub(crate) scheduled_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
     pub(crate) execution_id: ExecutionId,
     pub(crate) ffqn: FunctionFqn,
-    pub(crate) fn_component_id: ComponentId,
-    #[debug(skip)]
-    pub(crate) params: Params,
+    pub(crate) intent: ScheduleIntent,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl Schedule {
+    /// Apply the schedule event and return the stored result.
+    /// Returns `Ok(Ok(execution_id_val))` on success, or `Ok(Err(error))` on stored error.
     pub(crate) async fn apply(
         self,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<wasmtime::component::Val /* ExecutionId */, WorkflowFunctionError> {
+    ) -> Result<Result<(), ScheduleRequestError>, WorkflowFunctionError> {
         let value = event_history
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::Schedule(self)),
@@ -2236,9 +2305,8 @@ impl Schedule {
                 called_at,
             )
             .await?;
-        let value = assert_matches!(value,
-            ChildReturnValue::WastVal(wast_val) => wast_val.as_val());
-        Ok(value)
+        let result = assert_matches!(value, ChildReturnValue::Schedule(result) => result);
+        Ok(result)
     }
 }
 
@@ -2267,6 +2335,26 @@ impl From<StubIntentErr> for StubError {
             StubIntentErr::TypeCheckError(reason) => StubError::TypeCheckError(reason),
         }
     }
+}
+
+/// Intent for `schedule-json` function. Captures `fn_registry` lookup result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ScheduleIntent {
+    Ok {
+        fn_component_id: ComponentId,
+        params: Params,
+    },
+    Err(ScheduleRequestError),
+}
+
+/// Intent for `submit-json` function. Captures `fn_registry` lookup result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SubmitChildIntent {
+    Ok {
+        fn_component_id: ComponentId,
+        params: Params,
+    },
+    Err(ChildExecutionRequestError),
 }
 
 // -stub: func(execution-id: execution-id, return-value: result<?>) -> result<_, stub-error>
@@ -2829,15 +2917,21 @@ impl EventCallNonBlocking {
                 join_set_id,
                 child_execution_id,
                 target_ffqn,
-                params,
-                fn_component_id: _,
+                intent,
                 wasm_backtrace: _,
-            }) => DeterministicKey::ChildExecutionRequest {
-                join_set_id: join_set_id.clone(),
-                child_execution_id: child_execution_id.clone(),
-                target_ffqn: target_ffqn.clone(),
-                params: params.clone(),
-            },
+            }) => {
+                // Extract params from intent for deterministic matching
+                let params = match intent {
+                    SubmitChildIntent::Ok { params, .. } => params.clone(),
+                    SubmitChildIntent::Err(_) => Params::empty(),
+                };
+                DeterministicKey::ChildExecutionRequest {
+                    join_set_id: join_set_id.clone(),
+                    child_execution_id: child_execution_id.clone(),
+                    target_ffqn: target_ffqn.clone(),
+                    params,
+                }
+            }
             EventCallNonBlocking::SubmitDelay(SubmitDelay {
                 delay_id,
                 join_set_id,
@@ -2883,7 +2977,8 @@ mod tests {
     use crate::workflow::deadline_tracker::deadline_tracker_factory_test;
     use crate::workflow::event_history::{
         ApplyError, AwaitNextExtensionError, ChildReturnValue, JoinNextRequestingFfqn, JoinNextTry,
-        JoinNextTryError, JoinSetCreate, Schedule, Stub, StubIntent, StubParams, SubmitDelay,
+        JoinNextTryError, JoinSetCreate, Schedule, ScheduleIntent, Stub, StubIntent, StubParams,
+        SubmitChildIntent, SubmitDelay,
     };
     use crate::workflow::host_exports::response_id::ResponseId;
     use assert_matches::assert_matches;
@@ -3325,8 +3420,10 @@ mod tests {
                     scheduled_at_if_new: sim_clock.now(),
                     execution_id: ExecutionId::generate(),
                     ffqn: MOCK_FFQN,
-                    fn_component_id: ComponentId::dummy_activity(),
-                    params: Params::empty(),
+                    intent: ScheduleIntent::Ok {
+                        fn_component_id: ComponentId::dummy_activity(),
+                        params: Params::empty(),
+                    },
                     wasm_backtrace: None,
                 })),
                 &mut caching_db_connection,
@@ -3773,10 +3870,12 @@ mod tests {
                 EventCall::NonBlocking(EventCallNonBlocking::SubmitChildExecution(
                     SubmitChildExecution {
                         target_ffqn: ffqn,
-                        fn_component_id: ComponentId::dummy_activity(),
                         join_set_id,
                         child_execution_id,
-                        params: Params::empty(),
+                        intent: SubmitChildIntent::Ok {
+                            fn_component_id: ComponentId::dummy_activity(),
+                            params: Params::empty(),
+                        },
                         wasm_backtrace: None,
                     },
                 )),
@@ -3812,10 +3911,12 @@ mod tests {
                 EventCall::NonBlocking(EventCallNonBlocking::SubmitChildExecution(
                     SubmitChildExecution {
                         target_ffqn: ffqn_b,
-                        fn_component_id: ComponentId::dummy_activity(),
                         join_set_id: join_set_id.clone(),
                         child_execution_id: child_execution_id_b,
-                        params: Params::empty(),
+                        intent: SubmitChildIntent::Ok {
+                            fn_component_id: ComponentId::dummy_activity(),
+                            params: Params::empty(),
+                        },
                         wasm_backtrace: None,
                     },
                 )),
