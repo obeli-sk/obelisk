@@ -2,12 +2,29 @@ use crate::{
     type_wrapper::{TypeKey, TypeWrapper},
     wast_val::{ValKey, WastVal, WastValWithType},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
 };
+
+/// Extracts bytes from a list if all elements are `WastVal::U8`.
+/// Returns `None` if the list is empty or contains non-U8 elements.
+fn extract_u8_list(list: &[WastVal]) -> Option<Vec<u8>> {
+    if list.is_empty() {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(list.len());
+    for val in list {
+        match val {
+            WastVal::U8(b) => bytes.push(*b),
+            _ => return None,
+        }
+    }
+    Some(bytes)
+}
 
 impl Serialize for WastVal {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -28,7 +45,20 @@ impl Serialize for WastVal {
             WastVal::F64(v) => serializer.serialize_f64(*v),
             WastVal::Char(v) => serializer.serialize_char(*v),
             WastVal::String(v) => serializer.serialize_str(v),
-            WastVal::List(list) | WastVal::Tuple(list) => {
+            WastVal::List(list) => {
+                // Serialize list<u8> as base64 string for compact representation
+                if let Some(bytes) = extract_u8_list(list) {
+                    serializer.serialize_str(&BASE64.encode(bytes))
+                } else {
+                    use serde::ser::SerializeSeq;
+                    let mut seq = serializer.serialize_seq(Some(list.len()))?;
+                    for val in list {
+                        seq.serialize_element(val)?;
+                    }
+                    seq.end()
+                }
+            }
+            WastVal::Tuple(list) => {
                 use serde::ser::SerializeSeq;
                 let mut seq = serializer.serialize_seq(Some(list.len()))?;
                 for val in list {
@@ -355,6 +385,13 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
             {
                 match self.0 {
                     TypeWrapper::String => Ok(WastVal::String(str_val.into())),
+                    TypeWrapper::List(inner) if **inner == TypeWrapper::U8 => {
+                        // Decode base64 string to list<u8>
+                        let bytes = BASE64.decode(str_val).map_err(|e| {
+                            Error::custom(format!("invalid base64 for list<u8>: {e}"))
+                        })?;
+                        Ok(WastVal::List(bytes.into_iter().map(WastVal::U8).collect()))
+                    }
                     TypeWrapper::Variant(possible_variants) => {
                         if let Some(found) = possible_variants.get(&TypeKey::from_snake(str_val)) {
                             if found.is_none() {
@@ -1056,6 +1093,37 @@ mod tests {
         let expected = WastValWithType {
             r#type: TypeWrapper::List(TypeWrapper::Bool.into()),
             value: WastVal::List(vec![WastVal::Bool(true)]),
+        };
+        let json = serde_json::to_string_pretty(&expected).unwrap();
+        insta::assert_snapshot!(json);
+        let actual = serde_json::from_str(&json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_list_u8_base64() {
+        // list<u8> should be serialized as base64 string
+        let expected = WastValWithType {
+            r#type: TypeWrapper::List(TypeWrapper::U8.into()),
+            value: WastVal::List(vec![
+                WastVal::U8(0),
+                WastVal::U8(1),
+                WastVal::U8(255),
+                WastVal::U8(128),
+            ]),
+        };
+        let json = serde_json::to_string_pretty(&expected).unwrap();
+        insta::assert_snapshot!(json);
+        let actual = serde_json::from_str(&json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_list_u8_empty() {
+        // Empty list<u8> should be serialized as empty array (not base64)
+        let expected = WastValWithType {
+            r#type: TypeWrapper::List(TypeWrapper::U8.into()),
+            value: WastVal::List(vec![]),
         };
         let json = serde_json::to_string_pretty(&expected).unwrap();
         insta::assert_snapshot!(json);
