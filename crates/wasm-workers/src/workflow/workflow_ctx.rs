@@ -1819,7 +1819,7 @@ pub(crate) mod workflow_support {
 
             // Return stored result from apply
             match result {
-                Ok(_) => Ok(Ok(types_4_1_0::execution::ExecutionId {
+                Ok(()) => Ok(Ok(types_4_1_0::execution::ExecutionId {
                     id: child_execution_id.to_string(),
                 })),
                 Err(ChildExecutionRequestError::FunctionNotFound) => {
