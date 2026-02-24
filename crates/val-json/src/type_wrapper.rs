@@ -1,7 +1,8 @@
 pub use indexmap;
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::fmt::{self, Debug, Display};
+use std::str::FromStr;
 
 // TODO: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
 #[derive(Clone, Eq, Serialize, Deserialize)]
@@ -191,6 +192,109 @@ impl Debug for TypeWrapper {
             Self::Own => f.debug_tuple("Own").finish(),
             Self::Borrow => f.debug_tuple("Borrow").finish(),
         }
+    }
+}
+
+impl Display for TypeWrapper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bool => write!(f, "bool"),
+            Self::S8 => write!(f, "s8"),
+            Self::U8 => write!(f, "u8"),
+            Self::S16 => write!(f, "s16"),
+            Self::U16 => write!(f, "u16"),
+            Self::S32 => write!(f, "s32"),
+            Self::U32 => write!(f, "u32"),
+            Self::S64 => write!(f, "s64"),
+            Self::U64 => write!(f, "u64"),
+            Self::F32 => write!(f, "f32"),
+            Self::F64 => write!(f, "f64"),
+            Self::Char => write!(f, "char"),
+            Self::String => write!(f, "string"),
+            Self::Own => write!(f, "own"),
+            Self::Borrow => write!(f, "borrow"),
+            Self::List(inner) => write!(f, "list<{inner}>"),
+            Self::Option(inner) => write!(f, "option<{inner}>"),
+            Self::Tuple(items) => {
+                write!(f, "tuple<")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, ">")
+            }
+            Self::Result { ok, err } => match (ok, err) {
+                (None, None) => write!(f, "result"),
+                (Some(ok), None) => write!(f, "result<{ok}>"),
+                (None, Some(err)) => write!(f, "result<_, {err}>"),
+                (Some(ok), Some(err)) => write!(f, "result<{ok}, {err}>"),
+            },
+            Self::Record(fields) => {
+                write!(f, "record {{")?;
+                for (i, (key, ty)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    write!(f, " {}: {ty}", key.as_kebab_str())?;
+                }
+                if !fields.is_empty() {
+                    write!(f, " ")?;
+                }
+                write!(f, "}}")
+            }
+            Self::Variant(cases) => {
+                write!(f, "variant {{")?;
+                for (i, (key, payload)) in cases.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    write!(f, " {}", key.as_kebab_str())?;
+                    if let Some(ty) = payload {
+                        write!(f, "({ty})")?;
+                    }
+                }
+                if !cases.is_empty() {
+                    write!(f, " ")?;
+                }
+                write!(f, "}}")
+            }
+            Self::Enum(cases) => {
+                write!(f, "enum {{")?;
+                for (i, key) in cases.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    write!(f, " {}", key.as_kebab_str())?;
+                }
+                if !cases.is_empty() {
+                    write!(f, " ")?;
+                }
+                write!(f, "}}")
+            }
+            Self::Flags(flags) => {
+                write!(f, "flags {{")?;
+                for (i, key) in flags.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    write!(f, " {}", key.as_kebab_str())?;
+                }
+                if !flags.is_empty() {
+                    write!(f, " ")?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
+}
+
+impl FromStr for TypeWrapper {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_wit_type(s)
     }
 }
 
@@ -514,6 +618,30 @@ fn parse_type(s: &str) -> Result<(TypeWrapper, &str), String> {
             }
         }
 
+        "variant" => {
+            let rest = expect_char(rest.trim_start(), '{')?;
+            let (cases, rest) = parse_variant_cases(rest)?;
+            Ok((TypeWrapper::Variant(cases), rest))
+        }
+
+        "enum" => {
+            let rest = expect_char(rest.trim_start(), '{')?;
+            let (cases, rest) = parse_identifier_list(rest)?;
+            Ok((TypeWrapper::Enum(cases), rest))
+        }
+
+        "record" => {
+            let rest = expect_char(rest.trim_start(), '{')?;
+            let (fields, rest) = parse_record_fields(rest)?;
+            Ok((TypeWrapper::Record(fields), rest))
+        }
+
+        "flags" => {
+            let rest = expect_char(rest.trim_start(), '{')?;
+            let (flags, rest) = parse_identifier_list(rest)?;
+            Ok((TypeWrapper::Flags(flags), rest))
+        }
+
         _ => Err(format!("unknown type: '{ident}'")),
     }
 }
@@ -561,6 +689,134 @@ fn parse_comma_separated_types(s: &str, closing: char) -> Result<(Vec<TypeWrappe
     Ok((items, rest))
 }
 
+/// Parse a kebab-case identifier (letters, digits, hyphens).
+fn parse_identifier(s: &str) -> Result<(&str, &str), String> {
+    let s = s.trim_start();
+    if s.is_empty() {
+        return Err("unexpected end of input, expected identifier".to_string());
+    }
+
+    let ident_end = s
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+        .unwrap_or(s.len());
+
+    if ident_end == 0 {
+        let found = s.chars().next().unwrap();
+        return Err(format!("expected identifier, found '{found}'"));
+    }
+
+    Ok((&s[..ident_end], &s[ident_end..]))
+}
+
+/// Parse variant cases: `{ case1, case2(type), case3 }`
+fn parse_variant_cases(s: &str) -> Result<(IndexMap<TypeKey, Option<TypeWrapper>>, &str), String> {
+    let mut cases = IndexMap::new();
+    let mut rest = s.trim_start();
+
+    if let Some(stripped) = rest.strip_prefix('}') {
+        return Ok((cases, stripped));
+    }
+
+    loop {
+        let (ident, r) = parse_identifier(rest)?;
+        let key = TypeKey::new_kebab(ident);
+        rest = r.trim_start();
+
+        // Check for optional payload: case-name(type)
+        let payload = if rest.starts_with('(') {
+            rest = &rest[1..];
+            let (ty, r) = parse_type(rest)?;
+            rest = expect_char(r.trim_start(), ')')?;
+            Some(ty)
+        } else {
+            None
+        };
+
+        cases.insert(key, payload);
+        rest = rest.trim_start();
+
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if rest.starts_with('}') {
+            rest = &rest[1..];
+            break;
+        } else {
+            let found = rest
+                .chars()
+                .next()
+                .map_or("end of input".to_string(), |c| format!("'{c}'"));
+            return Err(format!("expected ',' or '}}', found {found}"));
+        }
+    }
+
+    Ok((cases, rest))
+}
+
+/// Parse a comma-separated list of identifiers: `{ ident1, ident2 }`
+fn parse_identifier_list(s: &str) -> Result<(IndexSet<TypeKey>, &str), String> {
+    let mut items = IndexSet::new();
+    let mut rest = s.trim_start();
+
+    if let Some(stripped) = rest.strip_prefix('}') {
+        return Ok((items, stripped));
+    }
+
+    loop {
+        let (ident, r) = parse_identifier(rest)?;
+        items.insert(TypeKey::new_kebab(ident));
+        rest = r.trim_start();
+
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if rest.starts_with('}') {
+            rest = &rest[1..];
+            break;
+        } else {
+            let found = rest
+                .chars()
+                .next()
+                .map_or("end of input".to_string(), |c| format!("'{c}'"));
+            return Err(format!("expected ',' or '}}', found {found}"));
+        }
+    }
+
+    Ok((items, rest))
+}
+
+/// Parse record fields: `{ field1: type1, field2: type2 }`
+fn parse_record_fields(s: &str) -> Result<(IndexMap<TypeKey, TypeWrapper>, &str), String> {
+    let mut fields = IndexMap::new();
+    let mut rest = s.trim_start();
+
+    if let Some(stripped) = rest.strip_prefix('}') {
+        return Ok((fields, stripped));
+    }
+
+    loop {
+        let (ident, r) = parse_identifier(rest)?;
+        let key = TypeKey::new_kebab(ident);
+        rest = expect_char(r.trim_start(), ':')?;
+        let (ty, r) = parse_type(rest)?;
+        fields.insert(key, ty);
+        rest = r.trim_start();
+
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if rest.starts_with('}') {
+            rest = &rest[1..];
+            break;
+        } else {
+            let found = rest
+                .chars()
+                .next()
+                .map_or("end of input".to_string(), |c| format!("'{c}'"));
+            return Err(format!("expected ',' or '}}', found {found}"));
+        }
+    }
+
+    Ok((fields, rest))
+}
+
 #[cfg(test)]
 mod tests {
     use super::TypeWrapper;
@@ -600,7 +856,8 @@ mod tests {
     }
 
     mod tests_parse_wit_type {
-        use crate::type_wrapper::{TypeWrapper, parse_wit_type};
+        use crate::type_wrapper::{TypeKey, TypeWrapper, parse_wit_type};
+        use indexmap::{IndexMap, IndexSet};
 
         #[test]
         fn primitives() {
@@ -678,6 +935,320 @@ mod tests {
         #[test]
         fn unknown_type() {
             assert!(parse_wit_type("foobar").is_err());
+        }
+
+        #[test]
+        fn variant_empty() {
+            assert_eq!(
+                parse_wit_type("variant {}").unwrap(),
+                TypeWrapper::Variant(IndexMap::new())
+            );
+        }
+
+        #[test]
+        fn variant_simple() {
+            use indexmap::indexmap;
+            assert_eq!(
+                parse_wit_type("variant { first, second }").unwrap(),
+                TypeWrapper::Variant(indexmap! {
+                    TypeKey::new_kebab("first") => None,
+                    TypeKey::new_kebab("second") => None,
+                })
+            );
+        }
+
+        #[test]
+        fn variant_with_payloads() {
+            use indexmap::indexmap;
+            assert_eq!(
+                parse_wit_type("variant { first, second(string), third(u32) }").unwrap(),
+                TypeWrapper::Variant(indexmap! {
+                    TypeKey::new_kebab("first") => None,
+                    TypeKey::new_kebab("second") => Some(TypeWrapper::String),
+                    TypeKey::new_kebab("third") => Some(TypeWrapper::U32),
+                })
+            );
+        }
+
+        #[test]
+        fn variant_nested_payload() {
+            use indexmap::indexmap;
+            assert_eq!(
+                parse_wit_type("variant { ok(list<string>), err(option<u32>) }").unwrap(),
+                TypeWrapper::Variant(indexmap! {
+                    TypeKey::new_kebab("ok") => Some(TypeWrapper::List(Box::new(TypeWrapper::String))),
+                    TypeKey::new_kebab("err") => Some(TypeWrapper::Option(Box::new(TypeWrapper::U32))),
+                })
+            );
+        }
+
+        #[test]
+        fn enum_empty() {
+            assert_eq!(
+                parse_wit_type("enum {}").unwrap(),
+                TypeWrapper::Enum(IndexSet::new())
+            );
+        }
+
+        #[test]
+        fn enum_simple() {
+            use indexmap::indexset;
+            assert_eq!(
+                parse_wit_type("enum { red, green, blue }").unwrap(),
+                TypeWrapper::Enum(indexset! {
+                    TypeKey::new_kebab("red"),
+                    TypeKey::new_kebab("green"),
+                    TypeKey::new_kebab("blue"),
+                })
+            );
+        }
+
+        #[test]
+        fn record_empty() {
+            assert_eq!(
+                parse_wit_type("record {}").unwrap(),
+                TypeWrapper::Record(IndexMap::new())
+            );
+        }
+
+        #[test]
+        fn record_simple() {
+            use indexmap::indexmap;
+            assert_eq!(
+                parse_wit_type("record { name: string, age: u32 }").unwrap(),
+                TypeWrapper::Record(indexmap! {
+                    TypeKey::new_kebab("name") => TypeWrapper::String,
+                    TypeKey::new_kebab("age") => TypeWrapper::U32,
+                })
+            );
+        }
+
+        #[test]
+        fn record_nested() {
+            use indexmap::indexmap;
+            assert_eq!(
+                parse_wit_type("record { items: list<string>, count: option<u64> }").unwrap(),
+                TypeWrapper::Record(indexmap! {
+                    TypeKey::new_kebab("items") => TypeWrapper::List(Box::new(TypeWrapper::String)),
+                    TypeKey::new_kebab("count") => TypeWrapper::Option(Box::new(TypeWrapper::U64)),
+                })
+            );
+        }
+
+        #[test]
+        fn flags_empty() {
+            assert_eq!(
+                parse_wit_type("flags {}").unwrap(),
+                TypeWrapper::Flags(IndexSet::new())
+            );
+        }
+
+        #[test]
+        fn flags_simple() {
+            use indexmap::indexset;
+            assert_eq!(
+                parse_wit_type("flags { read, write, execute }").unwrap(),
+                TypeWrapper::Flags(indexset! {
+                    TypeKey::new_kebab("read"),
+                    TypeKey::new_kebab("write"),
+                    TypeKey::new_kebab("execute"),
+                })
+            );
+        }
+
+        #[test]
+        fn kebab_case_identifiers() {
+            use indexmap::indexmap;
+            assert_eq!(
+                parse_wit_type("record { first-name: string, last-name: string }").unwrap(),
+                TypeWrapper::Record(indexmap! {
+                    TypeKey::new_kebab("first-name") => TypeWrapper::String,
+                    TypeKey::new_kebab("last-name") => TypeWrapper::String,
+                })
+            );
+        }
+    }
+
+    mod tests_display {
+        use super::super::*;
+        use indexmap::{indexmap, indexset};
+
+        #[test]
+        fn primitives() {
+            assert_eq!(TypeWrapper::Bool.to_string(), "bool");
+            assert_eq!(TypeWrapper::U32.to_string(), "u32");
+            assert_eq!(TypeWrapper::String.to_string(), "string");
+            assert_eq!(TypeWrapper::F64.to_string(), "f64");
+        }
+
+        #[test]
+        fn list() {
+            assert_eq!(
+                TypeWrapper::List(Box::new(TypeWrapper::String)).to_string(),
+                "list<string>"
+            );
+        }
+
+        #[test]
+        fn option() {
+            assert_eq!(
+                TypeWrapper::Option(Box::new(TypeWrapper::U32)).to_string(),
+                "option<u32>"
+            );
+        }
+
+        #[test]
+        fn tuple() {
+            assert_eq!(
+                TypeWrapper::Tuple(vec![TypeWrapper::U32, TypeWrapper::String].into_boxed_slice())
+                    .to_string(),
+                "tuple<u32, string>"
+            );
+        }
+
+        #[test]
+        fn result_variants() {
+            assert_eq!(
+                TypeWrapper::Result {
+                    ok: Some(Box::new(TypeWrapper::String)),
+                    err: Some(Box::new(TypeWrapper::U32)),
+                }
+                .to_string(),
+                "result<string, u32>"
+            );
+            assert_eq!(
+                TypeWrapper::Result {
+                    ok: Some(Box::new(TypeWrapper::String)),
+                    err: None,
+                }
+                .to_string(),
+                "result<string>"
+            );
+            assert_eq!(
+                TypeWrapper::Result {
+                    ok: None,
+                    err: None,
+                }
+                .to_string(),
+                "result"
+            );
+            assert_eq!(
+                TypeWrapper::Result {
+                    ok: None,
+                    err: Some(Box::new(TypeWrapper::String)),
+                }
+                .to_string(),
+                "result<_, string>"
+            );
+        }
+
+        #[test]
+        fn variant() {
+            let v = TypeWrapper::Variant(indexmap! {
+                TypeKey::new_kebab("first") => None,
+                TypeKey::new_kebab("second") => Some(TypeWrapper::String),
+            });
+            assert_eq!(v.to_string(), "variant { first, second(string) }");
+        }
+
+        #[test]
+        fn enum_display() {
+            let e = TypeWrapper::Enum(indexset! {
+                TypeKey::new_kebab("red"),
+                TypeKey::new_kebab("green"),
+            });
+            assert_eq!(e.to_string(), "enum { red, green }");
+        }
+
+        #[test]
+        fn record() {
+            let r = TypeWrapper::Record(indexmap! {
+                TypeKey::new_kebab("name") => TypeWrapper::String,
+                TypeKey::new_kebab("age") => TypeWrapper::U32,
+            });
+            assert_eq!(r.to_string(), "record { name: string, age: u32 }");
+        }
+
+        #[test]
+        fn flags() {
+            let f = TypeWrapper::Flags(indexset! {
+                TypeKey::new_kebab("read"),
+                TypeKey::new_kebab("write"),
+            });
+            assert_eq!(f.to_string(), "flags { read, write }");
+        }
+
+        #[test]
+        fn empty_containers() {
+            assert_eq!(TypeWrapper::Variant(indexmap! {}).to_string(), "variant {}");
+            assert_eq!(TypeWrapper::Enum(indexset! {}).to_string(), "enum {}");
+            assert_eq!(TypeWrapper::Record(indexmap! {}).to_string(), "record {}");
+            assert_eq!(TypeWrapper::Flags(indexset! {}).to_string(), "flags {}");
+        }
+    }
+
+    mod tests_roundtrip {
+        use super::super::*;
+
+        fn roundtrip(input: &str) {
+            let parsed: TypeWrapper = input.parse().unwrap();
+            let displayed = parsed.to_string();
+            let reparsed: TypeWrapper = displayed.parse().unwrap();
+            assert_eq!(parsed, reparsed, "roundtrip failed for: {input}");
+        }
+
+        #[test]
+        fn primitives() {
+            for s in [
+                "bool", "u8", "u16", "u32", "u64", "s8", "s16", "s32", "s64", "f32", "f64", "char",
+                "string",
+            ] {
+                roundtrip(s);
+            }
+        }
+
+        #[test]
+        fn generic_types() {
+            roundtrip("list<string>");
+            roundtrip("list<list<u8>>");
+            roundtrip("option<u32>");
+            roundtrip("tuple<u32, string, bool>");
+            roundtrip("result");
+            roundtrip("result<string>");
+            roundtrip("result<string, u32>");
+            roundtrip("result<_, string>");
+        }
+
+        #[test]
+        fn anonymous_types() {
+            roundtrip("variant { first, second(string) }");
+            roundtrip("enum { red, green, blue }");
+            roundtrip("record { name: string, age: u32 }");
+            roundtrip("flags { read, write, execute }");
+        }
+
+        #[test]
+        fn nested_anonymous() {
+            roundtrip("record { items: list<variant { ok(string), err }>, count: u32 }");
+            roundtrip(
+                "variant { success(record { data: string }), failure(enum { timeout, error }) }",
+            );
+        }
+    }
+
+    mod tests_from_str {
+        use super::super::*;
+
+        #[test]
+        fn from_str_works() {
+            let ty: TypeWrapper = "list<string>".parse().unwrap();
+            assert_eq!(ty, TypeWrapper::List(Box::new(TypeWrapper::String)));
+        }
+
+        #[test]
+        fn from_str_error() {
+            let result: Result<TypeWrapper, _> = "unknown_type".parse();
+            assert!(result.is_err());
         }
     }
 }
