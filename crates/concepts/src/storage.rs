@@ -499,10 +499,6 @@ pub enum HistoryEvent {
     #[display("JoinNextTry({join_set_id}, {outcome})")]
     JoinNextTry {
         join_set_id: JoinSetId,
-        /// The outcome replaces the old `found_response: bool` field.
-        /// Deserialization from old records uses [`JoinNextTryOutcome`]'s `Deserialize`
-        /// impl which accepts both the new string values and legacy booleans.
-        #[serde(alias = "found_response")]
         outcome: JoinNextTryOutcome,
     },
     /// Records the fact that a join set was awaited more times than its submission count.
@@ -648,7 +644,7 @@ pub enum ChildExecutionRequestError {
     TypeCheckError(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum JoinNextTryOutcome {
@@ -661,31 +657,6 @@ pub enum JoinNextTryOutcome {
     /// No response available, and all requests have been processed.
     #[display("all_processed")]
     AllProcessed,
-}
-
-impl<'de> serde::Deserialize<'de> for JoinNextTryOutcome {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::Deserialize;
-        // Accept both the new string values and the legacy bool from `found_response`.
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum BoolOrString {
-            Bool(bool),
-            String(String),
-        }
-        match BoolOrString::deserialize(deserializer)? {
-            BoolOrString::Bool(b) => Ok(JoinNextTryOutcome::from(b)),
-            BoolOrString::String(s) => match s.as_str() {
-                "found" => Ok(JoinNextTryOutcome::Found),
-                "pending" => Ok(JoinNextTryOutcome::Pending),
-                "all_processed" => Ok(JoinNextTryOutcome::AllProcessed),
-                other => Err(serde::de::Error::unknown_variant(
-                    other,
-                    &["found", "pending", "all_processed"],
-                )),
-            },
-        }
-    }
 }
 
 impl From<bool> for JoinNextTryOutcome {
