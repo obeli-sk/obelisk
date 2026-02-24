@@ -76,7 +76,10 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
                 {
                   "days": 1
                 }
-              ]
+              ],
+              "result": {
+                "Ok": null
+              }
             }
           }
         }

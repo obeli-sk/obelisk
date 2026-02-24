@@ -29,7 +29,7 @@ interface workflow-support {
         /// See `Function` definition
         ffqn-parsing-error(string),
         function-not-found,
-        params-parsing-error(string),
+        type-check-error(string),
     }
 
     @since(version = 4.2.0)
@@ -37,7 +37,7 @@ interface workflow-support {
         /// See `Function` definition
         ffqn-parsing-error(string),
         function-not-found,
-        params-parsing-error(string),
+        type-check-error(string),
     }
 
     /// Error variants that may occur when calling `join-next` function.

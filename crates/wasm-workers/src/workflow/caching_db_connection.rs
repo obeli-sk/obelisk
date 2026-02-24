@@ -25,10 +25,24 @@ pub(crate) enum CacheableDbEvent {
         child_req: CreateRequest,
         backtrace: Option<BacktraceInfo>,
     },
+    /// `SubmitChildExecution` where the intent failed (function not found or params parsing error).
+    /// Only persists the history event, no child execution created.
+    SubmitChildExecutionError {
+        request: AppendRequest,
+        version: Version,
+        backtrace: Option<BacktraceInfo>,
+    },
     Schedule {
         request: AppendRequest,
         version: Version,
         child_req: CreateRequest,
+        backtrace: Option<BacktraceInfo>,
+    },
+    /// Schedule where the intent failed (function not found or params parsing error).
+    /// Only persists the history event, no child execution created.
+    ScheduleError {
+        request: AppendRequest,
+        version: Version,
         backtrace: Option<BacktraceInfo>,
     },
     JoinSetCreate {
@@ -134,6 +148,16 @@ impl CachingDbConnection {
                     backtrace,
                 }
                 | CacheableDbEvent::JoinNextTry {
+                    request,
+                    version,
+                    backtrace,
+                }
+                | CacheableDbEvent::ScheduleError {
+                    request,
+                    version,
+                    backtrace,
+                }
+                | CacheableDbEvent::SubmitChildExecutionError {
                     request,
                     version,
                     backtrace,
@@ -349,6 +373,16 @@ impl CachingDbConnection {
                         backtrace,
                     }
                     | CacheableDbEvent::JoinNextTry {
+                        request,
+                        version,
+                        backtrace,
+                    }
+                    | CacheableDbEvent::ScheduleError {
+                        request,
+                        version,
+                        backtrace,
+                    }
+                    | CacheableDbEvent::SubmitChildExecutionError {
                         request,
                         version,
                         backtrace,

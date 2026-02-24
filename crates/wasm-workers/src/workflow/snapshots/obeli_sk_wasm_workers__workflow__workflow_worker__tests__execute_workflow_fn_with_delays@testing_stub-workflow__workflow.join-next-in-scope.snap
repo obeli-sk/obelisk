@@ -74,7 +74,10 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "target_ffqn": "testing:stub-activity/activity.foo",
               "params": [
                 "a"
-              ]
+              ],
+              "result": {
+                "Ok": null
+              }
             }
           }
         }
@@ -129,7 +132,10 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "target_ffqn": "testing:stub-activity/activity.foo",
               "params": [
                 "b"
-              ]
+              ],
+              "result": {
+                "Ok": null
+              }
             }
           }
         }
@@ -216,7 +222,10 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "target_ffqn": "testing:stub-activity/activity.foo",
               "params": [
                 "f"
-              ]
+              ],
+              "result": {
+                "Ok": null
+              }
             }
           }
         }
@@ -325,7 +334,10 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "target_ffqn": "testing:stub-activity/activity.foo",
               "params": [
                 "c"
-              ]
+              ],
+              "result": {
+                "Ok": null
+              }
             }
           }
         }

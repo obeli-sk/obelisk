@@ -14,9 +14,14 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
-use crate::workflow::event_history::{JoinSetCreate, StubIntent, StubIntentErr, StubParams};
+use crate::workflow::event_history::{
+    JoinSetCreate, ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitChildIntent,
+};
 use crate::workflow::host_exports::v4_1_0::{self, DelayId_4_1_0, ExecutionId_4_1_0};
-use crate::workflow::host_exports::{SUFFIX_FN_GET, SUFFIX_FN_STUB, stub_result_to_wast_val};
+use crate::workflow::host_exports::{
+    SUFFIX_FN_GET, SUFFIX_FN_STUB, execution_id_derived_into_wast_val, execution_id_into_wast_val,
+    stub_result_to_wast_val,
+};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutionIdDerived};
 use concepts::storage::{
@@ -261,17 +266,22 @@ impl ScheduleFnCall<'_> {
                 detail: Some(format!("{err:?}")),
             }
         })?;
-        Schedule {
+        let execution_id_val = execution_id_into_wast_val(&execution_id).as_val();
+        Ok(Schedule {
             schedule_at,
             scheduled_at_if_new,
             execution_id,
             ffqn: target_ffqn,
-            fn_component_id: target_component_id,
-            params: Params::from_wasmtime(Arc::from(target_params)),
+            intent: ScheduleIntent::Ok {
+                fn_component_id: target_component_id,
+                params: Params::from_wasmtime(Arc::from(target_params)),
+            },
             wasm_backtrace,
         }
         .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
-        .await
+        .await?
+        .map(|()| execution_id_val)
+        .expect("Ok intent cannot produce ScheduleRequestError"))
     }
 }
 
@@ -324,16 +334,22 @@ impl SubmitExecutionFnCall<'_> {
             wasm_backtrace,
         } = self;
         let child_execution_id = ctx.next_child_id(&join_set_id);
-        SubmitChildExecution {
-            target_ffqn,
-            fn_component_id: target_component_id,
+        let child_execution_id_val =
+            execution_id_derived_into_wast_val(&child_execution_id).as_val();
+        Ok(SubmitChildExecution {
+            target_ffqn: target_ffqn.clone(),
             join_set_id,
-            params: Params::from_wasmtime(Arc::from(target_params)),
+            intent: SubmitChildIntent::Ok {
+                fn_component_id: target_component_id,
+                params: Params::from_wasmtime(Arc::from(target_params)),
+            },
             child_execution_id,
             wasm_backtrace,
         }
         .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
-        .await
+        .await?
+        .map(|()| child_execution_id_val)
+        .expect("Ok intent cannot produce ChildExecutionRequestError"))
     }
 }
 
@@ -1458,7 +1474,8 @@ pub(crate) mod workflow_support {
         Schedule, Stub, SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, types_4_1_0,
     };
     use crate::workflow::event_history::{
-        JoinNext, JoinNextTry, Persist, StubIntent, StubIntentErr, StubParams, SubmitDelay,
+        JoinNext, JoinNextTry, Persist, ScheduleIntent, StubIntent, StubIntentErr, StubParams,
+        SubmitDelay,
     };
     use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextError;
@@ -1748,6 +1765,7 @@ pub(crate) mod workflow_support {
         }
 
         /// Submit a child execution request with JSON-serialized parameters.
+        /// The `fn_registry` lookup result is persisted as an intent for determinism.
         pub(crate) async fn submit_json(
             &mut self,
             join_set_id: JoinSetId,
@@ -1760,49 +1778,26 @@ pub(crate) mod workflow_support {
                 v4_1_0::obelisk::workflow::workflow_support::SubmitJsonError,
             >,
         > {
+            use concepts::storage::ChildExecutionRequestError;
             use v4_1_0::obelisk::workflow::workflow_support::SubmitJsonError;
 
-            // Look up the function in the registry
-            let Some((fn_metadata, fn_component_id)) = self
-                .event_history
-                .fn_registry
-                .get_by_exported_function(&target_ffqn)
-            else {
-                return Ok(Err(SubmitJsonError::FunctionNotFound));
-            };
-            let params = match serde_json::from_str(&params_json) {
+            // Return errors that do not depend on state directly without persisting
+            let params_json = match serde_json::from_str(&params_json) {
                 Ok(serde_json::Value::Array(params)) => params,
                 Ok(_other) => {
-                    return Ok(Err(SubmitJsonError::ParamsParsingError(
+                    return Ok(Err(SubmitJsonError::TypeCheckError(
                         "params must be a json array".to_string(),
                     )));
                 }
                 Err(err) => {
-                    return Ok(Err(SubmitJsonError::ParamsParsingError(format!(
+                    return Ok(Err(SubmitJsonError::TypeCheckError(format!(
                         "cannot parse params as JSON array: {err}"
                     ))));
                 }
             };
 
-            assert_eq!(
-                None, fn_metadata.extension,
-                "get_by_exported_function must not return extended functions"
-            );
-
-            let params = match Params::from_json_values(
-                Arc::from(params),
-                fn_metadata
-                    .parameter_types
-                    .iter()
-                    .map(|param_type| &param_type.type_wrapper),
-            ) {
-                Ok(params) => params,
-                Err(err) => {
-                    return Ok(Err(SubmitJsonError::ParamsParsingError(format!(
-                        "params type checking failed: {err}"
-                    ))));
-                }
-            };
+            // Compute intent from fn_registry lookup
+            let intent = self.get_submit_child_intent(&target_ffqn, params_json);
 
             // Get the child execution ID
             let child_execution_id = self.next_child_id(&join_set_id);
@@ -1811,24 +1806,75 @@ pub(crate) mod workflow_support {
             let called_at = self.clock_fn.now();
             let submit = SubmitChildExecution {
                 target_ffqn,
-                fn_component_id,
                 join_set_id,
                 child_execution_id: child_execution_id.clone(),
-                params,
+                intent,
                 wasm_backtrace,
             };
 
-            submit
+            let result = submit
                 .apply(&mut self.event_history, &mut self.db_connection, called_at)
                 .await
                 .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
 
-            Ok(Ok(types_4_1_0::execution::ExecutionId {
-                id: child_execution_id.to_string(),
-            }))
+            // Return stored result from apply
+            match result {
+                Ok(()) => Ok(Ok(types_4_1_0::execution::ExecutionId {
+                    id: child_execution_id.to_string(),
+                })),
+                Err(ChildExecutionRequestError::FunctionNotFound) => {
+                    Ok(Err(SubmitJsonError::FunctionNotFound))
+                }
+                Err(ChildExecutionRequestError::TypeCheckError(msg)) => {
+                    Ok(Err(SubmitJsonError::TypeCheckError(msg)))
+                }
+            }
+        }
+
+        /// Compute the intent for submit-json from `fn_registry` lookup.
+        fn get_submit_child_intent(
+            &self,
+            target_ffqn: &FunctionFqn,
+            params_json: Vec<serde_json::Value>,
+        ) -> crate::workflow::event_history::SubmitChildIntent {
+            use crate::workflow::event_history::SubmitChildIntent;
+            use concepts::storage::ChildExecutionRequestError;
+
+            // Look up the function in the registry
+            let Some((fn_metadata, fn_component_id)) = self
+                .event_history
+                .fn_registry
+                .get_by_exported_function(target_ffqn)
+            else {
+                return SubmitChildIntent::Err(ChildExecutionRequestError::FunctionNotFound);
+            };
+            assert_eq!(
+                None, fn_metadata.extension,
+                "get_by_exported_function must not return extended functions"
+            );
+            let params = match Params::from_json_values(
+                Arc::from(params_json),
+                fn_metadata
+                    .parameter_types
+                    .iter()
+                    .map(|param_type| &param_type.type_wrapper),
+            ) {
+                Ok(params) => params,
+                Err(err) => {
+                    return SubmitChildIntent::Err(ChildExecutionRequestError::TypeCheckError(
+                        format!("params type checking failed: {err}"),
+                    ));
+                }
+            };
+
+            SubmitChildIntent::Ok {
+                fn_component_id,
+                params,
+            }
         }
 
         /// Schedule an execution request with JSON-serialized parameters.
+        /// The `fn_registry` lookup result is persisted as an intent for determinism.
         pub(crate) async fn schedule_json(
             &mut self,
             target_ffqn: FunctionFqn,
@@ -1841,35 +1887,83 @@ pub(crate) mod workflow_support {
                 v4_1_0::obelisk::workflow::workflow_support::ScheduleJsonError,
             >,
         > {
+            use concepts::storage::ScheduleRequestError;
             use v4_1_0::obelisk::workflow::workflow_support::ScheduleJsonError;
 
-            // Look up the function in the registry
-            let Some((fn_metadata, fn_component_id)) = self
-                .event_history
-                .fn_registry
-                .get_by_exported_function(&target_ffqn)
-            else {
-                return Ok(Err(ScheduleJsonError::FunctionNotFound));
-            };
-            let params = match serde_json::from_str(&params_json) {
+            let called_at = self.clock_fn.now();
+            let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|err| {
+                wasmtime::Error::msg(format!("schedule-at conversion error: {err:?}"))
+            })?;
+
+            // Return errors that do not depend on state directly without persisting
+            let params_json = match serde_json::from_str(&params_json) {
                 Ok(serde_json::Value::Array(params)) => params,
                 Ok(_other) => {
-                    return Ok(Err(ScheduleJsonError::ParamsParsingError(
+                    return Ok(Err(ScheduleJsonError::TypeCheckError(
                         "params must be a json array".to_string(),
                     )));
                 }
                 Err(err) => {
-                    return Ok(Err(ScheduleJsonError::ParamsParsingError(format!(
+                    return Ok(Err(ScheduleJsonError::TypeCheckError(format!(
                         "cannot parse params as JSON array: {err}"
                     ))));
                 }
             };
 
+            // Compute intent from fn_registry lookup
+            let intent = self.get_schedule_intent(&target_ffqn, params_json);
+
+            // Generate new execution ID
+            let execution_id = ExecutionId::from_parts(
+                self.execution_id.get_top_level().timestamp_part(),
+                self.next_u128(),
+            );
+
+            let result = Schedule {
+                schedule_at,
+                scheduled_at_if_new,
+                execution_id: execution_id.clone(),
+                ffqn: target_ffqn,
+                intent,
+                wasm_backtrace,
+            }
+            .apply(&mut self.event_history, &mut self.db_connection, called_at)
+            .await
+            .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
+
+            match result {
+                Ok(()) => Ok(Ok(types_4_1_0::execution::ExecutionId {
+                    id: execution_id.to_string(),
+                })),
+                Err(ScheduleRequestError::FunctionNotFound) => {
+                    Ok(Err(ScheduleJsonError::FunctionNotFound))
+                }
+                Err(ScheduleRequestError::TypeCheckError(msg)) => {
+                    Ok(Err(ScheduleJsonError::TypeCheckError(msg)))
+                }
+            }
+        }
+
+        /// Compute the intent for schedule-json from `fn_registry` lookup.
+        fn get_schedule_intent(
+            &self,
+            target_ffqn: &FunctionFqn,
+            params: Vec<serde_json::Value>,
+        ) -> ScheduleIntent {
+            use concepts::storage::ScheduleRequestError;
+
+            // Look up the function in the registry
+            let Some((fn_metadata, fn_component_id)) = self
+                .event_history
+                .fn_registry
+                .get_by_exported_function(target_ffqn)
+            else {
+                return ScheduleIntent::Err(ScheduleRequestError::FunctionNotFound);
+            };
             assert_eq!(
                 None, fn_metadata.extension,
                 "get_by_exported_function must not return extended functions"
             );
-
             let params = match Params::from_json_values(
                 Arc::from(params),
                 fn_metadata
@@ -1879,39 +1973,15 @@ pub(crate) mod workflow_support {
             ) {
                 Ok(params) => params,
                 Err(err) => {
-                    return Ok(Err(ScheduleJsonError::ParamsParsingError(format!(
+                    return ScheduleIntent::Err(ScheduleRequestError::TypeCheckError(format!(
                         "params type checking failed: {err}"
-                    ))));
+                    )));
                 }
             };
-
-            // Generate new execution ID
-            let execution_id = ExecutionId::from_parts(
-                self.execution_id.get_top_level().timestamp_part(),
-                self.next_u128(),
-            );
-
-            let called_at = self.clock_fn.now();
-            let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|err| {
-                wasmtime::Error::msg(format!("schedule-at conversion error: {err:?}"))
-            })?;
-
-            Schedule {
-                schedule_at,
-                scheduled_at_if_new,
-                execution_id: execution_id.clone(),
-                ffqn: target_ffqn,
+            ScheduleIntent::Ok {
                 fn_component_id,
                 params,
-                wasm_backtrace,
             }
-            .apply(&mut self.event_history, &mut self.db_connection, called_at)
-            .await
-            .map_err(wasmtime::Error::new)?;
-
-            Ok(Ok(types_4_1_0::execution::ExecutionId {
-                id: execution_id.to_string(),
-            }))
         }
 
         #[instrument(skip_all, fields(%target_execution_id))]
@@ -3157,8 +3227,10 @@ pub(crate) mod tests {
                         child_execution_id,
                         target_ffqn: _,
                         params: _,
+                        result,
                     } => {
                         debug!("Got ChildExecutionRequest, executing child");
+                        result.expect("must never end with type check error or fn not found");
                         assert!(child_execution_count > 0);
                         exec_child(child_execution_id, db_pool.clone(), sim_clock.clone()).await;
                         child_execution_count -= 1;

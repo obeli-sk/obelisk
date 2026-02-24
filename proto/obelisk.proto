@@ -399,6 +399,7 @@ message ExecutionEvent {
 
             message ChildExecutionRequest {
                 ExecutionId child_execution_id = 1;
+                bool success = 2;  // false if function not found or params parsing error
             }
 
             JoinSetId join_set_id = 1;
@@ -451,6 +452,7 @@ message ExecutionEvent {
             }
             ExecutionId execution_id = 1;
             ScheduledAt scheduled_at = 2;
+            bool success = 3;  // false if function not found or params parsing error
         }
 
         message Stub {

@@ -517,6 +517,8 @@ pub enum HistoryEvent {
     Schedule {
         execution_id: ExecutionId,
         schedule_at: HistoryEventScheduleAt, // Stores intention to schedule an execution at a date/offset
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(())))]
+        result: Result<(), ScheduleRequestError>,
     },
     #[display("Stub({target_execution_id})")]
     Stub {
@@ -626,6 +628,26 @@ pub enum StubError {
     Conflict,
 }
 
+/// Error from the `schedule-json` function. Persisted in history for determinism.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleRequestError {
+    #[error("function not found")]
+    FunctionNotFound,
+    #[error("params parsing error: {0}")]
+    TypeCheckError(String),
+}
+
+/// Error from the `submit-json` function. Persisted in history for determinism.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildExecutionRequestError {
+    #[error("function not found")]
+    FunctionNotFound,
+    #[error("params parsing error: {0}")]
+    TypeCheckError(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
@@ -732,6 +754,8 @@ pub enum JoinSetRequest {
         target_ffqn: FunctionFqn,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Params::empty()))]
         params: Params,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(())))]
+        result: Result<(), ChildExecutionRequestError>,
     },
 }
 

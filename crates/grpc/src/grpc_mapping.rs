@@ -699,10 +699,11 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                                         }
                                     ))
                                 }
-                                JoinSetRequest::ChildExecutionRequest { child_execution_id, params: _, target_ffqn: _ } => {
+                                JoinSetRequest::ChildExecutionRequest { child_execution_id, params: _, target_ffqn: _, result } => {
                                     Some(history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(
                                         history_event::join_set_request::ChildExecutionRequest {
                                             child_execution_id: Some(grpc_gen::ExecutionId { id: child_execution_id.to_string() }),
+                                            success: result.is_ok(),
                                         }
                                     ))
                                 }
@@ -729,7 +730,7 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                                 outcome: proto_outcome.into(),
                             })
                         }
-                        HistoryEvent::Schedule { execution_id, schedule_at: scheduled_at } => history_event::Event::Schedule(history_event::Schedule {
+                        HistoryEvent::Schedule { execution_id, schedule_at: scheduled_at, result } => history_event::Event::Schedule(history_event::Schedule {
                             execution_id: Some(grpc_gen::ExecutionId { id: execution_id.to_string() }),
                             scheduled_at: Some(history_event::schedule::ScheduledAt {
                                 variant: match scheduled_at {
@@ -742,10 +743,11 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                                     })),
                                 },
                             }),
+                            success: result.is_ok(),
                         }),
-                        HistoryEvent::Stub { target_execution_id, result: target_result, .. } => history_event::Event::Stub(history_event::Stub {
+                        HistoryEvent::Stub { target_execution_id, result, .. } => history_event::Event::Stub(history_event::Stub {
                             execution_id: Some(ExecutionId::Derived(target_execution_id).into()),
-                            success: target_result.is_ok()
+                            success: result.is_ok()
                         }),
                     }),
                 }),

@@ -52,6 +52,9 @@ expression: events
                 3,
                 4
               ],
+              "result": {
+                "Ok": null
+              },
               "target_ffqn": "testing:integration/activities.add",
               "type": "child_execution_request"
             },

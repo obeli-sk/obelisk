@@ -183,7 +183,7 @@ expression: imports
               "variant": {
                 "ffqn-parsing-error": "string",
                 "function-not-found": null,
-                "params-parsing-error": "string"
+                "type-check-error": "string"
               }
             }
           }
@@ -252,7 +252,7 @@ expression: imports
               "variant": {
                 "ffqn-parsing-error": "string",
                 "function-not-found": null,
-                "params-parsing-error": "string"
+                "type-check-error": "string"
               }
             }
           }
