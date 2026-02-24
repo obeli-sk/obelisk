@@ -21,7 +21,6 @@ const_format.workspace = true
 deadpool-postgres = { optional = true, workspace = true }
 derive-where.workspace = true
 derive_more.workspace = true
-fxhash.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true
 opentelemetry.workspace = true
