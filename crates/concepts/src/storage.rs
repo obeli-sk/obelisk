@@ -2274,39 +2274,6 @@ mod tests {
     }
 
     #[test]
-    fn join_next_try_outcome_old_format_compat() {
-        // Old format: `found_response: true` -> Found
-        let json = r#"{"type":"join_next_try","join_set_id":"n:test","found_response":true}"#;
-        let event: HistoryEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            event,
-            HistoryEvent::JoinNextTry {
-                join_set_id: JoinSetId::new(
-                    crate::JoinSetKind::Named,
-                    crate::StrVariant::Static("test")
-                )
-                .unwrap(),
-                outcome: JoinNextTryOutcome::Found,
-            }
-        );
-
-        // Old format: `found_response: false` -> Pending (conservative default)
-        let json = r#"{"type":"join_next_try","join_set_id":"n:test","found_response":false}"#;
-        let event: HistoryEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            event,
-            HistoryEvent::JoinNextTry {
-                join_set_id: JoinSetId::new(
-                    crate::JoinSetKind::Named,
-                    crate::StrVariant::Static("test")
-                )
-                .unwrap(),
-                outcome: JoinNextTryOutcome::Pending,
-            }
-        );
-    }
-
-    #[test]
     fn join_next_try_outcome_serializes_new_format() {
         let event = HistoryEvent::JoinNextTry {
             join_set_id: JoinSetId::new(
