@@ -112,7 +112,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
             "type": "stub",
             "target_execution_id": "E_00000000000000000000000000.g:1_1",
             "retval_hash": "015951d6f9b8fdadb750e0c6859c6c899eda17e8b0a66a9341ca0cc96370707cde",
-            "persist_result": {
+            "result": {
               "Ok": null
             }
           }

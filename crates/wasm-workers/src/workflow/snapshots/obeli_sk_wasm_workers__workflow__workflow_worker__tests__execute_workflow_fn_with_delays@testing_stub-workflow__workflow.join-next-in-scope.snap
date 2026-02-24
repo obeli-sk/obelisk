@@ -144,7 +144,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
             "type": "stub",
             "target_execution_id": "E_00000000000000000000000000.n:b_1",
             "retval_hash": "0188eb6f2ed4e10b0a55f74f22443a5933a78281a2680b7f5f2b6dca35751535bf",
-            "persist_result": {
+            "result": {
               "Ok": null
             }
           }

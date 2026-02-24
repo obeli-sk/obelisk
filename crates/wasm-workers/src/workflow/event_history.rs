@@ -1076,7 +1076,7 @@ impl EventHistory {
                 HistoryEvent::Stub {
                     target_execution_id: found_execution_id,
                     retval_hash: found_retval_hash,
-                    persist_result: found_result,
+                    result: found_result,
                 },
             ) if params.target_execution_id == *found_execution_id
                 && params.retval_hash == *found_retval_hash =>
@@ -1331,7 +1331,7 @@ impl EventHistory {
                         let event = HistoryEvent::Stub {
                             target_execution_id: params.target_execution_id,
                             retval_hash: params.retval_hash,
-                            persist_result: Err(err.into()),
+                            result: Err(err.into()),
                         };
                         let history_event = (event.clone(), db_connection.version.clone());
                         let history_event_req = AppendRequest {
@@ -1384,7 +1384,7 @@ impl EventHistory {
                         };
                         debug!(target_execution_id = %params.target_execution_id, "Executed append_batch_respond_to_parent: {write_attempt:?}");
                         // The server might crash at this point, and restart processing.
-                        let persist_result = match write_attempt {
+                        let result = match write_attempt {
                             Ok(_) => Ok(()),
                             Err(DbErrorWrite::NonRetriable(
                                 DbErrorWriteNonRetriable::AlreadyFinished,
@@ -1431,7 +1431,7 @@ impl EventHistory {
                         let event = HistoryEvent::Stub {
                             target_execution_id: params.target_execution_id.clone(),
                             retval_hash: params.retval_hash.clone(),
-                            persist_result,
+                            result,
                         };
                         let history_event = (event.clone(), db_connection.version.clone());
                         let history_event_req = AppendRequest {

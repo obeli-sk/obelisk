@@ -524,7 +524,7 @@ pub enum HistoryEvent {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = StubRetVal::Typed(crate::SUPPORTED_RETURN_VALUE_OK_EMPTY).hash()))]
         retval_hash: StubRetValHash,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(())))]
-        persist_result: Result<(), StubError>,
+        result: Result<(), StubError>,
     },
 }
 

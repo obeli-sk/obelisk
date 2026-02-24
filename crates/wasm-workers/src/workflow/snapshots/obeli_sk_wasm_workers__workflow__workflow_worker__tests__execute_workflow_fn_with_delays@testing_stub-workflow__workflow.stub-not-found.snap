@@ -57,7 +57,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
             "type": "stub",
             "target_execution_id": "E_00000000000000000000000000.n:fake_1",
             "retval_hash": "019b5be9576617ac5e8a629880788475b6a0b5549f0bc8a56808370d2ae399d645",
-            "persist_result": {
+            "result": {
               "Err": "execution_not_found"
             }
           }
