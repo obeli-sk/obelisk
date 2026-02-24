@@ -18,11 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `retry_on_err` option in activities has been removed and is always on, which was the default already. To skip retrying, return variant containing `permanent`.
 
-### Notes for next breaking release
-
-- Remove deprecated `found_response` field (proto field 2) from `JoinNextTry` gRPC message, keeping only the `outcome` enum (field 3).
-- Remove `#[serde(alias = "found_response")]` and the bool branch in `JoinNextTryOutcome`'s `Deserialize` impl once old data no longer needs to be read.
-
 ## [0.35.4](https://github.com/obeli-sk/obelisk/compare/v0.35.3...v0.35.4)
 
 ### Added
