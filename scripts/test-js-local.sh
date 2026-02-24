@@ -5,4 +5,4 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
-ADDITIONAL_FEATURES="-F activity-js-local -F workflow-js-local" scripts/test.sh "$@"
+ADDITIONAL_FEATURES="-F activity-js-local -F workflow-js-local -F webhook-js-local" scripts/test.sh "$@"

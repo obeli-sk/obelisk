@@ -152,11 +152,12 @@ pub(crate) mod tests {
         }
 
         #[rstest::rstest(wasm_path => [
-            test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
+            test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
+            webhook_js_runtime_builder::WEBHOOK_JS_RUNTIME,
             ])]
         #[test]
         fn webhook(wasm_path: &str) {
-            crate::webhook::webhook_trigger::tests::nosim::compile_webhook(wasm_path);
+            crate::webhook::webhook_trigger::tests::compile_webhook(wasm_path);
         }
     }
 }

@@ -84,6 +84,12 @@
         "$ref": "#/$defs/WebhookComponentConfigToml"
       }
     },
+    "webhook_endpoint_js": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WebhookJsComponentConfigToml"
+      }
+    },
     "webui": {
       "$ref": "#/$defs/WebUIConfig"
     },
@@ -1288,6 +1294,60 @@
           "$ref": "#/$defs/ConfigName"
         },
         "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WebhookRoute"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location",
+        "http_server",
+        "routes"
+      ]
+    },
+    "WebhookJsComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "allowed_host": {
+          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          }
+        },
+        "content_digest": {
+          "description": "Content digest of the JS source file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml"
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml"
+        },
+        "http_server": {
+          "description": "The HTTP server to bind this webhook to.",
+          "$ref": "#/$defs/ConfigName"
+        },
+        "location": {
+          "description": "Location of the JavaScript source file.\nSupports local file paths and `gh://` GitHub release references.",
+          "$ref": "#/$defs/JsLocationToml"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "routes": {
+          "description": "Routes that this webhook responds to.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/WebhookRoute"

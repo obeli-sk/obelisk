@@ -394,6 +394,12 @@ pub struct WebhookEndpointConfig {
     pub subscription_interruption: Option<Duration>,
     pub logs_store_min_level: Option<LogLevel>,
     pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
+    pub js_config: Option<WebhookEndpointJsConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebhookEndpointJsConfig {
+    pub source: String,
 }
 
 struct WebhookEndpointCtx<S: Sleep> {
@@ -842,6 +848,9 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
         for env_var in config.env_vars.as_ref() {
             wasi_ctx.env(&env_var.key, &env_var.val);
         }
+        if let Some(js_config) = &config.js_config {
+            wasi_ctx.env("__OBELISK_JS_SOURCE__", &js_config.source);
+        }
 
         // Generate fresh placeholders for this execution run
         let http_policy =
@@ -1282,13 +1291,23 @@ fn execution_id_into_val(execution_id: &ExecutionId) -> Val {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::{
+        RunnableComponent,
+        engines::{EngineConfig, Engines},
+    };
+
     use super::MethodAwareRouter;
     use assert_matches::assert_matches;
+    use concepts::ComponentType;
     use hyper::{Method, Uri};
 
-    pub(crate) mod nosim {
+    pub(crate) fn compile_webhook(wasm_path: &str) -> RunnableComponent {
+        let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+        RunnableComponent::new(wasm_path, &engine, ComponentType::WebhookEndpoint).unwrap()
+    }
+
+    pub(crate) mod fibo {
         use super::*;
-        use crate::RunnableComponent;
         use crate::activity::activity_worker::test::compile_activity;
         use crate::activity::activity_worker::tests::new_activity_fibo;
         use crate::activity::cancel_registry::CancelRegistry;
@@ -1296,7 +1315,7 @@ pub(crate) mod tests {
         use crate::http_request_policy::{AllowedHostConfig, HostPattern};
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
-            self, WebhookEndpointCompiled, WebhookEndpointConfig,
+            self, WebhookEndpointCompiled, WebhookEndpointConfig, WebhookServerError,
         };
         use crate::workflow::workflow_worker::JoinNextBlockingStrategy;
         use crate::workflow::workflow_worker::test::compile_workflow;
@@ -1323,21 +1342,9 @@ pub(crate) mod tests {
         use tracing::info;
         use utils::sha256sum::calculate_sha256_file;
 
-        struct AbortOnDrop(tokio::task::AbortHandle);
-        impl Drop for AbortOnDrop {
-            fn drop(&mut self) {
-                self.0.abort();
-            }
-        }
-
-        pub(crate) fn compile_webhook(wasm_path: &str) -> RunnableComponent {
-            let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
-            RunnableComponent::new(wasm_path, &engine, ComponentType::WebhookEndpoint).unwrap()
-        }
-
         struct SetUpFiboWebhook {
             #[expect(dead_code)]
-            server: AbortOnDrop,
+            set: tokio::task::JoinSet<Result<(), WebhookServerError>>,
             #[expect(dead_code)]
             guard: DbGuard,
             db_pool: Arc<dyn DbPool>,
@@ -1409,6 +1416,7 @@ pub(crate) mod tests {
                             subscription_interruption: None,
                             logs_store_min_level: None,
                             allowed_hosts: Arc::from([]),
+                            js_config: None,
                         },
                         wasm_file,
                         &engine,
@@ -1425,24 +1433,22 @@ pub(crate) mod tests {
                 let server_addr = tcp_listener.local_addr().unwrap();
                 info!("Listening on port {}", server_addr.port());
                 let (server_termination_sender, server_termination_watcher) = watch::channel(());
-                let server = AbortOnDrop(
-                    tokio::spawn(webhook_trigger::server(
-                        DEPLOYMENT_ID_DUMMY,
-                        StrVariant::Static("test"),
-                        tcp_listener,
-                        engine,
-                        router,
-                        db_pool.clone(),
-                        sim_clock.clone_box(),
-                        TokioSleep,
-                        fn_registry,
-                        None,
-                        server_termination_watcher,
-                    ))
-                    .abort_handle(),
-                );
+                let mut set = tokio::task::JoinSet::new();
+                set.spawn(webhook_trigger::server(
+                    DEPLOYMENT_ID_DUMMY,
+                    StrVariant::Static("test"),
+                    tcp_listener,
+                    engine,
+                    router,
+                    db_pool.clone(),
+                    sim_clock.clone_box(),
+                    TokioSleep,
+                    fn_registry,
+                    None,
+                    server_termination_watcher,
+                ));
                 SetUpFiboWebhook {
-                    server,
+                    set,
                     guard,
                     db_pool,
                     server_addr,
@@ -1454,7 +1460,7 @@ pub(crate) mod tests {
                 }
             }
 
-            async fn fetch(
+            async fn fibo_fetch(
                 server_addr: &str,
                 n: u8,
                 iterations: u32,
@@ -1484,7 +1490,7 @@ pub(crate) mod tests {
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             assert_eq!(
                 "fiboa(1, 0) = hardcoded: 1",
-                SetUpFiboWebhook::fetch(&server_addr, 1, 0, 200).await
+                SetUpFiboWebhook::fibo_fetch(&server_addr, 1, 0, 200).await
             );
         }
 
@@ -1500,7 +1506,9 @@ pub(crate) mod tests {
             let fibo_webhook_harness = SetUpFiboWebhook::new(db, locking_strategy).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             let fetch_task =
-                tokio::spawn(async move { SetUpFiboWebhook::fetch(&server_addr, 2, 1, 200).await });
+                tokio::spawn(
+                    async move { SetUpFiboWebhook::fibo_fetch(&server_addr, 2, 1, 200).await },
+                );
 
             let now = fibo_webhook_harness.sim_clock.now();
             while fibo_webhook_harness
@@ -1546,7 +1554,7 @@ pub(crate) mod tests {
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             let n = 10;
             let iterations = 1;
-            let resp = SetUpFiboWebhook::fetch(&server_addr, n, iterations, 200).await;
+            let resp = SetUpFiboWebhook::fibo_fetch(&server_addr, n, iterations, 200).await;
 
             let execution_id = resp
                 .strip_prefix(&format!("fiboa({n}, {iterations}) = scheduled: "))
@@ -1682,6 +1690,7 @@ pub(crate) mod tests {
                             secret_env_mappings: Vec::new(),
                             replace_in: hashbrown::HashSet::new(),
                         }]),
+                        js_config: None,
                     },
                     wasm_file,
                     &engine,
@@ -1699,22 +1708,20 @@ pub(crate) mod tests {
             let server_addr = tcp_listener.local_addr().unwrap();
             info!("Listening on port {}", server_addr.port());
             let (_server_termination_sender, server_termination_watcher) = watch::channel(());
-            let server = AbortOnDrop(
-                tokio::spawn(webhook_trigger::server(
-                    DEPLOYMENT_ID_DUMMY,
-                    StrVariant::Static("test"),
-                    tcp_listener,
-                    engine,
-                    router,
-                    db_pool.clone(),
-                    sim_clock.clone_box(),
-                    TokioSleep,
-                    fn_registry,
-                    None,
-                    server_termination_watcher,
-                ))
-                .abort_handle(),
-            );
+            let mut set = tokio::task::JoinSet::new();
+            set.spawn(webhook_trigger::server(
+                DEPLOYMENT_ID_DUMMY,
+                StrVariant::Static("test"),
+                tcp_listener,
+                engine,
+                router,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                TokioSleep,
+                fn_registry,
+                None,
+                server_termination_watcher,
+            ));
 
             // Send request to webhook with mock server port as route param
             let mock_port = mock_address.port();
@@ -1772,7 +1779,7 @@ pub(crate) mod tests {
 
             drop(conn);
             drop(activity_exec);
-            drop(server);
+            drop(set);
             drop(guard);
             db_close.close().await;
         }
@@ -1849,6 +1856,7 @@ pub(crate) mod tests {
                         subscription_interruption: None,
                         logs_store_min_level: None,
                         allowed_hosts: Arc::from([]), // NO allowed hosts - request should be denied
+                        js_config: None,
                     },
                     wasm_file,
                     &engine,
@@ -1866,22 +1874,20 @@ pub(crate) mod tests {
             let server_addr = tcp_listener.local_addr().unwrap();
             info!("Listening on port {}", server_addr.port());
             let (_server_termination_sender, server_termination_watcher) = watch::channel(());
-            let server = AbortOnDrop(
-                tokio::spawn(webhook_trigger::server(
-                    DEPLOYMENT_ID_DUMMY,
-                    StrVariant::Static("test"),
-                    tcp_listener,
-                    engine,
-                    router,
-                    db_pool.clone(),
-                    sim_clock.clone_box(),
-                    TokioSleep,
-                    fn_registry,
-                    None,
-                    server_termination_watcher,
-                ))
-                .abort_handle(),
-            );
+            let mut set = tokio::task::JoinSet::new();
+            set.spawn(webhook_trigger::server(
+                DEPLOYMENT_ID_DUMMY,
+                StrVariant::Static("test"),
+                tcp_listener,
+                engine,
+                router,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                TokioSleep,
+                fn_registry,
+                None,
+                server_termination_watcher,
+            ));
 
             // Send request to webhook
             let mock_port = mock_address.port();
@@ -1897,14 +1903,165 @@ pub(crate) mod tests {
             mock_server.verify().await;
 
             drop(activity_exec);
-            drop(server);
+            drop(set);
             drop(guard);
             db_close.close().await;
         }
+    }
 
-        // Note: Secret replacement tests are in activity_worker.rs since the webhook
-        // test program doesn't construct URLs with placeholders. The underlying
-        // HttpRequestPolicy is the same for both webhooks and activities.
+    pub(crate) mod js_runtime {
+        use crate::engines::{EngineConfig, Engines};
+        use crate::testing_fn_registry::TestingFnRegistry;
+        use crate::webhook::webhook_trigger::{
+            self, MethodAwareRouter, WebhookEndpointCompiled, WebhookEndpointConfig,
+            WebhookEndpointJsConfig, WebhookServerError,
+        };
+        use concepts::component_id::InputContentDigest;
+        use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
+        use concepts::time::{ClockFn, TokioSleep};
+        use concepts::{ComponentId, ComponentType, StrVariant};
+        use std::net::SocketAddr;
+        use std::sync::Arc;
+        use test_utils::sim_clock::SimClock;
+        use tokio::net::TcpListener;
+        use tokio::sync::{mpsc, watch};
+        use tracing::info;
+        use utils::sha256sum::calculate_sha256_file;
+
+        async fn start_js_webhook_server(
+            source: &str,
+        ) -> (
+            tokio::task::JoinSet<Result<(), WebhookServerError>>,
+            SocketAddr,
+            watch::Sender<()>,
+        ) {
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool, _db_close) = db_tests::Database::Memory.set_up().await;
+            let fn_registry = TestingFnRegistry::new_from_components(vec![]);
+            let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+            let (db_forwarder_sender, _) = mpsc::channel(1);
+            let wasm_file = webhook_js_runtime_builder::WEBHOOK_JS_RUNTIME;
+            let router = {
+                let instance = WebhookEndpointCompiled::new(
+                    WebhookEndpointConfig {
+                        component_id: ComponentId::new(
+                            ComponentType::WebhookEndpoint,
+                            StrVariant::empty(),
+                            InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
+                        )
+                        .unwrap(),
+                        forward_stdout: None,
+                        forward_stderr: None,
+                        env_vars: Arc::from([]),
+                        fuel: None,
+                        backtrace_persist: false,
+                        subscription_interruption: None,
+                        logs_store_min_level: None,
+                        allowed_hosts: Arc::from([]),
+                        js_config: Some(WebhookEndpointJsConfig {
+                            source: source.to_string(),
+                        }),
+                    },
+                    wasm_file,
+                    &engine,
+                )
+                .unwrap()
+                .link(&engine, fn_registry.as_ref())
+                .unwrap()
+                .build(&db_forwarder_sender);
+                let mut router = MethodAwareRouter::default();
+                router.add(None, "", instance);
+                router
+            };
+            let tcp_listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+                .await
+                .unwrap();
+            let server_addr = tcp_listener.local_addr().unwrap();
+            info!("JS webhook listening on port {}", server_addr.port());
+            let (server_termination_sender, server_termination_watcher) = watch::channel(());
+            let mut set = tokio::task::JoinSet::new();
+            set.spawn(webhook_trigger::server(
+                DEPLOYMENT_ID_DUMMY,
+                StrVariant::Static("test-js"),
+                tcp_listener,
+                engine,
+                router,
+                db_pool,
+                sim_clock.clone_box(),
+                TokioSleep,
+                fn_registry,
+                None,
+                server_termination_watcher,
+            ));
+            (set, server_addr, server_termination_sender)
+        }
+
+        #[tokio::test]
+        async fn js_webhook_hello_world() {
+            test_utils::set_up();
+            let js_source = r#"
+                function handle(request) {
+                    return {
+                        status: 200,
+                        headers: [["content-type", "text/plain"]],
+                        body: "Hello from JS!"
+                    };
+                }
+            "#;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!("Hello from JS!", resp.text().await.unwrap());
+        }
+
+        #[tokio::test]
+        async fn js_webhook_reads_request_method_and_url() {
+            test_utils::set_up();
+            let js_source = r#"
+                function handle(request) {
+                    return {
+                        status: 200,
+                        headers: [],
+                        body: request.method + " " + request.url
+                    };
+                }
+            "#;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+            let resp = reqwest::get(format!("http://{server_addr}/some/path"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body = resp.text().await.unwrap();
+            assert!(
+                body.contains("GET") && body.contains("/some/path"),
+                "Expected method and path in response, got: {body}"
+            );
+        }
+
+        #[tokio::test]
+        async fn js_webhook_custom_status_code() {
+            test_utils::set_up();
+            let js_source = r#"
+                function handle(request) {
+                    return {
+                        status: 201,
+                        headers: [],
+                        body: "created"
+                    };
+                }
+            "#;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 201);
+            assert_eq!("created", resp.text().await.unwrap());
+        }
     }
 
     #[test]

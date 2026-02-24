@@ -32,6 +32,8 @@ use crate::config::toml::WorkflowJsComponentConfigToml;
 use crate::config::toml::WorkflowJsConfigVerified;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentConfigVerified;
+use crate::config::toml::webhook::WebhookJsComponentConfigToml;
+use crate::config::toml::webhook::WebhookJsConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::init;
@@ -125,6 +127,7 @@ use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointCompiled;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointConfig;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstanceLinked;
+use wasm_workers::webhook::webhook_trigger::WebhookEndpointJsConfig;
 use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerCompiled;
@@ -139,6 +142,9 @@ const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
 pub(crate) const ACTIVITY_JS_LOCATION: &str = include_str!("../../assets/activity-js-version.txt");
 #[cfg(not(feature = "workflow-js-local"))]
 pub(crate) const WORKFLOW_JS_LOCATION: &str = include_str!("../../assets/workflow-js-version.txt");
+#[cfg(not(feature = "webhook-js-local"))]
+pub(crate) const WEBHOOK_JS_LOCATION: &str =
+    include_str!("../../assets/webhook-js-runtime-version.txt");
 
 pub(crate) type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 
@@ -882,6 +888,7 @@ impl ServerVerified {
             config.workflows_js,
             http_servers,
             webhooks,
+            config.webhooks_js,
             wasm_cache_dir,
             metadata_dir,
             ignore_missing_env_vars,
@@ -959,6 +966,7 @@ impl ServerCompiledLinked {
             server_verified.config.workflows,
             server_verified.config.workflows_js,
             server_verified.config.webhooks_by_names,
+            server_verified.config.webhooks_js_by_names,
             server_verified.config.global_backtrace_persist,
             server_verified.config.fuel,
             server_verified.build_semaphore,
@@ -1242,6 +1250,7 @@ struct ConfigVerified {
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
+    webhooks_js_by_names: hashbrown::HashMap<ConfigName, WebhookJsConfigVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
@@ -1259,6 +1268,7 @@ impl ConfigVerified {
         workflows_js: Vec<WorkflowJsComponentConfigToml>,
         http_servers: Vec<webhook::HttpServer>,
         webhooks: Vec<webhook::WebhookComponentConfigToml>,
+        webhooks_js: Vec<WebhookJsComponentConfigToml>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
@@ -1270,7 +1280,7 @@ impl ConfigVerified {
         termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
     ) -> Result<ConfigVerified, anyhow::Error> {
-        // Check uniqueness of server and webhook names.
+        // Check uniqueness of server and webhook names (across both WASM and JS webhooks).
         {
             if http_servers.len()
                 > http_servers
@@ -1281,14 +1291,13 @@ impl ConfigVerified {
             {
                 bail!("Each `http_server` must have a unique name");
             }
-            if webhooks.len()
-                > webhooks
-                    .iter()
-                    .map(|it| &it.common.name)
-                    .collect::<hashbrown::HashSet<_>>()
-                    .len()
-            {
-                bail!("Each `webhook` must have a unique name");
+            let all_webhook_names: hashbrown::HashSet<_> = webhooks
+                .iter()
+                .map(|it| &it.common.name)
+                .chain(webhooks_js.iter().map(|it| &it.name))
+                .collect();
+            if webhooks.len() + webhooks_js.len() > all_webhook_names.len() {
+                bail!("Each `webhook_endpoint` and `webhook_endpoint_js` must have a unique name");
             }
         }
         let http_servers_to_webhook_names = {
@@ -1299,6 +1308,11 @@ impl ConfigVerified {
                     map.entry(webhook.http_server.clone())
                         .or_default()
                         .push(webhook.common.name.clone());
+                }
+                for webhook_js in &webhooks_js {
+                    map.entry(webhook_js.http_server.clone())
+                        .or_default()
+                        .push(webhook_js.name.clone());
                 }
                 map
             };
@@ -1431,11 +1445,23 @@ impl ConfigVerified {
         }
         .into();
 
+        // Skip fetching when no JS webhooks are configured
+        let webhook_js_runtime_fetch: OptionFuture<_> = if webhooks_js.is_empty() {
+            None
+        } else {
+            Some(fetch_webhook_js_runtime(
+                wasm_cache_dir.clone(),
+                metadata_dir.clone(),
+                path_prefixes.clone(),
+            ))
+        }
+        .into();
+
         // Abort/cancel safety:
         // If an error happens or Ctrl-C is pressed the whole process will shut down.
         // Downloading metadata and content must be robust enough to handle it.
         // We do not need to abort the tasks here.
-        let all = futures_util::future::join(
+        let all = futures_util::future::join3(
             futures_util::future::join5(
                 futures_util::future::join_all(activities_wasm),
                 futures_util::future::join_all(activities_stub_ext),
@@ -1444,9 +1470,10 @@ impl ConfigVerified {
                 activity_js_runtime_fetch,
             ),
             workflow_js_runtime_fetch,
+            webhook_js_runtime_fetch,
         );
         tokio::select! {
-            ((activity_wasm_results, activity_stub_ext_results, workflow_results, webhook_results, activity_js_runtime_result), workflow_js_runtime_result) = all => {
+            ((activity_wasm_results, activity_stub_ext_results, workflow_results, webhook_results, activity_js_runtime_result), workflow_js_runtime_result, webhook_js_runtime_result) = all => {
                 let activities_wasm = activity_wasm_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let activities_stub_ext = activity_stub_ext_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
@@ -1498,6 +1525,22 @@ impl ConfigVerified {
                     Vec::new()
                 };
 
+                let mut webhooks_js_by_names = hashbrown::HashMap::new();
+                if !webhooks_js.is_empty() {
+                    let webhook_js_wasm_path = webhook_js_runtime_result.transpose()?
+                        .expect("None only if there are no JS webhooks, see `webhook_js_runtime_fetch`");
+                    let webhook_js_wasm_path: Arc<Path> = Arc::from(webhook_js_wasm_path);
+                    for webhook_js in webhooks_js {
+                        let (k, v) = webhook_js.fetch_and_verify(
+                            webhook_js_wasm_path.clone(),
+                            wasm_cache_dir.clone(),
+                            path_prefixes.clone(),
+                            ignore_missing_env_vars,
+                        ).await?;
+                        webhooks_js_by_names.insert(k, v);
+                    }
+                }
+
                 Ok(ConfigVerified {
                     activities_wasm,
                     activities_js: activities_js_verified,
@@ -1505,6 +1548,7 @@ impl ConfigVerified {
                     workflows,
                     workflows_js: workflows_js_verified,
                     webhooks_by_names,
+                    webhooks_js_by_names,
                     http_servers_to_webhook_names,
                     global_backtrace_persist,
                     fuel
@@ -1550,6 +1594,7 @@ async fn compile_and_verify(
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
+    webhooks_js_by_names: hashbrown::HashMap<ConfigName, WebhookJsConfigVerified>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
@@ -1742,6 +1787,7 @@ async fn compile_and_verify(
                                 subscription_interruption: webhook.subscription_interruption,
                                 logs_store_min_level: webhook.logs_store_min_level,
                                 allowed_hosts: webhook.allowed_hosts,
+                                js_config: None,
                             };
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
@@ -1752,6 +1798,45 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook.routes,
+                            })
+                        })
+                    })
+                }),
+        )
+        .chain(
+            webhooks_js_by_names
+                .into_iter()
+                .map(|(webhook_name, webhook_js)| {
+                    let engines = engines.clone();
+                    let build_semaphore = build_semaphore.clone();
+                    let parent_span = parent_span.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+                        let span = info_span!(parent: parent_span, "webhook_js_compile", component_id = %webhook_js.component_id);
+                        span.in_scope(|| {
+                            let config = WebhookEndpointConfig {
+                                component_id: webhook_js.component_id,
+                                forward_stdout: webhook_js.forward_stdout,
+                                forward_stderr: webhook_js.forward_stderr,
+                                env_vars: Arc::from([]), // FIXME: Add to toml
+                                fuel,
+                                backtrace_persist: false,
+                                subscription_interruption: None,
+                                logs_store_min_level: webhook_js.logs_store_min_level,
+                                allowed_hosts: webhook_js.allowed_hosts,
+                                js_config: Some(WebhookEndpointJsConfig {
+                                    source: webhook_js.js_source,
+                                }),
+                            };
+                            let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
+                                config,
+                                webhook_js.wasm_path,
+                                &engines.webhook_engine,
+                            )?;
+                            Ok(CompiledComponent::Webhook {
+                                webhook_name,
+                                webhook_compiled,
+                                routes: webhook_js.routes,
                             })
                         })
                     })
@@ -1984,6 +2069,35 @@ async fn fetch_workflow_js_runtime(
         .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes, None)
         .await
         .context("cannot fetch workflow-js runtime")?;
+    Ok(wasm_path)
+}
+
+/// Resolve the webhook-js runtime WASM path from the local build.
+#[cfg(feature = "webhook-js-local")]
+async fn fetch_webhook_js_runtime(
+    _wasm_cache_dir: Arc<Path>,
+    _metadata_dir: Arc<Path>,
+    _path_prefixes: Arc<PathPrefixes>,
+) -> Result<PathBuf, anyhow::Error> {
+    Ok(PathBuf::from(
+        webhook_js_runtime_builder::WEBHOOK_JS_RUNTIME,
+    ))
+}
+
+/// Fetch the webhook-js runtime WASM from OCI.
+#[cfg(not(feature = "webhook-js-local"))]
+async fn fetch_webhook_js_runtime(
+    wasm_cache_dir: Arc<Path>,
+    metadata_dir: Arc<Path>,
+    path_prefixes: Arc<PathPrefixes>,
+) -> Result<PathBuf, anyhow::Error> {
+    let location: crate::config::toml::ComponentLocationToml = WEBHOOK_JS_LOCATION
+        .parse()
+        .context("cannot parse built-in webhook-js runtime location")?;
+    let (_content_digest, wasm_path) = location
+        .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes, None)
+        .await
+        .context("cannot fetch webhook-js runtime")?;
     Ok(wasm_path)
 }
 

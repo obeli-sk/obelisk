@@ -21,6 +21,7 @@ val-json.workspace = true
 wasm-workers.workspace = true
 
 activity-js-runtime-builder = { workspace = true, optional = true } # Only for local development
+webhook-js-runtime-builder = { workspace = true, optional = true } # Only for local development
 workflow-js-runtime-builder = { workspace = true, optional = true } # Only for local development
 
 anyhow.workspace = true
@@ -118,6 +119,7 @@ otlp = [
     "dep:opentelemetry-semantic-conventions",
 ]
 "activity-js-local" = ["dep:activity-js-runtime-builder"]
+"webhook-js-local" = ["dep:webhook-js-runtime-builder"]
 "workflow-js-local" = ["dep:workflow-js-runtime-builder"]
 default = ["otlp"]
 
@@ -129,6 +131,8 @@ resolver = "2"
 members = [
     "crates/activity-js-runtime",
     "crates/activity-js-runtime/builder",
+    "crates/webhook-js-runtime",
+    "crates/webhook-js-runtime/builder",
     "crates/bench",
     "crates/concepts",
     "crates/db-common",
@@ -189,6 +193,7 @@ rust-version = "1.91.0"
 
 [workspace.dependencies]
 activity-js-runtime-builder = { path = "crates/activity-js-runtime/builder" }
+webhook-js-runtime-builder = { path = "crates/webhook-js-runtime/builder" }
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.35.4" }
 db-common = { package = "obeli-sk-db-common", path = "crates/db-common", version = "0.35.4" }
 db-mem = { package = "obeli-sk-db-mem", path = "crates/db-mem", version = "0.35.4" }

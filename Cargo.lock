@@ -3166,6 +3166,7 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wasmtime-wasi-io",
+ "webhook-js-runtime-builder",
  "wiremock",
  "workflow-js-runtime-builder",
 ]
@@ -3246,6 +3247,7 @@ dependencies = [
  "utoipa",
  "utoipa-axum",
  "wasmtime",
+ "webhook-js-runtime-builder",
  "wit-component 0.245.1",
  "wit-parser 0.245.1",
  "workflow-js-runtime-builder",
@@ -6700,6 +6702,27 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webhook-js-runtime"
+version = "0.35.4"
+dependencies = [
+ "anyhow",
+ "boa_engine",
+ "boa_gc",
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.53.1",
+ "wit-bindgen-rust 0.53.1",
+ "wstd",
+]
+
+[[package]]
+name = "webhook-js-runtime-builder"
+version = "0.35.4"
+dependencies = [
+ "obelisk-component-builder",
 ]
 
 [[package]]
