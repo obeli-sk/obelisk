@@ -1285,9 +1285,9 @@ pub mod prefixed_ulid {
         JoinSetIdParseError,
     };
     use serde_with::{DeserializeFromStr, SerializeDisplay};
+    use sha2::{Digest, Sha256};
     use std::{
         fmt::{Debug, Display},
-        hash::Hasher,
         marker::PhantomData,
         num::ParseIntError,
         str::FromStr,
@@ -1660,14 +1660,9 @@ pub mod prefixed_ulid {
 
         #[must_use]
         pub fn random_seed(&self) -> u64 {
-            let mut hasher = fxhash::FxHasher::default();
-            // `Self::random_part` uses only the lower 80 bits of a 128-bit value.
-            // Truncate to 64 bits, since including the remaining 16 bits
-            // would not increase the entropy of the 64-bit output.
-            #[expect(clippy::cast_possible_truncation)]
-            let random_part = self.get_top_level().random_part() as u64;
-            hasher.write_u64(random_part);
-            hasher.write_u64(self.get_top_level().timestamp_part());
+            let mut hasher = Sha256::new();
+            // Hash the ulid as a 128-bit value (16 bytes, little-endian).
+            hasher.update(self.get_top_level().ulid.0.to_le_bytes());
             if let ExecutionId::Derived(ExecutionIdDerived {
                 top_level: _,
                 infix,
@@ -1675,10 +1670,12 @@ pub mod prefixed_ulid {
             }) = self
             {
                 // Each derived execution ID should return different seed.
-                hasher.write(infix.as_bytes());
-                hasher.write_u64(*idx);
+                hasher.update(infix.as_bytes());
+                hasher.update(idx.to_le_bytes());
             }
-            hasher.finish()
+            let hash = hasher.finalize();
+            // Extract the first 8 bytes as a little-endian u64.
+            u64::from_le_bytes(hash[..8].try_into().unwrap())
         }
 
         #[must_use]
