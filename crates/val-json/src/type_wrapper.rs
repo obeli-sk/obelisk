@@ -414,45 +414,6 @@ impl TypeWrapper {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::TypeWrapper;
-    use crate::type_wrapper::TypeKey;
-    use assert_matches::assert_matches;
-    use indexmap::indexmap;
-    use itertools::Itertools;
-
-    #[test]
-    fn deserialize_type_u64() {
-        let json = r#"["u64"]"#;
-        let actual: Vec<TypeWrapper> = serde_json::from_str(json).unwrap();
-        assert_eq!(vec![TypeWrapper::U64], actual);
-    }
-
-    #[test]
-    fn deser_should_preserve_its_attribute_order() {
-        let json = r#"
-            {
-                "record": {
-                    "logins": "string",
-                    "cursor": "string"
-                }
-            }
-        "#;
-        let deser: TypeWrapper = serde_json::from_str(json).unwrap();
-        let fields = assert_matches!(deser, TypeWrapper::Record(fields) => fields);
-        let expected = indexmap! {
-            TypeKey(Box::from("logins")) => TypeWrapper::String,
-            TypeKey(Box::from("cursor")) => TypeWrapper::String,
-        };
-        assert_eq!(expected, fields);
-        assert_eq!(
-            vec!["logins", "cursor"],
-            fields.keys().map(TypeKey::as_kebab_str).collect_vec()
-        );
-    }
-}
-
 /// Parse a WIT type syntax string into a `TypeWrapper`.
 ///
 /// Supports primitives (`bool`, `u8`..`u64`, `s8`..`s64`, `f32`, `f64`, `char`, `string`),
@@ -601,84 +562,122 @@ fn parse_comma_separated_types(s: &str, closing: char) -> Result<(Vec<TypeWrappe
 }
 
 #[cfg(test)]
-mod tests_parse_wit_type {
-    use super::*;
+mod tests {
+    use super::TypeWrapper;
+    use crate::type_wrapper::TypeKey;
+    use assert_matches::assert_matches;
+    use indexmap::indexmap;
+    use itertools::Itertools;
 
     #[test]
-    fn primitives() {
-        assert_eq!(parse_wit_type("bool").unwrap(), TypeWrapper::Bool);
-        assert_eq!(parse_wit_type("u32").unwrap(), TypeWrapper::U32);
-        assert_eq!(parse_wit_type("string").unwrap(), TypeWrapper::String);
-        assert_eq!(parse_wit_type("f64").unwrap(), TypeWrapper::F64);
+    fn deserialize_type_u64() {
+        let json = r#"["u64"]"#;
+        let actual: Vec<TypeWrapper> = serde_json::from_str(json).unwrap();
+        assert_eq!(vec![TypeWrapper::U64], actual);
     }
 
     #[test]
-    fn list() {
-        assert_eq!(
-            parse_wit_type("list<string>").unwrap(),
-            TypeWrapper::List(Box::new(TypeWrapper::String))
-        );
-        assert_eq!(
-            parse_wit_type("list<list<u8>>").unwrap(),
-            TypeWrapper::List(Box::new(TypeWrapper::List(Box::new(TypeWrapper::U8))))
-        );
-    }
-
-    #[test]
-    fn option() {
-        assert_eq!(
-            parse_wit_type("option<u32>").unwrap(),
-            TypeWrapper::Option(Box::new(TypeWrapper::U32))
-        );
-    }
-
-    #[test]
-    fn tuple() {
-        assert_eq!(
-            parse_wit_type("tuple<u32, string>").unwrap(),
-            TypeWrapper::Tuple(vec![TypeWrapper::U32, TypeWrapper::String].into_boxed_slice())
-        );
-    }
-
-    #[test]
-    fn result_variants() {
-        assert_eq!(
-            parse_wit_type("result<string, string>").unwrap(),
-            TypeWrapper::Result {
-                ok: Some(Box::new(TypeWrapper::String)),
-                err: Some(Box::new(TypeWrapper::String)),
+    fn deser_should_preserve_its_attribute_order() {
+        let json = r#"
+            {
+                "record": {
+                    "logins": "string",
+                    "cursor": "string"
+                }
             }
-        );
+        "#;
+        let deser: TypeWrapper = serde_json::from_str(json).unwrap();
+        let fields = assert_matches!(deser, TypeWrapper::Record(fields) => fields);
+        let expected = indexmap! {
+            TypeKey(Box::from("logins")) => TypeWrapper::String,
+            TypeKey(Box::from("cursor")) => TypeWrapper::String,
+        };
+        assert_eq!(expected, fields);
         assert_eq!(
-            parse_wit_type("result<string>").unwrap(),
-            TypeWrapper::Result {
-                ok: Some(Box::new(TypeWrapper::String)),
-                err: None,
-            }
-        );
-        assert_eq!(
-            parse_wit_type("result").unwrap(),
-            TypeWrapper::Result {
-                ok: None,
-                err: None,
-            }
-        );
-        assert_eq!(
-            parse_wit_type("result<_, string>").unwrap(),
-            TypeWrapper::Result {
-                ok: None,
-                err: Some(Box::new(TypeWrapper::String)),
-            }
+            vec!["logins", "cursor"],
+            fields.keys().map(TypeKey::as_kebab_str).collect_vec()
         );
     }
 
-    #[test]
-    fn trailing_chars() {
-        assert!(parse_wit_type("u32 extra").is_err());
-    }
+    mod tests_parse_wit_type {
+        use crate::type_wrapper::{TypeWrapper, parse_wit_type};
 
-    #[test]
-    fn unknown_type() {
-        assert!(parse_wit_type("foobar").is_err());
+        #[test]
+        fn primitives() {
+            assert_eq!(parse_wit_type("bool").unwrap(), TypeWrapper::Bool);
+            assert_eq!(parse_wit_type("u32").unwrap(), TypeWrapper::U32);
+            assert_eq!(parse_wit_type("string").unwrap(), TypeWrapper::String);
+            assert_eq!(parse_wit_type("f64").unwrap(), TypeWrapper::F64);
+        }
+
+        #[test]
+        fn list() {
+            assert_eq!(
+                parse_wit_type("list<string>").unwrap(),
+                TypeWrapper::List(Box::new(TypeWrapper::String))
+            );
+            assert_eq!(
+                parse_wit_type("list<list<u8>>").unwrap(),
+                TypeWrapper::List(Box::new(TypeWrapper::List(Box::new(TypeWrapper::U8))))
+            );
+        }
+
+        #[test]
+        fn option() {
+            assert_eq!(
+                parse_wit_type("option<u32>").unwrap(),
+                TypeWrapper::Option(Box::new(TypeWrapper::U32))
+            );
+        }
+
+        #[test]
+        fn tuple() {
+            assert_eq!(
+                parse_wit_type("tuple<u32, string>").unwrap(),
+                TypeWrapper::Tuple(vec![TypeWrapper::U32, TypeWrapper::String].into_boxed_slice())
+            );
+        }
+
+        #[test]
+        fn result_variants() {
+            assert_eq!(
+                parse_wit_type("result<string, string>").unwrap(),
+                TypeWrapper::Result {
+                    ok: Some(Box::new(TypeWrapper::String)),
+                    err: Some(Box::new(TypeWrapper::String)),
+                }
+            );
+            assert_eq!(
+                parse_wit_type("result<string>").unwrap(),
+                TypeWrapper::Result {
+                    ok: Some(Box::new(TypeWrapper::String)),
+                    err: None,
+                }
+            );
+            assert_eq!(
+                parse_wit_type("result").unwrap(),
+                TypeWrapper::Result {
+                    ok: None,
+                    err: None,
+                }
+            );
+            assert_eq!(
+                parse_wit_type("result<_, string>").unwrap(),
+                TypeWrapper::Result {
+                    ok: None,
+                    err: Some(Box::new(TypeWrapper::String)),
+                }
+            );
+        }
+
+        #[test]
+        fn trailing_chars() {
+            assert!(parse_wit_type("u32 extra").is_err());
+        }
+
+        #[test]
+        fn unknown_type() {
+            assert!(parse_wit_type("foobar").is_err());
+        }
     }
 }
