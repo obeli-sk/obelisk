@@ -78,7 +78,7 @@ pub fn json_stringify(value: &JsValue, ctx: &mut Context) -> JsResult<String> {
         .as_callable()
         .expect("JSON.stringify must be callable");
 
-    let result = stringify_fn.call(&json, &[value.clone()], ctx)?;
+    let result = stringify_fn.call(&json, std::slice::from_ref(value), ctx)?;
 
     result
         .as_string()

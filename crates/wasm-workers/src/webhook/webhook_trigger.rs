@@ -2119,7 +2119,10 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             let server_addr = tcp_listener.local_addr().unwrap();
-            info!("JS webhook with HTTP listening on port {}", server_addr.port());
+            info!(
+                "JS webhook with HTTP listening on port {}",
+                server_addr.port()
+            );
             let (server_termination_sender, server_termination_watcher) = watch::channel(());
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
