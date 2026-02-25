@@ -182,6 +182,7 @@ members = [
     "crates/val-json",
     "crates/wasm-workers",
     "crates/workflow-js-runtime",
+    "crates/workflow-js-runtime/builder",
 ]
 
 [workspace.package]

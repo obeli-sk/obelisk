@@ -382,6 +382,12 @@ name = "boa-common"
 version = "0.35.4"
 dependencies = [
  "boa_engine",
+ "boa_gc",
+ "boa_runtime",
+ "futures-concurrency",
+ "futures-lite 2.6.1",
+ "http",
+ "wstd",
 ]
 
 [[package]]
@@ -6720,6 +6726,7 @@ dependencies = [
  "boa-common",
  "boa_engine",
  "boa_gc",
+ "boa_runtime",
  "serde",
  "serde_json",
  "wit-bindgen 0.53.1",
