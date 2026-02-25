@@ -148,50 +148,7 @@ impl PartialEq for TypeWrapper {
 
 impl Debug for TypeWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Bool => write!(f, "Bool"),
-            Self::S8 => write!(f, "S8"),
-            Self::U8 => write!(f, "U8"),
-            Self::S16 => write!(f, "S16"),
-            Self::U16 => write!(f, "U16"),
-            Self::S32 => write!(f, "S32"),
-            Self::U32 => write!(f, "U32"),
-            Self::S64 => write!(f, "S64"),
-            Self::U64 => write!(f, "U64"),
-            Self::F32 => write!(f, "F32"),
-            Self::F64 => write!(f, "F64"),
-            Self::Char => write!(f, "Char"),
-            Self::String => write!(f, "String"),
-            Self::List(arg0) => f.debug_tuple("List").field(arg0).finish(),
-            Self::Record(arg0) => f.debug_tuple("Record").field(arg0).finish(),
-            Self::Tuple(arg0) => f.debug_tuple("Tuple").field(arg0).finish(),
-            Self::Variant(arg0) => f.debug_tuple("Variant").field(arg0).finish(),
-            Self::Enum(arg0) => f.debug_tuple("Enum").field(arg0).finish(),
-            Self::Option(arg0) => f.debug_tuple("Option").field(arg0).finish(),
-            Self::Result {
-                ok: Some(ok),
-                err: Some(err),
-            } => f
-                .debug_struct("Result")
-                .field("ok", ok)
-                .field("err", err)
-                .finish(),
-            Self::Result {
-                ok: None,
-                err: Some(err),
-            } => f.debug_struct("Result").field("err", err).finish(),
-            Self::Result {
-                ok: Some(ok),
-                err: None,
-            } => f.debug_struct("Result").field("ok", ok).finish(),
-            Self::Result {
-                ok: None,
-                err: None,
-            } => f.debug_struct("Result").finish(),
-            Self::Flags(flags) => f.debug_tuple("Flags").field(flags).finish(),
-            Self::Own => f.debug_tuple("Own").finish(),
-            Self::Borrow => f.debug_tuple("Borrow").finish(),
-        }
+        Display::fmt(self, f)
     }
 }
 
