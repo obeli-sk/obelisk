@@ -881,7 +881,7 @@ impl ServerVerified {
             .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
 
-        let mut config = ConfigVerified::fetch_and_verify_all(
+        let mut config = Box::pin(ConfigVerified::fetch_and_verify_all(
             config.activities_wasm,
             config.activities_js,
             config.activities_stub,
@@ -904,7 +904,7 @@ impl ServerVerified {
             fuel,
             termination_watcher,
             config.database.get_subscription_interruption(),
-        )
+        ))
         .await?;
         debug!("Verified config: {config:#?}");
         let component_source_map = {

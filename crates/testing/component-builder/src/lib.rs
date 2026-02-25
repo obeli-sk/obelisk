@@ -14,6 +14,7 @@ pub struct BuildConfig {
     pub rust_flags: String,
 }
 impl BuildConfig {
+    #[must_use]
     pub fn target_subdir(profile: &'static str) -> Self {
         Self {
             profile: profile.to_string(),
