@@ -36,9 +36,9 @@ impl WasiJobExecutor {
 impl WasiJobExecutor {
     /// Drive all enqueued jobs to completion (async).
     ///
-    /// Called by [`crate::activity_js_runtime::resolve_if_promise`] directly inside a
-    /// single `wstd::runtime::block_on`, avoiding the repeated `block_on` calls that
-    /// `JsPromise::await_blocking` → `run_jobs` would create.
+    /// Called by promise resolution directly inside a single `wstd::runtime::block_on`,
+    /// avoiding the repeated `block_on` calls that `JsPromise::await_blocking` → `run_jobs`
+    /// would create.
     pub async fn drive_jobs(self: Rc<Self>, context: &RefCell<&mut Context>) -> JsResult<()> {
         JobExecutor::run_jobs_async(self, context).await
     }

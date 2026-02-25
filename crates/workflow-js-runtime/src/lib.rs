@@ -1,4 +1,4 @@
-#![cfg(all(target_arch = "wasm32", getrandom_backend = "custom"))]
+#[cfg(all(target_arch = "wasm32", getrandom_backend = "custom"))]
 
 mod stub_getrandom {
     // Custom getrandom backend for deterministic workflows.
@@ -16,6 +16,7 @@ mod stub_getrandom {
 }
 
 mod generated {
+    #![allow(clippy::empty_line_after_outer_attr)]
     include!(concat!(env!("OUT_DIR"), "/any.rs"));
 }
 

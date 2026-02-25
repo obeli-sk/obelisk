@@ -9,9 +9,9 @@ use crate::generated::{
     exports::obelisk_activity::activity_js_runtime::execute::JsRuntimeError,
     obelisk::log::log::error as host_fn_error,
 };
-use crate::wasi_fetcher::WasiFetcher;
-use crate::wasi_job_executor::WasiJobExecutor;
-use boa_common::ObeliskLogger;
+use boa_common::console::{ObeliskLogger, setup_console};
+use boa_common::wasi_fetcher::WasiFetcher;
+use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{
     Context, JsError, JsResult, JsValue, Source, builtins::promise::PromiseState,
     object::builtins::JsPromise,
@@ -61,7 +61,7 @@ pub fn execute(
         .expect("building context must work");
 
     // Set up console
-    boa_common::setup_console(&mut context, Logger).expect("console setup must work");
+    setup_console(&mut context, Logger).expect("console setup must work");
 
     // Set up fetch
     setup_fetch(&mut context).expect("fetch setup must work");

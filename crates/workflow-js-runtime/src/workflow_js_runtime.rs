@@ -19,7 +19,7 @@ use crate::generated::obelisk::workflow::workflow_support::{
     join_set_create, join_set_create_named, random_string, random_u64, random_u64_inclusive,
     schedule_json, sleep, stub_json, submit_delay, submit_json,
 };
-use boa_common::ObeliskLogger;
+use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_engine::{
     Context, JsArgs, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source, js_string,
     property::Attribute,
@@ -50,7 +50,7 @@ impl ObeliskLogger for Logger {
 
 // Thread-local storage for JoinSets (WASM is single-threaded)
 thread_local! {
-    static JOIN_SETS: RefCell<Vec<Option<JoinSet>>> = RefCell::new(Vec::new());
+    static JOIN_SETS: RefCell<Vec<Option<JoinSet>>> = const { RefCell::new(Vec::new()) };
 }
 
 fn store_join_set(js: JoinSet) -> usize {
@@ -94,7 +94,7 @@ pub fn execute(
     setup_obelisk_api(&mut context).expect("obelisk API setup must work");
 
     // Set up console
-    boa_common::setup_console(&mut context, Logger).expect("console setup must work");
+    setup_console(&mut context, Logger).expect("console setup must work");
 
     // `params_json` is sent by trusted `workflow_js_worker`, params were typechecked.
     // Parse each JSON param and store as `__params__` array.
@@ -177,20 +177,18 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     // obelisk.createJoinSet([options])
     let create_join_set = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         // Check for options.name
-        if let Some(options) = args.get(0) {
-            if let Some(obj) = options.as_object() {
-                if let Ok(name_val) = obj.get(js_string!("name"), ctx) {
-                    if let Some(name) = name_val.as_string() {
-                        let name_str = name.to_std_string_escaped();
-                        return match join_set_create_named(&name_str) {
-                            Ok(js) => Ok(create_join_set_object(js, ctx)?),
-                            Err(e) => Err(JsNativeError::error()
-                                .with_message(format!("Failed to create named join set: {:?}", e))
-                                .into()),
-                        };
-                    }
-                }
-            }
+        if let Some(options) = args.first()
+            && let Some(obj) = options.as_object()
+            && let Ok(name_val) = obj.get(js_string!("name"), ctx)
+            && let Some(name) = name_val.as_string()
+        {
+            let name_str = name.to_std_string_escaped();
+            return match join_set_create_named(&name_str) {
+                Ok(js) => Ok(create_join_set_object(js, ctx)?),
+                Err(e) => Err(JsNativeError::error()
+                    .with_message(format!("Failed to create named join set: {:?}", e))
+                    .into()),
+            };
         }
 
         let js = join_set_create();
@@ -593,7 +591,7 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             .get(js_string!(JOIN_SET_IDX_KEY), ctx)?
             .to_u32(ctx)? as usize;
 
-        let join_result = with_join_set(idx, |js| join_next(js))
+        let join_result = with_join_set(idx, join_next)
             .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))?;
 
         match join_result {
@@ -649,7 +647,7 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             .get(js_string!(JOIN_SET_IDX_KEY), ctx)?
             .to_u32(ctx)? as usize;
 
-        let join_result = with_join_set(idx, |js| join_next_try(js))
+        let join_result = with_join_set(idx, join_next_try)
             .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))?;
 
         match join_result {
@@ -738,55 +736,54 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
         .ok_or_else(|| JsNativeError::typ().with_message("schedule must be an object"))?;
 
     // Check for different duration types
-    if let Ok(ms) = obj.get(js_string!("milliseconds"), ctx) {
-        if !ms.is_undefined() {
-            let ms_val = ms.to_u32(ctx)? as u64;
-            return Ok(ScheduleAt::In(Duration::Milliseconds(ms_val)));
-        }
+    if let Ok(ms) = obj.get(js_string!("milliseconds"), ctx)
+        && !ms.is_undefined()
+    {
+        let ms_val = ms.to_u32(ctx)? as u64;
+        return Ok(ScheduleAt::In(Duration::Milliseconds(ms_val)));
     }
 
-    if let Ok(secs) = obj.get(js_string!("seconds"), ctx) {
-        if !secs.is_undefined() {
-            let secs_val = secs.to_u32(ctx)? as u64;
-            return Ok(ScheduleAt::In(Duration::Seconds(secs_val)));
-        }
+    if let Ok(secs) = obj.get(js_string!("seconds"), ctx)
+        && !secs.is_undefined()
+    {
+        let secs_val = secs.to_u32(ctx)? as u64;
+        return Ok(ScheduleAt::In(Duration::Seconds(secs_val)));
     }
 
-    if let Ok(mins) = obj.get(js_string!("minutes"), ctx) {
-        if !mins.is_undefined() {
-            let mins_val = mins.to_u32(ctx)?;
-            return Ok(ScheduleAt::In(Duration::Minutes(mins_val)));
-        }
+    if let Ok(mins) = obj.get(js_string!("minutes"), ctx)
+        && !mins.is_undefined()
+    {
+        let mins_val = mins.to_u32(ctx)?;
+        return Ok(ScheduleAt::In(Duration::Minutes(mins_val)));
     }
 
-    if let Ok(hours) = obj.get(js_string!("hours"), ctx) {
-        if !hours.is_undefined() {
-            let hours_val = hours.to_u32(ctx)?;
-            return Ok(ScheduleAt::In(Duration::Hours(hours_val)));
-        }
+    if let Ok(hours) = obj.get(js_string!("hours"), ctx)
+        && !hours.is_undefined()
+    {
+        let hours_val = hours.to_u32(ctx)?;
+        return Ok(ScheduleAt::In(Duration::Hours(hours_val)));
     }
 
-    if let Ok(days) = obj.get(js_string!("days"), ctx) {
-        if !days.is_undefined() {
-            let days_val = days.to_u32(ctx)?;
-            return Ok(ScheduleAt::In(Duration::Days(days_val)));
-        }
+    if let Ok(days) = obj.get(js_string!("days"), ctx)
+        && !days.is_undefined()
+    {
+        let days_val = days.to_u32(ctx)?;
+        return Ok(ScheduleAt::In(Duration::Days(days_val)));
     }
 
     // Check for absolute time
-    if let Ok(at) = obj.get(js_string!("at"), ctx) {
-        if !at.is_undefined() {
-            let at_obj = at.as_object().ok_or_else(|| {
-                JsNativeError::typ()
-                    .with_message("'at' must be an object with seconds and nanoseconds")
-            })?;
-            let seconds = at_obj.get(js_string!("seconds"), ctx)?.to_u32(ctx)? as u64;
-            let nanoseconds = at_obj.get(js_string!("nanoseconds"), ctx)?.to_u32(ctx)?;
-            return Ok(ScheduleAt::At(Datetime {
-                seconds,
-                nanoseconds,
-            }));
-        }
+    if let Ok(at) = obj.get(js_string!("at"), ctx)
+        && !at.is_undefined()
+    {
+        let at_obj = at.as_object().ok_or_else(|| {
+            JsNativeError::typ().with_message("'at' must be an object with seconds and nanoseconds")
+        })?;
+        let seconds = at_obj.get(js_string!("seconds"), ctx)?.to_u32(ctx)? as u64;
+        let nanoseconds = at_obj.get(js_string!("nanoseconds"), ctx)?.to_u32(ctx)?;
+        return Ok(ScheduleAt::At(Datetime {
+            seconds,
+            nanoseconds,
+        }));
     }
 
     Ok(ScheduleAt::Now)
@@ -843,64 +840,37 @@ fn parse_duration(value: &JsValue, ctx: &mut Context) -> JsResult<Duration> {
         .as_object()
         .ok_or_else(|| JsNativeError::typ().with_message("duration must be an object"))?;
 
-    if let Ok(ms) = obj.get(js_string!("milliseconds"), ctx) {
-        if !ms.is_undefined() {
-            return Ok(Duration::Milliseconds(ms.to_u32(ctx)? as u64));
-        }
+    if let Ok(ms) = obj.get(js_string!("milliseconds"), ctx)
+        && !ms.is_undefined()
+    {
+        return Ok(Duration::Milliseconds(ms.to_u32(ctx)? as u64));
     }
 
-    if let Ok(secs) = obj.get(js_string!("seconds"), ctx) {
-        if !secs.is_undefined() {
-            return Ok(Duration::Seconds(secs.to_u32(ctx)? as u64));
-        }
+    if let Ok(secs) = obj.get(js_string!("seconds"), ctx)
+        && !secs.is_undefined()
+    {
+        return Ok(Duration::Seconds(secs.to_u32(ctx)? as u64));
     }
 
-    if let Ok(mins) = obj.get(js_string!("minutes"), ctx) {
-        if !mins.is_undefined() {
-            return Ok(Duration::Minutes(mins.to_u32(ctx)?));
-        }
+    if let Ok(mins) = obj.get(js_string!("minutes"), ctx)
+        && !mins.is_undefined()
+    {
+        return Ok(Duration::Minutes(mins.to_u32(ctx)?));
     }
 
-    if let Ok(hours) = obj.get(js_string!("hours"), ctx) {
-        if !hours.is_undefined() {
-            return Ok(Duration::Hours(hours.to_u32(ctx)?));
-        }
+    if let Ok(hours) = obj.get(js_string!("hours"), ctx)
+        && !hours.is_undefined()
+    {
+        return Ok(Duration::Hours(hours.to_u32(ctx)?));
     }
 
-    if let Ok(days) = obj.get(js_string!("days"), ctx) {
-        if !days.is_undefined() {
-            return Ok(Duration::Days(days.to_u32(ctx)?));
-        }
+    if let Ok(days) = obj.get(js_string!("days"), ctx)
+        && !days.is_undefined()
+    {
+        return Ok(Duration::Days(days.to_u32(ctx)?));
     }
 
     Err(JsNativeError::typ()
         .with_message("duration must have milliseconds, seconds, minutes, hours, or days")
         .into())
-}
-
-/// Convert JS value to JSON string.
-fn json_stringify(value: &JsValue, ctx: &mut Context) -> JsResult<String> {
-    // Use built-in JSON.stringify
-    let json = ctx
-        .global_object()
-        .get(js_string!("JSON"), ctx)
-        .expect("global JSON object must be found");
-    let json_obj = json.as_object().expect("JSON global must be an object");
-    let stringify = json_obj
-        .get(js_string!("stringify"), ctx)
-        .expect("stringify must exist on JSON object");
-    let stringify_fn = stringify
-        .as_callable()
-        .expect("JSON.stringify must be callable");
-
-    let result = stringify_fn.call(&json, &[value.clone()], ctx)?;
-
-    result
-        .as_string()
-        .map(|s| s.to_std_string_escaped())
-        .ok_or_else(|| {
-            JsNativeError::error()
-                .with_message("JSON.stringify returned non-string")
-                .into()
-        })
 }
