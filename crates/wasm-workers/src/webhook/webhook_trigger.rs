@@ -2181,6 +2181,41 @@ pub(crate) mod tests {
             let body = resp.text().await.unwrap();
             assert_eq!((status, body.as_str()), (200, "fetch works"));
         }
+
+        #[tokio::test]
+        async fn js_webhook_request_headers() {
+            test_utils::set_up();
+            // JS handler that returns the x-custom headers as JSON
+            let js_source = r#"
+                function handle(request) {
+                    const customHeaders = request.headers["x-custom"] || [];
+                    return {
+                        status: 200,
+                        headers: [["content-type", "application/json"]],
+                        body: JSON.stringify(customHeaders)
+                    };
+                }
+                "#;
+
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+
+            // Send request with multiple values for the same header
+            let client = reqwest::Client::new();
+            let resp = client
+                .get(format!("http://{server_addr}/"))
+                .header("x-custom", "value1")
+                .header("x-custom", "value2")
+                .send()
+                .await
+                .unwrap();
+
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap();
+            assert_eq!(status, 200);
+            let headers: Vec<String> = serde_json::from_str(&body).unwrap();
+            assert_eq!(headers, vec!["value1", "value2"]);
+        }
     }
 
     #[test]

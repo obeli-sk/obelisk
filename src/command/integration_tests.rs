@@ -104,6 +104,27 @@ name = "test_hello_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/hello.js"
 http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/hello" }}]
+
+[[webhook_endpoint_js]]
+name = "test_headers_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/headers.js"
+http_server = "test_webhook_server"
+routes = [{{ methods = ["GET"], route = "/headers" }}]
+
+[[webhook_endpoint_js]]
+name = "test_fetch_allowed_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
+http_server = "test_webhook_server"
+routes = [{{ methods = ["GET"], route = "/fetch-allowed" }}]
+[[webhook_endpoint_js.allowed_host]]
+pattern = "http://127.0.0.1:{port}"
+methods = ["GET"]
+
+[[webhook_endpoint_js]]
+name = "test_fetch_denied_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
+http_server = "test_webhook_server"
+routes = [{{ methods = ["GET"], route = "/fetch-denied" }}]
 "#,
         port = port,
         webhook_port = webhook_port,
@@ -198,6 +219,15 @@ impl TestServer {
     }
 
     // ---- helper methods ------------------------------------------------
+
+    fn api_port(&self) -> u16 {
+        self.base_url
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
 
     async fn submit_follow(&self, ffqn: &str, params: Vec<Value>) -> reqwest::Response {
         self.client
@@ -672,4 +702,56 @@ async fn webhook_js_hello() {
     assert_eq!(resp.status().as_u16(), 200);
     let body = resp.text().await.unwrap();
     assert_eq!(body, "Hello from JS webhook!");
+}
+
+#[tokio::test]
+async fn webhook_js_request_headers() {
+    let server = TestServer::start().await;
+    let resp = server
+        .client
+        .get(format!("{}/headers", server.webhook_base_url))
+        .header("x-custom", "value1")
+        .header("x-custom", "value2")
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.unwrap();
+    let headers: Vec<String> = serde_json::from_str(&body).unwrap();
+    assert_eq!(headers, vec!["value1", "value2"]);
+}
+
+#[tokio::test]
+async fn webhook_js_fetch_allowed() {
+    let server = TestServer::start().await;
+    let resp = server
+        .client
+        .get(format!("{}/fetch-allowed", server.webhook_base_url))
+        .header("x-target-port", server.api_port().to_string())
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.unwrap();
+    // The response should be a JSON array of components
+    let components: Value = serde_json::from_str(&body).unwrap();
+    assert!(components.is_array());
+}
+
+#[tokio::test]
+async fn webhook_js_fetch_denied() {
+    let server = TestServer::start().await;
+    let resp = server
+        .client
+        .get(format!("{}/fetch-denied", server.webhook_base_url))
+        .header("x-target-port", server.api_port().to_string())
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 500);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("HttpRequestDenied"),
+        "Expected body to contain 'HttpRequestDenied', got: {body}"
+    );
 }
