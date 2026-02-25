@@ -1,18 +1,28 @@
-use crate::generated::obelisk::log::log as obelisk_log;
+//! Console implementation for Boa JS engine routing to Obelisk logging.
+
 use boa_engine::{
     Context, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, js_string,
     property::Attribute,
 };
 
-/// Set up the global `console` object routing to obelisk:log.
-pub fn setup_console(context: &mut Context) -> JsResult<()> {
+/// Logging functions required by the console setup.
+pub trait ObeliskLogger: Copy + 'static {
+    fn trace(&self, msg: &str);
+    fn debug(&self, msg: &str);
+    fn info(&self, msg: &str);
+    fn warn(&self, msg: &str);
+    fn error(&self, msg: &str);
+}
+
+/// Set up the global `console` object routing to the provided logger.
+pub fn setup_console<L: ObeliskLogger>(context: &mut Context, logger: L) -> JsResult<()> {
     let console = JsObject::default(context.intrinsics());
 
     macro_rules! console_method {
-        ($name:expr, $log_fn:path) => {{
-            let func = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+        ($name:expr, $log_method:ident) => {{
+            let func = NativeFunction::from_copy_closure(move |_this, args, ctx| {
                 let msg = console_args_to_string(args, ctx)?;
-                $log_fn(&msg);
+                logger.$log_method(&msg);
                 Ok(JsValue::undefined())
             });
             console.set(
@@ -24,12 +34,12 @@ pub fn setup_console(context: &mut Context) -> JsResult<()> {
         }};
     }
 
-    console_method!("trace", obelisk_log::trace);
-    console_method!("debug", obelisk_log::debug);
-    console_method!("log", obelisk_log::info);
-    console_method!("info", obelisk_log::info);
-    console_method!("warn", obelisk_log::warn);
-    console_method!("error", obelisk_log::error);
+    console_method!("trace", trace);
+    console_method!("debug", debug);
+    console_method!("log", info);
+    console_method!("info", info);
+    console_method!("warn", warn);
+    console_method!("error", error);
 
     context.register_global_property(js_string!("console"), console, Attribute::all())?;
     Ok(())

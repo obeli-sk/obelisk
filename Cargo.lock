@@ -7,6 +7,7 @@ name = "activity-js-runtime"
 version = "0.35.4"
 dependencies = [
  "anyhow",
+ "boa-common",
  "boa_engine",
  "boa_gc",
  "boa_runtime",
@@ -374,6 +375,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "boa-common"
+version = "0.35.4"
+dependencies = [
+ "boa_engine",
 ]
 
 [[package]]
@@ -6709,6 +6717,7 @@ name = "webhook-js-runtime"
 version = "0.35.4"
 dependencies = [
  "anyhow",
+ "boa-common",
  "boa_engine",
  "boa_gc",
  "serde",
@@ -7402,6 +7411,7 @@ name = "workflow-js-runtime"
 version = "0.35.4"
 dependencies = [
  "anyhow",
+ "boa-common",
  "boa_engine",
  "serde_json",
  "wit-bindgen 0.53.1",

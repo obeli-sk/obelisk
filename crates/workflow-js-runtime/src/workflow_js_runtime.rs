@@ -19,11 +19,34 @@ use crate::generated::obelisk::workflow::workflow_support::{
     join_set_create, join_set_create_named, random_string, random_u64, random_u64_inclusive,
     schedule_json, sleep, stub_json, submit_delay, submit_json,
 };
+use boa_common::ObeliskLogger;
 use boa_engine::{
     Context, JsArgs, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source, js_string,
     property::Attribute,
 };
 use std::cell::RefCell;
+
+/// Logger implementation using the generated obelisk:log bindings.
+#[derive(Clone, Copy)]
+struct Logger;
+
+impl ObeliskLogger for Logger {
+    fn trace(&self, msg: &str) {
+        obelisk_log::trace(msg);
+    }
+    fn debug(&self, msg: &str) {
+        obelisk_log::debug(msg);
+    }
+    fn info(&self, msg: &str) {
+        obelisk_log::info(msg);
+    }
+    fn warn(&self, msg: &str) {
+        obelisk_log::warn(msg);
+    }
+    fn error(&self, msg: &str) {
+        obelisk_log::error(msg);
+    }
+}
 
 // Thread-local storage for JoinSets (WASM is single-threaded)
 thread_local! {
@@ -71,7 +94,7 @@ pub fn execute(
     setup_obelisk_api(&mut context).expect("obelisk API setup must work");
 
     // Set up console
-    setup_console(&mut context).expect("console setup must work");
+    boa_common::setup_console(&mut context, Logger).expect("console setup must work");
 
     // `params_json` is sent by trusted `workflow_js_worker`, params were typechecked.
     // Parse each JSON param and store as `__params__` array.
@@ -880,53 +903,4 @@ fn json_stringify(value: &JsValue, ctx: &mut Context) -> JsResult<String> {
                 .with_message("JSON.stringify returned non-string")
                 .into()
         })
-}
-
-/// Set up the global `console` object routing to obelisk:log.
-fn setup_console(context: &mut Context) -> JsResult<()> {
-    let console = new_object(context);
-
-    macro_rules! console_method {
-        ($name:expr, $log_fn:path) => {{
-            let func = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-                let msg = console_args_to_string(args, ctx)?;
-                $log_fn(&msg);
-                Ok(JsValue::undefined())
-            });
-            console.set(
-                js_string!($name),
-                func.to_js_function(context.realm()),
-                false,
-                context,
-            )?;
-        }};
-    }
-
-    console_method!("trace", obelisk_log::trace);
-    console_method!("debug", obelisk_log::debug);
-    console_method!("log", obelisk_log::info);
-    console_method!("info", obelisk_log::info);
-    console_method!("warn", obelisk_log::warn);
-    console_method!("error", obelisk_log::error);
-
-    context.register_global_property(js_string!("console"), console, Attribute::all())?;
-    Ok(())
-}
-
-/// Convert function arguments to a space-separated string.
-fn console_args_to_string(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
-    let parts: Result<Vec<String>, _> = args
-        .iter()
-        .map(|v| {
-            if let Some(s) = v.as_string() {
-                Ok(s.to_std_string_escaped())
-            } else {
-                // Try to stringify objects
-                json_stringify(v, ctx)
-                    .or_else(|_| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
-            }
-        })
-        .collect();
-
-    Ok(parts?.join(" "))
 }

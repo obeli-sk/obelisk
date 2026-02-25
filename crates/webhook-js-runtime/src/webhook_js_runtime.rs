@@ -14,11 +14,33 @@
 //! }
 //! ```
 
-use crate::console;
 use crate::generated::obelisk::log::log;
+use boa_common::ObeliskLogger;
 use boa_engine::{Context, Source};
 use wstd::http::body::Body;
 use wstd::http::{Request, Response, StatusCode};
+
+/// Logger implementation using the generated obelisk:log bindings.
+#[derive(Clone, Copy)]
+struct Logger;
+
+impl ObeliskLogger for Logger {
+    fn trace(&self, msg: &str) {
+        log::trace(msg);
+    }
+    fn debug(&self, msg: &str) {
+        log::debug(msg);
+    }
+    fn info(&self, msg: &str) {
+        log::info(msg);
+    }
+    fn warn(&self, msg: &str) {
+        log::warn(msg);
+    }
+    fn error(&self, msg: &str) {
+        log::error(msg);
+    }
+}
 
 const FN_NAME: &str = "handle";
 
@@ -80,7 +102,7 @@ fn run_js_handler(js_source: &str, fn_name: &str, request_json: &str) -> Result<
     let mut context = Context::default();
 
     // Set up console.log -> obelisk:log
-    console::setup_console(&mut context).expect("console setup must work");
+    boa_common::setup_console(&mut context, Logger).expect("console setup must work");
 
     // Parse the request JSON and make it available
     let request_js = format!("const __request__ = {request_json};");
