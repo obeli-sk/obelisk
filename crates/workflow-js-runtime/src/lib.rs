@@ -1,4 +1,4 @@
-#![cfg(all(target_arch = "wasm32", getrandom_backend = "custom"))]
+#[cfg(all(target_arch = "wasm32", getrandom_backend = "custom"))]
 
 mod stub_getrandom {
     // Custom getrandom backend for deterministic workflows.
