@@ -13,6 +13,7 @@ use directories::BaseDirs;
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
 use tokio::sync::watch;
+use tracing::debug;
 
 #[cfg(test)]
 mod populate_js_codegen_cache {
@@ -67,6 +68,29 @@ params.inline = [
   {{ name = "name", type = "string" }},
 ]
 max_retries = 0
+
+[[activity_js]]
+name = "test_fetch_denied_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/fetch_get.js"
+ffqn = "testing:integration/fetch-get-denied.fetch-get"
+params.inline = [
+  {{ name = "url", type = "string" }},
+  {{ name = "headers", type = "list<tuple<string,string>>" }},
+]
+max_retries = 0
+
+[[activity_js]]
+name = "test_fetch_allowed_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/fetch_get.js"
+ffqn = "testing:integration/fetch-get-allowed.fetch-get"
+params.inline = [
+  {{ name = "url", type = "string" }},
+  {{ name = "headers", type = "list<tuple<string,string>>" }},
+]
+max_retries = 0
+[[activity_js.allowed_host]]
+pattern = "http://127.0.0.1:{port}"
+methods = ["GET"]
 
 [[workflow_js]]
 name = "test_add_workflow"
@@ -131,6 +155,7 @@ routes = [{{ methods = ["GET"], route = "/fetch-denied" }}]
         db_dir = db_dir.path().display(),
         ws = workspace.display(),
     );
+    debug!("TOML:{toml_contents}");
     let toml_path = db_dir.path().join("obelisk-test.toml");
     std::fs::write(&toml_path, toml_contents).unwrap();
     (db_dir, toml_path)
@@ -172,16 +197,13 @@ impl TestServer {
         };
 
         let server_handle = tokio::spawn(async move {
-            if let Err(e) = Box::pin(run_internal(
+            Box::pin(run_internal(
                 config,
                 config_holder,
                 params,
                 termination_watcher,
             ))
             .await
-            {
-                eprintln!("Server error: {e:#}");
-            }
         });
 
         let base_url = format!("http://127.0.0.1:{port}");
@@ -191,7 +213,7 @@ impl TestServer {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
         loop {
             if server_handle.is_finished() {
-                server_handle.await.unwrap();
+                server_handle.await.unwrap().unwrap();
                 unreachable!("server must have panicked")
             }
             match client
@@ -221,12 +243,7 @@ impl TestServer {
     // ---- helper methods ------------------------------------------------
 
     fn api_port(&self) -> u16 {
-        self.base_url
-            .rsplit(':')
-            .next()
-            .unwrap()
-            .parse()
-            .unwrap()
+        self.base_url.rsplit(':').next().unwrap().parse().unwrap()
     }
 
     async fn submit_follow(&self, ffqn: &str, params: Vec<Value>) -> reqwest::Response {
@@ -657,6 +674,44 @@ async fn replay_nonexistent_execution_returns_404() {
     let server = TestServer::start().await;
     let resp = server.replay("E_01AAAAAAAAAAAAAAAAAAAAAAAA").await;
     assert_eq!(resp.status().as_u16(), 404);
+}
+
+#[tokio::test]
+async fn activity_js_fetch_denied() {
+    let server = TestServer::start().await;
+    let param_url = format!("http://127.0.0.1:{}/v1/components", server.api_port());
+    let resp = server
+        .submit_follow(
+            "testing:integration/fetch-get-denied.fetch-get",
+            vec![json!(param_url), json!([["accept", "application/json"]])],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    let err = body["err"].as_str().expect("expected err field");
+    assert!(
+        err.contains("HttpRequestDenied"),
+        "Expected error to contain 'HttpRequestDenied', got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn activity_js_fetch_allowed() {
+    let server = TestServer::start().await;
+    let param_url = format!("http://127.0.0.1:{}/v1/components", server.api_port());
+    let resp = server
+        .submit_follow(
+            "testing:integration/fetch-get-allowed.fetch-get",
+            vec![json!(param_url), json!([["accept", "application/json"]])],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    let result = body["ok"].as_str().expect("expected ok field");
+    debug!("result: {result}");
+    // The response should be a JSON array of components
+    let components: Value = serde_json::from_str(result).unwrap();
+    assert!(components.is_array());
 }
 
 // ---- Idempotency ----

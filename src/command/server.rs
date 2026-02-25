@@ -82,6 +82,7 @@ use futures_util::future::OptionFuture;
 use grpc::extractor::accept_trace;
 use grpc::grpc_gen;
 use hashbrown::HashMap;
+use indexmap::IndexMap;
 use serde_json::json;
 use std::fmt::Debug;
 use std::path::Path;
@@ -858,7 +859,7 @@ impl ServerVerified {
                 }],
                 backtrace: ComponentBacktraceConfig::default(),
                 logs_store_min_level: LogLevelToml::Off,
-                allowed_host: vec![AllowedHostToml {
+                allowed_hosts: vec![AllowedHostToml {
                     pattern: target_url,
                     methods: vec![],
                     secrets: None,
@@ -1059,7 +1060,7 @@ async fn spawn_tasks_and_threads(
                         server_compiled_linked
                             .compiled_components
                             .webhooks_by_names
-                            .remove(&name)
+                            .shift_remove(&name)
                             .expect("all webhooks must be verified")
                     })
                     .collect::<Vec<_>>();
@@ -1251,8 +1252,8 @@ struct ConfigVerified {
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
-    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
-    webhooks_js_by_names: hashbrown::HashMap<ConfigName, WebhookJsConfigVerified>,
+    webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,
+    webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
@@ -1479,7 +1480,7 @@ impl ConfigVerified {
                 let activities_wasm = activity_wasm_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let activities_stub_ext = activity_stub_ext_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
-                let mut webhooks_by_names = hashbrown::HashMap::new();
+                let mut webhooks_by_names = IndexMap::new();
                 for webhook in webhook_results {
                     let (k, v) = webhook??;
                     webhooks_by_names.insert(k, v);
@@ -1527,7 +1528,7 @@ impl ConfigVerified {
                     Vec::new()
                 };
 
-                let mut webhooks_js_by_names = hashbrown::HashMap::new();
+                let mut webhooks_js_by_names = IndexMap::new();
                 if !webhooks_js.is_empty() {
                     let webhook_js_wasm_path = webhook_js_runtime_result.transpose()?
                         .expect("None only if there are no JS webhooks, see `webhook_js_runtime_fetch`");
@@ -1567,7 +1568,7 @@ impl ConfigVerified {
 /// Holds all the work that does not require a database connection.
 struct LinkedComponents {
     workers_linked: Vec<WorkerLinked>,
-    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookInstancesAndRoutes>,
+    webhooks_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
 }
 
 #[expect(clippy::large_enum_variant)]
@@ -1595,8 +1596,8 @@ async fn compile_and_verify(
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
-    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
-    webhooks_js_by_names: hashbrown::HashMap<ConfigName, WebhookJsConfigVerified>,
+    webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,
+    webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
@@ -1891,7 +1892,7 @@ async fn compile_and_verify(
                         .map(|instance| (name, (instance, routes)))
                         .with_context(||format!("cannot compile {component_id}"))
                 })
-                .collect::<Result<hashbrown::HashMap<_,_>,_>>()?;
+                .collect::<Result<IndexMap<_,_>,_>>()?;
             Ok((LinkedComponents {
                 workers_linked,
                 webhooks_by_names,

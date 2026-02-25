@@ -3,7 +3,7 @@ use hyper::http::Method;
 use rand::RngCore;
 use secrecy::{ExposeSecret, SecretString};
 use std::fmt;
-use tracing::debug;
+use tracing::{debug, trace};
 use wasmtime_wasi_http::bindings::http::types::ErrorCode;
 
 /// Where in the outgoing request placeholders are replaced.
@@ -308,7 +308,7 @@ impl HttpRequestPolicy {
     ) {
         let body_secrets = self.body_secrets_for(request.uri(), request.method());
         if body_secrets.is_empty() {
-            debug!("No secrets, no modifications to HTTP body");
+            trace!("No secrets, no modifications to HTTP body");
             return;
         }
 

@@ -10,6 +10,12 @@ expression: functions
     "ffqn": "testing:integration/activities.greet"
   },
   {
+    "ffqn": "testing:integration/fetch-get-denied.fetch-get"
+  },
+  {
+    "ffqn": "testing:integration/fetch-get-allowed.fetch-get"
+  },
+  {
     "ffqn": "testing:integration/workflows.add-workflow"
   },
   {

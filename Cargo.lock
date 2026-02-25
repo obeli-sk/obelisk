@@ -3209,6 +3209,7 @@ dependencies = [
  "futures-util",
  "hashbrown 0.16.1",
  "http",
+ "indexmap 2.13.0",
  "insta",
  "itertools",
  "jsonwebtoken",
