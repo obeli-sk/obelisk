@@ -1161,6 +1161,7 @@ impl ActivityJsComponentConfigToml {
         use sha2::{Digest as _, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"activity_js:");
+        hasher.update(self.name.0.as_bytes());
         hasher.update(js_source.as_bytes());
         hasher.update(self.ffqn.as_bytes());
         for p in &parsed_params {
@@ -1306,6 +1307,7 @@ impl WorkflowJsComponentConfigToml {
         use sha2::{Digest as _, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"workflow_js:");
+        hasher.update(self.name.0.as_bytes());
         hasher.update(js_source.as_bytes());
         hasher.update(self.ffqn.as_bytes());
         for p in &parsed_params {
@@ -2099,6 +2101,7 @@ pub(crate) mod webhook {
             use sha2::{Digest as _, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(b"webhook_js:");
+            hasher.update(self.name.0.as_bytes());
             hasher.update(js_source.as_bytes());
             let hash: [u8; 32] = hasher.finalize().into();
             let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
