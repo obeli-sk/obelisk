@@ -131,6 +131,7 @@ resolver = "2"
 members = [
     "crates/activity-js-runtime",
     "crates/activity-js-runtime/builder",
+    "crates/boa-common",
     "crates/webhook-js-runtime",
     "crates/webhook-js-runtime/builder",
     "crates/bench",
@@ -193,6 +194,7 @@ rust-version = "1.91.0"
 
 [workspace.dependencies]
 activity-js-runtime-builder = { path = "crates/activity-js-runtime/builder" }
+boa-common = { path = "crates/boa-common" }
 webhook-js-runtime-builder = { path = "crates/webhook-js-runtime/builder" }
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.35.4" }
 db-common = { package = "obeli-sk-db-common", path = "crates/db-common", version = "0.35.4" }
