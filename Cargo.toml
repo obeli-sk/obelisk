@@ -415,11 +415,15 @@ codegen-units = 1
 lto = "fat"
 strip = "debuginfo"
 
-[profile.release_wasm]
+[profile.release_testprograms]
 inherits = "release"
-opt-level = "s"
 debug = "line-tables-only"
 strip = "none"
+
+[profile.release_wasm_runtime]
+inherits = "release"
+debug = "none"
+strip = true
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/obelisk-{ target }.tar.gz"

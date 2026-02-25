@@ -14,10 +14,10 @@ pub struct BuildConfig {
     pub rust_flags: String,
 }
 impl BuildConfig {
-    pub fn target_subdir(target_dir: impl Into<PathBuf>) -> Self {
+    pub fn target_subdir(profile: &'static str) -> Self {
         Self {
-            profile: "release_wasm".to_string(),
-            custom_dst_target_dir: Some(get_target_dir().join(target_dir.into())),
+            profile: profile.to_string(),
+            custom_dst_target_dir: Some(get_target_dir().join(profile)),
             rust_flags: String::new(),
         }
     }

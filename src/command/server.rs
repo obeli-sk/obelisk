@@ -139,9 +139,11 @@ use wasmtime::Engine;
 const EPOCH_MILLIS: u64 = 10;
 const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
 #[cfg(not(feature = "activity-js-local"))]
-pub(crate) const ACTIVITY_JS_LOCATION: &str = include_str!("../../assets/activity-js-version.txt");
+pub(crate) const ACTIVITY_JS_LOCATION: &str =
+    include_str!("../../assets/activity-js-runtime-version.txt");
 #[cfg(not(feature = "workflow-js-local"))]
-pub(crate) const WORKFLOW_JS_LOCATION: &str = include_str!("../../assets/workflow-js-version.txt");
+pub(crate) const WORKFLOW_JS_LOCATION: &str =
+    include_str!("../../assets/workflow-js-runtime-version.txt");
 #[cfg(not(feature = "webhook-js-local"))]
 pub(crate) const WEBHOOK_JS_LOCATION: &str =
     include_str!("../../assets/webhook-js-runtime-version.txt");
