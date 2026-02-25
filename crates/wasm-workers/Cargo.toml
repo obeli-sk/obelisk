@@ -72,6 +72,7 @@ test-programs-stub-activity-builder.workspace = true
 test-programs-stub-workflow-builder.workspace = true
 test-utils.workspace = true
 utils.workspace = true
+webhook-js-runtime-builder.workspace = true
 workflow-js-runtime-builder.workspace = true
 
 async-trait.workspace = true

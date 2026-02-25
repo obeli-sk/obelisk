@@ -41,7 +41,7 @@ use wasm_workers::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
     },
 };
-use webhook::{HttpServer, WebhookComponentConfigToml};
+use webhook::{HttpServer, WebhookComponentConfigToml, WebhookJsComponentConfigToml};
 
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
@@ -99,6 +99,8 @@ pub(crate) struct ConfigToml {
     pub(crate) http_servers: Vec<HttpServer>,
     #[serde(default, rename = "webhook_endpoint")]
     pub(crate) webhooks: Vec<WebhookComponentConfigToml>,
+    #[serde(default, rename = "webhook_endpoint_js")]
+    pub(crate) webhooks_js: Vec<WebhookJsComponentConfigToml>,
 }
 impl ConfigToml {
     pub(crate) fn get_deployment_id(&self) -> DeploymentId {
@@ -1866,7 +1868,8 @@ impl From<ComponentStdOutputToml> for Option<StdOutputConfig> {
 pub(crate) mod webhook {
     use super::{
         AllowedHostToml, ComponentBacktraceConfig, ComponentCommon, ComponentStdOutputToml,
-        ConfigName, resolve_allowed_hosts, resolve_env_vars_plaintext, validate_no_env_collision,
+        ConfigName, JsLocationToml, resolve_allowed_hosts, resolve_env_vars_plaintext,
+        validate_no_env_collision,
     };
     use crate::config::{
         config_holder::PathPrefixes,
@@ -1875,7 +1878,8 @@ pub(crate) mod webhook {
     };
     use anyhow::Context;
     use concepts::{
-        ComponentId, ComponentType, StrVariant, component_id::InputContentDigest, storage::LogLevel,
+        ComponentId, ComponentType, ContentDigest, StrVariant, component_id::InputContentDigest,
+        storage::LogLevel,
     };
     use schemars::JsonSchema;
     use serde::Deserialize;
@@ -2031,6 +2035,99 @@ pub(crate) mod webhook {
                     Self { methods, route }
                 }
             })
+        }
+    }
+
+    #[derive(Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct WebhookJsComponentConfigToml {
+        pub(crate) name: ConfigName,
+        /// Location of the JavaScript source file.
+        /// Supports local file paths and `gh://` GitHub release references.
+        pub(crate) location: JsLocationToml,
+        /// Content digest of the JS source file.
+        #[serde(default)]
+        #[schemars(with = "Option<String>")]
+        pub(crate) content_digest: Option<ContentDigest>,
+        /// The HTTP server to bind this webhook to.
+        pub(crate) http_server: ConfigName,
+        /// Routes that this webhook responds to.
+        pub(crate) routes: Vec<WebhookRoute>,
+        #[serde(default)]
+        pub(crate) forward_stdout: ComponentStdOutputToml,
+        #[serde(default)]
+        pub(crate) forward_stderr: ComponentStdOutputToml,
+        #[serde(default)]
+        pub(crate) logs_store_min_level: LogLevelToml,
+        /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
+        #[serde(default)]
+        pub(crate) allowed_host: Vec<AllowedHostToml>,
+    }
+
+    #[derive(Debug)]
+    pub(crate) struct WebhookJsConfigVerified {
+        pub(crate) wasm_path: Arc<Path>,
+        pub(crate) component_id: ComponentId,
+        pub(crate) js_source: String,
+        pub(crate) routes: Vec<WebhookRouteVerified>,
+        pub(crate) forward_stdout: Option<StdOutputConfig>,
+        pub(crate) forward_stderr: Option<StdOutputConfig>,
+        pub(crate) logs_store_min_level: Option<LogLevel>,
+        pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
+    }
+
+    impl WebhookJsComponentConfigToml {
+        #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
+        pub(crate) async fn fetch_and_verify(
+            self,
+            wasm_path: Arc<Path>,
+            wasm_cache_dir: Arc<Path>,
+            path_prefixes: Arc<PathPrefixes>,
+            ignore_missing_env_vars: bool,
+        ) -> Result<(ConfigName /* name */, WebhookJsConfigVerified), anyhow::Error> {
+            // Read JS source
+            let js_source = self
+                .location
+                .read_to_string(
+                    &wasm_cache_dir,
+                    &path_prefixes,
+                    self.content_digest.as_ref(),
+                )
+                .await?;
+
+            // Compute content digest from source
+            use sha2::{Digest as _, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(b"webhook_js:");
+            hasher.update(js_source.as_bytes());
+            let hash: [u8; 32] = hasher.finalize().into();
+            let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
+
+            let component_id = ComponentId::new(
+                ComponentType::WebhookEndpoint,
+                StrVariant::from(self.name.clone()),
+                InputContentDigest(content_digest),
+            )?;
+
+            let allowed_hosts = resolve_allowed_hosts(self.allowed_host, ignore_missing_env_vars)?;
+
+            Ok((
+                self.name,
+                WebhookJsConfigVerified {
+                    wasm_path,
+                    component_id,
+                    js_source,
+                    routes: self
+                        .routes
+                        .into_iter()
+                        .map(WebhookRouteVerified::try_from)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    forward_stdout: self.forward_stdout.into(),
+                    forward_stderr: self.forward_stderr.into(),
+                    logs_store_min_level: self.logs_store_min_level.into(),
+                    allowed_hosts,
+                },
+            ))
         }
     }
 }

@@ -11,8 +11,9 @@ on:
         required: true
         type: choice
         options:
-          - activity-js
-          - workflow-js
+          - activity-js-runtime
+          - workflow-js-runtime
+          - webhook-js-runtime
       tag:
         description: "The tag to be used when pushing the runtime to Docker Hub."
         required: true

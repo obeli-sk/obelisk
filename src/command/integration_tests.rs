@@ -36,7 +36,7 @@ fn free_port() -> u16 {
 /// Write a minimal TOML config to a temp file and return the path.
 /// The config references the JS fixtures from the workspace tree and
 /// places the `SQLite` database in a unique temp directory.
-fn write_test_toml(port: u16) -> (tempfile::TempDir, PathBuf) {
+fn write_test_toml(port: u16, webhook_port: u16) -> (tempfile::TempDir, PathBuf) {
     let workspace = get_workspace_dir();
     let db_dir = tempfile::tempdir().unwrap();
     let toml_contents = format!(
@@ -94,8 +94,19 @@ params.inline = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
+
+[[http_server]]
+name = "test_webhook_server"
+listening_addr = "127.0.0.1:{webhook_port}"
+
+[[webhook_endpoint_js]]
+name = "test_hello_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/hello.js"
+http_server = "test_webhook_server"
+routes = [{{ methods = ["GET"], route = "/hello" }}]
 "#,
         port = port,
+        webhook_port = webhook_port,
         db_dir = db_dir.path().display(),
         ws = workspace.display(),
     );
@@ -106,6 +117,7 @@ params.inline = [
 
 struct TestServer {
     base_url: String,
+    webhook_base_url: String,
     client: reqwest::Client,
     _termination_sender: watch::Sender<()>,
     _tmp_dir: tempfile::TempDir,
@@ -116,7 +128,8 @@ impl TestServer {
         test_utils::set_up();
 
         let port = free_port();
-        let (tmp_dir, toml_path) = write_test_toml(port);
+        let webhook_port = free_port();
+        let (tmp_dir, toml_path) = write_test_toml(port, webhook_port);
 
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
@@ -174,8 +187,10 @@ impl TestServer {
             }
         }
 
+        let webhook_base_url = format!("http://127.0.0.1:{webhook_port}");
         TestServer {
             base_url,
+            webhook_base_url,
             client,
             _termination_sender: termination_sender,
             _tmp_dir: tmp_dir,
@@ -561,8 +576,12 @@ async fn list_executions_after_submit() {
 
     let executions = server.list_executions().await;
     let arr = executions.as_array().expect("array");
-    assert_eq!(arr.len(), 1);
-    assert_eq!(arr[0]["ffqn"], json!("testing:integration/activities.add"));
+    assert_eq!(arr.len(), 1, "unexpected {arr:?}");
+    assert_eq!(
+        arr[0]["ffqn"],
+        json!("testing:integration/activities.add"),
+        "unexpected {arr:?}"
+    );
 }
 
 // ---- Error cases ----
@@ -637,4 +656,20 @@ async fn idempotent_submit_same_execution_id() {
     assert_eq!(resp2.status().as_u16(), 200);
     let body2: Value = resp2.json().await.unwrap();
     assert_eq!(body1, body2);
+}
+
+// ---- Webhook JS ----
+
+#[tokio::test]
+async fn webhook_js_hello() {
+    let server = TestServer::start().await;
+    let resp = server
+        .client
+        .get(format!("{}/hello", server.webhook_base_url))
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "Hello from JS webhook!");
 }

@@ -26,12 +26,12 @@ push() {
 # Make sure all components are fresh
 cargo check --workspace
 
-push activity_wasm      "target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_fibo_activity.wasm"
-push workflow           "target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_fibo_workflow.wasm"
-push webhook_endpoint   "target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_fibo_webhook.wasm"
-push activity_wasm      "target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_http_get_activity.wasm"
-push workflow           "target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_http_get_workflow.wasm"
-push activity_wasm      "target/release_testprograms/wasm32-wasip2/release_wasm/test_programs_sleep_activity.wasm"
-push workflow           "target/release_testprograms/wasm32-unknown-unknown/release_wasm/test_programs_sleep_workflow.wasm"
+push activity_wasm      "target/release_testprograms/wasm32-wasip2/release_testprograms/test_programs_fibo_activity.wasm"
+push workflow           "target/release_testprograms/wasm32-unknown-unknown/release_testprograms/test_programs_fibo_workflow.wasm"
+push webhook_endpoint   "target/release_testprograms/wasm32-wasip2/release_testprograms/test_programs_fibo_webhook.wasm"
+push activity_wasm      "target/release_testprograms/wasm32-wasip2/release_testprograms/test_programs_http_get_activity.wasm"
+push workflow           "target/release_testprograms/wasm32-unknown-unknown/release_testprograms/test_programs_http_get_workflow.wasm"
+push activity_wasm      "target/release_testprograms/wasm32-wasip2/release_testprograms/test_programs_sleep_activity.wasm"
+push workflow           "target/release_testprograms/wasm32-unknown-unknown/release_testprograms/test_programs_sleep_workflow.wasm"
 
 echo "All components pushed and TOML file updated successfully."
