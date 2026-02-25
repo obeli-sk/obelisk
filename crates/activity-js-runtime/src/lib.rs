@@ -4,8 +4,6 @@ mod generated {
 }
 
 mod activity_js_runtime;
-mod wasi_fetcher;
-mod wasi_job_executor;
 
 use generated::export;
 use generated::exports::obelisk_activity::activity_js_runtime::execute::{Guest, JsRuntimeError};

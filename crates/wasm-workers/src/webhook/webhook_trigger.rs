@@ -2062,6 +2062,122 @@ pub(crate) mod tests {
             assert_eq!(resp.status().as_u16(), 201);
             assert_eq!("created", resp.text().await.unwrap());
         }
+
+        async fn start_js_webhook_server_with_http(
+            source: &str,
+            allowed_host: &str,
+        ) -> (
+            tokio::task::JoinSet<Result<(), WebhookServerError>>,
+            SocketAddr,
+            watch::Sender<()>,
+        ) {
+            use crate::http_request_policy::{AllowedHostConfig, HostPattern};
+            let host_pattern = HostPattern::parse_with_methods(allowed_host, vec![]).unwrap();
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool, _db_close) = db_tests::Database::Memory.set_up().await;
+            let fn_registry = TestingFnRegistry::new_from_components(vec![]);
+            let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+            let (db_forwarder_sender, _) = mpsc::channel(1);
+            let wasm_file = webhook_js_runtime_builder::WEBHOOK_JS_RUNTIME;
+            let router = {
+                let instance = WebhookEndpointCompiled::new(
+                    WebhookEndpointConfig {
+                        component_id: ComponentId::new(
+                            ComponentType::WebhookEndpoint,
+                            StrVariant::empty(),
+                            InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
+                        )
+                        .unwrap(),
+                        forward_stdout: None,
+                        forward_stderr: None,
+                        env_vars: Arc::from([]),
+                        fuel: None,
+                        backtrace_persist: false,
+                        subscription_interruption: None,
+                        logs_store_min_level: None,
+                        allowed_hosts: Arc::from(vec![AllowedHostConfig {
+                            pattern: host_pattern,
+                            secret_env_mappings: Vec::new(),
+                            replace_in: hashbrown::HashSet::new(),
+                        }]),
+                        js_config: Some(WebhookEndpointJsConfig {
+                            source: source.to_string(),
+                        }),
+                    },
+                    wasm_file,
+                    &engine,
+                )
+                .unwrap()
+                .link(&engine, fn_registry.as_ref())
+                .unwrap()
+                .build(&db_forwarder_sender);
+                let mut router = MethodAwareRouter::default();
+                router.add(None, "", instance);
+                router
+            };
+            let tcp_listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+                .await
+                .unwrap();
+            let server_addr = tcp_listener.local_addr().unwrap();
+            info!("JS webhook with HTTP listening on port {}", server_addr.port());
+            let (server_termination_sender, server_termination_watcher) = watch::channel(());
+            let mut set = tokio::task::JoinSet::new();
+            set.spawn(webhook_trigger::server(
+                DEPLOYMENT_ID_DUMMY,
+                StrVariant::Static("test-js-http"),
+                tcp_listener,
+                engine,
+                router,
+                db_pool,
+                sim_clock.clone_box(),
+                TokioSleep,
+                fn_registry,
+                None,
+                server_termination_watcher,
+            ));
+            (set, server_addr, server_termination_sender)
+        }
+
+        #[tokio::test]
+        async fn js_webhook_fetch_get() {
+            use wiremock::{
+                Mock, MockServer, ResponseTemplate,
+                matchers::{method, path},
+            };
+            test_utils::set_up();
+            let mock_server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/hello"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("fetch works"))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let url = mock_server.uri();
+            let js_source = format!(
+                r#"
+                async function handle(request) {{
+                    const resp = await fetch("{url}/hello");
+                    const text = await resp.text();
+                    return {{
+                        status: 200,
+                        headers: [],
+                        body: text
+                    }};
+                }}
+                "#
+            );
+
+            let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_http(&js_source, &allowed).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap();
+            assert_eq!((status, body.as_str()), (200, "fetch works"));
+        }
     }
 
     #[test]

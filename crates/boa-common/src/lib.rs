@@ -1,5 +1,5 @@
 //! Common utilities for Boa JS engine-based Obelisk runtimes.
 
-mod console;
-
-pub use console::{ObeliskLogger, setup_console};
+pub mod console;
+pub mod wasi_fetcher;
+pub mod wasi_job_executor;

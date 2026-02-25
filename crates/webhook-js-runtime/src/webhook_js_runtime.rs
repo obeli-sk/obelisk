@@ -13,10 +13,27 @@
 //!     };
 //! }
 //! ```
+//!
+//! Async handlers with fetch are also supported:
+//! ```js
+//! async function handle(request) {
+//!     const resp = await fetch("https://example.com/api");
+//!     const data = await resp.text();
+//!     return { status: 200, headers: [], body: data };
+//! }
+//! ```
 
 use crate::generated::obelisk::log::log;
-use boa_common::ObeliskLogger;
-use boa_engine::{Context, Source};
+use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
+use boa_common::wasi_fetcher::WasiFetcher;
+use boa_common::wasi_job_executor::WasiJobExecutor;
+use boa_engine::{
+    Context, JsError, JsResult, JsValue, Source, builtins::promise::PromiseState,
+    object::builtins::JsPromise,
+};
+use boa_runtime::extensions::FetchExtension;
+use std::cell::RefCell;
+use std::rc::Rc;
 use wstd::http::body::Body;
 use wstd::http::{Request, Response, StatusCode};
 
@@ -62,7 +79,7 @@ async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Erro
     let request_json = request_to_json(&request);
 
     // Run JS and get response
-    match run_js_handler(&js_source, FN_NAME, &request_json) {
+    match run_js_handler_async(&js_source, &request_json).await {
         Ok(response_json) => json_to_response(&response_json),
         Err(err) => {
             log::error(&format!("JS error: {err}"));
@@ -97,12 +114,19 @@ fn request_to_json(request: &Request<Body>) -> String {
     .to_string()
 }
 
-/// Run the JS handler function and return the response JSON.
-fn run_js_handler(js_source: &str, fn_name: &str, request_json: &str) -> Result<String, String> {
-    let mut context = Context::default();
+/// Run the JS handler function and return the response JSON (async version).
+async fn run_js_handler_async(js_source: &str, request_json: &str) -> Result<String, String> {
+    let executor = Rc::new(WasiJobExecutor::default());
+    let mut context = Context::builder()
+        .job_executor(executor.clone())
+        .build()
+        .expect("building context must work");
 
     // Set up console.log -> obelisk:log
-    boa_common::setup_console(&mut context, Logger).expect("console setup must work");
+    setup_console(&mut context, Logger).expect("console setup must work");
+
+    // Set up fetch
+    setup_fetch(&mut context).expect("fetch setup must work");
 
     // Parse the request JSON and make it available
     let request_js = format!("const __request__ = {request_json};");
@@ -115,17 +139,51 @@ fn run_js_handler(js_source: &str, fn_name: &str, request_json: &str) -> Result<
         .eval(Source::from_bytes(js_source))
         .map_err(|e| format!("Failed to execute JS: {e}"))?;
 
-    // Call the handler function
-    let call_code = format!("JSON.stringify({fn_name}(__request__))");
+    // Call the handler function (may return a Promise for async handlers)
+    let call_code = format!("{FN_NAME}(__request__)");
     let result = context
         .eval(Source::from_bytes(&call_code))
-        .map_err(|e| format!("Failed to call {fn_name}: {e}"))?;
+        .map_err(|e| format!("Failed to call {FN_NAME}: {e}"))?;
 
-    // Extract the JSON string result
-    result
-        .as_string()
-        .map(|s| s.to_std_string_escaped())
-        .ok_or_else(|| "Handler did not return a JSON-serializable object".to_string())
+    // If the result is a Promise, drive it to completion
+    let result = resolve_if_promise_async(&result, &mut context, &executor)
+        .await
+        .map_err(|e| format!("Promise resolution failed: {e}"))?;
+
+    // Stringify the result
+    json_stringify(&result, &mut context).map_err(|e| format!("Failed to stringify result: {e}"))
+}
+
+/// If `value` is a Promise, drive it to completion and return the resolved value (async version).
+async fn resolve_if_promise_async(
+    value: &JsValue,
+    context: &mut Context,
+    executor: &Rc<WasiJobExecutor>,
+) -> JsResult<JsValue> {
+    let Some(object) = value.as_object() else {
+        return Ok(value.clone());
+    };
+    let Ok(promise) = JsPromise::from_object(object) else {
+        return Ok(value.clone());
+    };
+
+    // Drive promise resolution using the executor's async job runner.
+    let executor = executor.clone();
+    let context = RefCell::new(context);
+    loop {
+        match promise.state() {
+            PromiseState::Pending => {
+                executor.clone().drive_jobs(&context).await?;
+            }
+            PromiseState::Fulfilled(v) => return Ok(v),
+            PromiseState::Rejected(e) => return Err(JsError::from_opaque(e)),
+        }
+    }
+}
+
+/// Register the `fetch` API backed by WASIp2 HTTP.
+fn setup_fetch(context: &mut Context) -> JsResult<()> {
+    boa_runtime::register(FetchExtension(WasiFetcher), None, context)
 }
 
 /// Convert JSON response from JS to HTTP Response.

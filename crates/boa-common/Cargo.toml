@@ -10,6 +10,12 @@ version.workspace = true
 
 [dependencies]
 boa_engine = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false }
+boa_gc = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0" }
+boa_runtime = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false, features = ["fetch"] }
+futures-concurrency.workspace = true
+futures-lite = "2.6.1"
+http.workspace = true
+wstd.workspace = true
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(getrandom_backend, values("custom"))'] }

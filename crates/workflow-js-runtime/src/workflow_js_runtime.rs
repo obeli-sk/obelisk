@@ -19,7 +19,7 @@ use crate::generated::obelisk::workflow::workflow_support::{
     join_set_create, join_set_create_named, random_string, random_u64, random_u64_inclusive,
     schedule_json, sleep, stub_json, submit_delay, submit_json,
 };
-use boa_common::ObeliskLogger;
+use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_engine::{
     Context, JsArgs, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source, js_string,
     property::Attribute,
@@ -94,7 +94,7 @@ pub fn execute(
     setup_obelisk_api(&mut context).expect("obelisk API setup must work");
 
     // Set up console
-    boa_common::setup_console(&mut context, Logger).expect("console setup must work");
+    setup_console(&mut context, Logger).expect("console setup must work");
 
     // `params_json` is sent by trusted `workflow_js_worker`, params were typechecked.
     // Parse each JSON param and store as `__params__` array.
@@ -876,31 +876,4 @@ fn parse_duration(value: &JsValue, ctx: &mut Context) -> JsResult<Duration> {
     Err(JsNativeError::typ()
         .with_message("duration must have milliseconds, seconds, minutes, hours, or days")
         .into())
-}
-
-/// Convert JS value to JSON string.
-fn json_stringify(value: &JsValue, ctx: &mut Context) -> JsResult<String> {
-    // Use built-in JSON.stringify
-    let json = ctx
-        .global_object()
-        .get(js_string!("JSON"), ctx)
-        .expect("global JSON object must be found");
-    let json_obj = json.as_object().expect("JSON global must be an object");
-    let stringify = json_obj
-        .get(js_string!("stringify"), ctx)
-        .expect("stringify must exist on JSON object");
-    let stringify_fn = stringify
-        .as_callable()
-        .expect("JSON.stringify must be callable");
-
-    let result = stringify_fn.call(&json, &[value.clone()], ctx)?;
-
-    result
-        .as_string()
-        .map(|s| s.to_std_string_escaped())
-        .ok_or_else(|| {
-            JsNativeError::error()
-                .with_message("JSON.stringify returned non-string")
-                .into()
-        })
 }
