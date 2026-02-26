@@ -1318,6 +1318,7 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
                         wit_type: param.wit_type.to_string(),
                         type_wrapper: serde_json::to_string(&param.type_wrapper)
                             .expect("`TypeWrapper` must be serializable"),
+                        wit_type_inline: param.type_wrapper.to_string(),
                     }),
                 })
                 .collect(),
@@ -1325,6 +1326,7 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
                 wit_type: return_type.wit_type().to_string(),
                 type_wrapper: serde_json::to_string(&return_type.type_wrapper())
                     .expect("`TypeWrapper` must be serializable"),
+                wit_type_inline: return_type.type_wrapper().to_string(),
             }),
             function_name: Some(ffqn.into()),
             extension: extension.map(|it| {
