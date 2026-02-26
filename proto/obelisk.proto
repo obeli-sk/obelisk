@@ -144,10 +144,15 @@ message FunctionParameter {
 }
 
 message WitType {
+    // WIT string as outputed by WIT printer. May contain external types
     string wit_type = 1;
 
     // Internal information about the type serialized as JSON
+    // deprecated
     string type_wrapper = 2;
+
+    // WIT type without external references, e.g. `variant { first, second(string) }`
+    string wit_type_inline = 3;
 }
 
 message ExecutionId {
