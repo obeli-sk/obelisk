@@ -19,6 +19,20 @@ expression: components
   },
   {
     "component_id": {
+      "component_type": "activity_wasm",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_fetch_denied_activity"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "activity_wasm",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_fetch_allowed_activity"
+    }
+  },
+  {
+    "component_id": {
       "component_type": "workflow",
       "input_digest": "sha256:<REDACTED>",
       "name": "test_add_workflow"
@@ -43,6 +57,27 @@ expression: components
       "component_type": "webhook_endpoint",
       "input_digest": "sha256:<REDACTED>",
       "name": "test_hello_webhook"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_headers_webhook"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_fetch_allowed_webhook"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_fetch_denied_webhook"
     }
   }
 ]

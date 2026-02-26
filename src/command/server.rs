@@ -82,6 +82,7 @@ use futures_util::future::OptionFuture;
 use grpc::extractor::accept_trace;
 use grpc::grpc_gen;
 use hashbrown::HashMap;
+use indexmap::IndexMap;
 use serde_json::json;
 use std::fmt::Debug;
 use std::path::Path;
@@ -858,7 +859,7 @@ impl ServerVerified {
                 }],
                 backtrace: ComponentBacktraceConfig::default(),
                 logs_store_min_level: LogLevelToml::Off,
-                allowed_host: vec![AllowedHostToml {
+                allowed_hosts: vec![AllowedHostToml {
                     pattern: target_url,
                     methods: vec![],
                     secrets: None,
@@ -1059,7 +1060,7 @@ async fn spawn_tasks_and_threads(
                         server_compiled_linked
                             .compiled_components
                             .webhooks_by_names
-                            .remove(&name)
+                            .shift_remove(&name)
                             .expect("all webhooks must be verified")
                     })
                     .collect::<Vec<_>>();
@@ -1251,8 +1252,8 @@ struct ConfigVerified {
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
-    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
-    webhooks_js_by_names: hashbrown::HashMap<ConfigName, WebhookJsConfigVerified>,
+    webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,
+    webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
@@ -1479,7 +1480,7 @@ impl ConfigVerified {
                 let activities_wasm = activity_wasm_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let activities_stub_ext = activity_stub_ext_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
-                let mut webhooks_by_names = hashbrown::HashMap::new();
+                let mut webhooks_by_names = IndexMap::new();
                 for webhook in webhook_results {
                     let (k, v) = webhook??;
                     webhooks_by_names.insert(k, v);
@@ -1527,7 +1528,7 @@ impl ConfigVerified {
                     Vec::new()
                 };
 
-                let mut webhooks_js_by_names = hashbrown::HashMap::new();
+                let mut webhooks_js_by_names = IndexMap::new();
                 if !webhooks_js.is_empty() {
                     let webhook_js_wasm_path = webhook_js_runtime_result.transpose()?
                         .expect("None only if there are no JS webhooks, see `webhook_js_runtime_fetch`");
@@ -1567,7 +1568,7 @@ impl ConfigVerified {
 /// Holds all the work that does not require a database connection.
 struct LinkedComponents {
     workers_linked: Vec<WorkerLinked>,
-    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookInstancesAndRoutes>,
+    webhooks_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
 }
 
 #[expect(clippy::large_enum_variant)]
@@ -1595,8 +1596,8 @@ async fn compile_and_verify(
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
-    webhooks_by_names: hashbrown::HashMap<ConfigName, WebhookComponentConfigVerified>,
-    webhooks_js_by_names: hashbrown::HashMap<ConfigName, WebhookJsConfigVerified>,
+    webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,
+    webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
@@ -1617,7 +1618,7 @@ async fn compile_and_verify(
 
     // TODO: other components are not compiled in parallel.
     let activity_js_runnable = if let Some(first_activity_js) = activities_js.first() {
-        let engines = engines.clone();
+        let engine = engines.activity_engine.clone();
         let build_semaphore = build_semaphore.clone();
         let parent_span = parent_span.clone();
         let wasm_path = first_activity_js.wasm_path.clone();
@@ -1627,7 +1628,6 @@ async fn compile_and_verify(
             let span = info_span!(parent: parent_span, "activity_js_wasm_compile");
             span.in_scope(|| {
                 debug!("Building activity-js-runtime");
-                let engine = engines.activity_engine.clone();
                 RunnableComponent::new(&wasm_path, &engine, component_type)
                     .context("cannot compile activity-js-runtime")
             })
@@ -1641,7 +1641,7 @@ async fn compile_and_verify(
     .transpose()?;
 
     let workflow_js_runnable = if let Some(first_workflow_js) = workflows_js.first() {
-        let engines = engines.clone();
+        let engine = engines.workflow_engine.clone();
         let build_semaphore = build_semaphore.clone();
         let parent_span = parent_span.clone();
         let wasm_path = first_workflow_js.wasm_path.clone();
@@ -1650,13 +1650,34 @@ async fn compile_and_verify(
             let span = info_span!(parent: parent_span, "workflow_js_wasm_compile");
             span.in_scope(|| {
                 debug!("Building workflow-js-runtime");
-                let engine = engines.workflow_engine.clone();
                 RunnableComponent::new(&wasm_path, &engine, ComponentType::Workflow)
                     .context("cannot compile workflow-js-runtime")
             })
         })
         .await
         .context("panic while compiling workflow-js-runtime")?;
+        Some(runnable)
+    } else {
+        None
+    }
+    .transpose()?;
+
+    let webhook_js_runnable = if let Some((_, first_webhook_js)) = webhooks_js_by_names.first() {
+        let engine = engines.webhook_engine.clone();
+        let build_semaphore = build_semaphore.clone();
+        let parent_span = parent_span.clone();
+        let wasm_path = first_webhook_js.wasm_path.clone();
+        let runnable = tokio::task::spawn_blocking(move || {
+            let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+            let span = info_span!(parent: parent_span, "webhook_js_wasm_compile");
+            span.in_scope(|| {
+                debug!("Building webhook-js-runtime");
+                RunnableComponent::new(&wasm_path, &engine, ComponentType::WebhookEndpoint)
+                    .context("cannot compile webhook-js-runtime")
+            })
+        })
+        .await
+        .context("panic while compiling webhook-js-runtime")?;
         Some(runnable)
     } else {
         None
@@ -1791,10 +1812,11 @@ async fn compile_and_verify(
                                 allowed_hosts: webhook.allowed_hosts,
                                 js_config: None,
                             };
+                             let runnable_component =
+                                RunnableComponent::new(webhook.wasm_path, &engines.webhook_engine, ComponentType::WebhookEndpoint)?;
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
-                                webhook.wasm_path,
-                                &engines.webhook_engine,
+                                runnable_component,
                             )?;
                             Ok(CompiledComponent::Webhook {
                                 webhook_name,
@@ -1809,9 +1831,9 @@ async fn compile_and_verify(
             webhooks_js_by_names
                 .into_iter()
                 .map(|(webhook_name, webhook_js)| {
-                    let engines = engines.clone();
                     let build_semaphore = build_semaphore.clone();
                     let parent_span = parent_span.clone();
+                    let webhook_js_runnable = webhook_js_runnable.clone().expect("must have been filled above");
                     tokio::task::spawn_blocking(move || {
                         let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                         let span = info_span!(parent: parent_span, "webhook_js_compile", component_id = %webhook_js.component_id);
@@ -1830,10 +1852,10 @@ async fn compile_and_verify(
                                     source: webhook_js.js_source,
                                 }),
                             };
+
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
-                                webhook_js.wasm_path,
-                                &engines.webhook_engine,
+                                webhook_js_runnable
                             )?;
                             Ok(CompiledComponent::Webhook {
                                 webhook_name,
@@ -1891,7 +1913,7 @@ async fn compile_and_verify(
                         .map(|instance| (name, (instance, routes)))
                         .with_context(||format!("cannot compile {component_id}"))
                 })
-                .collect::<Result<hashbrown::HashMap<_,_>,_>>()?;
+                .collect::<Result<IndexMap<_,_>,_>>()?;
             Ok((LinkedComponents {
                 workers_linked,
                 webhooks_by_names,

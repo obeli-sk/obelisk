@@ -13,6 +13,7 @@ use directories::BaseDirs;
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
 use tokio::sync::watch;
+use tracing::debug;
 
 #[cfg(test)]
 mod populate_js_codegen_cache {
@@ -68,6 +69,29 @@ params.inline = [
 ]
 max_retries = 0
 
+[[activity_js]]
+name = "test_fetch_denied_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/fetch_get.js"
+ffqn = "testing:integration/fetch-get-denied.fetch-get"
+params.inline = [
+  {{ name = "url", type = "string" }},
+  {{ name = "headers", type = "list<tuple<string,string>>" }},
+]
+max_retries = 0
+
+[[activity_js]]
+name = "test_fetch_allowed_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/fetch_get.js"
+ffqn = "testing:integration/fetch-get-allowed.fetch-get"
+params.inline = [
+  {{ name = "url", type = "string" }},
+  {{ name = "headers", type = "list<tuple<string,string>>" }},
+]
+max_retries = 0
+[[activity_js.allowed_host]]
+pattern = "http://127.0.0.1:{port}"
+methods = ["GET"]
+
 [[workflow_js]]
 name = "test_add_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
@@ -104,12 +128,34 @@ name = "test_hello_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/hello.js"
 http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/hello" }}]
+
+[[webhook_endpoint_js]]
+name = "test_headers_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/headers.js"
+http_server = "test_webhook_server"
+routes = [{{ methods = ["GET"], route = "/headers" }}]
+
+[[webhook_endpoint_js]]
+name = "test_fetch_allowed_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
+http_server = "test_webhook_server"
+routes = [{{ methods = ["GET"], route = "/fetch-allowed" }}]
+[[webhook_endpoint_js.allowed_host]]
+pattern = "http://127.0.0.1:{port}"
+methods = ["GET"]
+
+[[webhook_endpoint_js]]
+name = "test_fetch_denied_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
+http_server = "test_webhook_server"
+routes = [{{ methods = ["GET"], route = "/fetch-denied" }}]
 "#,
         port = port,
         webhook_port = webhook_port,
         db_dir = db_dir.path().display(),
         ws = workspace.display(),
     );
+    debug!("TOML:{toml_contents}");
     let toml_path = db_dir.path().join("obelisk-test.toml");
     std::fs::write(&toml_path, toml_contents).unwrap();
     (db_dir, toml_path)
@@ -151,40 +197,37 @@ impl TestServer {
         };
 
         let server_handle = tokio::spawn(async move {
-            if let Err(e) = Box::pin(run_internal(
+            Box::pin(run_internal(
                 config,
                 config_holder,
                 params,
                 termination_watcher,
             ))
             .await
-            {
-                eprintln!("Server error: {e:#}");
-            }
         });
 
         let base_url = format!("http://127.0.0.1:{port}");
         let client = reqwest::Client::new();
 
         // Poll until the server is ready.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
         loop {
             if server_handle.is_finished() {
-                server_handle.await.unwrap();
+                server_handle.await.unwrap().unwrap();
                 unreachable!("server must have panicked")
             }
-            match client
+            debug!("Pinging sever");
+            let resp = client
                 .get(format!("{base_url}/v1/functions"))
                 .header("Accept", "application/json")
                 .send()
-                .await
+                .await;
+            if let Ok(resp) = resp
+                && resp.status().is_success()
             {
-                Ok(resp) if resp.status().is_success() => break,
-                _ if tokio::time::Instant::now() > deadline => {
-                    panic!("server did not become ready within 120 s")
-                }
-                _ => tokio::time::sleep(Duration::from_millis(200)).await,
+                break;
             }
+            debug!("Pinging sever failed");
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
         let webhook_base_url = format!("http://127.0.0.1:{webhook_port}");
@@ -198,6 +241,10 @@ impl TestServer {
     }
 
     // ---- helper methods ------------------------------------------------
+
+    fn api_port(&self) -> u16 {
+        self.base_url.rsplit(':').next().unwrap().parse().unwrap()
+    }
 
     async fn submit_follow(&self, ffqn: &str, params: Vec<Value>) -> reqwest::Response {
         self.client
@@ -629,6 +676,44 @@ async fn replay_nonexistent_execution_returns_404() {
     assert_eq!(resp.status().as_u16(), 404);
 }
 
+#[tokio::test]
+async fn activity_js_fetch_denied() {
+    let server = TestServer::start().await;
+    let param_url = format!("http://127.0.0.1:{}/v1/components", server.api_port());
+    let resp = server
+        .submit_follow(
+            "testing:integration/fetch-get-denied.fetch-get",
+            vec![json!(param_url), json!([["accept", "application/json"]])],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    let err = body["err"].as_str().expect("expected err field");
+    assert!(
+        err.contains("HttpRequestDenied"),
+        "Expected error to contain 'HttpRequestDenied', got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn activity_js_fetch_allowed() {
+    let server = TestServer::start().await;
+    let param_url = format!("http://127.0.0.1:{}/v1/components", server.api_port());
+    let resp = server
+        .submit_follow(
+            "testing:integration/fetch-get-allowed.fetch-get",
+            vec![json!(param_url), json!([["accept", "application/json"]])],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    let result = body["ok"].as_str().expect("expected ok field");
+    debug!("result: {result}");
+    // The response should be a JSON array of components
+    let components: Value = serde_json::from_str(result).unwrap();
+    assert!(components.is_array());
+}
+
 // ---- Idempotency ----
 
 #[tokio::test]
@@ -672,4 +757,56 @@ async fn webhook_js_hello() {
     assert_eq!(resp.status().as_u16(), 200);
     let body = resp.text().await.unwrap();
     assert_eq!(body, "Hello from JS webhook!");
+}
+
+#[tokio::test]
+async fn webhook_js_request_headers() {
+    let server = TestServer::start().await;
+    let resp = server
+        .client
+        .get(format!("{}/headers", server.webhook_base_url))
+        .header("x-custom", "value1")
+        .header("x-custom", "value2")
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.unwrap();
+    let headers: Vec<String> = serde_json::from_str(&body).unwrap();
+    assert_eq!(headers, vec!["value1", "value2"]);
+}
+
+#[tokio::test]
+async fn webhook_js_fetch_allowed() {
+    let server = TestServer::start().await;
+    let resp = server
+        .client
+        .get(format!("{}/fetch-allowed", server.webhook_base_url))
+        .header("x-target-port", server.api_port().to_string())
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.unwrap();
+    // The response should be a JSON array of components
+    let components: Value = serde_json::from_str(&body).unwrap();
+    assert!(components.is_array());
+}
+
+#[tokio::test]
+async fn webhook_js_fetch_denied() {
+    let server = TestServer::start().await;
+    let resp = server
+        .client
+        .get(format!("{}/fetch-denied", server.webhook_base_url))
+        .header("x-target-port", server.api_port().to_string())
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 500);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("HttpRequestDenied"),
+        "Expected body to contain 'HttpRequestDenied', got: {body}"
+    );
 }

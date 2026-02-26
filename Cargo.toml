@@ -42,6 +42,7 @@ docker_credential.workspace = true
 futures-util.workspace = true
 hashbrown.workspace = true
 http.workspace = true
+indexmap.workspace = true
 itertools.workspace = true
 jsonwebtoken.workspace = true # Enable rust_crypto features for oci-client's jsonwebtoken dep
 oci-client.workspace = true

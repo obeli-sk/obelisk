@@ -7,18 +7,40 @@ target = true
 directory = "."
 prefix = "obelisk.log" # File name prefix
 
+[[http_server]]
+name = "external_webhook"
+listening_addr = "127.0.0.1:9090"
+
 [[activity_js]]
 name = "activity_js_fetch_get"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/fetch.js"
+location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/fetch_get.js"
 ffqn = "testing:js/activity.fetch-get"
-params.inline = [{name = "url", type = "string"}]
+params.inline = [
+    {name = "url", type = "string"},
+    {name = "headers", type = "list<tuple<string,string>>"},
+]
 max_retries = 0
 [[activity_js.allowed_host]]
-pattern = "http://localhost:5005" # all https is allowed
+pattern = "http://localhost:5005"
 methods = ["GET"]
 
 [[workflow_js]]
 name = "workflow_js_test"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/component.js"
+location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/fetch_components.js"
 ffqn = "testing:js/workflow.fetch-components"
 params.inline = []
+
+[[webhook_endpoint_js]]
+name = "webhook_js_hello"
+location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/hello.js"
+http_server = "external_webhook"
+routes = [{ methods = ["GET"], route = "/hello" }]
+
+[[webhook_endpoint_js]]
+name = "webhook_js_fetch_components"
+location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/fetch_components.js"
+http_server = "external_webhook"
+routes = [{ methods = ["GET"], route = "/fetch" }]
+[[webhook_endpoint_js.allowed_host]]
+pattern = "http://localhost:5005"
+methods = ["GET"]

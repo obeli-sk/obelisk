@@ -33,6 +33,7 @@ use boa_engine::{
 };
 use boa_runtime::extensions::FetchExtension;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use wstd::http::body::Body;
 use wstd::http::{Request, Response, StatusCode};
@@ -95,11 +96,16 @@ fn request_to_json(request: &Request<Body>) -> String {
     let method = request.method().as_str();
     let uri = request.uri().to_string();
 
-    let headers: Vec<(String, String)> = request
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-        .collect();
+    let headers: HashMap<String, Vec<String>> =
+        request
+            .headers()
+            .iter()
+            .fold(HashMap::new(), |mut acc, (k, v)| {
+                acc.entry(k.to_string())
+                    .or_default()
+                    .push(v.to_str().unwrap_or_default().to_string());
+                acc
+            });
 
     // For now, we don't read the body to keep it simple
     // TODO: Add body reading support

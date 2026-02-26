@@ -100,8 +100,9 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Outgoing HTTP host allowlist.
 ## Each `[[activity_wasm.allowed_host]]` entry permits outbound requests to a host.
 ## If no entries are defined, all outbound HTTP connections are blocked.
-## Supports wildcards: "*" (all), "*.example.com" (subdomains), "192.168.1.*" (/24).
-## Bare hostname implies HTTPS port 443. Use "http://host" or "host:port" for non-defaults.
+## Supports wildcards: "*" (all https), "*.example.com" (subdomains), "http://192.168.1.*" (/24).
+## Bare hostname implies HTTPS port 443. Use "http://host" or "http://host:port" for non-defaults.
+## To allow all outbound HTTP use patterns "*", "http://*"
 # [[activity_wasm.allowed_host]]
 # pattern = "api.github.com"
 ## Optional method restrictions. Omit to allow all methods.

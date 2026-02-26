@@ -825,8 +825,8 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
-    #[serde(default)]
-    pub(crate) allowed_host: Vec<AllowedHostToml>,
+    #[serde(default, rename = "allowed_host")]
+    pub(crate) allowed_hosts: Vec<AllowedHostToml>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -985,7 +985,7 @@ impl ActivityWasmComponentConfigToml {
             .await?;
 
         let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
-        let allowed_hosts = resolve_allowed_hosts(self.allowed_host, ignore_missing_env_vars)?;
+        let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
 
         // Validate no collision between env_vars and secret env names
         validate_no_env_collision(&env_vars, &allowed_hosts)?;
@@ -1068,8 +1068,8 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
-    #[serde(default)]
-    pub(crate) allowed_host: Vec<AllowedHostToml>,
+    #[serde(default, rename = "allowed_host")]
+    pub(crate) allowed_hosts: Vec<AllowedHostToml>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
@@ -1175,7 +1175,7 @@ impl ActivityJsComponentConfigToml {
             InputContentDigest(content_digest),
         )?;
 
-        let allowed_hosts = resolve_allowed_hosts(self.allowed_host, ignore_missing_env_vars)?;
+        let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
 
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
@@ -1920,8 +1920,8 @@ pub(crate) mod webhook {
         #[serde(default)]
         pub(crate) logs_store_min_level: LogLevelToml,
         /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
-        #[serde(default)]
-        pub(crate) allowed_host: Vec<AllowedHostToml>,
+        #[serde(default, rename = "allowed_host")]
+        pub(crate) allowed_hosts: Vec<AllowedHostToml>,
     }
 
     impl WebhookComponentConfigToml {
@@ -1946,7 +1946,7 @@ pub(crate) mod webhook {
                 InputContentDigest(common.content_digest),
             )?;
             let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
-            let allowed_hosts = resolve_allowed_hosts(self.allowed_host, ignore_missing_env_vars)?;
+            let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
 
             // Validate no collision between env_vars and secret env names
             validate_no_env_collision(&env_vars, &allowed_hosts)?;
@@ -2060,8 +2060,8 @@ pub(crate) mod webhook {
         #[serde(default)]
         pub(crate) logs_store_min_level: LogLevelToml,
         /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
-        #[serde(default)]
-        pub(crate) allowed_host: Vec<AllowedHostToml>,
+        #[serde(default, rename = "allowed_host")]
+        pub(crate) allowed_hosts: Vec<AllowedHostToml>,
     }
 
     #[derive(Debug)]
@@ -2099,6 +2099,7 @@ pub(crate) mod webhook {
             use sha2::{Digest as _, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(b"webhook_js:");
+            hasher.update(self.name.0.as_bytes());
             hasher.update(js_source.as_bytes());
             let hash: [u8; 32] = hasher.finalize().into();
             let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
@@ -2109,7 +2110,7 @@ pub(crate) mod webhook {
                 InputContentDigest(content_digest),
             )?;
 
-            let allowed_hosts = resolve_allowed_hosts(self.allowed_host, ignore_missing_env_vars)?;
+            let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
 
             Ok((
                 self.name,
