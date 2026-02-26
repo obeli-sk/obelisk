@@ -1618,7 +1618,7 @@ async fn compile_and_verify(
 
     // TODO: other components are not compiled in parallel.
     let activity_js_runnable = if let Some(first_activity_js) = activities_js.first() {
-        let engines = engines.clone();
+        let engine = engines.activity_engine.clone();
         let build_semaphore = build_semaphore.clone();
         let parent_span = parent_span.clone();
         let wasm_path = first_activity_js.wasm_path.clone();
@@ -1628,7 +1628,6 @@ async fn compile_and_verify(
             let span = info_span!(parent: parent_span, "activity_js_wasm_compile");
             span.in_scope(|| {
                 debug!("Building activity-js-runtime");
-                let engine = engines.activity_engine.clone();
                 RunnableComponent::new(&wasm_path, &engine, component_type)
                     .context("cannot compile activity-js-runtime")
             })
@@ -1642,7 +1641,7 @@ async fn compile_and_verify(
     .transpose()?;
 
     let workflow_js_runnable = if let Some(first_workflow_js) = workflows_js.first() {
-        let engines = engines.clone();
+        let engine = engines.workflow_engine.clone();
         let build_semaphore = build_semaphore.clone();
         let parent_span = parent_span.clone();
         let wasm_path = first_workflow_js.wasm_path.clone();
@@ -1651,13 +1650,34 @@ async fn compile_and_verify(
             let span = info_span!(parent: parent_span, "workflow_js_wasm_compile");
             span.in_scope(|| {
                 debug!("Building workflow-js-runtime");
-                let engine = engines.workflow_engine.clone();
                 RunnableComponent::new(&wasm_path, &engine, ComponentType::Workflow)
                     .context("cannot compile workflow-js-runtime")
             })
         })
         .await
         .context("panic while compiling workflow-js-runtime")?;
+        Some(runnable)
+    } else {
+        None
+    }
+    .transpose()?;
+
+    let webhook_js_runnable = if let Some((_, first_webhook_js)) = webhooks_js_by_names.first() {
+        let engine = engines.webhook_engine.clone();
+        let build_semaphore = build_semaphore.clone();
+        let parent_span = parent_span.clone();
+        let wasm_path = first_webhook_js.wasm_path.clone();
+        let runnable = tokio::task::spawn_blocking(move || {
+            let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+            let span = info_span!(parent: parent_span, "webhook_js_wasm_compile");
+            span.in_scope(|| {
+                debug!("Building webhook-js-runtime");
+                RunnableComponent::new(&wasm_path, &engine, ComponentType::WebhookEndpoint)
+                    .context("cannot compile webhook-js-runtime")
+            })
+        })
+        .await
+        .context("panic while compiling webhook-js-runtime")?;
         Some(runnable)
     } else {
         None
@@ -1792,10 +1812,11 @@ async fn compile_and_verify(
                                 allowed_hosts: webhook.allowed_hosts,
                                 js_config: None,
                             };
+                             let runnable_component =
+                                RunnableComponent::new(webhook.wasm_path, &engines.webhook_engine, ComponentType::WebhookEndpoint)?;
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
-                                webhook.wasm_path,
-                                &engines.webhook_engine,
+                                runnable_component,
                             )?;
                             Ok(CompiledComponent::Webhook {
                                 webhook_name,
@@ -1810,9 +1831,9 @@ async fn compile_and_verify(
             webhooks_js_by_names
                 .into_iter()
                 .map(|(webhook_name, webhook_js)| {
-                    let engines = engines.clone();
                     let build_semaphore = build_semaphore.clone();
                     let parent_span = parent_span.clone();
+                    let webhook_js_runnable = webhook_js_runnable.clone().expect("must have been filled above");
                     tokio::task::spawn_blocking(move || {
                         let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                         let span = info_span!(parent: parent_span, "webhook_js_compile", component_id = %webhook_js.component_id);
@@ -1831,10 +1852,10 @@ async fn compile_and_verify(
                                     source: webhook_js.js_source,
                                 }),
                             };
+
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
-                                webhook_js.wasm_path,
-                                &engines.webhook_engine,
+                                webhook_js_runnable
                             )?;
                             Ok(CompiledComponent::Webhook {
                                 webhook_name,
