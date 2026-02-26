@@ -1,0 +1,21 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: exports
+---
+[
+    FunctionMetadata {
+        ffqn: a:b/c.fn,
+        parameter_types: (ParameterType { type_wrapper: string, name: p1, wit_type: string }),
+        return_type: Extendable(
+            ReturnTypeExtendable {
+                type_wrapper_tl: TypeWrapperTopLevel {
+                    ok: None,
+                    err: None,
+                },
+                wit_type: result,
+            },
+        ),
+        extension: None,
+        submittable: true,
+    },
+]

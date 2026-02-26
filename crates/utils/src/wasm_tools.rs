@@ -1147,4 +1147,21 @@ pub(crate) mod tests {
 
         insta::with_settings!({  snapshot_suffix => format!("{path}")}, {insta::assert_snapshot!(snapshot)});
     }
+
+    #[test]
+    fn test_new_from_wit_string() {
+        let wit = "
+            package a:b;
+            interface c {
+                fn: func(p1: string) -> result;
+            }
+            world z {
+                export c;
+            }
+        ";
+        let user_wasm_component =
+            WasmComponent::new_from_wit_string(wit, ComponentType::ActivityExternal).unwrap();
+        let exports = user_wasm_component.exported_functions(false).to_vec();
+        insta::assert_debug_snapshot!(exports);
+    }
 }
