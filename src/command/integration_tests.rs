@@ -210,24 +210,24 @@ impl TestServer {
         let client = reqwest::Client::new();
 
         // Poll until the server is ready.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
         loop {
             if server_handle.is_finished() {
                 server_handle.await.unwrap().unwrap();
                 unreachable!("server must have panicked")
             }
-            match client
+            debug!("Pinging sever");
+            let resp = client
                 .get(format!("{base_url}/v1/functions"))
                 .header("Accept", "application/json")
                 .send()
-                .await
+                .await;
+            if let Ok(resp) = resp
+                && resp.status().is_success()
             {
-                Ok(resp) if resp.status().is_success() => break,
-                _ if tokio::time::Instant::now() > deadline => {
-                    panic!("server did not become ready within 120 s")
-                }
-                _ => tokio::time::sleep(Duration::from_millis(200)).await,
+                break;
             }
+            debug!("Pinging sever failed");
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
         let webhook_base_url = format!("http://127.0.0.1:{webhook_port}");
