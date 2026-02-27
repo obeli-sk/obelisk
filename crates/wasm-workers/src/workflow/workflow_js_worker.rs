@@ -633,6 +633,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn async_fn_should_fail() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hello");
+        let js_source = r#"
+            export default async function hello() {
+                return "hello world";
+            }
+        "#;
+
+        let worker = new_js_workflow_worker(js_source, &ffqn);
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let err = worker.run(ctx).await.unwrap_err();
+        assert_matches!(
+            err,
+            WorkerError::FatalError(
+                FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                    ResultParsingErrorFromVal::TypeCheckError(reason),
+                )),
+                _version,
+            ) => {
+                assert!(reason.starts_with("expected string, got JsValue"), "reason: {reason}");
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn workflow_js_with_params() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet");
