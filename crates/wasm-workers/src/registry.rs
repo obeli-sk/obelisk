@@ -35,7 +35,6 @@ pub struct WorkflowReplayInfo {
 #[derive(Debug, Clone)]
 pub struct JsWorkflowReplayInfo {
     pub js_source: String,
-    pub user_ffqn: FunctionFqn,
     pub user_params: Vec<concepts::ParameterType>,
 }
 

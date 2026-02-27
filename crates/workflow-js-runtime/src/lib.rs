@@ -19,7 +19,7 @@ mod generated {
     #![allow(clippy::empty_line_after_outer_attr)]
     include!(concat!(env!("OUT_DIR"), "/any.rs"));
 }
-
+mod deterministic_executor;
 mod workflow_js_runtime;
 
 use generated::export;
@@ -30,10 +30,9 @@ export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn run(
-        fn_name: String,
         js_code: String,
         params_json: Vec<String>,
     ) -> Result<Result<String, String>, JsRuntimeError> {
-        workflow_js_runtime::execute(&fn_name, &js_code, &params_json)
+        workflow_js_runtime::execute(&js_code, &params_json)
     }
 }

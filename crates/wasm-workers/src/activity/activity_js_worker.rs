@@ -133,14 +133,12 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
             // Copied from activity_js_runtime_builder::exports::obelisk_activity::activity_js_runtime::execute::RUN
             FunctionFqn::new_static_tuple(("obelisk-activity:activity-js-runtime/execute", "run"));
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(self.user_ffqn.function_name.to_string()),
             serde_json::Value::String(self.js_source.clone()),
             serde_json::Value::Array(params_json_list),
         ]);
         ctx.params = Params::from_json_values(
             boa_params,
             [
-                &TypeWrapper::String,
                 &TypeWrapper::String,
                 &TypeWrapper::List(Box::new(TypeWrapper::String)),
             ]
@@ -231,7 +229,7 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
                             version,
                         ))
                     }
-                    "cannot_declare_function" | "function_not_found" => {
+                    "module_parse_error" | "no_default_export" => {
                         let detail = payload.as_ref().and_then(|p| {
                             if let WastVal::String(s) = p.as_ref() {
                                 Some(s.clone())
@@ -509,11 +507,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_simple_return() {
+    async fn simple_anon_export() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hello");
         let js_source = r#"
-            function hello() {
+            export default function() {
                 return "hello world";
             }
         "#;
@@ -529,11 +527,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_with_params() {
+    async fn simple_with_name() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hello");
+        let js_source = r#"
+            export default function simple() {
+                return "hello world";
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "hello world");
+    }
+
+    #[tokio::test]
+    async fn async_simple() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hello");
+        let js_source = r#"
+            export default async function async_simple() {
+                return "hello world";
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "hello world");
+    }
+
+    #[tokio::test]
+    async fn with_params() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet");
         let js_source = r#"
-            function greet(params) {
+            export default function greet(params) {
                 let name = params[0];
                 let greeting = params[1];
                 return greeting + ", " + name + "!";
@@ -551,11 +589,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_with_throw_string() {
+    async fn with_throw_string() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
         let js_source = r#"
-            function fail() {
+            export default function fail() {
                 throw "something went wrong";
             }
         "#;
@@ -572,11 +610,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_with_throw_error_object() {
+    async fn with_throw_error_object() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
         let js_source = r#"
-            function fail() {
+            export default function fail() {
                 throw new Error("something went wrong");
             }
         "#;
@@ -593,11 +631,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_console_log() {
+    async fn console_log() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "logging");
         let js_source = r#"
-            function logging(params) {
+            export default function logging(params) {
                 console.log("Log message:", params[0]);
                 console.info("Info message");
                 console.warn("Warning message");
@@ -617,11 +655,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_returning_object_should_fail_to_typecheck() {
+    async fn returning_object_should_fail_to_typecheck() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "object");
         let js_source = r"
-            function object(params) {
+            export default function object(params) {
                 return { name: params[0], count: 42 };
             }
         ";
@@ -645,11 +683,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_throwing_object_should_fail_to_typecheck() {
+    async fn throwing_object_should_fail_to_typecheck() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "throw-object");
         let js_source = r"
-            function throw_object() {
+            export default function throw_object() {
                 throw { code: 42, message: 'error' };
             }
         ";
@@ -673,11 +711,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_syntax_error_should_fail_to_instantiate() {
+    async fn no_default_export() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hello");
+        let js_source = r"
+            export function hello() {
+                return 'notice not default';
+            }
+        ";
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+        let err = worker.run(ctx).await.unwrap_err();
+        assert_matches!(
+            err,
+            WorkerError::FatalError(
+                FatalError::CannotInstantiate { reason, detail: _ },
+                _version,
+            ) => {
+                assert!(reason.contains("no_default_export"), "reason: {reason}");
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn syntax_error_should_fail_to_instantiate() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "broken");
         let js_source = r"
-            function broken( {
+            export default function broken( {
                 return 'this has a syntax error';
             }
         ";
@@ -692,32 +753,7 @@ mod tests {
                 FatalError::CannotInstantiate { reason, detail: _ },
                 _version,
             ) => {
-                assert!(reason.contains("cannot_declare_function"), "reason: {reason}");
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn js_activity_function_not_found_should_fail_to_instantiate() {
-        test_utils::set_up();
-        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "missing");
-        let js_source = r"
-            function some_other_function() {
-                return 'hello';
-            }
-        ";
-
-        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
-
-        let err = worker.run(ctx).await.unwrap_err();
-        assert_matches!(
-            err,
-            WorkerError::FatalError(
-                FatalError::CannotInstantiate { reason, detail: _ },
-                _version,
-            ) => {
-                assert!(reason.contains("function_not_found"), "reason: {reason}");
+                assert!(reason.contains("module_parse_error"), "reason: {reason}");
             }
         );
     }
@@ -749,7 +785,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_fetch_get() {
+    async fn fetch_get() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{method, path},
@@ -767,7 +803,7 @@ mod tests {
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
         let js_source = format!(
             r#"
-            async function do_fetch(params) {{
+            export default async function do_fetch(params) {{
                 const resp = await fetch("{url}/hello");
                 const text = await resp.text();
                 return text;
@@ -787,7 +823,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_fetch_post_json() {
+    async fn fetch_post_json() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{body_json, method, path},
@@ -806,7 +842,7 @@ mod tests {
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "post-json");
         let js_source = format!(
             r#"
-            async function post_json(params) {{
+            export default async function post_json(params) {{
                 const resp = await fetch("{url}/api", {{
                     method: "POST",
                     headers: {{ "Content-Type": "application/json" }},
@@ -830,7 +866,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_fetch_response_status() {
+    async fn fetch_response_status() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{method, path},
@@ -848,7 +884,7 @@ mod tests {
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "check-status");
         let js_source = format!(
             r#"
-            async function check_status(params) {{
+            export default async function check_status(params) {{
                 const resp = await fetch("{url}/not-found");
                 return "status:" + resp.status;
             }}
@@ -867,12 +903,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_fetch_disallowed_host() {
+    async fn fetch_disallowed_host() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "bad-fetch");
         // No hosts are allowed
         let js_source = r#"
-            async function bad_fetch(params) {
+            export default async function bad_fetch(params) {
                 const resp = await fetch("http://example.com/");
                 return await resp.text();
             }
@@ -889,11 +925,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_sync_function_still_works_with_fetch_runtime() {
+    async fn sync_function_still_works_with_fetch_runtime() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "sync-fn");
         let js_source = r#"
-            function sync_fn(params) {
+            export default function sync_fn(params) {
                 return "sync result: " + params[0];
             }
         "#;
@@ -909,11 +945,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_custom_params_string_and_u32() {
+    async fn custom_params_string_and_u32() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet-n-times");
         let js_source = r#"
-            function greet_n_times(name, count) {
+            export default function greet_n_times(name, count) {
                 let parts = [];
                 for (let i = 0; i < count; i++) {
                     parts.push("Hello, " + name + "!");
@@ -950,11 +986,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_custom_params_no_params() {
+    async fn custom_params_no_params() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "no-args");
         let js_source = r#"
-            function no_args() {
+            export default function no_args() {
                 return "no args works";
             }
         "#;
@@ -970,11 +1006,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_activity_custom_params_list_and_bool() {
+    async fn custom_params_list_and_bool() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "format-list");
         let js_source = r#"
-            function format_list(items, uppercase) {
+            export default function format_list(items, uppercase) {
                 let result = items.join(", ");
                 if (uppercase) {
                     result = result.toUpperCase();

@@ -1,4 +1,4 @@
-function add_via_activity(a, b) {
+export default function add_via_activity(a, b) {
     const js = obelisk.createJoinSet();
     const execId = js.submit('testing:integration/activities.add', [a, b]);
     console.log('Submitted add activity, execId:', execId);

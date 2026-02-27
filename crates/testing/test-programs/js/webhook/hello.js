@@ -1,4 +1,4 @@
-function handle(request) {
+export default function handle(request) {
     console.info(request);
     return {
         status: 200,

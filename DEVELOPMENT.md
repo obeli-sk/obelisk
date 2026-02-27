@@ -38,14 +38,6 @@ direnv allow
 ```
 Or manually install dependencies (see [dev-deps.txt](dev-deps.txt)).
 
-## Before Committing
-
-Always run:
-```sh
-./scripts/clippy.sh
-```
-This runs clippy with pedantic settings and formats code.
-
 ## Running Tests
 
 Postgres must be running. See `.envrc-example` for environment variables.
@@ -60,36 +52,8 @@ cargo test --package obeli-db-tests --test deployment_pagination
 cargo test --package obelisk grpc_server::tests
 ```
 
-### Database Tests
-
-Tests in `crates/testing/db-tests/` use `#[expand_enum_database]` to run against
-multiple backends (SQLite, PostgreSQL, Memory). The Memory backend has limited functionality.
-
-```rust
-#[expand_enum_database]
-#[rstest]
-#[tokio::test]
-async fn my_test(database: Database) {
-    if database == Database::Memory {
-        return; // Skip if not supported
-    }
-    // ...
-}
-```
 
 ## Code Patterns
-
-### Pagination
-
-Cursor-based pagination via `Pagination<T>`:
-```rust
-pub enum Pagination<T> {
-    NewerThan { length: u16, cursor: T, including_cursor: bool },
-    OlderThan { length: u16, cursor: T, including_cursor: bool },
-}
-```
-Results are always returned in **descending order** (newest first), even for `NewerThan`.
-The DB layer reverses `NewerThan` results.
 
 ### WASM Component Error Variants
 
@@ -120,11 +84,3 @@ Implementation pattern:
 | REST API | `src/server/web_api_server.rs` |
 | Type conversions (gRPC) | `crates/grpc/src/grpc_mapping.rs` |
 | Test utilities | `crates/testing/test-utils/src/` |
-
-## Commit Messages
-
-Use conventional commit style with scope:
-- `fix(grpc):` — gRPC fixes
-- `r:` or `refactor:` — Refactoring
-- `test:` — Test additions/changes
-- `chore:` — Maintenance tasks

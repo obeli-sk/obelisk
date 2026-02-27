@@ -4,23 +4,23 @@ interface execute {
 
     variant js-runtime-error {
         execution-failed, // Must exist to satisfy Obelisk contract
-        /// error when `js-code` could not be evaluated, before actually running the function with supplied parameters.
-        cannot-declare-function(string),
-        /// `js-code` was evaluated, but type of `fn-name` not a function.
-        function-not-found,
-        // function was executed and succeeded, but did not type check.
+        /// Error when `js-code` could not be parsed as an ES module.
+        module-parse-error(string),
+        /// `js-code` was parsed, but does not have a callable default export.
+        no-default-export,
+        // Function was executed and succeeded, but did not type check.
         wrong-return-type(string),
-        // function was executed and thrown an error, but it did not type check.
+        // Function was executed and threw an error, but it did not type check.
         wrong-thrown-type(string),
     }
 
     /// Execute JavaScript code as an activity.
     ///
-    /// The JS code should define a function named as declared in `fn-name` that receives
-    /// the params as positional arguments (each element is one JSON-serialized parameter value)
-    /// and returns a string.
+    /// The JS code should use ES module syntax with `export default function(...) { ... }`.
+    /// The default export receives params as positional arguments
+    /// (each element is one JSON-serialized parameter value) and returns a string.
     ///
     /// Returns Ok(Ok(string)) on success, Ok(Err(string)) on thrown string/Error,
     /// or Err(js-runtime-error) on type/declaration errors.
-    run: func(fn-name: string, js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>;
+    run: func(js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>;
 }

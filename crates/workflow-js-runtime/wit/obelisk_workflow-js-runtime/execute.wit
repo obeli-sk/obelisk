@@ -5,10 +5,10 @@ interface execute {
     variant js-runtime-error {
         /// Must exist to satisfy Obelisk contract.
         execution-failed,
-        /// Error when `js-code` could not be evaluated, before actually running the function.
-        cannot-declare-function(string),
-        /// `js-code` was evaluated, but `fn-name` is not a function.
-        function-not-found,
+        /// Error when `js-code` could not be parsed as an ES module.
+        module-parse-error(string),
+        /// `js-code` was parsed, but does not have a callable default export.
+        no-default-export,
         /// Function was executed and succeeded, but result did not type check.
         wrong-return-type(string),
         /// Function was executed and threw an error, but it did not type check.
@@ -17,11 +17,11 @@ interface execute {
 
     /// Execute JavaScript code as a workflow.
     ///
-    /// The JS code should define a function named as declared in `fn-name` that receives
-    /// the params as positional arguments (each element is one JSON-serialized parameter value)
-    /// and returns a string.
+    /// The JS code should use ES module syntax with `export default function(...) { ... }`.
+    /// The default export receives params as positional arguments
+    /// (each element is one JSON-serialized parameter value) and returns a string.
     ///
     /// Returns Ok(Ok(result)) on success, Ok(Err(error_message)) on user error,
     /// or Err(js-runtime-error) on runtime error.
-    run: func(fn-name: string, js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>;
+    run: func(js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>;
 }
