@@ -3,9 +3,9 @@
 //! This is a WASI HTTP handler that runs JavaScript code to process HTTP requests.
 //! The JS code is provided via the `JS_SOURCE` environment variable.
 //!
-//! The JS handler receives a request object and should return a response object:
+//! The JS handler uses ES module syntax with a default export:
 //! ```js
-//! function handle(request) {
+//! export default function(request) {
 //!     return {
 //!         status: 200,
 //!         headers: [["content-type", "text/plain"]],
@@ -16,7 +16,7 @@
 //!
 //! Async handlers with fetch are also supported:
 //! ```js
-//! async function handle(request) {
+//! export default async function(request) {
 //!     const resp = await fetch("https://example.com/api");
 //!     const data = await resp.text();
 //!     return { status: 200, headers: [], body: data };
@@ -25,6 +25,7 @@
 
 use crate::generated::obelisk::log::log;
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
+use boa_common::esm::{EsmError, get_default_export_async};
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{
@@ -59,8 +60,6 @@ impl ObeliskLogger for Logger {
         log::error(msg);
     }
 }
-
-const FN_NAME: &str = "handle";
 
 #[wstd::http_server]
 async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Error> {
@@ -134,36 +133,51 @@ async fn run_js_handler_async(js_source: &str, request_json: &str) -> Result<Str
     // Set up fetch
     setup_fetch(&mut context).expect("fetch setup must work");
 
-    // Parse the request JSON and make it available
-    let request_js = format!("const __request__ = {request_json};");
-    context
-        .eval(Source::from_bytes(&request_js))
-        .map_err(|e| format!("Failed to set request: {e}"))?;
+    // We need to wrap context in RefCell for the async ESM loading
+    let context = RefCell::new(&mut context);
 
-    // Execute the user's JS code
-    context
-        .eval(Source::from_bytes(js_source))
-        .map_err(|e| format!("Failed to execute JS: {e}"))?;
+    // Get the default export function from the ES module (async version)
+    let default_fn = match get_default_export_async(js_source, &context, &executor).await {
+        Ok(func) => func,
+        Err(EsmError::ParseError(msg)) => return Err(format!("Module parse error: {msg}")),
+        Err(EsmError::LoadError(msg)) => return Err(format!("Module load error: {msg}")),
+        Err(EsmError::LinkError(msg)) => return Err(format!("Module link error: {msg}")),
+        Err(EsmError::EvalError(msg)) => return Err(format!("Module eval error: {msg}")),
+        Err(EsmError::NoDefaultExport) => return Err("No default export found".to_string()),
+        Err(EsmError::DefaultNotCallable) => {
+            return Err("Default export is not callable".to_string());
+        }
+    };
 
-    // Call the handler function (may return a Promise for async handlers)
-    let call_code = format!("{FN_NAME}(__request__)");
-    let result = context
-        .eval(Source::from_bytes(&call_code))
-        .map_err(|e| format!("Failed to call {FN_NAME}: {e}"))?;
+    // Parse the request JSON as a JS value
+    let request_value = context
+        .borrow_mut()
+        .eval(Source::from_bytes(&format!("({request_json})")))
+        .map_err(|e| format!("Failed to parse request: {e}"))?;
+
+    // Call the default export function with the request (may return a Promise for async handlers)
+    let result = default_fn
+        .call(
+            &JsValue::undefined(),
+            &[request_value],
+            *context.borrow_mut(),
+        )
+        .map_err(|e| format!("Failed to call handler: {e}"))?;
 
     // If the result is a Promise, drive it to completion
-    let result = resolve_if_promise_async(&result, &mut context, &executor)
+    let result = resolve_if_promise_async(&result, &context, &executor)
         .await
         .map_err(|e| format!("Promise resolution failed: {e}"))?;
 
     // Stringify the result
-    json_stringify(&result, &mut context).map_err(|e| format!("Failed to stringify result: {e}"))
+    json_stringify(&result, *context.borrow_mut())
+        .map_err(|e| format!("Failed to stringify result: {e}"))
 }
 
 /// If `value` is a Promise, drive it to completion and return the resolved value (async version).
 async fn resolve_if_promise_async(
     value: &JsValue,
-    context: &mut Context,
+    context: &RefCell<&mut Context>,
     executor: &Rc<WasiJobExecutor>,
 ) -> JsResult<JsValue> {
     let Some(object) = value.as_object() else {
@@ -174,12 +188,10 @@ async fn resolve_if_promise_async(
     };
 
     // Drive promise resolution using the executor's async job runner.
-    let executor = executor.clone();
-    let context = RefCell::new(context);
     loop {
         match promise.state() {
             PromiseState::Pending => {
-                executor.clone().drive_jobs(&context).await?;
+                executor.clone().drive_jobs(context).await?;
             }
             PromiseState::Fulfilled(v) => return Ok(v),
             PromiseState::Rejected(e) => return Err(JsError::from_opaque(e)),

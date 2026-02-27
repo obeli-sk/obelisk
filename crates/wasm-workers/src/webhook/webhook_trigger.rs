@@ -2004,10 +2004,10 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
-        async fn js_webhook_hello_world() {
+        async fn webhook_js_hello_world() {
             test_utils::set_up();
             let js_source = r#"
-                function handle(request) {
+                export default function handle(request) {
                     return {
                         status: 200,
                         headers: [["content-type", "text/plain"]],
@@ -2025,10 +2025,10 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
-        async fn js_webhook_reads_request_method_and_url() {
+        async fn webhook_js_reads_request_method_and_url() {
             test_utils::set_up();
             let js_source = r#"
-                function handle(request) {
+                export default function handle(request) {
                     return {
                         status: 200,
                         headers: [],
@@ -2050,10 +2050,10 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
-        async fn js_webhook_custom_status_code() {
+        async fn webhook_js_custom_status_code() {
             test_utils::set_up();
             let js_source = r#"
-                function handle(request) {
+                export default function handle(request) {
                     return {
                         status: 201,
                         headers: [],
@@ -2152,7 +2152,7 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
-        async fn js_webhook_fetch_get() {
+        async fn webhook_js_fetch_get() {
             use wiremock::{
                 Mock, MockServer, ResponseTemplate,
                 matchers::{method, path},
@@ -2169,7 +2169,7 @@ pub(crate) mod tests {
             let url = mock_server.uri();
             let js_source = format!(
                 r#"
-                async function handle(request) {{
+                export default async function handle(request) {{
                     const resp = await fetch("{url}/hello");
                     const text = await resp.text();
                     return {{
@@ -2193,11 +2193,11 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
-        async fn js_webhook_request_headers() {
+        async fn webhook_js_request_headers() {
             test_utils::set_up();
             // JS handler that returns the x-custom headers as JSON
             let js_source = r#"
-                function handle(request) {
+                export default function handle(request) {
                     const customHeaders = request.headers["x-custom"] || [];
                     return {
                         status: 200,

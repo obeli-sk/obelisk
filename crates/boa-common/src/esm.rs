@@ -2,12 +2,14 @@
 //!
 //! Provides utilities for parsing and evaluating ES modules with `export default`.
 
+use crate::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{
-    Context, JsError, JsResult, JsValue, Source,
+    Context, JsError, Source,
     builtins::promise::PromiseState,
     module::{IdleModuleLoader, Module},
     object::builtins::JsFunction,
 };
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Errors that can occur when loading or evaluating an ES module.
@@ -127,15 +129,84 @@ pub fn get_default_export(js_code: &str, context: &mut Context) -> Result<JsFunc
     JsFunction::from_object(func.clone()).ok_or(EsmError::DefaultNotCallable)
 }
 
-/// Call the default export function with the given arguments.
+/// Async version of [`get_default_export`] for use in async contexts.
 ///
-/// This is a convenience wrapper that calls `get_default_export` and then
-/// invokes the function with the provided arguments.
-pub fn call_default_export(
+/// This version uses `WasiJobExecutor::drive_jobs` instead of `context.run_jobs()`,
+/// which avoids nesting `block_on` calls when already inside wstd's async runtime
+/// (e.g., in webhook handlers).
+pub async fn get_default_export_async(
     js_code: &str,
-    args: &[JsValue],
-    context: &mut Context,
-) -> Result<JsResult<JsValue>, EsmError> {
-    let func = get_default_export(js_code, context)?;
-    Ok(func.call(&JsValue::undefined(), args, context))
+    context: &RefCell<&mut Context>,
+    executor: &Rc<WasiJobExecutor>,
+) -> Result<JsFunction, EsmError> {
+    // 1. Parse the JS code as an ES Module
+    let module = Module::parse(Source::from_bytes(js_code), None, *context.borrow_mut())
+        .map_err(|err| EsmError::from_js_error(err, EsmError::ParseError))?;
+
+    // 2. Load module dependencies
+    let load_promise = module.load(*context.borrow_mut());
+
+    // Drive the load promise to completion using async executor
+    executor
+        .clone()
+        .drive_jobs(context)
+        .await
+        .map_err(|err| EsmError::from_js_error(err, EsmError::LoadError))?;
+
+    match load_promise.state() {
+        PromiseState::Fulfilled(_) => {}
+        PromiseState::Rejected(err) => {
+            return Err(EsmError::LoadError(JsError::from_opaque(err).to_string()));
+        }
+        PromiseState::Pending => {
+            return Err(EsmError::LoadError(
+                "module load promise is still pending".to_string(),
+            ));
+        }
+    }
+
+    // 3. Link the module
+    module
+        .link(*context.borrow_mut())
+        .map_err(|err| EsmError::from_js_error(err, EsmError::LinkError))?;
+
+    // 4. Evaluate the module
+    let eval_promise = module.evaluate(*context.borrow_mut());
+
+    // Drive the evaluate promise to completion using async executor
+    executor
+        .clone()
+        .drive_jobs(context)
+        .await
+        .map_err(|err| EsmError::from_js_error(err, EsmError::EvalError))?;
+
+    match eval_promise.state() {
+        PromiseState::Fulfilled(_) => {}
+        PromiseState::Rejected(err) => {
+            return Err(EsmError::EvalError(JsError::from_opaque(err).to_string()));
+        }
+        PromiseState::Pending => {
+            return Err(EsmError::EvalError(
+                "module evaluate promise is still pending".to_string(),
+            ));
+        }
+    }
+
+    // 5. Get the module namespace and extract the default export
+    let namespace = module.namespace(*context.borrow_mut());
+    let default_export = namespace
+        .get(boa_engine::js_string!("default"), *context.borrow_mut())
+        .map_err(|err| EsmError::from_js_error(err, EsmError::EvalError))?;
+
+    // 6. Check if default export exists
+    if default_export.is_undefined() {
+        return Err(EsmError::NoDefaultExport);
+    }
+
+    // 7. Verify it's a callable function
+    let Some(func) = default_export.as_callable() else {
+        return Err(EsmError::DefaultNotCallable);
+    };
+
+    JsFunction::from_object(func.clone()).ok_or(EsmError::DefaultNotCallable)
 }
