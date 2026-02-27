@@ -7421,6 +7421,8 @@ dependencies = [
  "anyhow",
  "boa-common",
  "boa_engine",
+ "futures-concurrency",
+ "futures-lite 2.6.1",
  "serde_json",
  "wit-bindgen 0.53.1",
  "wit-bindgen-rust 0.53.1",

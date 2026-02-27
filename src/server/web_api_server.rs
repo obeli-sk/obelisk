@@ -1551,7 +1551,6 @@ async fn execution_replay(
             execution_id.clone(),
             logs_storage_config,
             js_info.js_source.clone(),
-            js_info.user_ffqn.clone(),
         )
         .await
     } else {
@@ -1651,7 +1650,6 @@ async fn execution_upgrade(
                 execution_id.clone(),
                 logs_storage_config,
                 js_info.js_source.clone(),
-                js_info.user_ffqn.clone(),
             )
             .await
         } else {

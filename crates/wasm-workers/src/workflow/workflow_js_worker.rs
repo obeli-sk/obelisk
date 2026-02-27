@@ -34,7 +34,6 @@ use wasmtime::Engine;
 pub struct WorkflowJsWorkerCompiled {
     inner: WorkflowWorkerCompiled,
     js_source: String,
-    user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
     /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
     user_wasm_component: WasmComponent,
@@ -44,16 +43,15 @@ impl WorkflowJsWorkerCompiled {
     pub fn new(
         inner: WorkflowWorkerCompiled,
         js_source: String,
-        user_ffqn: FunctionFqn,
+        user_ffqn: &FunctionFqn,
         user_params: Vec<ParameterType>,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
-        let wit = synthesize_wit(&user_ffqn, &user_params);
+        let wit = synthesize_wit(user_ffqn, &user_params);
         let user_wasm_component =
             WasmComponent::new_from_wit_string(&wit, ComponentType::Workflow)?;
         Ok(Self {
             inner,
             js_source,
-            user_ffqn,
             user_params,
             user_wasm_component,
         })
@@ -89,7 +87,6 @@ impl WorkflowJsWorkerCompiled {
         Ok(WorkflowJsWorkerLinked {
             inner: linked,
             js_source: self.js_source,
-            user_ffqn: self.user_ffqn,
             user_params: self.user_params,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
         })
@@ -99,7 +96,6 @@ impl WorkflowJsWorkerCompiled {
 pub struct WorkflowJsWorkerLinked {
     inner: super::workflow_worker::WorkflowWorkerLinked,
     js_source: String,
-    user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
     user_exports_noext: Vec<FunctionMetadata>,
 }
@@ -123,7 +119,6 @@ impl WorkflowJsWorkerLinked {
         WorkflowJsWorker {
             inner,
             js_source: self.js_source,
-            user_ffqn: self.user_ffqn,
             user_params: self.user_params,
             user_exports_noext: self.user_exports_noext,
         }
@@ -133,7 +128,6 @@ impl WorkflowJsWorkerLinked {
 pub struct WorkflowJsWorker {
     inner: WorkflowWorker,
     js_source: String,
-    user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
     user_exports_noext: Vec<FunctionMetadata>,
 }
@@ -170,14 +164,12 @@ impl Worker for WorkflowJsWorker {
             // Copied from workflow_js_runtime_builder::exports::obelisk_workflow::workflow_js_runtime::execute::RUN
             FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(self.user_ffqn.function_name.to_string()),
             serde_json::Value::String(self.js_source.clone()),
             serde_json::Value::Array(params_json_list),
         ]);
         ctx.params = Params::from_json_values(
             boa_params,
             [
-                &TypeWrapper::String,
                 &TypeWrapper::String,
                 &TypeWrapper::List(Box::new(TypeWrapper::String)),
             ]
@@ -275,7 +267,7 @@ impl Worker for WorkflowJsWorker {
                                     version,
                                 ))
                             }
-                            "cannot_declare_function" | "function_not_found" => {
+                            "module_parse_error" | "no_default_export" => {
                                 let detail = payload.as_ref().and_then(|p| {
                                     if let WastVal::String(s) = p.as_ref() {
                                         Some(s.clone())
@@ -344,7 +336,6 @@ impl WorkflowJsWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         js_source: String,
-        user_ffqn: FunctionFqn,
     ) -> Result<(), ReplayError> {
         let clock_fn = ConstClock(chrono::DateTime::from_timestamp_nanos(0));
 
@@ -386,14 +377,12 @@ impl WorkflowJsWorker {
         let boa_ffqn =
             FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(user_ffqn.function_name.to_string()),
             serde_json::Value::String(js_source),
             serde_json::Value::Array(params_json_list),
         ]);
         let transformed_params = Params::from_json_values(
             boa_params,
             [
-                &TypeWrapper::String,
                 &TypeWrapper::String,
                 &TypeWrapper::List(Box::new(TypeWrapper::String)),
             ]
@@ -519,7 +508,7 @@ mod tests {
 
     const FIBO_10_OUTPUT: u64 = 55;
 
-    fn new_js_workflow_worker(js_source: &str, user_ffqn: FunctionFqn) -> Arc<dyn Worker> {
+    fn new_js_workflow_worker(js_source: &str, user_ffqn: &FunctionFqn) -> Arc<dyn Worker> {
         let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let cancel_registry = CancelRegistry::new();
         let clock_fn: Box<dyn ClockFn> = Now.clone_box();
@@ -624,16 +613,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_workflow_simple_return() {
+    async fn workflow_js_simple_return() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hello");
         let js_source = r#"
-            function hello() {
+            export default function hello() {
                 return "hello world";
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone());
+        let worker = new_js_workflow_worker(js_source, &ffqn);
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -644,18 +633,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_workflow_with_params() {
+    async fn workflow_js_with_params() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet");
         let js_source = r#"
-            function greet(params) {
+            export default function greet(params) {
                 let name = params[0];
                 let greeting = params[1];
                 return greeting + ", " + name + "!";
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone());
+        let worker = new_js_workflow_worker(js_source, &ffqn);
         let ctx = make_worker_context(ffqn, &["World".to_string(), "Hello".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -666,16 +655,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_workflow_with_throw_string() {
+    async fn workflow_js_with_throw_string() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
         let js_source = r#"
-            function fail() {
+            export default function fail() {
                 throw "something went wrong";
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone());
+        let worker = new_js_workflow_worker(js_source, &ffqn);
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -687,16 +676,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_workflow_syntax_error_should_fail_to_instantiate() {
+    async fn workflow_js_syntax_error_should_fail_to_instantiate() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "broken");
         let js_source = r"
-            function broken( {
+            export default function broken( {
                 return 'this has a syntax error';
             }
         ";
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone());
+        let worker = new_js_workflow_worker(js_source, &ffqn);
         let ctx = make_worker_context(ffqn, &[]);
 
         let err = worker.run(ctx).await.unwrap_err();
@@ -706,22 +695,22 @@ mod tests {
                 FatalError::CannotInstantiate { reason, detail: _ },
                 _version,
             ) => {
-                assert!(reason.contains("cannot_declare_function"), "reason: {reason}");
+                assert!(reason.contains("module_parse_error"), "reason: {reason}");
             }
         );
     }
 
     #[tokio::test]
-    async fn js_workflow_function_not_found_should_fail_to_instantiate() {
+    async fn workflow_js_no_default_export() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "missing");
         let js_source = r"
-            function some_other_function() {
+            export function some_other_function() {
                 return 'hello';
             }
         ";
 
-        let worker = new_js_workflow_worker(js_source, ffqn.clone());
+        let worker = new_js_workflow_worker(js_source, &ffqn);
         let ctx = make_worker_context(ffqn, &[]);
 
         let err = worker.run(ctx).await.unwrap_err();
@@ -731,7 +720,7 @@ mod tests {
                 FatalError::CannotInstantiate { reason, detail: _ },
                 _version,
             ) => {
-                assert!(reason.contains("function_not_found"), "reason: {reason}");
+                assert!(reason.contains("no_default_export"), "reason: {reason}");
             }
         );
     }
@@ -742,7 +731,7 @@ mod tests {
 
     async fn compile_js_workflow_worker(
         js_source: &str,
-        user_ffqn: FunctionFqn,
+        user_ffqn: &FunctionFqn,
         db_pool: Arc<dyn DbPool>,
         clock_fn: Box<dyn ClockFn>,
         fn_registry: Arc<dyn FunctionRegistry>,
@@ -832,11 +821,12 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn js_workflow_join_next_try_found(database: Database) {
+    async fn workflow_js_join_next_try_found(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r"function test_delay(params) {
+        let js_source = r"
+        export default function test_delay(params) {
             const js = obelisk.createJoinSet();
             const delayId = js.submitDelay({ milliseconds: 10 });
             obelisk.sleep({ milliseconds: 20 });
@@ -876,17 +866,17 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn js_workflow_all_apis(
+    async fn workflow_js_all_apis(
         database: Database,
         #[values(false, true)] activity_should_win: bool,
         #[values(false, true)] explicit_close: bool,
     ) {
         let (_guard, db_pool, db_close) = database.set_up().await;
-        js_workflow_all_apis_inner(db_pool.clone(), activity_should_win, explicit_close).await;
+        workflow_js_all_apis_inner(db_pool.clone(), activity_should_win, explicit_close).await;
         db_close.close().await;
     }
 
-    async fn js_workflow_all_apis_inner(
+    async fn workflow_js_all_apis_inner(
         db_pool: Arc<dyn DbPool>,
         activity_should_win: bool,
         explicit_close: bool,
@@ -895,7 +885,8 @@ mod tests {
         let sim_clock = SimClock::epoch();
 
         // JS code that exercises all workflow-support APIs
-        let js_source = r"function test_all_apis(params) {
+        let js_source = r"
+        export default function test_all_apis(params) {
             console.log('Starting comprehensive API test');
             const explicit_close = params[0] === 'true';
 
@@ -973,7 +964,7 @@ mod tests {
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (worker, component_id, runnable_component) = compile_js_workflow_worker(
             js_source,
-            user_ffqn.clone(),
+            &user_ffqn,
             db_pool.clone(),
             sim_clock.clone_box(),
             fn_registry.clone(),
@@ -997,7 +988,7 @@ mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id: execution_id.clone(),
-                ffqn: user_ffqn.clone(),
+                ffqn: user_ffqn,
                 params,
                 parent: None,
                 metadata: ExecutionMetadata::empty(),
@@ -1181,7 +1172,6 @@ mod tests {
                 log_sender,
             }),
             js_source.to_string(),
-            user_ffqn,
         )
         .await
         .unwrap();
@@ -1254,7 +1244,7 @@ mod tests {
                 Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let (worker, component_id, _runnable_component) = compile_js_workflow_worker(
                 js_source,
-                user_ffqn.clone(),
+                &user_ffqn,
                 db_pool.clone(),
                 sim_clock.clone_box(),
                 fn_registry,
@@ -1327,11 +1317,12 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn js_workflow_stub(database: Database) {
+    async fn workflow_js_stub(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r"function test_stub(params) {
+        let js_source = r"
+        export default function test_stub(params) {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'ok': 'stubbed-result-42'});
@@ -1361,11 +1352,12 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn js_workflow_stub_with_error(database: Database) {
+    async fn workflow_js_stub_with_error(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r"function test_stub_err(params) {
+        let js_source = r"
+        export default function test_stub_err(params) {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'err': null}); // result<string> has no error type
@@ -1390,11 +1382,12 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn js_workflow_stub_execution_not_found(database: Database) {
+    async fn workflow_js_stub_execution_not_found(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r"function test_stub_not_found(params) {
+        let js_source = r"
+        export default function test_stub_not_found(params) {
             try {
                 obelisk.stub('E_00000000000000000000000000.n:fake_1', {'ok': 'x'});
                 return JSON.stringify({ error: 'expected-error-but-got-none' });
@@ -1423,11 +1416,12 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn js_workflow_stub_same_value_twice(database: Database) {
+    async fn workflow_js_stub_same_value_twice(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r"function test_stub_twice(params) {
+        let js_source = r"
+        export default function test_stub_twice(params) {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'ok': 'same-value'});
@@ -1453,11 +1447,12 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn js_workflow_stub_noret(database: Database) {
+    async fn workflow_js_stub_noret(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r"function test_stub_noret(params) {
+        let js_source = r"
+        export default function test_stub_noret(params) {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.noret', []);
             obelisk.stub(execId, {'ok': null}); // result has no payload
@@ -1482,11 +1477,12 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn js_workflow_stub_conflict(database: Database) {
+    async fn workflow_js_stub_conflict(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r"function test_stub_conflict(params) {
+        let js_source = r"
+        export default function test_stub_conflict(params) {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'ok': 'first-value'});

@@ -2184,7 +2184,7 @@ fn prespawn_js_workflow(
     let worker = WorkflowJsWorkerCompiled::new(
         inner,
         workflow_js.js_source.clone(),
-        workflow_js.ffqn.clone(),
+        &workflow_js.ffqn,
         workflow_js.params.clone(),
     )
     .with_context(|| format!("cannot create JS workflow worker for {component_id}"))?;
@@ -2197,7 +2197,6 @@ fn prespawn_js_workflow(
         workflows_lock_extension_leeway,
         wit,
         workflow_js.js_source,
-        workflow_js.ffqn,
         workflow_js.params,
     ))
 }
@@ -2327,7 +2326,6 @@ impl WorkerCompiled {
         workflows_lock_extension_leeway: Duration,
         wit: Option<String>,
         js_source: String,
-        user_ffqn: FunctionFqn,
         user_params: Vec<concepts::ParameterType>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2343,7 +2341,6 @@ impl WorkerCompiled {
                 logs_store_min_level,
                 js_workflow_info: Some(JsWorkflowReplayInfo {
                     js_source,
-                    user_ffqn,
                     user_params,
                 }),
             }),

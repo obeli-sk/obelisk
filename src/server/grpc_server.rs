@@ -806,7 +806,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 execution_id.clone(),
                 logs_storage_config,
                 js_info.js_source.clone(),
-                js_info.user_ffqn.clone(),
             )
             .await
         } else {
@@ -878,7 +877,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     execution_id.clone(),
                     logs_storage_config,
                     js_info.js_source.clone(),
-                    js_info.user_ffqn.clone(),
                 )
                 .await
             } else {

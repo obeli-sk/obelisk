@@ -3,12 +3,14 @@
 //! This runtime provides:
 //! - `obelisk.*` workflow API (join sets, sleep, random, etc.)
 //! - `console.*` → `obelisk:log` routing
+//! - ES Module support with `export default`
 //!
 //! Unlike activity-js-runtime, this runtime:
 //! - Does NOT provide `fetch()` (HTTP is not deterministic)
 //! - Uses synchronous execution only (no async/promises)
 //! - Runs on `wasm32-unknown-unknown` target
 
+use crate::deterministic_executor::DeterministicJobExecutor;
 use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::JsRuntimeError;
 use crate::generated::obelisk::log::log as obelisk_log;
 use crate::generated::obelisk::types::execution::{ExecutionId, Function, ResponseId};
@@ -21,10 +23,12 @@ use crate::generated::obelisk::workflow::workflow_support::{
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_engine::{
-    Context, JsArgs, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, Source, js_string,
+    Context, JsArgs, JsError, JsNativeError, JsObject, JsResult, JsValue, Module, NativeFunction,
+    Source, builtins::promise::PromiseState, js_string, object::builtins::JsFunction,
     property::Attribute,
 };
 use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Logger implementation using the generated obelisk:log bindings.
 #[derive(Clone, Copy)]
@@ -79,55 +83,62 @@ fn take_join_set(idx: usize) -> Option<JoinSet> {
 /// Execute JavaScript code with the given parameters.
 ///
 /// `params_json` is a list of JSON-serialized parameter values.
-/// Each element is passed as a positional argument to the JS function `fn_name`.
+/// Each element is passed as a positional argument to the default export function.
 pub fn execute(
-    fn_name: &str,
     js_code: &str,
     params_json: &[String],
 ) -> Result<Result<String, String>, JsRuntimeError> {
-    // `fn_name` comes from trusted `workflow_js_worker`, must be FFQN's fn name
-    let fn_name = fn_name.replace('-', "_");
+    let executor = Rc::new(DeterministicJobExecutor::default());
+    let mut context = Context::builder()
+        .job_executor(executor.clone())
+        .build()
+        .expect("building context must work");
 
-    let mut context = Context::default();
-
-    // Set up the obelisk global object with workflow APIs
+    // Set up the obelisk global object with workflow APIs BEFORE module evaluation
+    // so that `obelisk.*` is available during module initialization
     setup_obelisk_api(&mut context).expect("obelisk API setup must work");
 
     // Set up console
     setup_console(&mut context, Logger).expect("console setup must work");
 
+    // Get the default export function from the ES module
+    let default_fn = match get_default_export_workflow(js_code, &mut context) {
+        Ok(func) => func,
+        Err(EsmErrorWorkflow::ParseError(msg)) => {
+            obelisk_log::error(&format!("module parse error: {msg}"));
+            return Err(JsRuntimeError::ModuleParseError(msg));
+        }
+        Err(EsmErrorWorkflow::LoadError(msg)) => {
+            obelisk_log::error(&format!("module load error: {msg}"));
+            return Err(JsRuntimeError::ModuleParseError(msg));
+        }
+        Err(EsmErrorWorkflow::LinkError(msg)) => {
+            obelisk_log::error(&format!("module link error: {msg}"));
+            return Err(JsRuntimeError::ModuleParseError(msg));
+        }
+        Err(EsmErrorWorkflow::EvalError(msg)) => {
+            obelisk_log::error(&format!("module eval error: {msg}"));
+            return Err(JsRuntimeError::ModuleParseError(msg));
+        }
+        Err(EsmErrorWorkflow::NoDefaultExport | EsmErrorWorkflow::DefaultNotCallable) => {
+            return Err(JsRuntimeError::NoDefaultExport);
+        }
+    };
+
     // `params_json` is sent by trusted `workflow_js_worker`, params were typechecked.
-    // Parse each JSON param and store as `__params__` array.
-    let params_js_parts: Vec<&str> = params_json.iter().map(|p| p.as_str()).collect();
-    let params_array = format!("const __params__ = [{}];", params_js_parts.join(", "));
-    context
-        .eval(Source::from_bytes(&params_array))
-        .expect("already verified that params_json elements are parseable");
-
-    // Add the function to the context, without running it.
-    let bare_fn_eval = context.eval(Source::from_bytes(js_code));
-    if let Err(err) = bare_fn_eval {
-        obelisk_log::error(&format!("cannot evaluate - {err:?}"));
-        return Err(JsRuntimeError::CannotDeclareFunction(err.to_string()));
-    }
-
-    let typeof_fn = context.eval(Source::from_bytes(&format!("typeof {fn_name}")));
-    let Ok(typeof_fn) = typeof_fn else {
-        return Err(JsRuntimeError::FunctionNotFound);
-    };
-    let Some(typeof_fn) = typeof_fn.as_string() else {
-        return Err(JsRuntimeError::FunctionNotFound);
-    };
-    if typeof_fn.as_str() != "function" {
-        return Err(JsRuntimeError::FunctionNotFound);
-    }
-
-    // Spread params as positional arguments: fn_name(__params__[0], __params__[1], ...)
-    let spread_args: Vec<String> = (0..params_json.len())
-        .map(|i| format!("__params__[{i}]"))
+    // Parse each JSON param into a JsValue.
+    let args: Vec<JsValue> = params_json
+        .iter()
+        .map(|param| {
+            // Each param is a JSON value — parse it as a JS value
+            context
+                .eval(Source::from_bytes(param))
+                .expect("already verified that params_json elements are parseable")
+        })
         .collect();
-    let call_fn = format!("{fn_name}({});", spread_args.join(", "));
-    let result = context.eval(Source::from_bytes(&call_fn));
+
+    // Call the default export function with the params
+    let result = default_fn.call(&JsValue::undefined(), &args, &mut context);
 
     match result {
         Ok(js_value) => {
@@ -163,6 +174,102 @@ fn extract_error_string(err: &boa_engine::JsError) -> Option<String> {
         return Some(string);
     }
     None
+}
+
+/// Errors that can occur when loading or evaluating an ES module for workflows.
+#[derive(Debug)]
+enum EsmErrorWorkflow {
+    ParseError(String),
+    LoadError(String),
+    LinkError(String),
+    EvalError(String),
+    NoDefaultExport,
+    DefaultNotCallable,
+}
+
+impl EsmErrorWorkflow {
+    fn from_js_error(err: JsError, f: impl FnOnce(String) -> Self) -> Self {
+        f(err.to_string())
+    }
+}
+
+/// Parse an ES module and extract its default export as a callable function.
+///
+/// This is a workflow-specific version that uses synchronous execution
+/// (no job executor) since workflows don't use async/promises.
+///
+/// IMPORTANT: `obelisk.*` globals must be set up BEFORE calling this function
+/// so they're available during module evaluation.
+fn get_default_export_workflow(
+    js_code: &str,
+    context: &mut Context,
+) -> Result<JsFunction, EsmErrorWorkflow> {
+    // 1. Parse the JS code as an ES Module
+    let module = Module::parse(Source::from_bytes(js_code), None, context)
+        .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::ParseError))?;
+
+    // 2. Load module dependencies (should resolve immediately with no imports)
+    let load_promise = module.load(context);
+    context
+        .run_jobs()
+        .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::LoadError))?;
+
+    match load_promise.state() {
+        PromiseState::Fulfilled(_) => {}
+        PromiseState::Rejected(err) => {
+            return Err(EsmErrorWorkflow::LoadError(
+                JsError::from_opaque(err).to_string(),
+            ));
+        }
+        PromiseState::Pending => {
+            return Err(EsmErrorWorkflow::LoadError(
+                "module load promise is still pending".to_string(),
+            ));
+        }
+    }
+
+    // 3. Link the module
+    module
+        .link(context)
+        .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::LinkError))?;
+
+    // 4. Evaluate the module
+    let eval_promise = module.evaluate(context);
+    context
+        .run_jobs()
+        .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::EvalError))?;
+
+    match eval_promise.state() {
+        PromiseState::Fulfilled(_) => {}
+        PromiseState::Rejected(err) => {
+            return Err(EsmErrorWorkflow::EvalError(
+                JsError::from_opaque(err).to_string(),
+            ));
+        }
+        PromiseState::Pending => {
+            return Err(EsmErrorWorkflow::EvalError(
+                "module evaluate promise is still pending".to_string(),
+            ));
+        }
+    }
+
+    // 5. Get the module namespace and extract the default export
+    let namespace = module.namespace(context);
+    let default_export = namespace
+        .get(js_string!("default"), context)
+        .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::EvalError))?;
+
+    // 6. Check if default export exists
+    if default_export.is_undefined() {
+        return Err(EsmErrorWorkflow::NoDefaultExport);
+    }
+
+    // 7. Verify it's a callable function
+    let Some(func) = default_export.as_callable() else {
+        return Err(EsmErrorWorkflow::DefaultNotCallable);
+    };
+
+    JsFunction::from_object(func.clone()).ok_or(EsmErrorWorkflow::DefaultNotCallable)
 }
 
 /// Helper to create a new JS object with the default prototype.
