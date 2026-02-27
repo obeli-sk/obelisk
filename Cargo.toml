@@ -427,8 +427,7 @@ strip = "none"
 
 [profile.release_wasm_runtime]
 inherits = "release"
-debug = "none"
-strip = true
+debug = "line-tables-only"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/obelisk-{ target }.tar.gz"
