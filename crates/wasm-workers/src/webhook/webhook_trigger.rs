@@ -1307,7 +1307,7 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::new_activity_fibo;
         use crate::activity::cancel_registry::CancelRegistry;
         use crate::engines::{EngineConfig, Engines};
-        use crate::http_request_policy::{AllowedHostConfig, HostPattern};
+        use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, WebhookEndpointCompiled, WebhookEndpointConfig, WebhookServerError,
@@ -1685,8 +1685,11 @@ pub(crate) mod tests {
                         subscription_interruption: None,
                         logs_store_min_level: None,
                         allowed_hosts: Arc::from(vec![AllowedHostConfig {
-                            pattern: HostPattern::parse_with_methods(&mock_allowed_host, vec![])
-                                .unwrap(),
+                            pattern: HostPattern::parse_with_methods(
+                                &mock_allowed_host,
+                                MethodsPattern::AllMethods,
+                            )
+                            .unwrap(),
                             secret_env_mappings: Vec::new(),
                             replace_in: hashbrown::HashSet::new(),
                         }]),
@@ -2075,8 +2078,9 @@ pub(crate) mod tests {
             SocketAddr,
             watch::Sender<()>,
         ) {
-            use crate::http_request_policy::{AllowedHostConfig, HostPattern};
-            let host_pattern = HostPattern::parse_with_methods(allowed_host, vec![]).unwrap();
+            use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
+            let host_pattern =
+                HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods).unwrap();
             let sim_clock = SimClock::default();
             let (_guard, db_pool, _db_close) = db_tests::Database::Memory.set_up().await;
             let fn_registry = TestingFnRegistry::new_from_components(vec![]);

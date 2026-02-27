@@ -100,13 +100,24 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Outgoing HTTP host allowlist.
 ## Each `[[activity_wasm.allowed_host]]` entry permits outbound requests to a host.
 ## If no entries are defined, all outbound HTTP connections are blocked.
-## Supports wildcards: "*" (all https), "*.example.com" (subdomains), "http://192.168.1.*" (/24).
-## Bare hostname implies HTTPS port 443. Use "http://host" or "http://host:port" for non-defaults.
-## To allow all outbound HTTP use patterns "*", "http://*"
+##
+## Supports wildcards:
+## - "*" matches all HTTPS hosts on port 443
+## - "*://*" matches http://host:80 and https://host:443 (any host, default ports)
+## - "*://*:*" matches any scheme, any host, any port
+## - "*.example.com" matches subdomains
+## - "http://192.168.1.*" matches a /24 range
+##
+## Method restrictions:
+## - `methods = "*"` allows all methods
+## - `methods = ["GET", "POST"]` restricts to specific methods
+## - `methods = []` allows nothing (config warning)
+## - Omitting `methods` entirely allows nothing (config warning)
+##
+## Multiple entries can match the same request; they form a union (secrets are merged).
 # [[activity_wasm.allowed_host]]
 # pattern = "api.github.com"
-## Optional method restrictions. Omit to allow all methods.
-# methods = ["GET", "POST"]
+# methods = "*"
 ## Optional secrets: injected via placeholder replacement in outgoing HTTP requests.
 ## WASM receives an opaque placeholder instead of the real value.
 ## The runtime replaces placeholders with real values only for requests to this host.

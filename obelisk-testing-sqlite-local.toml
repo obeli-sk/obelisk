@@ -45,9 +45,11 @@ max_retries = 0
 exec.lock_expiry.seconds = 5
 [[activity_wasm.allowed_host]]
 pattern = "*" # only https allowed
+methods = "*"
 
 [[activity_wasm.allowed_host]]
 pattern = "httpbin.org"
+methods = "*"
 secrets = {env_vars = ["API_KEY=foo"], replace_in = ["headers", "params", "body"] }
 
 [[workflow]]
