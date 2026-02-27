@@ -87,6 +87,7 @@ impl JobExecutor for WasiJobExecutor {
                 && self.promise_jobs.borrow().is_empty()
                 && self.async_jobs.borrow().is_empty()
                 && self.generic_jobs.borrow().is_empty()
+                && self.timeout_jobs.borrow().is_empty()
             {
                 break;
             }
@@ -106,6 +107,10 @@ impl JobExecutor for WasiJobExecutor {
                     }
                     None => {} // group drained
                 }
+            } else if let Some(sleep_duration) = self.time_until_next_timeout(context) {
+                // 5. No async jobs, but we have pending timeout jobs.
+                //    Sleep until the next timeout is ready.
+                wstd::task::sleep(sleep_duration).await;
             }
         }
 
@@ -114,6 +119,27 @@ impl JobExecutor for WasiJobExecutor {
 }
 
 impl WasiJobExecutor {
+    /// Calculate the duration until the next timeout job is ready.
+    /// Returns `None` if there are no pending timeout jobs.
+    fn time_until_next_timeout(
+        &self,
+        context: &RefCell<&mut Context>,
+    ) -> Option<wstd::time::Duration> {
+        let timeouts = self.timeout_jobs.borrow();
+        let next_deadline = timeouts.keys().next()?;
+        let now = context.borrow().clock().now();
+
+        // If deadline is in the past, return zero duration
+        if *next_deadline <= now {
+            return Some(wstd::time::Duration::from_nanos(0));
+        }
+
+        // Calculate the difference: deadline - now
+        let js_duration = *next_deadline - now;
+        let std_duration: std::time::Duration = js_duration.into();
+        Some(wstd::time::Duration::from(std_duration))
+    }
+
     /// Run all ready synchronous jobs: promise microtasks, timeout jobs, generic jobs.
     fn run_sync_jobs(&self, context: &RefCell<&mut Context>) -> JsResult<()> {
         // Timeout jobs

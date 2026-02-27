@@ -1045,4 +1045,84 @@ mod tests {
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "APPLE, BANANA, CHERRY");
     }
+
+    #[tokio::test]
+    async fn set_timeout_basic() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "delayed");
+        let js_source = r#"
+            export default async function delayed() {
+                return new Promise((resolve) => {
+                    setTimeout(() => {
+                        resolve("delayed result");
+                    }, 50);
+                });
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let start = std::time::Instant::now();
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let elapsed = start.elapsed();
+
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "delayed result");
+
+        // Verify that we actually waited for the timeout (at least 50ms)
+        assert!(
+            elapsed >= std::time::Duration::from_millis(50),
+            "expected at least 50ms delay, got {:?}",
+            elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn set_timeout_multiple() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "multi-timeout");
+        let js_source = r#"
+            export default async function multi_timeout() {
+                let results = [];
+
+                await new Promise((resolve) => {
+                    setTimeout(() => {
+                        results.push("first");
+                        resolve();
+                    }, 30);
+                });
+
+                await new Promise((resolve) => {
+                    setTimeout(() => {
+                        results.push("second");
+                        resolve();
+                    }, 30);
+                });
+
+                return results.join(", ");
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let start = std::time::Instant::now();
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let elapsed = start.elapsed();
+
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "first, second");
+
+        // Both timeouts should have been honored (at least 60ms total)
+        assert!(
+            elapsed >= std::time::Duration::from_millis(60),
+            "expected at least 60ms delay, got {:?}",
+            elapsed
+        );
+    }
 }
