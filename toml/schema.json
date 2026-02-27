@@ -355,12 +355,15 @@
       "type": "object",
       "properties": {
         "methods": {
-          "description": "Allowed HTTP methods. Empty or omitted means all methods are allowed.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          }
+          "description": "Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = \"*\"` or `methods = [\"*\"]` to allow all methods.\n- `methods = [\"GET\", \"POST\"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MethodsInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "pattern": {
           "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`).",
@@ -857,6 +860,25 @@
         "plain_compact",
         "json"
       ]
+    },
+    "MethodsInput": {
+      "description": "Input for method restrictions in TOML configuration.\nSupports both `methods = \"*\"` and `methods = [\"GET\", \"POST\"]` syntax.",
+      "anyOf": [
+        {
+          "description": "All methods allowed (from `methods = \"*\"`).",
+          "$ref": "#/$defs/MethodsInputStar"
+        },
+        {
+          "description": "Specific methods list (from `methods = [\"GET\", \"POST\"]`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "MethodsInputStar": {
+      "type": "null"
     },
     "OtlpConfig": {
       "type": "object",
