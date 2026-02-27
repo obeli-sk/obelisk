@@ -35,7 +35,7 @@ use wasm_workers::http_request_policy::HostPatternError;
 use wasm_workers::{
     activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
     envvar::EnvVar,
-    http_request_policy::{AllowedHostConfig, HostPattern, ReplacementLocation},
+    http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern, ReplacementLocation},
     std_output_stream::StdOutputConfig,
     workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
@@ -862,15 +862,46 @@ pub(crate) enum ReplaceIn {
     Params,
 }
 
+/// Input for method restrictions in TOML configuration.
+/// Supports both `methods = "*"` and `methods = ["GET", "POST"]` syntax.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub(crate) enum MethodsInput {
+    /// All methods allowed (from `methods = "*"`).
+    Star(MethodsInputStar),
+    /// Specific methods list (from `methods = ["GET", "POST"]`).
+    List(Vec<String>),
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub(crate) struct MethodsInputStar(#[serde(deserialize_with = "deserialize_star")] ());
+
+fn deserialize_star<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s == "*" {
+        Ok(())
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "expected \"*\", got \"{s}\""
+        )))
+    }
+}
+
 /// An allowed outgoing HTTP host with optional method restrictions and secrets.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AllowedHostToml {
     /// Host pattern (e.g. `"api.example.com"`, `"*.example.com"`, `"http://localhost:8080"`).
     pub pattern: String,
-    /// Allowed HTTP methods. Empty or omitted means all methods are allowed.
-    #[serde(default)]
-    pub methods: Vec<String>,
+    /// Allowed HTTP methods.
+    /// - Omit to allow nothing (warning emitted).
+    /// - `methods = "*"` or `methods = ["*"]` to allow all methods.
+    /// - `methods = ["GET", "POST"]` to allow specific methods.
+    /// - `methods = []` to allow nothing (warning emitted).
+    pub methods: Option<MethodsInput>,
     /// Optional secrets for this host.
     #[serde(default)]
     pub secrets: Option<AllowedHostSecretsToml>,
@@ -2221,6 +2252,8 @@ enum ResolveAllowedHostsError {
     EnvVarsMissing(#[from] EnvVarsMissing),
     #[error("cannot parse HTTP method `{0}`")]
     InvalidMethod(String),
+    #[error("use `methods = \"*\"` to allow all methods, not `methods = [\"*\"]`")]
+    InvalidMethodStar,
 }
 
 fn resolve_allowed_hosts(
@@ -2229,21 +2262,62 @@ fn resolve_allowed_hosts(
 ) -> Result<Arc<[AllowedHostConfig]>, ResolveAllowedHostsError> {
     entries
         .into_iter()
-        .map(|entry| {
-            let methods = entry
-                .methods
-                .into_iter()
-                .map(|m| {
-                    http::Method::from_bytes(m.as_bytes())
-                        .map_err(|_| ResolveAllowedHostsError::InvalidMethod(m))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+        .filter_map(|entry| {
+            // Convert MethodsInput to MethodsPattern
+            let methods = match entry.methods {
+                None => {
+                    // Omitted methods: nothing allowed, warn and skip
+                    warn!(
+                        "allowed_host `{}` has no `methods` field - no requests will be allowed; \
+                         use `methods = \"*\"` to allow all methods",
+                        entry.pattern
+                    );
+                    return None;
+                }
+                Some(MethodsInput::Star(_)) => {
+                    // `methods = "*"` - all methods allowed
+                    MethodsPattern::AllMethods
+                }
+                Some(MethodsInput::List(list)) => {
+                    if list.is_empty() {
+                        // Empty list: nothing allowed, warn and skip
+                        warn!(
+                            "allowed_host `{}` has empty `methods = []` - no requests will be allowed",
+                            entry.pattern
+                        );
+                        return None;
+                    }
+                    // Parse specific methods
+                    match list
+                        .into_iter()
+                        .map(|m| {
+                            http::Method::from_bytes(m.as_bytes()).map_err(|_| {
+                                if m == "*" {
+                                    ResolveAllowedHostsError::InvalidMethodStar
+                                } else {
+                                    ResolveAllowedHostsError::InvalidMethod(m)
+                                }
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                    {
+                        Ok(methods) => MethodsPattern::Specific(methods),
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+            };
 
-            let pattern = HostPattern::parse_with_methods(&entry.pattern, methods)?;
+            let pattern = match HostPattern::parse_with_methods(&entry.pattern, methods) {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e.into())),
+            };
 
             let (secret_env_mappings, replace_in) = if let Some(secrets) = entry.secrets {
                 if secrets.env_vars.is_empty() {
-                    warn!("allowed_host `{}` has empty `secrets.env_vars`", entry.pattern);
+                    warn!(
+                        "allowed_host `{}` has empty `secrets.env_vars`",
+                        entry.pattern
+                    );
                 }
                 if secrets.replace_in.is_empty() {
                     warn!(
@@ -2251,14 +2325,15 @@ fn resolve_allowed_hosts(
                         entry.pattern
                     );
                 }
-                if pattern.scheme == "http" {
-                    warn!("secrets allowed for unencrypted host `{pattern}`");
+                if pattern.scheme.allows_unencrypted() {
+                    warn!("secrets allowed for potentially unencrypted host `{pattern}`");
                 }
 
-                let env_mappings = resolve_secret_env_vars(
-                    secrets.env_vars,
-                    ignore_missing_env_vars,
-                )?;
+                let env_mappings =
+                    match resolve_secret_env_vars(secrets.env_vars, ignore_missing_env_vars) {
+                        Ok(m) => m,
+                        Err(e) => return Some(Err(e)),
+                    };
                 let replace_in = secrets
                     .replace_in
                     .into_iter()
@@ -2273,11 +2348,11 @@ fn resolve_allowed_hosts(
                 (Vec::new(), hashbrown::HashSet::new())
             };
 
-            Ok(AllowedHostConfig {
+            Some(Ok(AllowedHostConfig {
                 pattern,
                 secret_env_mappings,
                 replace_in,
-            })
+            }))
         })
         .collect::<Result<_, _>>()
 }

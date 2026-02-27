@@ -26,19 +26,67 @@ pub struct PlaceholderSecret {
     pub replace_in: hashbrown::HashSet<ReplacementLocation>,
 }
 
+/// Scheme pattern for matching requests.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum SchemePattern {
+    Http,
+    Https,
+    /// Matches both http and https (used with `*://` prefix).
+    Any,
+}
+
+impl fmt::Display for SchemePattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SchemePattern::Http => write!(f, "http"),
+            SchemePattern::Https => write!(f, "https"),
+            SchemePattern::Any => write!(f, "*"),
+        }
+    }
+}
+
+impl SchemePattern {
+    /// Returns true if this pattern allows unencrypted HTTP traffic.
+    #[must_use]
+    pub fn allows_unencrypted(&self) -> bool {
+        matches!(self, SchemePattern::Http | SchemePattern::Any)
+    }
+}
+
+/// Port pattern for matching requests.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PortPattern {
+    /// Match a specific port.
+    Specific(u16),
+    /// Match any port (used with `:*` suffix).
+    Any,
+    /// Match the default port for the scheme (80 for http, 443 for https).
+    Default,
+}
+
+/// Methods pattern for matching requests.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum MethodsPattern {
+    /// All methods are allowed.
+    AllMethods,
+    /// Only specific methods are allowed.
+    Specific(Vec<Method>),
+}
+
 /// A parsed host pattern for matching outgoing requests.
 /// Supports wildcards: `*` means all hosts, `*.example.com` matches subdomains,
 /// `192.168.1.*` matches a /24 range.
 ///
-/// Optionally restricts allowed HTTP methods. When `methods` is empty, all
-/// methods are permitted.
+/// Special patterns:
+/// - `*://*` matches any scheme (http/https), any host, but only default ports (80/443).
+/// - `*://*:*` matches any scheme, any host, any port.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HostPattern {
-    pub scheme: String,
+    pub scheme: SchemePattern,
     pub host_pattern: String,
-    pub port: u16,
-    /// Allowed HTTP methods. Empty means all methods are allowed.
-    pub methods: Vec<Method>,
+    pub port: PortPattern,
+    /// Allowed HTTP methods.
+    pub methods: MethodsPattern,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -53,24 +101,36 @@ impl HostPattern {
     /// Parse a host specification string into a `HostPattern`.
     /// Rules:
     /// - No scheme → HTTPS assumed
+    /// - `*://` prefix → matches both http and https
     /// - No port → default for scheme (443 for HTTPS, 80 for HTTP)
-    /// - `*` wildcard must be first or last character of host portion
+    /// - `:*` suffix → matches any port
+    /// - `*` wildcard in host must be first or last character of host portion
+    ///
+    /// Special patterns:
+    /// - `*://*` matches any scheme, any host, default ports only (80 for http, 443 for https)
+    /// - `*://*:*` matches any scheme, any host, any port
     ///
     /// # Errors
     /// Returns an error if the wildcard is in the middle of the host.
-    pub fn parse_with_methods(input: &str, methods: Vec<Method>) -> Result<Self, HostPatternError> {
+    pub fn parse_with_methods(
+        input: &str,
+        methods: MethodsPattern,
+    ) -> Result<Self, HostPatternError> {
         let mut host_pattern = Self::parse(input)?;
         host_pattern.methods = methods;
         Ok(host_pattern)
     }
 
     fn parse(input: &str) -> Result<Self, HostPatternError> {
-        let (scheme, rest) = if let Some(rest) = input.strip_prefix("https://") {
-            ("https", rest)
+        // Check for `*://` prefix (any scheme)
+        let (scheme, rest) = if let Some(rest) = input.strip_prefix("*://") {
+            (SchemePattern::Any, rest)
+        } else if let Some(rest) = input.strip_prefix("https://") {
+            (SchemePattern::Https, rest)
         } else if let Some(rest) = input.strip_prefix("http://") {
-            ("http", rest)
+            (SchemePattern::Http, rest)
         } else {
-            ("https", input)
+            (SchemePattern::Https, input)
         };
 
         // Reject patterns that contain a path (e.g. "http://localhost:1234/")
@@ -80,17 +140,24 @@ impl HostPattern {
             });
         }
 
-        let (host, port) = if let Some((h, p)) = rest.rsplit_once(':') {
-            if let Ok(port) = p.parse::<u16>() {
-                (h.to_string(), port)
+        // Check for `:*` suffix (any port)
+        let (host_port_str, any_port) = if let Some(stripped) = rest.strip_suffix(":*") {
+            (stripped, true)
+        } else {
+            (rest, false)
+        };
+
+        let (host, port) = if any_port {
+            (host_port_str.to_string(), PortPattern::Any)
+        } else if let Some((h, p)) = host_port_str.rsplit_once(':') {
+            if let Ok(port_num) = p.parse::<u16>() {
+                (h.to_string(), PortPattern::Specific(port_num))
             } else {
                 // Not a valid port, treat the whole thing as host
-                let default_port = if scheme == "https" { 443 } else { 80 };
-                (rest.to_string(), default_port)
+                (host_port_str.to_string(), PortPattern::Default)
             }
         } else {
-            let default_port = if scheme == "https" { 443 } else { 80 };
-            (rest.to_string(), default_port)
+            (host_port_str.to_string(), PortPattern::Default)
         };
 
         // Validate wildcard: must be first or last character
@@ -99,38 +166,78 @@ impl HostPattern {
         }
 
         Ok(HostPattern {
-            scheme: scheme.to_string(),
+            scheme,
             host_pattern: host,
             port,
-            methods: Vec::new(),
+            methods: MethodsPattern::AllMethods,
         })
     }
 
     /// Check if a (scheme, host, port, method) tuple matches this pattern.
-    /// When `self.methods` is empty, all methods are allowed.
     #[must_use]
     fn matches(&self, scheme: &str, host: &str, port: u16, method: &Method) -> bool {
-        if self.scheme != scheme || self.port != port {
+        // Check scheme
+        let scheme_matches = match &self.scheme {
+            SchemePattern::Http => scheme == "http",
+            SchemePattern::Https => scheme == "https",
+            SchemePattern::Any => scheme == "http" || scheme == "https",
+        };
+        if !scheme_matches {
             return false;
         }
+
+        // Check port
+        let port_matches = match &self.port {
+            PortPattern::Specific(p) => port == *p,
+            PortPattern::Any => true,
+            PortPattern::Default => {
+                // For Any scheme, check if port is the default for the actual request scheme
+                match scheme {
+                    "http" => port == 80,
+                    "https" => port == 443,
+                    _ => false,
+                }
+            }
+        };
+        if !port_matches {
+            return false;
+        }
+
+        // Check host pattern
         if !match_wildcard(&self.host_pattern, host) {
             return false;
         }
-        self.methods.is_empty() || self.methods.contains(method)
+
+        // Check method
+        match &self.methods {
+            MethodsPattern::AllMethods => true,
+            MethodsPattern::Specific(methods) => methods.contains(method),
+        }
     }
 }
 
 impl fmt::Display for HostPattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let default_port = if self.scheme == "https" { 443 } else { 80 };
-        if self.port == default_port {
-            write!(f, "{}://{}", self.scheme, self.host_pattern)?;
-        } else {
-            write!(f, "{}://{}:{}", self.scheme, self.host_pattern, self.port)?;
+        // Write scheme
+        write!(f, "{}://{}", self.scheme, self.host_pattern)?;
+
+        // Write port
+        match &self.port {
+            PortPattern::Specific(p) => write!(f, ":{p}")?,
+            PortPattern::Any => write!(f, ":*")?,
+            PortPattern::Default => {} // Don't show default port
         }
-        if !self.methods.is_empty() {
-            let methods: Vec<&str> = self.methods.iter().map(Method::as_str).collect();
-            write!(f, " [{}]", methods.join(", "))?;
+
+        // Write methods
+        match &self.methods {
+            MethodsPattern::AllMethods => {} // Don't show when all methods allowed
+            MethodsPattern::Specific(methods) if methods.is_empty() => {
+                write!(f, " [NONE]")?;
+            }
+            MethodsPattern::Specific(methods) => {
+                let method_strs: Vec<&str> = methods.iter().map(Method::as_str).collect();
+                write!(f, " [{}]", method_strs.join(", "))?;
+            }
         }
         Ok(())
     }
@@ -389,9 +496,9 @@ mod tests {
     #[test]
     fn parse_host_pattern_bare_hostname() {
         let p = HostPattern::parse("api.openai.com").unwrap();
-        assert_eq!(p.scheme, "https");
+        assert_eq!(p.scheme, SchemePattern::Https);
         assert_eq!(p.host_pattern, "api.openai.com");
-        assert_eq!(p.port, 443);
+        assert_eq!(p.port, PortPattern::Default);
         assert!(p.matches("https", "api.openai.com", 443, &Method::GET));
         assert!(!p.matches("http", "api.openai.com", 80, &Method::GET));
     }
@@ -399,9 +506,9 @@ mod tests {
     #[test]
     fn parse_host_pattern_with_scheme_and_port() {
         let p = HostPattern::parse("http://localhost:8080").unwrap();
-        assert_eq!(p.scheme, "http");
+        assert_eq!(p.scheme, SchemePattern::Http);
         assert_eq!(p.host_pattern, "localhost");
-        assert_eq!(p.port, 8080);
+        assert_eq!(p.port, PortPattern::Specific(8080));
         assert!(p.matches("http", "localhost", 8080, &Method::GET));
         assert!(!p.matches("https", "localhost", 8080, &Method::GET));
     }
@@ -409,9 +516,11 @@ mod tests {
     #[test]
     fn parse_host_pattern_http_default_port() {
         let p = HostPattern::parse("http://example.com").unwrap();
-        assert_eq!(p.scheme, "http");
+        assert_eq!(p.scheme, SchemePattern::Http);
         assert_eq!(p.host_pattern, "example.com");
-        assert_eq!(p.port, 80);
+        assert_eq!(p.port, PortPattern::Default);
+        assert!(p.matches("http", "example.com", 80, &Method::GET));
+        assert!(!p.matches("http", "example.com", 8080, &Method::GET));
     }
 
     #[test]
@@ -458,15 +567,18 @@ mod tests {
     #[test]
     fn parse_host_pattern_https_non_default_port() {
         let p = HostPattern::parse("internal.corp.com:8443").unwrap();
-        assert_eq!(p.scheme, "https");
+        assert_eq!(p.scheme, SchemePattern::Https);
         assert_eq!(p.host_pattern, "internal.corp.com");
-        assert_eq!(p.port, 8443);
+        assert_eq!(p.port, PortPattern::Specific(8443));
     }
 
     #[test]
     fn host_pattern_method_restriction() {
-        let p = HostPattern::parse_with_methods("api.example.com", vec![Method::GET, Method::HEAD])
-            .unwrap();
+        let p = HostPattern::parse_with_methods(
+            "api.example.com",
+            MethodsPattern::Specific(vec![Method::GET, Method::HEAD]),
+        )
+        .unwrap();
         assert!(p.matches("https", "api.example.com", 443, &Method::GET));
         assert!(p.matches("https", "api.example.com", 443, &Method::HEAD));
         assert!(!p.matches("https", "api.example.com", 443, &Method::POST));
@@ -474,9 +586,9 @@ mod tests {
     }
 
     #[test]
-    fn host_pattern_no_methods_allows_all() {
+    fn host_pattern_all_methods_allows_all() {
         let p = HostPattern::parse("api.example.com").unwrap();
-        assert!(p.methods.is_empty());
+        assert_eq!(p.methods, MethodsPattern::AllMethods);
         assert!(p.matches("https", "api.example.com", 443, &Method::GET));
         assert!(p.matches("https", "api.example.com", 443, &Method::POST));
         assert!(p.matches("https", "api.example.com", 443, &Method::DELETE));
@@ -484,10 +596,107 @@ mod tests {
     }
 
     #[test]
+    fn host_pattern_empty_methods_matches_nothing() {
+        let p =
+            HostPattern::parse_with_methods("api.example.com", MethodsPattern::Specific(vec![]))
+                .unwrap();
+        assert!(!p.matches("https", "api.example.com", 443, &Method::GET));
+        assert!(!p.matches("https", "api.example.com", 443, &Method::POST));
+        assert!(!p.matches("https", "api.example.com", 443, &Method::DELETE));
+    }
+
+    #[test]
     fn display_host_pattern_with_methods() {
-        let p = HostPattern::parse_with_methods("api.example.com", vec![Method::GET, Method::POST])
-            .unwrap();
+        let p = HostPattern::parse_with_methods(
+            "api.example.com",
+            MethodsPattern::Specific(vec![Method::GET, Method::POST]),
+        )
+        .unwrap();
         assert_eq!(p.to_string(), "https://api.example.com [GET, POST]");
+    }
+
+    #[test]
+    fn parse_host_pattern_any_scheme_default_ports() {
+        // `*://*` matches any scheme, any host, default ports only
+        let p = HostPattern::parse("*://*").unwrap();
+        assert_eq!(p.scheme, SchemePattern::Any);
+        assert_eq!(p.host_pattern, "*");
+        assert_eq!(p.port, PortPattern::Default);
+
+        // Should match http on port 80
+        assert!(p.matches("http", "foo.com", 80, &Method::GET));
+        // Should match https on port 443
+        assert!(p.matches("https", "foo.com", 443, &Method::GET));
+        // Should NOT match http on non-default port
+        assert!(!p.matches("http", "foo.com", 8080, &Method::GET));
+        // Should NOT match https on non-default port
+        assert!(!p.matches("https", "foo.com", 8443, &Method::GET));
+    }
+
+    #[test]
+    fn parse_host_pattern_any_scheme_any_port() {
+        // `*://*:*` matches any scheme, any host, any port
+        let p = HostPattern::parse("*://*:*").unwrap();
+        assert_eq!(p.scheme, SchemePattern::Any);
+        assert_eq!(p.host_pattern, "*");
+        assert_eq!(p.port, PortPattern::Any);
+
+        // Should match everything
+        assert!(p.matches("http", "foo.com", 80, &Method::GET));
+        assert!(p.matches("https", "foo.com", 443, &Method::GET));
+        assert!(p.matches("http", "foo.com", 8080, &Method::GET));
+        assert!(p.matches("https", "foo.com", 8443, &Method::GET));
+        assert!(p.matches("http", "localhost", 3000, &Method::POST));
+    }
+
+    #[test]
+    fn parse_host_pattern_any_port_specific_scheme() {
+        // `http://localhost:*` matches http, localhost, any port
+        let p = HostPattern::parse("http://localhost:*").unwrap();
+        assert_eq!(p.scheme, SchemePattern::Http);
+        assert_eq!(p.host_pattern, "localhost");
+        assert_eq!(p.port, PortPattern::Any);
+
+        assert!(p.matches("http", "localhost", 80, &Method::GET));
+        assert!(p.matches("http", "localhost", 8080, &Method::GET));
+        assert!(p.matches("http", "localhost", 3000, &Method::GET));
+        assert!(!p.matches("https", "localhost", 443, &Method::GET));
+        assert!(!p.matches("http", "other.com", 80, &Method::GET));
+    }
+
+    #[test]
+    fn parse_host_pattern_wildcard_host_any_port() {
+        // `http://192.*:*` matches http, any host starting with 192., any port
+        let p = HostPattern::parse("http://192.*:*").unwrap();
+        assert_eq!(p.scheme, SchemePattern::Http);
+        assert_eq!(p.host_pattern, "192.*");
+        assert_eq!(p.port, PortPattern::Any);
+
+        assert!(p.matches("http", "192.168.1.1", 80, &Method::GET));
+        assert!(p.matches("http", "192.168.1.1", 8080, &Method::GET));
+        assert!(p.matches("http", "192.0.0.1", 3000, &Method::POST));
+        assert!(!p.matches("https", "192.168.1.1", 443, &Method::GET));
+        assert!(!p.matches("http", "10.0.0.1", 80, &Method::GET));
+    }
+
+    #[test]
+    fn display_host_pattern_any_scheme() {
+        let p = HostPattern::parse("*://*").unwrap();
+        assert_eq!(p.to_string(), "*://*");
+
+        let p = HostPattern::parse("*://*:*").unwrap();
+        assert_eq!(p.to_string(), "*://*:*");
+
+        let p = HostPattern::parse("http://localhost:*").unwrap();
+        assert_eq!(p.to_string(), "http://localhost:*");
+    }
+
+    #[test]
+    fn display_host_pattern_empty_methods() {
+        let p =
+            HostPattern::parse_with_methods("api.example.com", MethodsPattern::Specific(vec![]))
+                .unwrap();
+        assert_eq!(p.to_string(), "https://api.example.com [NONE]");
     }
 
     #[test]

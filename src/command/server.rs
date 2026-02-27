@@ -14,7 +14,6 @@ use crate::config::toml::ActivityStubExtComponentConfigToml;
 use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
-use crate::config::toml::AllowedHostToml;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
@@ -36,6 +35,7 @@ use crate::config::toml::webhook::WebhookJsComponentConfigToml;
 use crate::config::toml::webhook::WebhookJsConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
+use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::init;
 use crate::init::Guard;
 use crate::project_dirs;
@@ -861,7 +861,7 @@ impl ServerVerified {
                 logs_store_min_level: LogLevelToml::Off,
                 allowed_hosts: vec![AllowedHostToml {
                     pattern: target_url,
-                    methods: vec![],
+                    methods: Some(MethodsInput::Star(MethodsInputStar::default())),
                     secrets: None,
                 }],
             });
