@@ -42,6 +42,68 @@ impl WasiJobExecutor {
     pub async fn drive_jobs(self: Rc<Self>, context: &RefCell<&mut Context>) -> JsResult<()> {
         JobExecutor::run_jobs_async(self, context).await
     }
+
+    /// Drive jobs until the given condition returns true, then stop early.
+    ///
+    /// This is useful for promise resolution where we want to stop as soon as
+    /// the main promise resolves, abandoning any orphaned jobs (like unwaited timers).
+    pub async fn drive_jobs_until<F>(
+        self: Rc<Self>,
+        context: &RefCell<&mut Context>,
+        is_done: F,
+    ) -> JsResult<()>
+    where
+        F: Fn() -> bool,
+    {
+        let mut group = FutureGroup::new();
+        loop {
+            // Check done condition before doing any work
+            if is_done() {
+                break;
+            }
+
+            // 1. Move newly enqueued async jobs into the concurrent FutureGroup.
+            for job in mem::take(&mut *self.async_jobs.borrow_mut()) {
+                group.insert(job.call(context));
+            }
+
+            // 2. Run all ready synchronous jobs (promise microtasks, timeouts, generic).
+            self.run_sync_jobs(context)?;
+
+            // Check done condition after sync jobs (promise might have resolved)
+            if is_done() {
+                break;
+            }
+
+            // 3. Check if there's any work left.
+            if group.is_empty()
+                && self.promise_jobs.borrow().is_empty()
+                && self.async_jobs.borrow().is_empty()
+                && self.generic_jobs.borrow().is_empty()
+                && self.timeout_jobs.borrow().is_empty()
+            {
+                break;
+            }
+
+            // 4. If there are async futures in flight, await the next one.
+            if !group.is_empty() {
+                match group.next().await {
+                    Some(Ok(_)) => {}
+                    Some(Err(err)) => {
+                        self.clear();
+                        return Err(err);
+                    }
+                    None => {}
+                }
+            } else if let Some(sleep_duration) = self.time_until_next_timeout(context) {
+                // 5. No async jobs, but we have pending timeout jobs.
+                //    Sleep until the next timeout is ready.
+                wstd::task::sleep(sleep_duration).await;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for WasiJobExecutor {
@@ -72,48 +134,32 @@ impl JobExecutor for WasiJobExecutor {
     }
 
     async fn run_jobs_async(self: Rc<Self>, context: &RefCell<&mut Context>) -> JsResult<()> {
-        let mut group = FutureGroup::new();
-        loop {
-            // 1. Move newly enqueued async jobs into the concurrent FutureGroup.
-            for job in mem::take(&mut *self.async_jobs.borrow_mut()) {
-                group.insert(job.call(context));
-            }
-
-            // 2. Run all ready synchronous jobs (promise microtasks, timeouts, generic).
-            self.run_sync_jobs(context)?;
-
-            // 3. Check if there's any work left.
-            if group.is_empty()
-                && self.promise_jobs.borrow().is_empty()
-                && self.async_jobs.borrow().is_empty()
-                && self.generic_jobs.borrow().is_empty()
-            {
-                break;
-            }
-
-            // 4. If there are async futures in flight, await the next one.
-            //    This is a proper `.await` — when inner futures are Pending on
-            //    WASIp2 pollables, the task yields to wstd's reactor WITHOUT
-            //    re-scheduling. The reactor then calls `block_on_pollables()`
-            //    → `wasi:io/poll::poll` → wasmtime fiber suspends → tokio can
-            //    run other tasks (e.g. the HTTP client spawned by activity_ctx).
-            if !group.is_empty() {
-                match group.next().await {
-                    Some(Ok(_)) => {} // async job completed successfully
-                    Some(Err(err)) => {
-                        self.clear();
-                        return Err(err);
-                    }
-                    None => {} // group drained
-                }
-            }
-        }
-
-        Ok(())
+        self.drive_jobs_until(context, || false).await
     }
 }
 
 impl WasiJobExecutor {
+    /// Calculate the duration until the next timeout job is ready.
+    /// Returns `None` if there are no pending timeout jobs.
+    fn time_until_next_timeout(
+        &self,
+        context: &RefCell<&mut Context>,
+    ) -> Option<wstd::time::Duration> {
+        let timeouts = self.timeout_jobs.borrow();
+        let next_deadline = timeouts.keys().next()?;
+        let now = context.borrow().clock().now();
+
+        // If deadline is in the past, return zero duration
+        if *next_deadline <= now {
+            return Some(wstd::time::Duration::from_nanos(0));
+        }
+
+        // Calculate the difference: deadline - now
+        let js_duration = *next_deadline - now;
+        let std_duration: std::time::Duration = js_duration.into();
+        Some(wstd::time::Duration::from(std_duration))
+    }
+
     /// Run all ready synchronous jobs: promise microtasks, timeout jobs, generic jobs.
     fn run_sync_jobs(&self, context: &RefCell<&mut Context>) -> JsResult<()> {
         // Timeout jobs

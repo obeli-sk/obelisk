@@ -321,70 +321,109 @@ mod tests {
     use tracing::info_span;
     use val_json::wast_val::WastVal;
 
-    async fn new_js_activity_worker_with_config(
-        js_source: &str,
+    struct JsWorkerBuilder {
+        js_source: String,
         user_ffqn: FunctionFqn,
-        config_fn: impl FnOnce(concepts::ComponentId) -> super::super::activity_worker::ActivityConfig,
-    ) -> Arc<dyn Worker> {
-        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let cancel_registry = CancelRegistry::new();
-        let (db_forwarder_sender, _) = mpsc::channel(1);
-        let clock_fn: Box<dyn ClockFn> = Now.clone_box();
-
-        let component_id = concepts::ComponentId::new(
-            ComponentType::ActivityWasm,
-            StrVariant::Static("test_js"),
-            InputContentDigest(CONTENT_DIGEST_DUMMY),
-        )
-        .unwrap();
-
-        // Compile the Boa WASM component
-        let (wasm_component, _boa_component_id) = compile_activity_with_engine(
-            activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
-            &engine,
-            ComponentType::ActivityWasm,
-        )
-        .await;
-
-        let config = config_fn(component_id);
-
-        let compiled = super::super::activity_worker::ActivityWorkerCompiled::new_with_config(
-            wasm_component,
-            config,
-            engine,
-            clock_fn,
-            TokioSleep,
-        )
-        .unwrap();
-
-        let js_compiled = ActivityJsWorkerCompiled::new(
-            compiled,
-            js_source.to_string(),
-            user_ffqn,
-            vec![ParameterType {
-                type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
-                name: StrVariant::Static("params"),
-                wit_type: StrVariant::Static("list<string>"),
-            }],
-        )
-        .unwrap();
-
-        Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
+        user_params: Vec<ParameterType>,
+        allowed_hosts: Vec<crate::http_request_policy::AllowedHostConfig>,
+        logs_storage_config: Option<crate::component_logger::LogStrageConfig>,
     }
 
-    async fn new_js_activity_worker(js_source: &str, user_ffqn: FunctionFqn) -> Arc<dyn Worker> {
-        new_js_activity_worker_with_config(js_source, user_ffqn, |component_id| {
-            super::super::activity_worker::ActivityConfig {
+    impl JsWorkerBuilder {
+        fn new(js_source: &str, user_ffqn: FunctionFqn) -> Self {
+            Self {
+                js_source: js_source.to_string(),
+                user_ffqn,
+                user_params: vec![ParameterType {
+                    type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
+                    name: StrVariant::Static("params"),
+                    wit_type: StrVariant::Static("list<string>"),
+                }],
+                allowed_hosts: Vec::new(),
+                logs_storage_config: None,
+            }
+        }
+
+        fn with_params(mut self, params: Vec<ParameterType>) -> Self {
+            self.user_params = params;
+            self
+        }
+
+        fn with_allowed_host(mut self, host: &str) -> Self {
+            use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
+            let pattern =
+                HostPattern::parse_with_methods(host, MethodsPattern::AllMethods).unwrap();
+            self.allowed_hosts.push(AllowedHostConfig {
+                pattern,
+                secret_env_mappings: Vec::new(),
+                replace_in: hashbrown::HashSet::new(),
+            });
+            self
+        }
+
+        fn with_logs(mut self, config: crate::component_logger::LogStrageConfig) -> Self {
+            self.logs_storage_config = Some(config);
+            self
+        }
+
+        async fn build(self) -> Arc<dyn Worker> {
+            let engine =
+                Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+            let cancel_registry = CancelRegistry::new();
+            let (db_forwarder_sender, _) = mpsc::channel(1);
+            let clock_fn: Box<dyn ClockFn> = Now.clone_box();
+
+            let component_id = concepts::ComponentId::new(
+                ComponentType::ActivityWasm,
+                StrVariant::Static("test_js"),
+                InputContentDigest(CONTENT_DIGEST_DUMMY),
+            )
+            .unwrap();
+
+            let (wasm_component, _boa_component_id) = compile_activity_with_engine(
+                activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
+                &engine,
+                ComponentType::ActivityWasm,
+            )
+            .await;
+
+            let config = super::super::activity_worker::ActivityConfig {
                 component_id,
                 forward_stdout: None,
                 forward_stderr: None,
                 env_vars: Arc::from([]),
                 directories_config: None,
                 fuel: None,
-                allowed_hosts: Arc::from([]),
-            }
-        })
-        .await
+                allowed_hosts: Arc::from(self.allowed_hosts),
+            };
+
+            let compiled = super::super::activity_worker::ActivityWorkerCompiled::new_with_config(
+                wasm_component,
+                config,
+                engine,
+                clock_fn,
+                TokioSleep,
+            )
+            .unwrap();
+
+            let js_compiled = ActivityJsWorkerCompiled::new(
+                compiled,
+                self.js_source,
+                self.user_ffqn,
+                self.user_params,
+            )
+            .unwrap();
+
+            Arc::new(js_compiled.into_worker(
+                cancel_registry,
+                &db_forwarder_sender,
+                self.logs_storage_config,
+            ))
+        }
+    }
+
+    async fn new_js_activity_worker(js_source: &str, user_ffqn: FunctionFqn) -> Arc<dyn Worker> {
+        JsWorkerBuilder::new(js_source, user_ffqn).build().await
     }
 
     async fn new_js_activity_worker_custom_params(
@@ -392,49 +431,10 @@ mod tests {
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
     ) -> Arc<dyn Worker> {
-        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let cancel_registry = CancelRegistry::new();
-        let (db_forwarder_sender, _) = mpsc::channel(1);
-        let clock_fn: Box<dyn ClockFn> = Now.clone_box();
-
-        let component_id = concepts::ComponentId::new(
-            ComponentType::ActivityWasm,
-            StrVariant::Static("test_js"),
-            InputContentDigest(CONTENT_DIGEST_DUMMY),
-        )
-        .unwrap();
-
-        let (wasm_component, _boa_component_id) = compile_activity_with_engine(
-            activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
-            &engine,
-            ComponentType::ActivityWasm,
-        )
-        .await;
-
-        let config = super::super::activity_worker::ActivityConfig {
-            component_id,
-            forward_stdout: None,
-            forward_stderr: None,
-            env_vars: Arc::from([]),
-            directories_config: None,
-            fuel: None,
-            allowed_hosts: Arc::from([]),
-        };
-
-        let compiled = super::super::activity_worker::ActivityWorkerCompiled::new_with_config(
-            wasm_component,
-            config,
-            engine,
-            clock_fn,
-            TokioSleep,
-        )
-        .unwrap();
-
-        let js_compiled =
-            ActivityJsWorkerCompiled::new(compiled, js_source.to_string(), user_ffqn, user_params)
-                .unwrap();
-
-        Arc::new(js_compiled.into_worker(cancel_registry, &db_forwarder_sender, None))
+        JsWorkerBuilder::new(js_source, user_ffqn)
+            .with_params(user_params)
+            .build()
+            .await
     }
 
     fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
@@ -763,25 +763,10 @@ mod tests {
         user_ffqn: FunctionFqn,
         allowed_host: &str,
     ) -> Arc<dyn Worker> {
-        use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
-        let host_pattern =
-            HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods).unwrap();
-        new_js_activity_worker_with_config(js_source, user_ffqn, move |component_id| {
-            super::super::activity_worker::ActivityConfig {
-                component_id,
-                forward_stdout: None,
-                forward_stderr: None,
-                env_vars: Arc::from([]),
-                directories_config: None,
-                fuel: None,
-                allowed_hosts: Arc::from(vec![AllowedHostConfig {
-                    pattern: host_pattern,
-                    secret_env_mappings: Vec::new(),
-                    replace_in: hashbrown::HashSet::new(),
-                }]),
-            }
-        })
-        .await
+        JsWorkerBuilder::new(js_source, user_ffqn)
+            .with_allowed_host(allowed_host)
+            .build()
+            .await
     }
 
     #[tokio::test]
@@ -1044,5 +1029,148 @@ mod tests {
         let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "APPLE, BANANA, CHERRY");
+    }
+
+    #[tokio::test]
+    async fn set_timeout_basic() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "delayed");
+        let js_source = r#"
+            export default async function delayed() {
+                return new Promise((resolve) => {
+                    setTimeout(() => {
+                        resolve("delayed result");
+                    }, 50);
+                });
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let start = std::time::Instant::now();
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let elapsed = start.elapsed();
+
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "delayed result");
+
+        // Verify that we actually waited for the timeout (at least 50ms)
+        assert!(
+            elapsed >= std::time::Duration::from_millis(50),
+            "expected at least 50ms delay, got {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_timeout_multiple() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "multi-timeout");
+        let js_source = r#"
+            export default async function multi_timeout() {
+                let results = [];
+
+                await new Promise((resolve) => {
+                    setTimeout(() => {
+                        results.push("first");
+                        resolve();
+                    }, 30);
+                });
+
+                await new Promise((resolve) => {
+                    setTimeout(() => {
+                        results.push("second");
+                        resolve();
+                    }, 30);
+                });
+
+                return results.join(", ");
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let start = std::time::Instant::now();
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let elapsed = start.elapsed();
+
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "first, second");
+
+        // Both timeouts should have been honored (at least 60ms total)
+        assert!(
+            elapsed >= std::time::Duration::from_millis(60),
+            "expected at least 60ms delay, got {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_timeout_orphaned_abandoned() {
+        use crate::component_logger::LogStrageConfig;
+        use concepts::storage::LogLevel;
+
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "orphan-timer");
+        // This function logs immediately, then starts an orphaned timer that would log.
+        // The orphaned timer's log should never appear.
+        let js_source = r#"
+            export default async function orphan_timer() {
+                console.log("immediate log");
+
+                // Start a timer but don't await it - this should be abandoned
+                setTimeout(() => {
+                    console.log("orphaned timer log");
+                }, 100);
+
+                // Return immediately
+                return "done";
+            }
+        "#;
+
+        // Set up log capture
+        let (log_sender, mut log_receiver) = mpsc::channel(10);
+        let logs_storage_config = LogStrageConfig {
+            min_level: LogLevel::Trace,
+            log_sender,
+        };
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_logs(logs_storage_config)
+            .build()
+            .await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+
+        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "done");
+
+        // Collect all log messages
+        log_receiver.close();
+        let mut messages = Vec::new();
+        while let Some(log_row) = log_receiver.recv().await {
+            if let concepts::storage::LogEntry::Log { message, .. } = log_row.log_entry {
+                messages.push(message);
+            }
+        }
+
+        // The immediate log should be present
+        assert!(
+            messages.iter().any(|m| m.contains("immediate log")),
+            "expected 'immediate log' message, got: {messages:?}"
+        );
+
+        // The orphaned timer log should NOT be present
+        assert!(
+            !messages.iter().any(|m| m.contains("orphaned timer log")),
+            "orphaned timer should have been abandoned, but found its log message: {messages:?}"
+        );
     }
 }
