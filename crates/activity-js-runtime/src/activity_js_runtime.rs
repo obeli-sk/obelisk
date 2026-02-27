@@ -62,12 +62,7 @@ pub fn execute(
     setup_fetch(&mut context).expect("fetch setup must work");
 
     // Run the async execution inside a single wstd reactor
-    wstd::runtime::block_on(execute_async(
-        js_code,
-        params_json,
-        &mut context,
-        &executor,
-    ))
+    wstd::runtime::block_on(execute_async(js_code, params_json, &mut context, &executor))
 }
 
 /// Async implementation of JS execution.

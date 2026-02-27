@@ -146,14 +146,19 @@ pub async fn resolve_promise(
         return Ok(value.clone());
     };
 
-    // Drive promise resolution using the executor's async job runner.
-    loop {
-        match promise.state() {
-            PromiseState::Pending => {
-                executor.clone().drive_jobs(context).await?;
-            }
-            PromiseState::Fulfilled(v) => return Ok(v),
-            PromiseState::Rejected(e) => return Err(JsError::from_opaque(e)),
-        }
+    // Drive jobs until this specific promise resolves, then stop immediately.
+    // This abandons orphaned jobs (like unwaited setTimeout callbacks).
+    executor
+        .clone()
+        .drive_jobs_until(context, || {
+            !matches!(promise.state(), PromiseState::Pending)
+        })
+        .await?;
+
+    // Return the resolved value
+    match promise.state() {
+        PromiseState::Fulfilled(v) => Ok(v),
+        PromiseState::Rejected(e) => Err(JsError::from_opaque(e)),
+        PromiseState::Pending => unreachable!("promise should be resolved after drive_jobs_until"),
     }
 }
