@@ -241,7 +241,7 @@ base64 = "0.22.1"
 bytes = "1.11.1"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
-chrono = { version = "0.4.43", features = ["arbitrary", "serde"] }
+chrono = { version = "0.4.44", features = ["arbitrary", "serde"] }
 clap = { version = "4.5.60", features = ["derive"] }
 config = { version = "0.15.19", default-features = false, features = [
     "toml",
@@ -313,11 +313,11 @@ secrecy = "0.10.3"
 semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-serde_with = "3.16.1"
+serde_with = "3.17.0"
 sha2 = "0.10.9"
 strum = { version = "0.27.2", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
-tempfile = "3.25"
+tempfile = "3.26"
 thiserror = "2.0"
 tokio-postgres = { version = "0.7.16", features = ["with-chrono-0_4", "with-serde_json-1"] }
 tokio = { version = "1", features = [
