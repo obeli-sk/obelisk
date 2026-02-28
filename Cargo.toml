@@ -241,7 +241,7 @@ base64 = "0.22.1"
 bytes = "1.11.1"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
-chrono = { version = "0.4.43", features = ["arbitrary", "serde"] }
+chrono = { version = "0.4.44", features = ["arbitrary", "serde"] }
 clap = { version = "4.5.60", features = ["derive"] }
 config = { version = "0.15.19", default-features = false, features = [
     "toml",
@@ -290,7 +290,7 @@ oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matchi
 prost = "0.14.3"
 prost-wkt-types = "0.7"
 quote = "1"
-rand = "0.9"
+rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls-no-provider",
@@ -313,11 +313,11 @@ secrecy = "0.10.3"
 semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-serde_with = "3.16.1"
+serde_with = "3.17.0"
 sha2 = "0.10.9"
-strum = { version = "0.27.2", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
-tempfile = "3.25"
+tempfile = "3.26"
 thiserror = "2.0"
 tokio-postgres = { version = "0.7.16", features = ["with-chrono-0_4", "with-serde_json-1"] }
 tokio = { version = "1", features = [
@@ -353,11 +353,11 @@ utoipa-axum = "0.2.0"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "41.0.4", features = ["memory-protection-keys"] }
-wasmtime-wasi = "41.0.4"
-wasmtime-wasi-io = "41.0.4"
-wasmtime-wasi-http = "41.0.4"
-wasmtime-environ = "41.0.4"
+wasmtime = { version = "42.0.1", features = ["memory-protection-keys"] }
+wasmtime-wasi = "42.0.1"
+wasmtime-wasi-io = "42.0.1"
+wasmtime-wasi-http = "42.0.1"
+wasmtime-environ = "42.0.1"
 # wasm-tools
 wast = "245.0.1"
 wit-parser = "0.245.1"
