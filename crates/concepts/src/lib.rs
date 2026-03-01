@@ -2114,7 +2114,6 @@ pub struct ReturnTypeExtendable {
     pub wit_type: StrVariant,
 }
 
-#[cfg(any(test, feature = "test"))]
 pub const RETURN_TYPE_DUMMY: ReturnType = ReturnType::Extendable(ReturnTypeExtendable {
     type_wrapper_tl: TypeWrapperTopLevel {
         ok: None,
