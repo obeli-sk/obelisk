@@ -5,9 +5,9 @@ expression: wit
 package root:component;
 
 world root {
-  import obelisk:types/time@4.1.0;
-  import obelisk:types/execution@4.1.0;
-  import obelisk:types/join-set@4.1.0;
+  import obelisk:types/time@4.2.0;
+  import obelisk:types/execution@4.2.0;
+  import obelisk:types/join-set@4.2.0;
   import testing:stub-activity-obelisk-ext/activity;
   import testing:stub-activity-obelisk-stub/activity;
   import testing:stub-activity/activity;
@@ -25,7 +25,7 @@ package obelisk:log@1.0.0 {
 }
 
 
-package obelisk:types@4.1.0 {
+package obelisk:types@4.2.0 {
   @since(version = 3.0.0)
   interface time {
     @since(version = 3.0.0)
@@ -134,6 +134,14 @@ package obelisk:types@4.1.0 {
       /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
       timeout: option<duration>,
     }
+
+    @since(version = 4.2.0)
+    variant schedule-json-error {
+      /// See `Function` definition
+      ffqn-parsing-error(string),
+      function-not-found,
+      type-check-error(string),
+    }
   }
   @since(version = 4.0.0)
   interface join-set {
@@ -178,9 +186,9 @@ package obelisk:types@4.1.0 {
 
 package obelisk:workflow@4.2.0 {
   interface workflow-support {
-    use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/time@4.1.0.{schedule-at};
-    use obelisk:types/execution@4.1.0.{delay-id, response-id};
+    use obelisk:types/join-set@4.2.0.{join-set};
+    use obelisk:types/time@4.2.0.{schedule-at};
+    use obelisk:types/execution@4.2.0.{delay-id, response-id};
 
     variant join-set-create-error {
       conflict,
@@ -206,8 +214,8 @@ package obelisk:workflow@4.2.0 {
 
 package testing:stub-activity-obelisk-ext {
   interface activity {
-    use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/execution@4.1.0.{execution-id, await-next-extension-error, get-extension-error};
+    use obelisk:types/join-set@4.2.0.{join-set};
+    use obelisk:types/execution@4.2.0.{execution-id, await-next-extension-error, get-extension-error};
 
     foo-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
@@ -220,7 +228,7 @@ package testing:stub-activity-obelisk-ext {
 
 package testing:stub-activity-obelisk-stub {
   interface activity {
-    use obelisk:types/execution@4.1.0.{execution-id, stub-error};
+    use obelisk:types/execution@4.2.0.{execution-id, stub-error};
 
     foo-stub: func(execution-id: execution-id, execution-result: result<string>) -> result<_, stub-error>;
   }
@@ -238,7 +246,7 @@ package testing:stub-activity {
 
 package testing:stub-workflow {
   interface workflow {
-    use obelisk:types/execution@4.1.0.{execution-id};
+    use obelisk:types/execution@4.2.0.{execution-id};
 
     submit-stub-await: func(arg: string) -> result<string>;
 
@@ -267,9 +275,9 @@ package testing:stub-workflow {
 
 package testing:stub-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@4.1.0.{execution-id};
-    use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/execution@4.1.0.{await-next-extension-error, get-extension-error};
+    use obelisk:types/execution@4.2.0.{execution-id};
+    use obelisk:types/join-set@4.2.0.{join-set};
+    use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
 
     submit-stub-await-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
@@ -342,8 +350,8 @@ package testing:stub-workflow-obelisk-ext {
 
 package testing:stub-workflow-obelisk-schedule {
   interface workflow {
-    use obelisk:types/execution@4.1.0.{execution-id};
-    use obelisk:types/time@4.1.0.{schedule-at};
+    use obelisk:types/execution@4.2.0.{execution-id};
+    use obelisk:types/time@4.2.0.{schedule-at};
 
     submit-stub-await-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
 

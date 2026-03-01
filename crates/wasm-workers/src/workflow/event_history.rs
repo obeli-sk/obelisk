@@ -4,17 +4,17 @@ use super::deadline_tracker::DeadlineTracker;
 use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
 use super::host_exports::execution_id_derived_into_wast_val;
-use super::host_exports::v4_1_0::obelisk::types::execution::GetExtensionError;
+use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::workflow::host_exports::ffqn_into_wast_val;
+use crate::workflow::host_exports::latest;
+use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
+use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
+use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError;
 use crate::workflow::host_exports::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
 use crate::workflow::host_exports::response_id::ResponseId;
-use crate::workflow::host_exports::v4_1_0;
-use crate::workflow::host_exports::v4_1_0::obelisk::types::execution as types_execution;
-use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextError;
-use crate::workflow::host_exports::v4_1_0::obelisk::workflow::workflow_support::JoinNextTryError;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ComponentId;
@@ -1844,9 +1844,9 @@ impl EventHistory {
         child_execution_id: &ExecutionIdDerived,
     ) -> Result<
         Result<Option<String>, Option<String>>,
-        v4_1_0::obelisk::workflow::workflow_support::GetResultJsonError,
+        latest::obelisk::workflow::workflow_support::GetResultJsonError,
     > {
-        use v4_1_0::obelisk::workflow::workflow_support::GetResultJsonError;
+        use latest::obelisk::workflow::workflow_support::GetResultJsonError;
 
         // Check if it was awaited (exists in processed responses index)
         let response_idx = self
@@ -4109,7 +4109,7 @@ mod tests {
         .unwrap();
         let (response_id, delay_result) = result.expect("should find response");
         // Check that response_id is a delay with the expected id
-        use crate::workflow::host_exports::v4_1_0::obelisk::types::execution::ResponseId as WitResponseId;
+        use crate::workflow::host_exports::latest::obelisk::types::execution::ResponseId as WitResponseId;
         let WitResponseId::DelayId(wit_delay_id) = response_id else {
             panic!("expected DelayId, got {response_id:?}");
         };
