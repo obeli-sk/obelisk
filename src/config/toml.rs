@@ -1080,7 +1080,8 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
-    pub(crate) ffqn: String,
+    #[schemars(with = "String")]
+    pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS function.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
     /// If omitted, defaults to a single `(params: list<string>)` parameter.
@@ -1151,9 +1152,6 @@ impl ActivityJsComponentConfigToml {
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
-        let ffqn = FunctionFqn::from_str(&self.ffqn)
-            .map_err(|e| anyhow!("invalid ffqn `{}`: {e}", self.ffqn))?;
-
         // Parse custom params or default to `params: list<string>`
         let parsed_params = match self.params {
             ParamsSpec::Default => {
@@ -1193,7 +1191,7 @@ impl ActivityJsComponentConfigToml {
         let mut hasher = Sha256::new();
         hasher.update(b"activity_js:");
         hasher.update(js_source.as_bytes());
-        hasher.update(self.ffqn.as_bytes());
+        hasher.update(self.ffqn.to_string().as_bytes());
         for p in &parsed_params {
             hasher.update(p.wit_type.as_ref().as_bytes());
         }
@@ -1226,7 +1224,7 @@ impl ActivityJsComponentConfigToml {
         Ok(ActivityJsConfigVerified {
             wasm_path,
             js_source,
-            ffqn,
+            ffqn: self.ffqn,
             params: parsed_params,
             activity_config,
             exec_config: self.exec.into_exec_exec_config(
@@ -1252,7 +1250,8 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
-    pub(crate) ffqn: String,
+    #[schemars(with = "String")]
+    pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS workflow function.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
     /// If omitted, defaults to a single `(params: list<string>)` parameter.
@@ -1296,9 +1295,6 @@ impl WorkflowJsComponentConfigToml {
         path_prefixes: Arc<PathPrefixes>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
-        let ffqn = FunctionFqn::from_str(&self.ffqn)
-            .map_err(|e| anyhow!("invalid ffqn `{}`: {e}", self.ffqn))?;
-
         // Parse custom params or default to `params: list<string>`
         let parsed_params = match self.params {
             ParamsSpec::Default => {
@@ -1338,7 +1334,7 @@ impl WorkflowJsComponentConfigToml {
         let mut hasher = Sha256::new();
         hasher.update(b"workflow_js:");
         hasher.update(js_source.as_bytes());
-        hasher.update(self.ffqn.as_bytes());
+        hasher.update(self.ffqn.to_string().as_bytes());
         for p in &parsed_params {
             hasher.update(p.wit_type.as_ref().as_bytes());
         }
@@ -1369,7 +1365,7 @@ impl WorkflowJsComponentConfigToml {
         Ok(WorkflowJsConfigVerified {
             wasm_path,
             js_source,
-            ffqn,
+            ffqn: self.ffqn,
             params: parsed_params,
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(
