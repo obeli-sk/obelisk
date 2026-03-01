@@ -13,8 +13,8 @@ world root {
   import wasi:cli/stderr@0.2.9;
   import wasi:http/types@0.2.9;
   import obelisk:log/log@1.0.0;
-  import obelisk:types/time@4.1.0;
-  import obelisk:types/execution@4.1.0;
+  import obelisk:types/time@4.2.0;
+  import obelisk:types/execution@4.2.0;
   import testing:fibo-workflow/workflow;
   import testing:fibo-workflow-obelisk-schedule/workflow;
   import wasi:cli/environment@0.2.9;
@@ -30,7 +30,7 @@ package obelisk:log@1.0.0 {
 }
 
 
-package obelisk:types@4.1.0 {
+package obelisk:types@4.2.0 {
   @since(version = 3.0.0)
   interface time {
     @since(version = 3.0.0)
@@ -138,6 +138,14 @@ package obelisk:types@4.1.0 {
       /// Override max duration of a execution run (single attempt).
       /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
       timeout: option<duration>,
+    }
+
+    @since(version = 4.2.0)
+    variant schedule-json-error {
+      /// See `Function` definition
+      ffqn-parsing-error(string),
+      function-not-found,
+      type-check-error(string),
     }
   }
   @since(version = 4.0.0)
@@ -405,8 +413,8 @@ package testing:fibo-workflow {
 
 package testing:fibo-workflow-obelisk-schedule {
   interface workflow {
-    use obelisk:types/time@4.1.0.{schedule-at};
-    use obelisk:types/execution@4.1.0.{execution-id};
+    use obelisk:types/time@4.2.0.{schedule-at};
+    use obelisk:types/execution@4.2.0.{execution-id};
 
     fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
   }

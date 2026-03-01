@@ -129,8 +129,6 @@ impl ComponentConfigRegistry {
         }
         let errors = if !errors.is_empty() {
             let errors = errors.join("\n");
-            // TODO: Promote to an error when version resolution is implemented
-            // https://github.com/bytecodealliance/wasmtime/blob/8dbd5db30d05e96594e2516cdbd7cc213f1c2fa4/crates/environ/src/component/names.rs#L102-L104
             tracing::warn!("component resolution error: \n{errors}");
             Some(errors)
         } else {
@@ -170,6 +168,7 @@ impl ComponentConfigRegistry {
                         | "obelisk:workflow@4.2.0"
                         | "obelisk:types@4.0.0"
                         | "obelisk:types@4.1.0"
+                        | "obelisk:types@4.2.0"
                 )
             }
             ComponentType::WebhookEndpoint => {
@@ -178,7 +177,10 @@ impl ComponentConfigRegistry {
                     "wasi" => true,
                     "obelisk" => matches!(
                         import.ffqn.ifc_fqn.pkg_fqn_name().to_string().as_str(),
-                        "obelisk:log@1.0.0" | "obelisk:types@4.0.0" | "obelisk:types@4.1.0"
+                        "obelisk:log@1.0.0"
+                            | "obelisk:types@4.0.0"
+                            | "obelisk:types@4.1.0"
+                            | "obelisk:types@4.2.0"
                     ),
                     _ => false,
                 }

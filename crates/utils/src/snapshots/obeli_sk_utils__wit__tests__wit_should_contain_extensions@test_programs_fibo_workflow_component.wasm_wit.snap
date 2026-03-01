@@ -5,9 +5,9 @@ expression: wit
 package root:component;
 
 world root {
-  import obelisk:types/time@4.1.0;
-  import obelisk:types/execution@4.1.0;
-  import obelisk:types/join-set@4.1.0;
+  import obelisk:types/time@4.2.0;
+  import obelisk:types/execution@4.2.0;
+  import obelisk:types/join-set@4.2.0;
   import obelisk:workflow/workflow-support@4.2.0;
   import testing:fibo/fibo;
   import testing:fibo-obelisk-ext/fibo;
@@ -16,7 +16,7 @@ world root {
   export testing:fibo-workflow-obelisk-ext/workflow;
   export testing:fibo-workflow-obelisk-schedule/workflow;
 }
-package obelisk:types@4.1.0 {
+package obelisk:types@4.2.0 {
   @since(version = 3.0.0)
   interface time {
     @since(version = 3.0.0)
@@ -125,6 +125,14 @@ package obelisk:types@4.1.0 {
       /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
       timeout: option<duration>,
     }
+
+    @since(version = 4.2.0)
+    variant schedule-json-error {
+      /// See `Function` definition
+      ffqn-parsing-error(string),
+      function-not-found,
+      type-check-error(string),
+    }
   }
   @since(version = 4.0.0)
   interface join-set {
@@ -169,18 +177,12 @@ package obelisk:types@4.1.0 {
 
 package obelisk:workflow@4.2.0 {
   interface workflow-support {
-    use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/execution@4.1.0.{function, submit-config, execution-id};
-    use obelisk:types/time@4.1.0.{schedule-at};
-    use obelisk:types/execution@4.1.0.{response-id};
+    use obelisk:types/join-set@4.2.0.{join-set};
+    use obelisk:types/execution@4.2.0.{function, submit-config, execution-id};
+    use obelisk:types/time@4.2.0.{schedule-at};
+    use obelisk:types/execution@4.2.0.{schedule-json-error, response-id};
 
     variant submit-json-error {
-      ffqn-parsing-error(string),
-      function-not-found,
-      type-check-error(string),
-    }
-
-    variant schedule-json-error {
       ffqn-parsing-error(string),
       function-not-found,
       type-check-error(string),
@@ -217,8 +219,8 @@ package testing:fibo {
 
 package testing:fibo-obelisk-ext {
   interface fibo {
-    use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/execution@4.1.0.{execution-id, await-next-extension-error};
+    use obelisk:types/join-set@4.2.0.{join-set};
+    use obelisk:types/execution@4.2.0.{execution-id, await-next-extension-error};
 
     fibo-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
 
@@ -229,7 +231,7 @@ package testing:fibo-obelisk-ext {
 
 package testing:fibo-workflow {
   interface workflow {
-    use obelisk:types/execution@4.1.0.{execution-id};
+    use obelisk:types/execution@4.2.0.{execution-id};
 
     fibow: func(n: u8, iterations: u32) -> result<u64>;
 
@@ -254,9 +256,9 @@ package testing:fibo-workflow {
 
 package testing:fibo-workflow-obelisk-ext {
   interface workflow {
-    use obelisk:types/execution@4.1.0.{execution-id};
-    use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/execution@4.1.0.{await-next-extension-error, get-extension-error};
+    use obelisk:types/execution@4.2.0.{execution-id};
+    use obelisk:types/join-set@4.2.0.{join-set};
+    use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
 
     fibow-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
@@ -317,8 +319,8 @@ package testing:fibo-workflow-obelisk-ext {
 
 package testing:fibo-workflow-obelisk-schedule {
   interface workflow {
-    use obelisk:types/execution@4.1.0.{execution-id};
-    use obelisk:types/time@4.1.0.{schedule-at};
+    use obelisk:types/execution@4.2.0.{execution-id};
+    use obelisk:types/time@4.2.0.{schedule-at};
 
     fibow-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
 

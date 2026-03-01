@@ -5,7 +5,7 @@ expression: wit
 package root:component;
 
 world root {
-  import obelisk:types/time@4.1.0;
+  import obelisk:types/time@4.2.0;
   import wasi:io/poll@0.2.6;
   import wasi:clocks/monotonic-clock@0.2.6;
   import wasi:io/error@0.2.6;
@@ -18,7 +18,7 @@ world root {
   export testing:sleep-obelisk-ext/sleep;
   export testing:sleep-obelisk-schedule/sleep;
 }
-package obelisk:types@4.1.0 {
+package obelisk:types@4.2.0 {
   @since(version = 3.0.0)
   interface time {
     @since(version = 3.0.0)
@@ -127,6 +127,14 @@ package obelisk:types@4.1.0 {
       /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
       timeout: option<duration>,
     }
+
+    @since(version = 4.2.0)
+    variant schedule-json-error {
+      /// See `Function` definition
+      ffqn-parsing-error(string),
+      function-not-found,
+      type-check-error(string),
+    }
   }
   @since(version = 4.0.0)
   interface join-set {
@@ -223,7 +231,7 @@ package wasi:cli@0.2.6 {
 
 package testing:sleep {
   interface sleep {
-    use obelisk:types/time@4.1.0.{duration};
+    use obelisk:types/time@4.2.0.{duration};
 
     sleep: func(duration: duration) -> result;
 
@@ -236,10 +244,10 @@ package testing:sleep {
 
 package testing:sleep-obelisk-ext {
   interface sleep {
-    use obelisk:types/time@4.1.0.{duration};
-    use obelisk:types/execution@4.1.0.{execution-id};
-    use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/execution@4.1.0.{await-next-extension-error, get-extension-error};
+    use obelisk:types/time@4.2.0.{duration};
+    use obelisk:types/execution@4.2.0.{execution-id};
+    use obelisk:types/join-set@4.2.0.{join-set};
+    use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
 
     sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
@@ -264,9 +272,9 @@ package testing:sleep-obelisk-ext {
 
 package testing:sleep-obelisk-schedule {
   interface sleep {
-    use obelisk:types/time@4.1.0.{duration};
-    use obelisk:types/execution@4.1.0.{execution-id};
-    use obelisk:types/time@4.1.0.{schedule-at};
+    use obelisk:types/time@4.2.0.{duration};
+    use obelisk:types/execution@4.2.0.{execution-id};
+    use obelisk:types/time@4.2.0.{schedule-at};
 
     sleep-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 

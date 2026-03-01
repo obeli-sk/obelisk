@@ -15,7 +15,7 @@ world root {
   export testing:stub-activity-obelisk-ext/activity;
   export testing:stub-activity-obelisk-stub/activity;
 }
-package obelisk:types@4.1.0 {
+package obelisk:types@4.2.0 {
   @since(version = 3.0.0)
   interface time {
     @since(version = 3.0.0)
@@ -124,6 +124,14 @@ package obelisk:types@4.1.0 {
       /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
       timeout: option<duration>,
     }
+
+    @since(version = 4.2.0)
+    variant schedule-json-error {
+      /// See `Function` definition
+      ffqn-parsing-error(string),
+      function-not-found,
+      type-check-error(string),
+    }
   }
   @since(version = 4.0.0)
   interface join-set {
@@ -213,9 +221,9 @@ package testing:stub-activity {
 
 package testing:stub-activity-obelisk-ext {
   interface activity {
-    use obelisk:types/execution@4.1.0.{execution-id};
-    use obelisk:types/join-set@4.1.0.{join-set};
-    use obelisk:types/execution@4.1.0.{await-next-extension-error, get-extension-error};
+    use obelisk:types/execution@4.2.0.{execution-id};
+    use obelisk:types/join-set@4.2.0.{join-set};
+    use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
 
     foo-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
@@ -234,7 +242,7 @@ package testing:stub-activity-obelisk-ext {
 
 package testing:stub-activity-obelisk-stub {
   interface activity {
-    use obelisk:types/execution@4.1.0.{execution-id, stub-error};
+    use obelisk:types/execution@4.2.0.{execution-id, stub-error};
 
     foo-stub: func(execution-id: execution-id, execution-result: result<string>) -> result<_, stub-error>;
 
