@@ -130,9 +130,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "event": {
         "finished": {
           "result": {
-            "ok": {
-              "ok": null
-            }
+            "ok": null
           },
           "http_client_traces": null
         }

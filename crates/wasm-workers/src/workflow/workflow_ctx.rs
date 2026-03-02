@@ -3297,7 +3297,7 @@ pub(crate) mod tests {
             &child_log.events
         );
         let child_res = child_log.as_finished_result().unwrap();
-        assert_matches!(child_res, SupportedFunctionReturnValue::Ok { ok: None });
+        assert_matches!(child_res, SupportedFunctionReturnValue::Ok(None));
     }
 
     fn skip_locked<'a>(

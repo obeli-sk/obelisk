@@ -545,7 +545,7 @@ pub fn to_any<T: serde::Serialize>(
 impl From<SupportedFunctionReturnValue> for grpc_gen::SupportedFunctionResult {
     fn from(finished_result: SupportedFunctionReturnValue) -> Self {
         let value = match finished_result {
-            SupportedFunctionReturnValue::Ok { ok: val_with_type } => {
+            SupportedFunctionReturnValue::Ok(val_with_type) => {
                 grpc_gen::supported_function_result::Value::Ok(
                     grpc_gen::supported_function_result::OkPayload {
                         return_value: val_with_type
@@ -560,7 +560,7 @@ impl From<SupportedFunctionReturnValue> for grpc_gen::SupportedFunctionResult {
                     },
                 )
             }
-            SupportedFunctionReturnValue::Err { err: val_with_type } => {
+            SupportedFunctionReturnValue::Err(val_with_type) => {
                 grpc_gen::supported_function_result::Value::Error(
                     grpc_gen::supported_function_result::ErrorPayload {
                         return_value: val_with_type

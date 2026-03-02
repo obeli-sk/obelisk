@@ -1792,7 +1792,7 @@ async fn test_append_response_with_same_child_id_twice_should_fail(database: Dat
     let response = JoinSetResponse::ChildExecutionFinished {
         child_execution_id,
         finished_version: Version(1),
-        result: concepts::SupportedFunctionReturnValue::Ok { ok: None },
+        result: concepts::SupportedFunctionReturnValue::Ok(None),
     };
     append_response_with_same_id_twice_should_fail(
         db_connection.as_ref(),
@@ -2101,7 +2101,7 @@ async fn pause_finished_execution_should_fail(database: Database) {
             AppendRequest {
                 created_at: sim_clock.now(),
                 event: ExecutionRequest::Finished {
-                    result: SupportedFunctionReturnValue::Ok { ok: None },
+                    result: SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None,
                 },
             },
@@ -2389,7 +2389,7 @@ async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(d
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id,
                     finished_version: Version(1),
-                    result: SupportedFunctionReturnValue::Ok { ok: None },
+                    result: SupportedFunctionReturnValue::Ok(None),
                 },
             },
         )
