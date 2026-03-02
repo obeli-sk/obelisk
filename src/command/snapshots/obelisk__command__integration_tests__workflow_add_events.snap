@@ -1,6 +1,6 @@
 ---
 source: src/command/integration_tests.rs
-expression: events_before
+expression: events
 ---
 {
   "events": [
@@ -35,10 +35,8 @@ expression: events_before
           "http_client_traces": null,
           "result": {
             "ok": {
-              "ok": {
-                "type": "string",
-                "value": "30"
-              }
+              "type": "string",
+              "value": "30"
             }
           }
         }

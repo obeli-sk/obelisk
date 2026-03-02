@@ -622,8 +622,8 @@ impl From<TypeWrapperTopLevel> for TypeWrapper {
 #[derive(Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SupportedFunctionReturnValue {
-    Ok { ok: Option<WastValWithType> },   // FIXME
-    Err { err: Option<WastValWithType> }, // FIXME: {err: {err
+    Ok(Option<WastValWithType>),
+    Err(Option<WastValWithType>),
     ExecutionError(FinishedExecutionError),
 }
 impl Display for SupportedFunctionReturnValue {
@@ -638,20 +638,17 @@ impl SupportedFunctionReturnValue {
     #[must_use]
     pub fn is_permanent_variant(&self) -> bool {
         match self {
-            SupportedFunctionReturnValue::Err {
-                err:
-                    Some(WastValWithType {
-                        value: val_json::wast_val::WastVal::Variant(key, _),
-                        ..
-                    }),
-            } => key.as_snake_str().contains("permanent"),
+            SupportedFunctionReturnValue::Err(Some(WastValWithType {
+                value: val_json::wast_val::WastVal::Variant(key, _),
+                ..
+            })) => key.as_snake_str().contains("permanent"),
             _ => false,
         }
     }
 }
 
 pub const SUPPORTED_RETURN_VALUE_OK_EMPTY: SupportedFunctionReturnValue =
-    SupportedFunctionReturnValue::Ok { ok: None };
+    SupportedFunctionReturnValue::Ok(None);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResultParsingError {
@@ -715,7 +712,7 @@ impl SupportedFunctionReturnValue {
             WastValWithType {
                 r#type: TypeWrapper::Result { ok: None, err: _ },
                 value: WastVal::Result(Ok(None)),
-            } => Ok(SupportedFunctionReturnValue::Ok { ok: None }),
+            } => Ok(SupportedFunctionReturnValue::Ok(None)),
 
             // `result<T, ?>` + `{"ok": !null}`
             WastValWithType {
@@ -725,18 +722,16 @@ impl SupportedFunctionReturnValue {
                         err: _,
                     },
                 value: WastVal::Result(Ok(Some(value))),
-            } => Ok(SupportedFunctionReturnValue::Ok {
-                ok: Some(WastValWithType {
-                    r#type: *ok,
-                    value: *value,
-                }),
-            }),
+            } => Ok(SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                r#type: *ok,
+                value: *value,
+            }))),
 
             // `result<?, _>` + `{"err": null}`
             WastValWithType {
                 r#type: TypeWrapper::Result { ok: _, err: None },
                 value: WastVal::Result(Err(None)),
-            } => Ok(SupportedFunctionReturnValue::Err { err: None }),
+            } => Ok(SupportedFunctionReturnValue::Err(None)),
 
             // `result<?, E>` + `{"err": !null}`
             WastValWithType {
@@ -746,12 +741,10 @@ impl SupportedFunctionReturnValue {
                         err: Some(err),
                     },
                 value: WastVal::Result(Err(Some(value))),
-            } => Ok(SupportedFunctionReturnValue::Err {
-                err: Some(WastValWithType {
-                    r#type: *err,
-                    value: *value,
-                }),
-            }),
+            } => Ok(SupportedFunctionReturnValue::Err(Some(WastValWithType {
+                r#type: *err,
+                value: *value,
+            }))),
 
             _ => Err(()),
         }
@@ -777,22 +770,22 @@ impl SupportedFunctionReturnValue {
         };
 
         match (ty.ok, ty.err, value) {
-            (None, _, Ok(None)) => Ok(SupportedFunctionReturnValue::Ok { ok: None }),
-            (Some(ok_type), _, Ok(Some(value))) => Ok(SupportedFunctionReturnValue::Ok {
-                ok: Some(WastValWithType {
+            (None, _, Ok(None)) => Ok(SupportedFunctionReturnValue::Ok(None)),
+            (Some(ok_type), _, Ok(Some(value))) => {
+                Ok(SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                     r#type: *ok_type,
                     value: WastVal::try_from(*value)
                         .map_err(ResultParsingErrorFromVal::WastValConversionError)?,
-                }),
-            }),
-            (_, None, Err(None)) => Ok(SupportedFunctionReturnValue::Err { err: None }),
-            (_, Some(err_type), Err(Some(value))) => Ok(SupportedFunctionReturnValue::Err {
-                err: Some(WastValWithType {
+                })))
+            }
+            (_, None, Err(None)) => Ok(SupportedFunctionReturnValue::Err(None)),
+            (_, Some(err_type), Err(Some(value))) => {
+                Ok(SupportedFunctionReturnValue::Err(Some(WastValWithType {
                     r#type: *err_type,
                     value: WastVal::try_from(*value)
                         .map_err(ResultParsingErrorFromVal::WastValConversionError)?,
-                }),
-            }),
+                })))
+            }
             (ok_type, err_type, value) => Err(ResultParsingErrorFromVal::TypeCheckError(format!(
                 "invalid combination - ok type: {ok_type:?}, err type: {err_type:?}, value: {value:?}"
             ))),
@@ -809,10 +802,10 @@ impl SupportedFunctionReturnValue {
         get_return_type: impl FnOnce() -> TypeWrapperTopLevel,
     ) -> Result<Option<Box<WastVal>>, Option<Box<WastVal>>> {
         match self {
-            SupportedFunctionReturnValue::Ok { ok: None } => Ok(None),
-            SupportedFunctionReturnValue::Ok { ok: Some(v) } => Ok(Some(Box::new(v.value))),
-            SupportedFunctionReturnValue::Err { err: None } => Err(None),
-            SupportedFunctionReturnValue::Err { err: Some(v) } => Err(Some(Box::new(v.value))),
+            SupportedFunctionReturnValue::Ok(None) => Ok(None),
+            SupportedFunctionReturnValue::Ok(Some(v)) => Ok(Some(Box::new(v.value))),
+            SupportedFunctionReturnValue::Err(None) => Err(None),
+            SupportedFunctionReturnValue::Err(Some(v)) => Err(Some(Box::new(v.value))),
             SupportedFunctionReturnValue::ExecutionError(_) => {
                 Err(Self::execution_error_to_wast_val_err(&get_return_type()))
             }
@@ -850,8 +843,8 @@ impl SupportedFunctionReturnValue {
     #[must_use]
     pub fn as_pending_state_finished_result(&self) -> PendingStateFinishedResultKind {
         match self {
-            SupportedFunctionReturnValue::Ok { ok: _ } => PendingStateFinishedResultKind::Ok,
-            SupportedFunctionReturnValue::Err { err: _ } => {
+            SupportedFunctionReturnValue::Ok(_) => PendingStateFinishedResultKind::Ok,
+            SupportedFunctionReturnValue::Err(_) => {
                 PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error)
             }
             SupportedFunctionReturnValue::ExecutionError(err) => {

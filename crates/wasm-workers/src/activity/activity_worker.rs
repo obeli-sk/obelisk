@@ -948,13 +948,13 @@ pub(crate) mod tests {
         let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionRequest::Finished { result, .. } => result);
         let wast_val_with_type = match test_retry_behavior {
             TestRetryBehavior::SucceedOnRetry => {
-                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
+                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(wast_val_with_type)) => wast_val_with_type);
                 let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
                 assert_eq!(BODY, val.deref());
                 wast_val_with_type
             }
             TestRetryBehavior::Fail { expected_retry_err } => {
-                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(wast_val_with_type)} => wast_val_with_type);
+                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Err(Some(wast_val_with_type)) => wast_val_with_type);
                 let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
                 assert_eq!(expected_retry_err, val.deref());
                 wast_val_with_type
@@ -1044,7 +1044,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok} => ok);
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(ok) => ok);
         let fibo = assert_matches!(res,
             Some(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 }) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
@@ -1448,7 +1448,7 @@ pub(crate) mod tests {
                 exec_log.last_event().event.clone(),
                 ExecutionRequest::Finished { result, http_client_traces: Some(http_client_traces) }
                 => (result, http_client_traces));
-        let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
+        let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(wast_val_with_type)) => wast_val_with_type);
         let val = assert_matches!(wast_val_with_type.value, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
         // check types
@@ -1730,7 +1730,7 @@ pub(crate) mod tests {
         );
         // The execution should fail with an ExecutionError when the WASM traps.
         // The trap happens because the HTTP request is denied and the WASM unwraps the error.
-        let err = assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(err)} => err);
+        let err = assert_matches!(res, SupportedFunctionReturnValue::Err(Some(err)) => err);
         let err = assert_matches!(err.value, WastVal::String(err) => err);
         assert_eq!("ErrorCode::HttpRequestDenied", err);
         // Verify the mock server was not called (request was blocked before reaching it)
@@ -1874,7 +1874,7 @@ pub(crate) mod tests {
             ExecutionRequest::Finished { result, .. } => result
         );
         // Should succeed with the secret replaced
-        assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(..));
         server.verify().await;
         drop(db_connection);
         drop(exec_task);
@@ -1972,7 +1972,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(..));
 
         db_close.close().await;
     }
@@ -2052,7 +2052,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(..));
         db_close.close().await;
     }
 
@@ -2180,8 +2180,8 @@ pub(crate) mod tests {
             .await
             .unwrap();
         let sleep_pid = assert_matches!(res,
-                SupportedFunctionReturnValue::Ok{ok: Some(WastValWithType {value,
-                    r#type: _})} => value);
+                SupportedFunctionReturnValue::Ok(Some(WastValWithType {value,
+                    r#type: _})) => value);
         let sleep_pid = assert_matches!(sleep_pid, WastVal::U32(val) => val);
         debug!("Sleep pid: {sleep_pid}");
 
@@ -2263,7 +2263,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-        let record = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: record} => record);
+        let record = assert_matches!(res, SupportedFunctionReturnValue::Ok(record) => record);
         assert_json_snapshot!(record);
         db_close.close().await;
     }
@@ -2330,8 +2330,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-        let variant =
-            assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: variant} => variant);
+        let variant = assert_matches!(res, SupportedFunctionReturnValue::Ok(variant) => variant);
         assert_json_snapshot!(variant);
         db_close.close().await;
     }
@@ -2404,7 +2403,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         // The permanent-failure variant should prevent retry and finish with Err
-        let err = assert_matches!(res, SupportedFunctionReturnValue::Err { err } => err);
+        let err = assert_matches!(res, SupportedFunctionReturnValue::Err(err) => err);
         let (key, _) = assert_matches!(
             err,
             Some(WastValWithType {

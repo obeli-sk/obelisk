@@ -35,10 +35,8 @@ expression: events
           "http_client_traces": [],
           "result": {
             "ok": {
-              "ok": {
-                "type": "string",
-                "value": "Hello, World!"
-              }
+              "type": "string",
+              "value": "Hello, World!"
             }
           }
         }

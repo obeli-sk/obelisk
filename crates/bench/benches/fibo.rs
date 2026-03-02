@@ -359,6 +359,6 @@ mod bench {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok { .. });
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(..));
     }
 }

@@ -86,10 +86,8 @@ expression: events
           "http_client_traces": null,
           "result": {
             "ok": {
-              "ok": {
-                "type": "string",
-                "value": "7"
-              }
+              "type": "string",
+              "value": "7"
             }
           }
         }

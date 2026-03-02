@@ -114,7 +114,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "event": {
             "type": "stub",
             "target_execution_id": "E_00000000000000000000000000.g:1_1",
-            "retval_hash": "0188eb6f2ed4e10b0a55f74f22443a5933a78281a2680b7f5f2b6dca35751535bf",
+            "retval_hash": "01f33bf5f99c8ba5a8fb4e194e272437f7b426414fa5547ccc0c5d7ba27e3e64de",
             "result": {
               "Ok": null
             }
@@ -206,9 +206,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "event": {
         "finished": {
           "result": {
-            "ok": {
-              "ok": null
-            }
+            "ok": null
           },
           "http_client_traces": null
         }
@@ -226,9 +224,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "child_execution_id": "E_00000000000000000000000000.g:1_1",
           "finished_version": 1,
           "result": {
-            "err": {
-              "err": null
-            }
+            "err": null
           }
         }
       }

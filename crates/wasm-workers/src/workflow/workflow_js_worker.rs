@@ -190,59 +190,47 @@ impl Worker for WorkflowJsWorker {
                 http_client_traces,
             } => {
                 match retval {
-                    SupportedFunctionReturnValue::Ok {
-                        ok:
-                            Some(WastValWithType {
-                                r#type:
-                                    TypeWrapper::Result {
-                                        ok: Some(ok_type),
-                                        err: Some(_),
-                                    },
-                                value: WastVal::Result(Ok(Some(ok_val))),
-                            }),
-                    } => {
+                    SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                        r#type:
+                            TypeWrapper::Result {
+                                ok: Some(ok_type),
+                                err: Some(_),
+                            },
+                        value: WastVal::Result(Ok(Some(ok_val))),
+                    })) => {
                         // js runtime returned {"ok": {"ok":"some string"}}
                         assert_eq!(TypeWrapper::String, *ok_type);
                         Ok(WorkerResultOk::RunFinished {
-                            retval: SupportedFunctionReturnValue::Ok {
-                                ok: Some(WastValWithType {
-                                    r#type: *ok_type,
-                                    value: *ok_val,
-                                }),
-                            },
+                            retval: SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                                r#type: *ok_type,
+                                value: *ok_val,
+                            })),
                             version,
                             http_client_traces,
                         })
                     }
 
-                    SupportedFunctionReturnValue::Ok {
-                        ok:
-                            Some(WastValWithType {
-                                r#type:
-                                    TypeWrapper::Result {
-                                        ok: Some(_),
-                                        err: Some(err_type),
-                                    },
-                                value: WastVal::Result(Err(Some(err_val))),
-                            }),
-                    } => {
+                    SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                        r#type:
+                            TypeWrapper::Result {
+                                ok: Some(_),
+                                err: Some(err_type),
+                            },
+                        value: WastVal::Result(Err(Some(err_val))),
+                    })) => {
                         // js runtime returned {"ok":{"err":"some string"}}
                         assert_eq!(TypeWrapper::String, *err_type);
                         Ok(WorkerResultOk::RunFinished {
-                            retval: SupportedFunctionReturnValue::Err {
-                                err: Some(WastValWithType {
-                                    r#type: *err_type,
-                                    value: *err_val,
-                                }),
-                            },
+                            retval: SupportedFunctionReturnValue::Err(Some(WastValWithType {
+                                r#type: *err_type,
+                                value: *err_val,
+                            })),
                             version,
                             http_client_traces,
                         })
                     }
 
-                    SupportedFunctionReturnValue::Err {
-                        err: Some(js_runtime_err),
-                    } => {
+                    SupportedFunctionReturnValue::Err(Some(js_runtime_err)) => {
                         // Map JsRuntimeError variants to appropriate WorkerError
                         let WastVal::Variant(variant_name, payload) = &js_runtime_err.value else {
                             unreachable!("expected Variant for js-runtime-error")
@@ -627,7 +615,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "hello world");
     }
@@ -676,7 +664,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "Hello, World!");
     }
@@ -697,7 +685,7 @@ mod tests {
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
         // For result<string, string>, a throw becomes Err
-        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err { err } => err);
+        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err(err) => err);
         let err_val = err_val.expect("should have err value");
         assert_eq!(extract_string(&err_val.value), "something went wrong");
     }
@@ -1095,8 +1083,7 @@ mod tests {
         info!("Got result: {res:?}");
 
         // Verify results
-        let ok_val =
-            assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+        let ok_val = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
         let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
         let result: serde_json::Value = serde_json::from_str(json_str).unwrap();
 
@@ -1331,8 +1318,7 @@ mod tests {
                 .get_finished_result(&self.execution_id)
                 .await
                 .unwrap();
-            let ok_val =
-                assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: Some(val) } => val);
+            let ok_val = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
             let json_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
             serde_json::from_str(json_str).unwrap()
         }

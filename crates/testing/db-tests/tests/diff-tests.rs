@@ -237,9 +237,7 @@ async fn persist_finished_event(
 
     let wast_val_with_type: WastValWithType = serde_json::from_str(WVWT_RECORD_UNSORTED).unwrap();
     let finished = ExecutionRequest::Finished {
-        result: SupportedFunctionReturnValue::Ok {
-            ok: Some(wast_val_with_type),
-        },
+        result: SupportedFunctionReturnValue::Ok(Some(wast_val_with_type)),
         http_client_traces: None,
     };
     // Finished

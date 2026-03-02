@@ -152,59 +152,47 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
         let (retval, version, http_client_traces) = assert_matches!(inner_worker_ok, WorkerResultOk::RunFinished { retval, version,  http_client_traces }
             => (retval, version,  http_client_traces), "activity_js_runtime runs in ActivityWorker");
         match retval {
-            SupportedFunctionReturnValue::Ok {
-                ok:
-                    Some(WastValWithType {
-                        r#type:
-                            TypeWrapper::Result {
-                                ok: Some(ok_type),
-                                err: Some(_),
-                            },
-                        value: WastVal::Result(Ok(Some(ok_val))),
-                    }),
-            } => {
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                r#type:
+                    TypeWrapper::Result {
+                        ok: Some(ok_type),
+                        err: Some(_),
+                    },
+                value: WastVal::Result(Ok(Some(ok_val))),
+            })) => {
                 // js runtime returned {"ok": {"ok":"some string"}}
                 assert_eq!(TypeWrapper::String, *ok_type);
                 Ok(WorkerResultOk::RunFinished {
-                    retval: SupportedFunctionReturnValue::Ok {
-                        ok: Some(WastValWithType {
-                            r#type: *ok_type,
-                            value: *ok_val,
-                        }),
-                    },
+                    retval: SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                        r#type: *ok_type,
+                        value: *ok_val,
+                    })),
                     version,
                     http_client_traces,
                 })
             }
 
-            SupportedFunctionReturnValue::Ok {
-                ok:
-                    Some(WastValWithType {
-                        r#type:
-                            TypeWrapper::Result {
-                                ok: Some(_),
-                                err: Some(err_type),
-                            },
-                        value: WastVal::Result(Err(Some(err_val))),
-                    }),
-            } => {
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                r#type:
+                    TypeWrapper::Result {
+                        ok: Some(_),
+                        err: Some(err_type),
+                    },
+                value: WastVal::Result(Err(Some(err_val))),
+            })) => {
                 // js runtime returned {"ok":{"err":"some string"}}
                 assert_eq!(TypeWrapper::String, *err_type);
                 Ok(WorkerResultOk::RunFinished {
-                    retval: SupportedFunctionReturnValue::Err {
-                        err: Some(WastValWithType {
-                            r#type: *err_type,
-                            value: *err_val,
-                        }),
-                    },
+                    retval: SupportedFunctionReturnValue::Err(Some(WastValWithType {
+                        r#type: *err_type,
+                        value: *err_val,
+                    })),
                     version,
                     http_client_traces,
                 })
             }
 
-            SupportedFunctionReturnValue::Err {
-                err: Some(js_runtime_err),
-            } => {
+            SupportedFunctionReturnValue::Err(Some(js_runtime_err)) => {
                 // Map JsRuntimeError variants to appropriate WorkerError
                 let WastVal::Variant(variant_name, payload) = &js_runtime_err.value else {
                     unreachable!("expected Variant for js-runtime-error")
@@ -522,7 +510,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "hello world");
     }
@@ -542,7 +530,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "hello world");
     }
@@ -562,7 +550,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "hello world");
     }
@@ -584,7 +572,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "Hello, World!");
     }
@@ -605,7 +593,7 @@ mod tests {
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
         // For result<string, string>, a throw becomes Err
-        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err { err } => err);
+        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err(err) => err);
         let err_val = err_val.expect("should have err value");
         assert_eq!(extract_string(&err_val.value), "something went wrong");
     }
@@ -626,7 +614,7 @@ mod tests {
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
         // For result<string, string>, a throw becomes Err
-        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err { err } => err);
+        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err(err) => err);
         let err_val = err_val.expect("should have err value");
         assert_eq!(extract_string(&err_val.value), "something went wrong");
     }
@@ -650,7 +638,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "logged");
     }
@@ -803,7 +791,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "fetch works");
     }
@@ -846,7 +834,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "ok");
     }
@@ -883,7 +871,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "status:404");
     }
@@ -904,7 +892,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err { err } => err);
+        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err(err) => err);
         let err_str = err_val.expect("should have error value");
         let msg = extract_string(&err_str.value);
         assert_eq!("ErrorCode::HttpRequestDenied", msg);
@@ -925,7 +913,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "sync result: hello");
     }
@@ -963,7 +951,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(
             extract_string(&ok_val.value),
@@ -986,7 +974,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "no args works");
     }
@@ -1027,7 +1015,7 @@ mod tests {
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "APPLE, BANANA, CHERRY");
     }
@@ -1054,7 +1042,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "delayed result");
 
@@ -1099,7 +1087,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "first, second");
 
@@ -1149,7 +1137,7 @@ mod tests {
         let result = worker.run(ctx).await.expect("worker should succeed");
 
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
-        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "done");
 

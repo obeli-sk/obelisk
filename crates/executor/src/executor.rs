@@ -442,10 +442,7 @@ impl ExecTask {
     ) -> Result<Option<AppendOrCancel>, DbErrorWrite> {
         Ok(match worker_result {
             WorkerResult::Ok(WorkerResultOk::RunFinished {
-                retval:
-                    ref retval @ SupportedFunctionReturnValue::Err {
-                        err: ref result_err,
-                    },
+                retval: ref retval @ SupportedFunctionReturnValue::Err(ref result_err),
                 version,
                 http_client_traces,
             }) if component_type.is_activity()
@@ -1003,7 +1000,7 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionRequest::Finished {
-                    result: SupportedFunctionReturnValue::Ok { ok: None },
+                    result: SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None
                 },
                 created_at: _,
@@ -1061,7 +1058,7 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionRequest::Finished {
-                    result: SupportedFunctionReturnValue::Ok { ok: None },
+                    result: SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None
                 },
                 created_at: _,
@@ -1271,7 +1268,7 @@ mod tests {
             execution_log.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionRequest::Finished {
-                    result: SupportedFunctionReturnValue::Ok{ok:None},
+                    result: SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None
                 },
                 created_at: finished_at,

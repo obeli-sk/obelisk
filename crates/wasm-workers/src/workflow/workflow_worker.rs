@@ -1273,7 +1273,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val);
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
 
         let fibo = assert_matches!(res,
             WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
@@ -1399,7 +1399,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val);
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
 
         let fibo = assert_matches!(res,
             WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
@@ -1467,7 +1467,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         // Should return Ok(()) since the test passed
-        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(None));
     }
 
     /// Test: `submit_json` with malformed JSON params → `ParamsParsingError`
@@ -1532,7 +1532,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(None));
     }
 
     /// Test: `get_result_json` before await → `NotFoundInProcessedResponses`
@@ -1622,7 +1622,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(None));
     }
 
     /// Test: `get_result_json` when activity returns error → Err(None) for unit error type
@@ -1719,7 +1719,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(None));
     }
 
     /// Test: `schedule_json` function for scheduling executions with JSON params
@@ -1783,7 +1783,7 @@ pub(crate) mod tests {
             .unwrap();
 
         // Extract the execution-id record from the result
-        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val);
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
         let record = assert_matches!(res.value, WastVal::Record(map) => map);
 
         // Extract the "id" field from the record
@@ -2252,7 +2252,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok { ok: None });
+        assert_matches!(res, SupportedFunctionReturnValue::Ok(None));
         drop(db_connection);
         db_close.close().await;
     }
@@ -2358,8 +2358,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        let val =
-            assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val.value);
+        let val = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val.value);
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
         drop(db_connection);
@@ -2476,8 +2475,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        let val =
-            assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(val)} => val.value);
+        let val = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val.value);
         let val = assert_matches!(val, WastVal::List(vec) => vec);
         assert_eq!(concurrency, val.len());
         for val in val {
@@ -2575,7 +2573,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_matches!(
             res.as_finished_result().unwrap(),
-            SupportedFunctionReturnValue::Ok { ok: None }
+            SupportedFunctionReturnValue::Ok(None)
         );
         sim_clock.move_time_forward(SLEEP_DURATION);
         // The scheduled `noop` execution should be pending.
@@ -2687,7 +2685,7 @@ pub(crate) mod tests {
             .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Err { err: Some(_) });
+        assert_matches!(res, SupportedFunctionReturnValue::Err(Some(_)));
         let pending_state = db_connection
             .get_pending_state(&execution_id)
             .await
@@ -2810,9 +2808,7 @@ pub(crate) mod tests {
         let res = db_connection.get(&execution_id).await.unwrap();
         let value = assert_matches!(
             res.as_finished_result().unwrap(),
-            SupportedFunctionReturnValue::Ok{
-                ok: Some(WastValWithType { value, .. })
-             } => value
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType { value, .. })) => value
         );
         assert_eq!(WastVal::String(format!("stubbing {INPUT_PARAM}")), value);
         drop(db_connection);
@@ -3200,7 +3196,7 @@ pub(crate) mod tests {
             db_connection.as_ref(),
             sim_clock.now(),
             stub_execution_id,
-            SupportedFunctionReturnValue::Err { err: None },
+            SupportedFunctionReturnValue::Err(None),
         )
         .await;
 
@@ -3217,7 +3213,7 @@ pub(crate) mod tests {
         let res = db_connection.get(&execution_id).await.unwrap();
         assert_matches!(
             res.as_finished_result().unwrap(),
-            SupportedFunctionReturnValue::Ok { ok: None }
+            SupportedFunctionReturnValue::Ok(None)
         );
         drop(db_connection);
         db_close.close().await;

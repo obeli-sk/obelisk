@@ -3107,12 +3107,11 @@ mod tests {
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
-        const CHILD_RESP: SupportedFunctionReturnValue = SupportedFunctionReturnValue::Ok {
-            ok: Some(WastValWithType {
+        const CHILD_RESP: SupportedFunctionReturnValue =
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
-            }),
-        };
+            }));
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
@@ -3217,18 +3216,16 @@ mod tests {
     async fn create_two_non_blocking_childs_then_two_join_nexts(
         #[values(true, false)] submits_and_awaits_in_correct_order: bool,
     ) {
-        const KID_A_RET: SupportedFunctionReturnValue = SupportedFunctionReturnValue::Ok {
-            ok: Some(WastValWithType {
+        const KID_A_RET: SupportedFunctionReturnValue =
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
-            }),
-        };
-        const KID_B_RET: SupportedFunctionReturnValue = SupportedFunctionReturnValue::Ok {
-            ok: Some(WastValWithType {
+            }));
+        const KID_B_RET: SupportedFunctionReturnValue =
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(2),
-            }),
-        };
+            }));
 
         test_utils::set_up();
 

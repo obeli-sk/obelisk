@@ -1221,10 +1221,10 @@ enum RetVal {
 impl From<SupportedFunctionReturnValue> for RetVal {
     fn from(value: SupportedFunctionReturnValue) -> RetVal {
         match value {
-            SupportedFunctionReturnValue::Ok { ok: val_with_type } => {
+            SupportedFunctionReturnValue::Ok(val_with_type) => {
                 RetVal::Ok(val_with_type.map(|it| it.value))
             }
-            SupportedFunctionReturnValue::Err { err: val_with_type } => {
+            SupportedFunctionReturnValue::Err(val_with_type) => {
                 RetVal::Err(val_with_type.map(|it| it.value))
             }
             SupportedFunctionReturnValue::ExecutionError(err) => RetVal::ExecutionError(err),

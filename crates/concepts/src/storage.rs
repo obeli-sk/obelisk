@@ -2204,15 +2204,13 @@ mod tests {
 
     #[test]
     fn join_set_deser_with_result_ok_option_none_should_work() {
-        let expected = SupportedFunctionReturnValue::Ok {
-            ok: Some(WastValWithType {
-                r#type: TypeWrapper::Result {
-                    ok: Some(Box::new(TypeWrapper::Option(Box::new(TypeWrapper::String)))),
-                    err: Some(Box::new(TypeWrapper::String)),
-                },
-                value: WastVal::Result(Ok(Some(Box::new(WastVal::Option(None))))),
-            }),
-        };
+        let expected = SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+            r#type: TypeWrapper::Result {
+                ok: Some(Box::new(TypeWrapper::Option(Box::new(TypeWrapper::String)))),
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            value: WastVal::Result(Ok(Some(Box::new(WastVal::Option(None))))),
+        }));
         let json = serde_json::to_string(&expected).unwrap();
         assert_snapshot!(json);
 
@@ -2302,12 +2300,11 @@ mod tests {
 
         #[test]
         fn typed_variant_hash_is_stable() {
-            let retval = StubRetVal::Typed(SupportedFunctionReturnValue::Ok {
-                ok: Some(WastValWithType {
+            let retval =
+                StubRetVal::Typed(SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                     r#type: TypeWrapper::String,
                     value: WastVal::String("hello".into()),
-                }),
-            });
+                })));
             let hash = retval.hash();
             // Hash should start with version byte 0x01
             assert_eq!(hash.to_string().chars().take(2).collect::<String>(), "01");
@@ -2327,8 +2324,8 @@ mod tests {
 
         #[test]
         fn different_values_produce_different_hashes() {
-            let typed1 = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
-            let typed2 = StubRetVal::Typed(SupportedFunctionReturnValue::Err { err: None });
+            let typed1 = StubRetVal::Typed(SupportedFunctionReturnValue::Ok(None));
+            let typed2 = StubRetVal::Typed(SupportedFunctionReturnValue::Err(None));
             let untyped1 = StubRetVal::Untyped("value1".to_string());
             let untyped2 = StubRetVal::Untyped("value2".to_string());
 
@@ -2347,8 +2344,8 @@ mod tests {
 
         #[test]
         fn same_values_produce_same_hashes() {
-            let retval1 = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
-            let retval2 = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
+            let retval1 = StubRetVal::Typed(SupportedFunctionReturnValue::Ok(None));
+            let retval2 = StubRetVal::Typed(SupportedFunctionReturnValue::Ok(None));
             assert_eq!(retval1.hash(), retval2.hash());
 
             let untyped1 = StubRetVal::Untyped("test".to_string());
@@ -2358,7 +2355,7 @@ mod tests {
 
         #[test]
         fn hash_serialization_roundtrip() {
-            let retval = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
+            let retval = StubRetVal::Typed(SupportedFunctionReturnValue::Ok(None));
             let hash = retval.hash();
 
             let serialized = serde_json::to_string(&hash).unwrap();
@@ -2381,9 +2378,9 @@ mod tests {
         #[test]
         fn typed_and_untyped_with_same_content_produce_different_hashes() {
             // Even if the JSON content is the same, Typed vs Untyped should hash differently
-            let typed = StubRetVal::Typed(SupportedFunctionReturnValue::Ok { ok: None });
+            let typed = StubRetVal::Typed(SupportedFunctionReturnValue::Ok(None));
             let json_of_typed =
-                serde_json::to_string(&SupportedFunctionReturnValue::Ok { ok: None }).unwrap();
+                serde_json::to_string(&SupportedFunctionReturnValue::Ok(None)).unwrap();
             let untyped = StubRetVal::Untyped(json_of_typed);
 
             assert_ne!(typed.hash(), untyped.hash());

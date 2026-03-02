@@ -56,7 +56,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "event": {
             "type": "stub",
             "target_execution_id": "E_00000000000000000000000000.n:fake_1",
-            "retval_hash": "019b5be9576617ac5e8a629880788475b6a0b5549f0bc8a56808370d2ae399d645",
+            "retval_hash": "014b53e58191c5e7c86b877ca0beec6b9eb0dc24d785878d552304af45e87f661c",
             "result": {
               "Err": "execution_not_found"
             }
@@ -70,9 +70,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "event": {
         "finished": {
           "result": {
-            "ok": {
-              "ok": null
-            }
+            "ok": null
           },
           "http_client_traces": null
         }
