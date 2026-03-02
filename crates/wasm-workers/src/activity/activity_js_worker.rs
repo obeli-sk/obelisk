@@ -304,6 +304,7 @@ fn synthesize_wit(ffqn: &FunctionFqn, params: &[ParameterType]) -> String {
 mod tests {
     use super::*;
     use crate::activity::activity_worker::test::compile_activity_with_engine;
+    use crate::activity::activity_worker::tests::TestRetryBehavior;
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
     use concepts::SupportedFunctionReturnValue;
@@ -1172,5 +1173,74 @@ mod tests {
             !messages.iter().any(|m| m.contains("orphaned timer log")),
             "orphaned timer should have been abandoned, but found its log message: {messages:?}"
         );
+    }
+
+    /// Creates a JS activity worker with allowed host configuration for HTTP tests.
+    /// The JS function should have signature: `function(url: string) -> result<string, string>`
+    async fn new_js_activity_worker_for_retry_test(
+        js_source: &str,
+        user_ffqn: FunctionFqn,
+        listener: &std::net::TcpListener,
+    ) -> Arc<dyn Worker> {
+        let server_address = listener
+            .local_addr()
+            .expect("Failed to get server address.");
+        let allowed_host = format!("http://127.0.0.1:{port}", port = server_address.port());
+
+        let user_params = vec![ParameterType {
+            type_wrapper: TypeWrapper::String,
+            name: StrVariant::Static("url"),
+            wit_type: StrVariant::Static("string"),
+        }];
+
+        JsWorkerBuilder::new(js_source, user_ffqn)
+            .with_params(user_params)
+            .with_allowed_host(&allowed_host)
+            .build()
+            .await
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn fetch_get_retry_on_fallible_err(
+        #[values(TestRetryBehavior::SucceedOnRetry,TestRetryBehavior::Fail { expected_retry_err: "wrong status code: 404" })]
+        test_retry_behavior: TestRetryBehavior,
+        #[values(
+            executor::executor::LockingStrategy::ByFfqns,
+            executor::executor::LockingStrategy::ByComponentDigest
+        )]
+        locking_strategy: executor::executor::LockingStrategy,
+    ) {
+        use crate::activity::activity_worker::tests::run_http_get_retry_test;
+
+        test_utils::set_up();
+
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fetch-get");
+        // JS that throws on non-2xx status codes (similar to the Rust http_get activity)
+        let js_source = r#"
+            export default async function fetch_get(url) {
+                const resp = await fetch(url);
+                if (!resp.ok) {
+                    throw "wrong status code: " + resp.status;
+                }
+                const text = await resp.text();
+                return text;
+            }
+        "#;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let worker =
+            new_js_activity_worker_for_retry_test(js_source, ffqn.clone(), &listener).await;
+
+        run_http_get_retry_test(
+            listener,
+            worker,
+            ffqn,
+            |uri| Params::from_json_values_test(vec![json!(format!("{uri}/"))]),
+            locking_strategy,
+            "wrong status code: 500",
+            test_retry_behavior,
+        )
+        .await;
     }
 }

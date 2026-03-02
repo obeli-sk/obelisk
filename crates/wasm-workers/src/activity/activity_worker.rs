@@ -802,6 +802,232 @@ pub(crate) mod tests {
         .await
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum TestRetryBehavior {
+        SucceedOnRetry,
+        Fail { expected_retry_err: &'static str },
+    }
+
+    /// Common test helper for testing HTTP GET retry behavior on fallible errors.
+    ///
+    /// This function tests that:
+    /// 1. An activity that returns an error (from a 500 response) triggers a temporary failure with backoff
+    /// 2. After the backoff expires, the activity is retried
+    /// 3. On retry, either succeeds (if `succeed_eventually` is true) or fails permanently
+    pub(crate) async fn run_http_get_retry_test(
+        listener: std::net::TcpListener,
+        worker: Arc<dyn Worker>,
+        ffqn: FunctionFqn,
+        make_params: impl FnOnce(&str) -> Params,
+        locking_strategy: LockingStrategy,
+        expected_err_contains: &str,
+        test_retry_behavior: TestRetryBehavior,
+    ) {
+        use std::ops::Deref;
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+
+        const BODY: &str = "ok";
+        const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
+
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+
+        let server_address = listener
+            .local_addr()
+            .expect("Failed to get server address.");
+        let uri = format!("http://127.0.0.1:{port}", port = server_address.port());
+
+        let retry_config = ComponentRetryConfig {
+            max_retries: Some(1),
+            retry_exp_backoff: RETRY_EXP_BACKOFF,
+        };
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            tick_sleep: Duration::ZERO,
+            component_id: ComponentId::dummy_activity(),
+            task_limiter: None,
+            executor_id: ExecutorId::generate(),
+            retry_config,
+            locking_strategy,
+        };
+        let ffqns = Arc::from([ffqn.clone()]);
+        let exec_task = ExecTask::new_test(
+            exec_config,
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            ffqns,
+        );
+
+        let params = make_params(&uri);
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: ffqn.clone(),
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        let server = MockServer::builder().listener(listener).start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(500).set_body_string(BODY))
+            .expect(1)
+            .mount(&server)
+            .await;
+        debug!("started mock server on {}", server.address());
+
+        {
+            // Expect error result to be interpreted as a temporary failure
+            assert_eq!(
+                1,
+                exec_task
+                    .tick_test(sim_clock.now(), RunId::generate())
+                    .await
+                    .wait_for_tasks()
+                    .await
+                    .len()
+            );
+            let exec_log = db_connection.get(&execution_id).await.unwrap();
+
+            let (reason, detail, found_expires_at, http_client_traces) = assert_matches!(
+                &exec_log.last_event().event,
+                ExecutionRequest::TemporarilyFailed {
+                    backoff_expires_at,
+                    reason,
+                    detail: Some(detail),
+                    http_client_traces: Some(http_client_traces)
+                }
+                => (reason, detail, *backoff_expires_at, http_client_traces)
+            );
+            assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
+            assert_eq!("activity returned error", reason.deref());
+            assert!(
+                detail.contains(expected_err_contains),
+                "Unexpected detail: {detail}, expected to contain: {expected_err_contains}"
+            );
+
+            assert_eq!(1, http_client_traces.len());
+            let http_client_trace = http_client_traces.iter().next().unwrap();
+            let (method_actual, uri_actual) = assert_matches!(
+                http_client_trace,
+                HttpClientTrace {
+                    req: RequestTrace {
+                        method,
+                        sent_at: _,
+                        uri
+                    },
+                    resp: Some(ResponseTrace {
+                        status: Ok(500),
+                        finished_at: _
+                    })
+                }
+                => (method, uri)
+            );
+            assert_eq!("GET", method_actual);
+            assert_eq!(format!("{uri}/"), *uri_actual);
+            server.verify().await;
+        }
+
+        // Noop until the timeout expires
+        assert_eq!(
+            0,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .wait_for_tasks()
+                .await
+                .len()
+        );
+        sim_clock.move_time_forward(RETRY_EXP_BACKOFF);
+
+        server.reset().await;
+
+        if test_retry_behavior == TestRetryBehavior::SucceedOnRetry {
+            // Reconfigure the server, return 200
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+                .expect(1)
+                .mount(&server)
+                .await;
+            debug!("Reconfigured the server");
+        } // otherwise return 404
+
+        assert_eq!(
+            1,
+            exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .wait_for_tasks()
+                .await
+                .len()
+        );
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
+        let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionRequest::Finished { result, .. } => result);
+        let wast_val_with_type = match test_retry_behavior {
+            TestRetryBehavior::SucceedOnRetry => {
+                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
+                let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
+                assert_eq!(BODY, val.deref());
+                wast_val_with_type
+            }
+            TestRetryBehavior::Fail { expected_retry_err } => {
+                let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(wast_val_with_type)} => wast_val_with_type);
+                let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
+                assert_eq!(expected_retry_err, val.deref());
+                wast_val_with_type
+            }
+        };
+        // check types
+        assert_matches!(wast_val_with_type.r#type, TypeWrapper::String); // in both cases
+        drop(db_connection);
+        drop(exec_task);
+        db_close.close().await;
+    }
+
+    /// Creates an activity worker with allowed host configuration.
+    /// Returns the worker and the URI for the allowed host.
+    pub(crate) async fn create_activity_worker_with_allowed_host(
+        wasm_path: &str,
+        listener: &std::net::TcpListener,
+    ) -> Arc<dyn Worker> {
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let sim_clock = SimClock::default();
+        let server_address = listener
+            .local_addr()
+            .expect("Failed to get server address.");
+        let uri = format!("http://127.0.0.1:{port}", port = server_address.port());
+
+        let (worker, _) = new_activity_worker_with_config(
+            wasm_path,
+            engine,
+            sim_clock.clone_box(),
+            TokioSleep,
+            {
+                let uri = uri.clone();
+                move |component_id| activity_config_allowed_host(component_id, &uri)
+            },
+        )
+        .await;
+        worker
+    }
+
     #[rstest]
     #[tokio::test]
     async fn fibo_once(
@@ -1421,199 +1647,33 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest::rstest(
-            succeed_eventually => [false, true],
-        )]
+    #[rstest::rstest]
     #[tokio::test]
     async fn http_get_retry_on_fallible_err(
-        succeed_eventually: bool,
+        #[values(TestRetryBehavior::SucceedOnRetry,TestRetryBehavior::Fail { expected_retry_err: "wrong status code: 404" })]
+        test_retry_behavior: TestRetryBehavior,
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,
     ) {
-        use std::ops::Deref;
-        use wiremock::{
-            Mock, MockServer, ResponseTemplate,
-            matchers::{method, path},
-        };
-        const BODY: &str = "ok";
-        const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
         test_utils::set_up();
-        let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let server_address = listener
-            .local_addr()
-            .expect("Failed to get server address.");
-        let uri = format!("http://127.0.0.1:{port}", port = server_address.port());
-
-        let (worker, _) = new_activity_worker_with_config(
+        let worker = create_activity_worker_with_allowed_host(
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            engine,
-            sim_clock.clone_box(),
-            TokioSleep,
-            {
-                let uri = uri.clone();
-                move |component_id| activity_config_allowed_host(component_id, &uri)
-            },
+            &listener,
         )
         .await;
 
-        let retry_config = ComponentRetryConfig {
-            max_retries: Some(1),
-            retry_exp_backoff: RETRY_EXP_BACKOFF,
-        };
-        let exec_config = ExecConfig {
-            batch_size: 1,
-            lock_expiry: Duration::from_secs(1),
-            tick_sleep: Duration::ZERO,
-            component_id: ComponentId::dummy_activity(),
-            task_limiter: None,
-            executor_id: ExecutorId::generate(),
-            retry_config,
-            locking_strategy,
-        };
-        let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-        let exec_task = ExecTask::new_test(
-            exec_config,
+        run_http_get_retry_test(
+            listener,
             worker,
-            sim_clock.clone_box(),
-            db_pool.clone(),
-            ffqns,
-        );
-
-        let params = Params::from_json_values_test(vec![json!(uri.clone())]);
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection_test().await.unwrap();
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
-                params,
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                component_id: ComponentId::dummy_activity(),
-
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
-
-        let server = MockServer::builder().listener(listener).start().await;
-        Mock::given(method("GET"))
-            .and(path("/"))
-            .respond_with(ResponseTemplate::new(500).set_body_string(BODY))
-            .expect(1)
-            .mount(&server)
-            .await;
-        debug!("started mock server on {}", server.address());
-
-        {
-            // Expect error result to be interpreted as an temporary failure
-            assert_eq!(
-                1,
-                exec_task
-                    .tick_test(sim_clock.now(), RunId::generate())
-                    .await
-                    .wait_for_tasks()
-                    .await
-                    .len()
-            );
-            let exec_log = db_connection.get(&execution_id).await.unwrap();
-
-            let (reason, detail, found_expires_at, http_client_traces) = assert_matches!(
-                &exec_log.last_event().event,
-                ExecutionRequest::TemporarilyFailed {
-                    backoff_expires_at,
-                    reason,
-                    detail: Some(detail),
-                    http_client_traces: Some(http_client_traces)
-                }
-                => (reason, detail, *backoff_expires_at, http_client_traces)
-            );
-            assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
-            assert_eq!("activity returned error", reason.deref());
-            assert!(
-                detail.contains("wrong status code: 500"),
-                "Unexpected {detail}"
-            );
-
-            assert_eq!(1, http_client_traces.len());
-            let http_client_trace = http_client_traces.iter().next().unwrap();
-            let (method, uri_actual) = assert_matches!(
-                http_client_trace,
-                HttpClientTrace {
-                    req: RequestTrace {
-                        method,
-                        sent_at: _,
-                        uri
-                    },
-                    resp: Some(ResponseTrace {
-                        status: Ok(500),
-                        finished_at: _
-                    })
-                }
-                => (method, uri)
-            );
-            assert_eq!("GET", method);
-            assert_eq!(format!("{uri}/"), *uri_actual);
-            server.verify().await;
-        }
-        // Noop until the timeout expires
-        assert_eq!(
-            0,
-            exec_task
-                .tick_test(sim_clock.now(), RunId::generate())
-                .await
-                .wait_for_tasks()
-                .await
-                .len()
-        );
-        sim_clock.move_time_forward(RETRY_EXP_BACKOFF);
-        server.reset().await;
-        if succeed_eventually {
-            // Reconfigure the server
-            Mock::given(method("GET"))
-                .and(path("/"))
-                .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
-                .expect(1)
-                .mount(&server)
-                .await;
-            debug!("Reconfigured the server");
-        } // otherwise return 404
-
-        assert_eq!(
-            1,
-            exec_task
-                .tick_test(sim_clock.now(), RunId::generate())
-                .await
-                .wait_for_tasks()
-                .await
-                .len()
-        );
-        let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionRequest::Finished { result, .. } => result);
-        let wast_val_with_type = if succeed_eventually {
-            let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok{ok: Some(wast_val_with_type)} => wast_val_with_type);
-            let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
-            assert_eq!(BODY, val.deref());
-            wast_val_with_type
-        } else {
-            let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Err{err: Some(wast_val_with_type)} => wast_val_with_type);
-            let val = assert_matches!(&wast_val_with_type.value, WastVal::String(val) => val);
-            assert_eq!("wrong status code: 404", val.deref());
-            wast_val_with_type
-        };
-        // check types
-        assert_matches!(wast_val_with_type.r#type, TypeWrapper::String); // in both cases
-        drop(db_connection);
-        drop(exec_task);
-        db_close.close().await;
+            HTTP_GET_SUCCESSFUL_ACTIVITY,
+            |uri| Params::from_json_values_test(vec![json!(uri)]),
+            locking_strategy,
+            "wrong status code: 500",
+            test_retry_behavior,
+        )
+        .await;
     }
 
     #[tokio::test]
