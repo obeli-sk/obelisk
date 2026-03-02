@@ -3030,6 +3030,7 @@ dependencies = [
  "opentelemetry",
  "rstest",
  "serde",
+ "serde_json",
  "test-db-macro",
  "test-utils",
  "thiserror 2.0.18",

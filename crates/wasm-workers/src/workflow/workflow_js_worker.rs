@@ -184,7 +184,7 @@ impl Worker for WorkflowJsWorker {
             WorkerResultOk::DbUpdatedByWorkerOrWatcher => {
                 Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
             }
-            WorkerResultOk::Finished {
+            WorkerResultOk::RunFinished {
                 retval,
                 version,
                 http_client_traces,
@@ -203,7 +203,7 @@ impl Worker for WorkflowJsWorker {
                     } => {
                         // js runtime returned {"ok": {"ok":"some string"}}
                         assert_eq!(TypeWrapper::String, *ok_type);
-                        Ok(WorkerResultOk::Finished {
+                        Ok(WorkerResultOk::RunFinished {
                             retval: SupportedFunctionReturnValue::Ok {
                                 ok: Some(WastValWithType {
                                     r#type: *ok_type,
@@ -228,7 +228,7 @@ impl Worker for WorkflowJsWorker {
                     } => {
                         // js runtime returned {"ok":{"err":"some string"}}
                         assert_eq!(TypeWrapper::String, *err_type);
-                        Ok(WorkerResultOk::Finished {
+                        Ok(WorkerResultOk::RunFinished {
                             retval: SupportedFunctionReturnValue::Err {
                                 err: Some(WastValWithType {
                                     r#type: *err_type,
@@ -287,7 +287,7 @@ impl Worker for WorkflowJsWorker {
                                 // This variant is returned when a workflow function fails,
                                 // e.g., when joinNext returns an error from a child execution.
                                 // We propagate this as an ExecutionError.
-                                Ok(WorkerResultOk::Finished {
+                                Ok(WorkerResultOk::RunFinished {
                                     retval: SupportedFunctionReturnValue::ExecutionError(
                                         FinishedExecutionError {
                                             kind: ExecutionFailureKind::Uncategorized,
@@ -304,7 +304,7 @@ impl Worker for WorkflowJsWorker {
                     }
 
                     retval @ SupportedFunctionReturnValue::ExecutionError(_) => {
-                        Ok(WorkerResultOk::Finished {
+                        Ok(WorkerResultOk::RunFinished {
                             retval,
                             version,
                             http_client_traces,
@@ -626,7 +626,7 @@ mod tests {
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
-        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
         let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "hello world");
@@ -675,7 +675,7 @@ mod tests {
         let ctx = make_worker_context(ffqn, &["World".to_string(), "Hello".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
-        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
         let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok { ok } => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "Hello, World!");
@@ -695,7 +695,7 @@ mod tests {
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
-        let retval = assert_matches!(result, WorkerResultOk::Finished { retval, .. } => retval);
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
         // For result<string, string>, a throw becomes Err
         let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err { err } => err);
         let err_val = err_val.expect("should have err value");

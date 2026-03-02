@@ -627,7 +627,7 @@ impl WorkflowWorker {
         match worker_result_refactored {
             WorkerResultRefactored::Ok(retval, mut workflow_ctx) => {
                 match Self::close_join_sets(&mut workflow_ctx).await {
-                    Ok(CloseJoinSetOk::Ok) => Ok(WorkerResultOk::Finished {
+                    Ok(CloseJoinSetOk::Ok) => Ok(WorkerResultOk::RunFinished {
                         retval,
                         version: workflow_ctx.db_connection.version,
                         http_client_traces: None,

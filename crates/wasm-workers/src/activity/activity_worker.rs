@@ -24,7 +24,6 @@ use std::{fmt::Debug, sync::Arc};
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
 use utils::wasm_tools::ExIm;
-use val_json::wast_val::WastValWithType;
 use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
 use wasmtime::{Engine, component::Val};
 use wasmtime::{Store, UpdateDeadline};
@@ -495,34 +494,11 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                 .collect_vec(),
         );
         match res {
-            Ok(Ok(result)) => {
-                // Interpret any `SupportedFunctionReturnValue::Err` as a retry request (ActivityReturnedError)
-                if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
-                    let permanent = is_permanent_variant(result_err.as_ref());
-                    if ctx.can_be_retried && !permanent {
-                        let detail = serde_json::to_string(result_err)
-                            .expect("SupportedFunctionReturnValue should be serializable to JSON");
-                        return WorkerResult::Err(WorkerError::ActivityReturnedError {
-                            detail: Some(detail),
-                            version: ctx.version.clone(),
-                            http_client_traces,
-                        });
-                    }
-                    // else: log and pass the retval as is to be stored.
-                    ctx.worker_span.in_scope(|| {
-                        if permanent {
-                            info!("Execution returned a permanent error variant, not retrying");
-                        } else {
-                            info!("Execution returned an error variant, not retrying");
-                        }
-                    });
-                }
-                WorkerResult::Ok(WorkerResultOk::Finished {
-                    retval: result,
-                    version: ctx.version.clone(),
-                    http_client_traces,
-                })
-            }
+            Ok(Ok(result)) => WorkerResult::Ok(WorkerResultOk::RunFinished {
+                retval: result,
+                version: ctx.version.clone(),
+                http_client_traces,
+            }),
             Ok(Err(result_parsing_err)) => WorkerResult::Err(WorkerError::FatalError(
                 FatalError::ResultParsingError(result_parsing_err),
                 ctx.version.clone(),
@@ -565,16 +541,6 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
                 },
             ),
         }
-    }
-}
-
-fn is_permanent_variant(result_err: Option<&WastValWithType>) -> bool {
-    match result_err {
-        Some(WastValWithType {
-            value: val_json::wast_val::WastVal::Variant(key, _),
-            ..
-        }) => key.as_snake_str().contains("permanent"),
-        _ => false,
     }
 }
 
