@@ -622,8 +622,8 @@ impl From<TypeWrapperTopLevel> for TypeWrapper {
 #[derive(Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SupportedFunctionReturnValue {
-    Ok { ok: Option<WastValWithType> },
-    Err { err: Option<WastValWithType> },
+    Ok { ok: Option<WastValWithType> },   // FIXME
+    Err { err: Option<WastValWithType> }, // FIXME: {err: {err
     ExecutionError(FinishedExecutionError),
 }
 impl Display for SupportedFunctionReturnValue {
@@ -631,6 +631,21 @@ impl Display for SupportedFunctionReturnValue {
         match self.as_pending_state_finished_result() {
             PendingStateFinishedResultKind::Ok => write!(f, "execution completed successfully"),
             PendingStateFinishedResultKind::Err(err) => write!(f, "{err}"),
+        }
+    }
+}
+impl SupportedFunctionReturnValue {
+    #[must_use]
+    pub fn is_permanent_variant(&self) -> bool {
+        match self {
+            SupportedFunctionReturnValue::Err {
+                err:
+                    Some(WastValWithType {
+                        value: val_json::wast_val::WastVal::Variant(key, _),
+                        ..
+                    }),
+            } => key.as_snake_str().contains("permanent"),
+            _ => false,
         }
     }
 }

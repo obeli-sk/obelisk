@@ -8,7 +8,8 @@ use concepts::storage::{
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
-    ComponentId, ComponentRetryConfig, FunctionMetadata, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, FunctionMetadata, StrVariant,
+    SupportedFunctionReturnValue,
 };
 use concepts::{ExecutionFailureKind, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
@@ -333,12 +334,14 @@ impl ExecTask {
                     "otel.name" = format!("worker {}", locked_execution.ffqn),
                     %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.config.executor_id, component_id = %self.config.component_id);
                 locked_execution.metadata.enrich(&worker_span);
+                let component_type = self.config.component_id.component_type;
                 tokio::spawn({
                     let worker_span2 = worker_span.clone();
                     let retry_config = self.config.retry_config;
                     async move {
                         let _permit = permit;
                         let res = Self::run_worker(
+                            component_type,
                             worker,
                             db_pool.as_ref(),
                             clock_fn,
@@ -360,6 +363,7 @@ impl ExecTask {
     }
 
     async fn run_worker(
+        component_type: ComponentType,
         worker: Arc<dyn Worker>,
         db_pool: &dyn DbPool,
         clock_fn: Box<dyn ClockFn>,
@@ -397,9 +401,10 @@ impl ExecTask {
             worker_span,
         };
         let worker_result = worker.run(ctx).await;
-        trace!(?worker_result, "Worker::run finished");
+        debug!("Worker::run finished {worker_result:?}");
         let result_obtained_at = clock_fn.now();
         match Self::worker_result_to_execution_event(
+            component_type,
             locked_execution.execution_id,
             worker_result,
             result_obtained_at,
@@ -427,6 +432,7 @@ impl ExecTask {
 
     /// Map the `WorkerError` to an temporary or a permanent failure.
     fn worker_result_to_execution_event(
+        component_type: ComponentType,
         execution_id: ExecutionId,
         worker_result: WorkerResult,
         result_obtained_at: DateTime<Utc>,
@@ -435,7 +441,44 @@ impl ExecTask {
         unlock_expiry_on_limit_reached: Duration,
     ) -> Result<Option<AppendOrCancel>, DbErrorWrite> {
         Ok(match worker_result {
-            WorkerResult::Ok(WorkerResultOk::Finished {
+            WorkerResult::Ok(WorkerResultOk::RunFinished {
+                retval:
+                    ref retval @ SupportedFunctionReturnValue::Err {
+                        err: ref result_err,
+                    },
+                version,
+                http_client_traces,
+            }) if component_type.is_activity()
+                && can_be_retried.is_some()
+                && !retval.is_permanent_variant() =>
+            {
+                // Interpret returned `err` variant as a retry request, unless it is a permanent variant
+                let detail = serde_json::to_string(result_err)
+                    .expect("SupportedFunctionReturnValue should be serializable to JSON");
+                let duration = can_be_retried.expect(
+                    "ActivityReturnedError must not be returned when retries are exhausted",
+                );
+                let expires_at = result_obtained_at + duration;
+                debug!("Retrying ActivityReturnedError after {duration:?} at {expires_at}");
+                let primary_event = ExecutionRequest::TemporarilyFailed {
+                    backoff_expires_at: expires_at,
+                    reason: StrVariant::Static("activity returned error"),
+                    detail: Some(detail),
+                    http_client_traces,
+                };
+                Some(AppendOrCancel::Other(Append {
+                    created_at: result_obtained_at,
+                    primary_event: AppendRequest {
+                        created_at: result_obtained_at,
+                        event: primary_event,
+                    },
+                    execution_id,
+                    version,
+                    child_finished: None,
+                }))
+            }
+
+            WorkerResult::Ok(WorkerResultOk::RunFinished {
                 retval: result,
                 version,
                 http_client_traces,
@@ -465,7 +508,9 @@ impl ExecTask {
                     child_finished,
                 }))
             }
+
             WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher) => None,
+
             WorkerResult::Err(err) => {
                 let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
 
@@ -617,27 +662,6 @@ impl ExecTask {
                                 version,
                             )
                         }
-                    }
-                    WorkerError::ActivityReturnedError {
-                        detail,
-                        version,
-                        http_client_traces,
-                    } => {
-                        let duration = can_be_retried.expect(
-                            "ActivityReturnedError must not be returned when retries are exhausted",
-                        );
-                        let expires_at = result_obtained_at + duration;
-                        debug!("Retrying ActivityReturnedError after {duration:?} at {expires_at}");
-                        (
-                            ExecutionRequest::TemporarilyFailed {
-                                backoff_expires_at: expires_at,
-                                reason: StrVariant::Static("activity returned error"), // is same as the variant's display message.
-                                detail, // contains the backtrace
-                                http_client_traces,
-                            },
-                            None,
-                            version,
-                        )
                     }
                     WorkerError::LimitReached {
                         reason,
@@ -966,7 +990,7 @@ mod tests {
             db_pool,
             exec_config,
             Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-                WorkerResultOk::Finished {
+                WorkerResultOk::RunFinished {
                     retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     version: Version::new(2),
                     http_client_traces: None,
@@ -1011,7 +1035,7 @@ mod tests {
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-            WorkerResultOk::Finished {
+            WorkerResultOk::RunFinished {
                 retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 version: Version::new(2),
                 http_client_traces: None,
@@ -1196,7 +1220,7 @@ mod tests {
                 Version::new(4),
                 (
                     vec![],
-                    WorkerResult::Ok(WorkerResultOk::Finished {
+                    WorkerResult::Ok(WorkerResultOk::RunFinished {
                         retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         version: Version::new(4),
                         http_client_traces: None,
@@ -1596,7 +1620,7 @@ mod tests {
     impl Worker for SleepyWorker {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             tokio::time::sleep(self.duration).await;
-            WorkerResult::Ok(WorkerResultOk::Finished {
+            WorkerResult::Ok(WorkerResultOk::RunFinished {
                 retval: self.result.clone(),
                 version: ctx.version,
                 http_client_traces: None,

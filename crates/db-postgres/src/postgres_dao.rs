@@ -1891,7 +1891,7 @@ async fn lock_single_execution(
     lock_expires_at: DateTime<Utc>,
     retry_config: ComponentRetryConfig,
 ) -> Result<LockedExecution, DbErrorWrite> {
-    debug!("lock_single_execution");
+    trace!("lock_single_execution");
 
     // Check State
     let combined_state = get_combined_state(tx, execution_id).await?;

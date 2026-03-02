@@ -29,7 +29,8 @@ pub type WorkerResult = Result<WorkerResultOk, WorkerError>;
 #[derive(Debug)]
 pub enum WorkerResultOk {
     DbUpdatedByWorkerOrWatcher,
-    Finished {
+    /// The execution run has returned a valid `retval`. Activity with retry budget returning `err` will be retried by the executor.
+    RunFinished {
         retval: SupportedFunctionReturnValue,
         version: Version,
         http_client_traces: Option<Vec<HttpClientTrace>>,
@@ -67,13 +68,6 @@ pub enum WorkerError {
         reason: String,
         detail: String,
         version: Version,
-    },
-    // Used by activity worker, must not be returned when retries are exhausted.
-    #[error("activity returned error")]
-    ActivityReturnedError {
-        detail: Option<String>,
-        version: Version,
-        http_client_traces: Option<Vec<HttpClientTrace>>,
     },
     /// Resources are exhausted.
     /// Executor must mark the execution as Unlocked.
