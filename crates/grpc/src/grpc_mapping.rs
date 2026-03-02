@@ -657,7 +657,7 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                             .collect(),
                     })
                 },
-                ExecutionRequest::Finished { result, http_client_traces } => grpc_gen::execution_event::Event::Finished(grpc_gen::execution_event::Finished {
+                ExecutionRequest::Finished { retval: result, http_client_traces } => grpc_gen::execution_event::Event::Finished(grpc_gen::execution_event::Finished {
                     value: Some(
                         grpc_gen::SupportedFunctionResult::from(result)
                     ),

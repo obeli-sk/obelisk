@@ -33,7 +33,7 @@ expression: events
       "event": {
         "finished": {
           "http_client_traces": [],
-          "result": {
+          "retval": {
             "ok": {
               "type": "string",
               "value": "Hello, World!"

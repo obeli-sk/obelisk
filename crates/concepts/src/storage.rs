@@ -124,7 +124,7 @@ impl ExecutionLog {
     #[must_use]
     pub fn as_finished_result(&self) -> Option<SupportedFunctionReturnValue> {
         if let ExecutionEvent {
-            event: ExecutionRequest::Finished { result, .. },
+            event: ExecutionRequest::Finished { retval: result, .. },
             ..
         } = self.events.last().expect("must contain at least one event")
         {
@@ -359,7 +359,7 @@ pub enum ExecutionRequest {
     #[display("Finished")]
     Finished {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::SUPPORTED_RETURN_VALUE_OK_EMPTY))]
-        result: SupportedFunctionReturnValue,
+        retval: SupportedFunctionReturnValue,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
@@ -1015,7 +1015,7 @@ pub trait DbExecutor: Send + Sync {
             .await
             .map_err(DbErrorWrite::from)?;
         if let ExecutionRequest::Finished {
-            result:
+            retval:
                 SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
                     kind: ExecutionFailureKind::Cancelled,
                     ..
@@ -1037,7 +1037,7 @@ pub trait DbExecutor: Send + Sync {
         let cancel_request = AppendRequest {
             created_at: cancelled_at,
             event: ExecutionRequest::Finished {
-                result: child_result.clone(),
+                retval: child_result.clone(),
                 http_client_traces: None,
             },
         };
@@ -1513,7 +1513,7 @@ pub async fn stub_execution(
         let finished_req = AppendRequest {
             created_at,
             event: ExecutionRequest::Finished {
-                result: return_value.clone(),
+                retval: return_value.clone(),
                 http_client_traces: None,
             },
         };
@@ -1545,7 +1545,7 @@ pub async fn stub_execution(
             .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
         match found.event {
             ExecutionRequest::Finished {
-                result: found_result,
+                retval: found_result,
                 ..
             } if return_value == found_result => {
                 // Same value has already be written, RPC is successful.

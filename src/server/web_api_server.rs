@@ -1261,9 +1261,9 @@ async fn execution_get_retval(
         .await
         .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
 
-    if let ExecutionRequest::Finished { result, .. } = last_event.event {
-        let result = RetVal::from(result);
-        Ok(Json(result).into_response())
+    if let ExecutionRequest::Finished { retval, .. } = last_event.event {
+        let retval = RetVal::from(retval);
+        Ok(Json(retval).into_response())
     } else if params.follow {
         Ok(stream_execution_response(
             execution_id,

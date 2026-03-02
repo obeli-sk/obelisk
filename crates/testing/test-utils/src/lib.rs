@@ -150,7 +150,7 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
                     component_id.input_digest = InputContentDigest(CONTENT_DIGEST_DUMMY);
                 }
                 ExecutionRequest::Finished {
-                    result:
+                    retval:
                         SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
                             kind: ExecutionFailureKind::Uncategorized,
                             reason: _,

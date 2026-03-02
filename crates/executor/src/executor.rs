@@ -492,7 +492,7 @@ impl ExecTask {
                 let primary_event = AppendRequest {
                     created_at: result_obtained_at,
                     event: ExecutionRequest::Finished {
-                        result,
+                        retval: result,
                         http_client_traces,
                     },
                 };
@@ -548,7 +548,7 @@ impl ExecTask {
                                 });
                             (
                                 ExecutionRequest::Finished {
-                                    result,
+                                    retval: result,
                                     http_client_traces,
                                 },
                                 child_finished,
@@ -602,7 +602,7 @@ impl ExecTask {
                                 });
                             (
                                 ExecutionRequest::Finished {
-                                    result,
+                                    retval: result,
                                     http_client_traces,
                                 },
                                 child_finished,
@@ -652,7 +652,7 @@ impl ExecTask {
                                 });
                             (
                                 ExecutionRequest::Finished {
-                                    result,
+                                    retval: result,
                                     http_client_traces,
                                 },
                                 child_finished,
@@ -699,7 +699,7 @@ impl ExecTask {
                             });
                         (
                             ExecutionRequest::Finished {
-                                result,
+                                retval: result,
                                 http_client_traces: None,
                             },
                             child_finished,
@@ -1000,7 +1000,7 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionRequest::Finished {
-                    result: SupportedFunctionReturnValue::Ok(None),
+                    retval: SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None
                 },
                 created_at: _,
@@ -1058,7 +1058,7 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionRequest::Finished {
-                    result: SupportedFunctionReturnValue::Ok(None),
+                    retval: SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None
                 },
                 created_at: _,
@@ -1268,7 +1268,7 @@ mod tests {
             execution_log.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionRequest::Finished {
-                    result: SupportedFunctionReturnValue::Ok(None),
+                    retval: SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None
                 },
                 created_at: finished_at,
@@ -1331,7 +1331,7 @@ mod tests {
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionRequest::Finished{
-                    result: SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{reason, kind, detail}),
+                    retval: SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{reason, kind, detail}),
                     http_client_traces: None
                 },
                 created_at: at,
@@ -1559,7 +1559,7 @@ mod tests {
         );
         assert_eq!(
             ExecutionRequest::Finished {
-                result: SupportedFunctionReturnValue::ExecutionError(expected_child_err),
+                retval: SupportedFunctionReturnValue::ExecutionError(expected_child_err),
                 http_client_traces: None
             },
             child_log.last_event().event

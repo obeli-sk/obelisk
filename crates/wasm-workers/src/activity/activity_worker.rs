@@ -945,7 +945,7 @@ pub(crate) mod tests {
                 .len()
         );
         let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionRequest::Finished { result, .. } => result);
+        let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionRequest::Finished { retval, .. } => retval);
         let wast_val_with_type = match test_retry_behavior {
             TestRetryBehavior::SucceedOnRetry => {
                 let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(wast_val_with_type)) => wast_val_with_type);
@@ -1221,11 +1221,11 @@ pub(crate) mod tests {
 
         // Check the result.
         let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let result = assert_matches!(
+        let retval = assert_matches!(
             exec_log.last_event().event.clone(),
-            ExecutionRequest::Finished { result, .. } => result
+            ExecutionRequest::Finished { retval, .. } => retval
         );
-        assert_eq!(expected, result);
+        assert_eq!(expected, retval);
 
         drop(exec_task);
         db_close.close().await;
@@ -1446,8 +1446,8 @@ pub(crate) mod tests {
         info!("Finished in {stopwatch:?}");
         let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
-                ExecutionRequest::Finished { result, http_client_traces: Some(http_client_traces) }
-                => (result, http_client_traces));
+                ExecutionRequest::Finished { retval, http_client_traces: Some(http_client_traces) }
+                => (retval, http_client_traces));
         let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(wast_val_with_type)) => wast_val_with_type);
         let val = assert_matches!(wast_val_with_type.value, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
@@ -1576,8 +1576,8 @@ pub(crate) mod tests {
         info!("Finished in {stopwatch:?}");
         let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
-                ExecutionRequest::Finished { result, http_client_traces: Some(http_client_traces) }
-                => (result, http_client_traces));
+                ExecutionRequest::Finished { retval, http_client_traces: Some(http_client_traces) }
+                => (retval, http_client_traces));
         let res = assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(err) => err);
         let reason = assert_matches!(
             res,
@@ -1724,13 +1724,13 @@ pub(crate) mod tests {
                 .len()
         );
         let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let res = assert_matches!(
+        let retval = assert_matches!(
             exec_log.last_event().event.clone(),
-            ExecutionRequest::Finished { result, .. } => result
+            ExecutionRequest::Finished { retval, .. } => retval
         );
         // The execution should fail with an ExecutionError when the WASM traps.
         // The trap happens because the HTTP request is denied and the WASM unwraps the error.
-        let err = assert_matches!(res, SupportedFunctionReturnValue::Err(Some(err)) => err);
+        let err = assert_matches!(retval, SupportedFunctionReturnValue::Err(Some(err)) => err);
         let err = assert_matches!(err.value, WastVal::String(err) => err);
         assert_eq!("ErrorCode::HttpRequestDenied", err);
         // Verify the mock server was not called (request was blocked before reaching it)
@@ -1869,12 +1869,12 @@ pub(crate) mod tests {
                 .len()
         );
         let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let res = assert_matches!(
+        let retval = assert_matches!(
             exec_log.last_event().event.clone(),
-            ExecutionRequest::Finished { result, .. } => result
+            ExecutionRequest::Finished { retval, .. } => retval
         );
         // Should succeed with the secret replaced
-        assert_matches!(res, SupportedFunctionReturnValue::Ok(..));
+        assert_matches!(retval, SupportedFunctionReturnValue::Ok(..));
         server.verify().await;
         drop(db_connection);
         drop(exec_task);

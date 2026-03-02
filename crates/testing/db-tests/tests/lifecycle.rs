@@ -195,7 +195,7 @@ async fn append_after_finish_should_not_be_possible(
         debug!(now = %created_at, "Finish execution");
         let req = AppendRequest {
             event: ExecutionRequest::Finished {
-                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
             },
             created_at,
@@ -210,7 +210,7 @@ async fn append_after_finish_should_not_be_possible(
         debug!(now = %created_at, "Append after finish should fail");
         let req = AppendRequest {
             event: ExecutionRequest::Finished {
-                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
             },
             created_at,
@@ -1025,7 +1025,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
                     batch: vec![AppendRequest {
                         created_at: sim_clock.now(),
                         event: ExecutionRequest::Finished {
-                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                             http_client_traces: None,
                         },
                     }],
@@ -1070,7 +1070,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
         let batch = vec![AppendRequest {
             created_at: sim_clock.now(),
             event: ExecutionRequest::Finished {
-                result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
             },
         }];
@@ -2101,7 +2101,7 @@ async fn pause_finished_execution_should_fail(database: Database) {
             AppendRequest {
                 created_at: sim_clock.now(),
                 event: ExecutionRequest::Finished {
-                    result: SupportedFunctionReturnValue::Ok(None),
+                    retval: SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None,
                 },
             },
@@ -2745,7 +2745,7 @@ async fn wait_for_finished_result_should_fetch_before_racing_with_timeout(databa
             version,
             AppendRequest {
                 event: ExecutionRequest::Finished {
-                    result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     http_client_traces: None,
                 },
                 created_at: sim_clock.now(),

@@ -350,7 +350,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     .await
                     .to_status()?;
                 let ExecutionRequest::Finished {
-                    result: finished_result,
+                    retval: finished_result,
                     ..
                 } = finished_result.event
                 else {
@@ -1175,7 +1175,7 @@ async fn notify_status(
                             .await
                             .to_status()
                             .and_then(|event| match event.event {
-                                ExecutionRequest::Finished { result, .. } => Ok(result),
+                                ExecutionRequest::Finished { retval: result, .. } => Ok(result),
                                 _ => Err(tonic::Status::internal(
                                     "pending state finished implies `Finished` event",
                                 )),
