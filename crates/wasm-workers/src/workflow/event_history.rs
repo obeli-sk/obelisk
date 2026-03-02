@@ -1416,7 +1416,7 @@ impl EventHistory {
                             let finished_req = AppendRequest {
                                 created_at: called_at,
                                 event: ExecutionRequest::Finished {
-                                    result: retval_intent.clone(),
+                                    retval: retval_intent.clone(),
                                     http_client_traces: None,
                                 },
                             };
@@ -1460,7 +1460,7 @@ impl EventHistory {
                                     .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
                                 match found.event {
                                     ExecutionRequest::Finished {
-                                        result: found_result,
+                                        retval: found_result,
                                         ..
                                     } if retval_intent == found_result => Ok(()),
                                     ExecutionRequest::Finished { .. } => {

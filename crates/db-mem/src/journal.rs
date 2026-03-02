@@ -292,7 +292,7 @@ impl ExecutionJournal {
 
     fn find_current_pending_state(&self) -> PendingState {
         if let Some(last_event) = self.execution_events.last()
-            && let ExecutionRequest::Finished { result, .. } = &last_event.event
+            && let ExecutionRequest::Finished { retval: result, .. } = &last_event.event
         {
             let idx = self.execution_events.len() - 1;
             return PendingState::Finished(PendingStateFinished {

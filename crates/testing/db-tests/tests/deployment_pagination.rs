@@ -98,7 +98,7 @@ async fn finish_execution(
             AppendRequest {
                 created_at: sim_clock.now(),
                 event: ExecutionRequest::Finished {
-                    result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     http_client_traces: None,
                 },
             },

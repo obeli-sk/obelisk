@@ -2965,7 +2965,7 @@ pub(crate) mod tests {
                     AppendRequest {
                         created_at: sim_clock.now(),
                         event: concepts::storage::ExecutionRequest::Finished {
-                            result: finished_value,
+                            retval: finished_value,
                             http_client_traces: None,
                         },
                     },
@@ -3271,7 +3271,7 @@ pub(crate) mod tests {
                     batch: vec![AppendRequest {
                         created_at: sim_clock.now(),
                         event: concepts::storage::ExecutionRequest::Finished {
-                            result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                            retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                             http_client_traces: None,
                         },
                     }],

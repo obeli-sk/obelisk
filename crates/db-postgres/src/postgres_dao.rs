@@ -1849,7 +1849,7 @@ fn parse_response_with_cursor(
             result: delay_success.then_some(()).ok_or(()),
         },
         (None, None, Some(child_execution_id), Some(finished_version), Some(json_val)) => {
-            if let ExecutionRequest::Finished { result, .. } = json_val {
+            if let ExecutionRequest::Finished { retval: result, .. } = json_val {
                 JoinSetResponse::ChildExecutionFinished {
                     child_execution_id,
                     finished_version,
@@ -2249,13 +2249,13 @@ async fn append(
             return Ok((next_version, AppendNotifier::default()));
         }
 
-        ExecutionRequest::Finished { result, .. } => {
+        ExecutionRequest::Finished { retval, .. } => {
             update_state_finished(
                 tx,
                 execution_id,
                 &appending_version,
                 req.created_at,
-                PendingStateFinishedResultKind::from(result),
+                PendingStateFinishedResultKind::from(retval),
             )
             .await?;
             return Ok((
@@ -2264,7 +2264,7 @@ async fn append(
                     pending_at: None,
                     execution_finished: Some(NotifierExecutionFinished {
                         execution_id: execution_id.clone(),
-                        retval: result.clone(),
+                        retval: retval.clone(),
                     }),
                     response: None,
                 },
@@ -3720,8 +3720,8 @@ impl DbConnection for PostgresConnection {
                 tx.commit().await?;
                 cleanup();
 
-                if let ExecutionRequest::Finished { result, .. } = event.event {
-                    return Ok(result);
+                if let ExecutionRequest::Finished { retval, .. } = event.event {
+                    return Ok(retval);
                 }
                 error!("Mismatch, expected Finished row: {event:?} based on t_state {finished}");
                 return Err(DbErrorReadWithTimeout::from(consistency_db_err(

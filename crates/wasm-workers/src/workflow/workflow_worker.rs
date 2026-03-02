@@ -3230,7 +3230,7 @@ pub(crate) mod tests {
         let finished_req = AppendRequest {
             created_at,
             event: ExecutionRequest::Finished {
-                result: result.clone(),
+                retval: result.clone(),
                 http_client_traces: None,
             },
         };

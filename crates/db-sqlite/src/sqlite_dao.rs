@@ -1966,7 +1966,7 @@ impl SqlitePool {
                 None,
                 Some(child_execution_id),
                 Some(finished_version),
-                Some(JsonWrapper(ExecutionRequest::Finished { result, .. })),
+                Some(JsonWrapper(ExecutionRequest::Finished { retval: result, .. })),
             ) => JoinSetResponse::ChildExecutionFinished {
                 child_execution_id,
                 finished_version: Version(finished_version),
@@ -2356,13 +2356,13 @@ impl SqlitePool {
                 return Ok((next_version, AppendNotifier::default()));
             }
 
-            ExecutionRequest::Finished { result, .. } => {
+            ExecutionRequest::Finished { retval, .. } => {
                 Self::update_state_finished(
                     tx,
                     execution_id,
                     &appending_version,
                     req.created_at,
-                    PendingStateFinishedResultKind::from(result),
+                    PendingStateFinishedResultKind::from(retval),
                 )?;
                 return Ok((
                     appending_version,
@@ -2370,7 +2370,7 @@ impl SqlitePool {
                         pending_at: None,
                         execution_finished: Some(NotifierExecutionFinished {
                             execution_id: execution_id.clone(),
-                            retval: result.clone(),
+                            retval: retval.clone(),
                         }),
                         response: None,
                     },
@@ -4267,8 +4267,8 @@ impl DbConnection for SqlitePool {
                 if let PendingState::Finished(finished) = pending_state {
                     let event =
                         Self::get_execution_event(tx, &execution_id, finished.version)?;
-                    if let ExecutionRequest::Finished { result, ..} = event.event {
-                        Ok(itertools::Either::Left(result))
+                    if let ExecutionRequest::Finished { retval, ..} = event.event {
+                        Ok(itertools::Either::Left(retval))
                     } else {
                         error!("Mismatch, expected Finished row: {event:?} based on t_state {finished}");
                         Err(DbErrorReadWithTimeout::from(consistency_db_err(

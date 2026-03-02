@@ -957,7 +957,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
                     AppendRequest {
                         created_at: self.clock_fn.now(),
                         event: ExecutionRequest::Finished {
-                            result,
+                            retval: result,
                             http_client_traces,
                         },
                     },

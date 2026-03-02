@@ -167,7 +167,7 @@ pub(crate) async fn tick(
                         primary_event: AppendRequest {
                             created_at: executed_at,
                             event: ExecutionRequest::Finished {
-                                result: finished_exec_result,
+                                retval: finished_exec_result,
                                 http_client_traces: None,
                             },
                         },

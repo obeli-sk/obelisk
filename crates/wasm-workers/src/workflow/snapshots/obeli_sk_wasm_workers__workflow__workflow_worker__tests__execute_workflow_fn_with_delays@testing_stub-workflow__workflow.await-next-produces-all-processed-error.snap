@@ -78,7 +78,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
         "finished": {
-          "result": {
+          "retval": {
             "ok": null
           },
           "http_client_traces": null
