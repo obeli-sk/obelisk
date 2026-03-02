@@ -206,7 +206,7 @@ impl<S: Sleep + 'static> Worker for ActivityWorker<S> {
     }
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
-        trace!("Params: {params:?}", params = ctx.params);
+        trace!("Context: {ctx:?}");
         assert!(ctx.event_history.is_empty());
         let cancelation_token = self
             .cancel_registry
@@ -240,10 +240,10 @@ impl<S: Sleep + 'static> Worker for ActivityWorker<S> {
                 ctx.worker_span.in_scope(|| {
                     if let WorkerResult::Err(err) = &res {
                         info!(%err, duration = ?stopwatch_for_reporting.elapsed(),
-                        "Finished with an error");
+                        "Run finished with an error");
                     } else {
                         info!(duration = ?stopwatch_for_reporting.elapsed(),
-                        "Finished");
+                        "Run finished successfully");
                     }
                 });
                 return res;
@@ -253,7 +253,7 @@ impl<S: Sleep + 'static> Worker for ActivityWorker<S> {
                 ctx.worker_span.in_scope(||
                         info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at,
                         now = %self.clock_fn.now(),
-                        "Timed out")
+                        "Run timed out")
                     );
                 let http_client_traces = Some(activity_ctx.http_client_traces
                     .into_iter()
@@ -496,7 +496,7 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
         );
         match res {
             Ok(Ok(result)) => {
-                // Interpret any `SupportedFunctionResult::Fallible` Err variant as a retry request (TemporaryError)
+                // Interpret any `SupportedFunctionReturnValue::Err` as a retry request (ActivityReturnedError)
                 if let SupportedFunctionReturnValue::Err { err: result_err } = &result {
                     let permanent = is_permanent_variant(result_err.as_ref());
                     if ctx.can_be_retried && !permanent {

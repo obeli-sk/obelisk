@@ -397,7 +397,7 @@ impl ExecTask {
             worker_span,
         };
         let worker_result = worker.run(ctx).await;
-        trace!(?worker_result, "Worker::run finished");
+        debug!("Worker::run finished {worker_result:?}");
         let result_obtained_at = clock_fn.now();
         match Self::worker_result_to_execution_event(
             locked_execution.execution_id,
