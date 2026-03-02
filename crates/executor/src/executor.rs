@@ -445,7 +445,7 @@ impl ExecTask {
                 retval: ref retval @ SupportedFunctionReturnValue::Err(ref result_err),
                 version,
                 http_client_traces,
-            }) if component_type.is_activity()
+            }) if component_type == ComponentType::ActivityWasm
                 && can_be_retried.is_some()
                 && !retval.is_permanent_variant() =>
             {
