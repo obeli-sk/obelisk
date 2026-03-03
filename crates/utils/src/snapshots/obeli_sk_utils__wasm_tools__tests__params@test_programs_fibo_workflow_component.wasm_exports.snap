@@ -138,11 +138,7 @@ expression: exports
     "return_type": {
       "extendable": {
         "type_wrapper_tl": {
-          "ok": {
-            "record": {
-              "id": "string"
-            }
-          },
+          "ok": "record { id: string }",
           "err": "string"
         },
         "wit_type": "result<execution-id, string>"

@@ -3,12 +3,7 @@ source: crates/val-json/src/wast_val_ser.rs
 expression: json
 ---
 {
-  "type": {
-    "record": {
-      "field1": "bool",
-      "field-2": "u32"
-    }
-  },
+  "type": "record { field1: bool, field-2: u32 }",
   "value": {
     "field1": true,
     "field_2": 1

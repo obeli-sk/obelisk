@@ -3,9 +3,7 @@ source: crates/val-json/src/wast_val_ser.rs
 expression: json
 ---
 {
-  "type": {
-    "list": "bool"
-  },
+  "type": "list<bool>",
   "value": [
     true
   ]

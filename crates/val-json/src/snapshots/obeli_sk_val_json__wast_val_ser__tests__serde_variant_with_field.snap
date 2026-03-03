@@ -3,15 +3,7 @@ source: crates/val-json/src/wast_val_ser.rs
 expression: json
 ---
 {
-  "type": {
-    "variant": {
-      "milli-seconds": "u64",
-      "seconds": "u64",
-      "minutes": "u32",
-      "hours": "u32",
-      "days": "u32"
-    }
-  },
+  "type": "variant { milli-seconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }",
   "value": {
     "milli_seconds": 1
   }

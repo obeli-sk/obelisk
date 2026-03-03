@@ -1,12 +1,13 @@
 pub use indexmap;
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::fmt::{self, Debug, Display};
 use std::str::FromStr;
 
 // TODO: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
-#[derive(Clone, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Eq, SerializeDisplay, DeserializeFromStr, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub enum TypeWrapper {
     Bool,
     S8,
@@ -790,15 +791,20 @@ mod tests {
     }
 
     #[test]
+    fn serde_roundtrip_wit_format() {
+        let ty = TypeWrapper::Record(indexmap! {
+            TypeKey(Box::from("logins")) => TypeWrapper::String,
+            TypeKey(Box::from("cursor")) => TypeWrapper::String,
+        });
+        let json = serde_json::to_string(&ty).unwrap();
+        assert_eq!(json, r#""record { logins: string, cursor: string }""#);
+        let deser: TypeWrapper = serde_json::from_str(&json).unwrap();
+        assert_eq!(ty, deser);
+    }
+
+    #[test]
     fn deser_should_preserve_its_attribute_order() {
-        let json = r#"
-            {
-                "record": {
-                    "logins": "string",
-                    "cursor": "string"
-                }
-            }
-        "#;
+        let json = r#""record { logins: string, cursor: string }""#;
         let deser: TypeWrapper = serde_json::from_str(json).unwrap();
         let fields = assert_matches!(deser, TypeWrapper::Record(fields) => fields);
         let expected = indexmap! {

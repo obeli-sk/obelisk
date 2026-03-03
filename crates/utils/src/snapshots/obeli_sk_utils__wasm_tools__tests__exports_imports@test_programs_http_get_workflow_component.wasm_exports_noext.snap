@@ -70,9 +70,7 @@ expression: exports
     "ffqn": "testing:http-workflow/workflow.get-successful-concurrently",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "list": "string"
-        },
+        "type_wrapper": "list<string>",
         "name": "urls",
         "wit_type": "list<string>"
       }
@@ -80,9 +78,7 @@ expression: exports
     "return_type": {
       "extendable": {
         "type_wrapper_tl": {
-          "ok": {
-            "list": "string"
-          },
+          "ok": "list<string>",
           "err": "string"
         },
         "wit_type": "result<list<string>, string>"
@@ -108,9 +104,7 @@ expression: exports
     "return_type": {
       "extendable": {
         "type_wrapper_tl": {
-          "ok": {
-            "list": "string"
-          },
+          "ok": "list<string>",
           "err": "string"
         },
         "wit_type": "result<list<string>, string>"

@@ -974,11 +974,11 @@ mod tests {
     #[test]
     fn serde_result_ok_none_invalid_bool() {
         let json = r#"
-            {"type":{"result":{"err":null,"ok":null}},"value":{"ok":true}}
+            {"type":"result","value":{"ok":true}}
             "#;
         let actual = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid result value, expected null at line 2 column 73",
+            "invalid result value, expected null at line 2 column 48",
             actual.to_string()
         );
     }
@@ -986,11 +986,11 @@ mod tests {
     #[test]
     fn serde_result_ok_none_invalid_string_value() {
         let json = r#"
-            {"type":{"result":{"err":null,"ok":null}},"value":{"ok": "str"}}
+            {"type":"result","value":{"ok": "str"}}
             "#;
         let actual = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid result value, expected null at line 2 column 75",
+            "invalid result value, expected null at line 2 column 50",
             actual.to_string()
         );
     }
@@ -998,11 +998,11 @@ mod tests {
     #[test]
     fn serde_result_err_none_invalid_bool() {
         let json = r#"
-            {"type":{"result":{"err":null,"ok":null}},"value":{"err":true}}
+            {"type":"result","value":{"err":true}}
             "#;
         let actual = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid result value, expected null at line 2 column 74",
+            "invalid result value, expected null at line 2 column 49",
             actual.to_string()
         );
     }
@@ -1010,11 +1010,11 @@ mod tests {
     #[test]
     fn serde_result_err_none_invalid_string() {
         let json = r#"
-            {"type":{"result":{"err":null,"ok":null}},"value":{"err": "str"}}
+            {"type":"result","value":{"err": "str"}}
             "#;
         let actual = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid result value, expected null at line 2 column 76",
+            "invalid result value, expected null at line 2 column 51",
             actual.to_string()
         );
     }
@@ -1189,11 +1189,11 @@ mod tests {
     #[test]
     fn serde_variant_wrong_tag() {
         let json = r#"
-            {"type":{"variant":{"a":null,"b":null}},"value":{"c":null}}
+            {"type":"variant { a, b }","value":{"c":null}}
             "#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "cannot deserialize variant: `c` not found in the following list: `[\"a\", \"b\"]` at line 2 column 64",
+            "cannot deserialize variant: `c` not found in the following list: `[\"a\", \"b\"]` at line 2 column 51",
             err.to_string()
         );
     }
@@ -1201,11 +1201,11 @@ mod tests {
     #[test]
     fn serde_variant_unexpected_string() {
         let json = r#"
-            {"type":{"variant":{"string":null,"map":"u64"}},"value":"map"}
+            {"type":"variant { string, map(u64) }","value":"map"}
         "#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "cannot deserialize variant: `map` must be serialized as map at line 2 column 73",
+            "cannot deserialize variant: `map` must be serialized as map at line 2 column 64",
             err.to_string()
         );
     }
@@ -1213,11 +1213,11 @@ mod tests {
     #[test]
     fn serde_variant_unexpected_map() {
         let json = r#"
-            {"type":{"variant":{"string":null,"map":"u64"}},"value":{"string": true}}
+            {"type":"variant { string, map(u64) }","value":{"string": true}}
         "#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "cannot deserialize variant: `string` must be serialized as string at line 2 column 77",
+            "cannot deserialize variant: `string` must be serialized as string at line 2 column 68",
             err.to_string()
         );
     }
@@ -1240,11 +1240,11 @@ mod tests {
     #[test]
     fn serde_enum_deser_wrong_key_should_fail() {
         let json = r#"
-            {"type":{"enum":["a","b"]},"value":"c"}
+            {"type":"enum { a, b }","value":"c"}
             "#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "cannot deserialize enum: `c` not found in the following list: `[\"a\", \"b\"]` at line 2 column 50",
+            "cannot deserialize enum: `c` not found in the following list: `[\"a\", \"b\"]` at line 2 column 47",
             err.to_string()
         );
     }
@@ -1252,31 +1252,31 @@ mod tests {
     #[test]
     fn serde_enum_deser_map_should_expect_string() {
         let json = r#"
-            {"type":{"enum":["a","b"]},"value":{"a":1}}
+            {"type":"enum { a, b }","value":{"a":1}}
             "#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid type: map, expected value matching {\"enum\":[\"a\",\"b\"]} at line 2 column 48",
+            "invalid type: map, expected value matching \"enum { a, b }\" at line 2 column 45",
             err.to_string()
         );
     }
 
     #[test]
     fn serde_enum_deser_with_too_few_values_should_fail() {
-        let json = r#"{"type":{"tuple":["bool","u32"]},"value":[false]}"#;
+        let json = r#"{"type":"tuple<bool, u32>","value":[false]}"#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid length 1, expected value matching {\"tuple\":[\"bool\",\"u32\"]} at line 1 column 48",
+            "invalid length 1, expected value matching \"tuple<bool, u32>\" at line 1 column 42",
             err.to_string()
         );
     }
 
     #[test]
     fn serde_enum_deser_with_too_many_values_should_fail() {
-        let json = r#"{"type":{"tuple":["bool","u32"]},"value":[false, 1, false]}"#;
+        let json = r#"{"type":"tuple<bool, u32>","value":[false, 1, false]}"#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "invalid length 3, expected value matching {\"tuple\":[\"bool\",\"u32\"]} at line 1 column 58",
+            "invalid length 3, expected value matching \"tuple<bool, u32>\" at line 1 column 52",
             err.to_string()
         );
     }
@@ -1309,20 +1309,20 @@ mod tests {
 
     #[test]
     fn serde_flags_duplicates_should_fail() {
-        let json = r#"{"type":{"flags":["a","b","c"]},"value":["a","a"]}"#;
+        let json = r#"{"type":"flags { a, b, c }","value":["a","a"]}"#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "cannot deserialize flags: flag `a` was found more than once at line 1 column 49",
+            "cannot deserialize flags: flag `a` was found more than once at line 1 column 45",
             err.to_string()
         );
     }
 
     #[test]
     fn serde_flags_unknown_flags_should_fail() {
-        let json = r#"{"type":{"flags":["a","b","c"]},"value":["a","d"]}"#;
+        let json = r#"{"type":"flags { a, b, c }","value":["a","d"]}"#;
         let err = serde_json::from_str::<WastValWithType>(json).unwrap_err();
         assert_eq!(
-            "cannot deserialize flags: flag `d` not found in the list: `[\"a\", \"b\", \"c\"]` at line 1 column 49",
+            "cannot deserialize flags: flag `d` not found in the list: `[\"a\", \"b\", \"c\"]` at line 1 column 45",
             err.to_string()
         );
     }
@@ -1332,12 +1332,7 @@ mod tests {
         let expected_keys = vec!["logins", "cursor"];
         let json = r#"
             {
-                "type": {
-                    "record": {
-                        "logins": "string",
-                        "cursor": "string"
-                    }
-                },
+                "type": "record { logins: string, cursor: string }",
                 "value": {
                     "logins": "logins",
                     "cursor": "cursor"
