@@ -105,6 +105,7 @@ test-utils.workspace = true
 wasm-workers = { workspace = true, features = ["test"] }
 
 insta.workspace = true
+paste.workspace = true
 rstest.workspace = true
 
 [[bin]]
@@ -287,6 +288,7 @@ lazy_static = "1.5"
 libc = "0.2.182"
 oci-client = { version = "0.16.0", default-features = false }
 oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
+paste = "1.0"
 prost = "0.14.3"
 prost-wkt-types = "0.7"
 quote = "1"
