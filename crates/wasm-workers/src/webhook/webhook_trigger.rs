@@ -964,7 +964,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
             }
             PendingState::Locked(_) => ExecutionStatus::Locked,
             PendingState::BlockedByJoinSet(_) => ExecutionStatus::BlockedByJoinSet,
-            PendingState::Paused(_) => ExecutionStatus::Locked, // Treat paused as locked for simplicity
+            PendingState::Paused(_) => ExecutionStatus::Paused,
             PendingState::Finished(finished) => {
                 let finished_status = match finished.result_kind {
                     PendingStateFinishedResultKind::Ok => ExecutionStatusFinished::Ok,

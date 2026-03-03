@@ -41,6 +41,8 @@ interface webhook-support {
         pending-at(datetime),
         /// Execution is currently being processed.
         locked,
+        /// Execution is currently paused.
+        paused,
         /// Execution is waiting for child executions to complete (workflows only).
         blocked-by-join-set,
         /// Execution has finished.

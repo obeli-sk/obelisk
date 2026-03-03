@@ -300,6 +300,9 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                     ExecutionStatus::Locked => {
                         result_obj.set(js_string!("status"), js_string!("locked"), false, ctx)?;
                     }
+                    ExecutionStatus::Paused => {
+                        result_obj.set(js_string!("status"), js_string!("paused"), false, ctx)?;
+                    }
                     ExecutionStatus::BlockedByJoinSet => {
                         result_obj.set(
                             js_string!("status"),
