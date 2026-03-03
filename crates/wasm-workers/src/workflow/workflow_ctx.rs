@@ -1294,12 +1294,35 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function get-result-json", err))?;
 
-        // schedule-json: func(schedule-at: schedule-at, function: function, params: string, config: option<submit-config>) -> result<execution-id, schedule-json-error>
+        // execution-id-generate: func() -> execution-id
+        inst_workflow_support
+            .func_wrap_async(
+                "execution-id-generate",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, (): ()| {
+                    Box::new(async move {
+                        let (host, _wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let execution_id = ExecutionId::from_parts(
+                            host.execution_id.get_top_level().timestamp_part(),
+                            host.next_u128(),
+                        );
+                        Ok((typesTypes::execution::ExecutionId {
+                            id: execution_id.to_string(),
+                        },))
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function execution-id-generate", err)
+            })?;
+
+        // schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>) -> result<_, schedule-json-error>
         inst_workflow_support
             .func_wrap_async(
                 "schedule-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (schedule_at, function, params, _config): (
+                      (execution_id, schedule_at, function, params, _config): (
+                    typesTypes::execution::ExecutionId,
                     ScheduleAtTypes,
                     typesTypes::execution::Function,
                     String,                                      // params JSON
@@ -1310,6 +1333,16 @@ impl WorkflowCtx {
                         use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
+                        // Parse the execution ID
+                        let execution_id = match ExecutionId::try_from(execution_id) {
+                            Ok(id) => id,
+                            Err(err) => {
+                                let wit_result = Err(ScheduleJsonError::FfqnParsingError(format!(
+                                    "invalid execution ID: {err}"
+                                )));
+                                return Ok((wit_result,));
+                            }
+                        };
                         let ffqn = match FunctionFqn::try_from_tuple(
                             &function.interface_name,
                             &function.function_name,
@@ -1322,7 +1355,7 @@ impl WorkflowCtx {
                             }
                         };
                         let wit_result = host
-                            .schedule_json(ffqn, params, schedule_at, wasm_backtrace)
+                            .schedule_json(execution_id, ffqn, params, schedule_at, wasm_backtrace)
                             .await?;
                         Ok((wit_result,))
                     })
@@ -1877,15 +1910,13 @@ pub(crate) mod workflow_support {
         /// The `fn_registry` lookup result is persisted as an intent for determinism.
         pub(crate) async fn schedule_json(
             &mut self,
+            execution_id: ExecutionId,
             target_ffqn: FunctionFqn,
             params_json: String,
             schedule_at: HistoryEventScheduleAt,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<
-            Result<
-                typesTypes::execution::ExecutionId,
-                latest::obelisk::workflow::workflow_support::ScheduleJsonError,
-            >,
+            Result<(), latest::obelisk::workflow::workflow_support::ScheduleJsonError>,
         > {
             use concepts::storage::ScheduleRequestError;
             use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
@@ -1913,16 +1944,10 @@ pub(crate) mod workflow_support {
             // Compute intent from fn_registry lookup
             let intent = self.get_schedule_intent(&target_ffqn, params_json);
 
-            // Generate new execution ID
-            let execution_id = ExecutionId::from_parts(
-                self.execution_id.get_top_level().timestamp_part(),
-                self.next_u128(),
-            );
-
             let result = Schedule {
                 schedule_at,
                 scheduled_at_if_new,
-                execution_id: execution_id.clone(),
+                execution_id,
                 ffqn: target_ffqn,
                 intent,
                 wasm_backtrace,
@@ -1932,9 +1957,7 @@ pub(crate) mod workflow_support {
             .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
 
             match result {
-                Ok(()) => Ok(Ok(typesTypes::execution::ExecutionId {
-                    id: execution_id.to_string(),
-                })),
+                Ok(()) => Ok(Ok(())),
                 Err(ScheduleRequestError::FunctionNotFound) => {
                     Ok(Err(ScheduleJsonError::FunctionNotFound))
                 }

@@ -203,7 +203,9 @@ package obelisk:workflow@4.2.0 {
 
     get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
 
-    schedule-json: func(schedule-at: schedule-at, function: function, params: string, config: option<submit-config>) -> result<execution-id, schedule-json-error>;
+    execution-id-generate: func() -> execution-id;
+
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>) -> result<_, schedule-json-error>;
 
     join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
   }

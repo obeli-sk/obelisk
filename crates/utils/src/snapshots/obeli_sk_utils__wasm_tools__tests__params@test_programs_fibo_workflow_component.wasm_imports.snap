@@ -3,6 +3,22 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
+  "obelisk:workflow/workflow-support@4.2.0.execution-id-generate": {
+    "ffqn": "obelisk:workflow/workflow-support@4.2.0.execution-id-generate",
+    "parameter_types": [],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "wit_type": "execution-id"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
   "obelisk:workflow/workflow-support@4.2.0.get-result-json": {
     "ffqn": "obelisk:workflow/workflow-support@4.2.0.get-result-json",
     "parameter_types": [
@@ -111,6 +127,15 @@ expression: imports
     "parameter_types": [
       {
         "type_wrapper": {
+          "record": {
+            "id": "string"
+          }
+        },
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": {
           "variant": {
             "at": {
               "record": {
@@ -174,11 +199,7 @@ expression: imports
       "non_extendable": {
         "type_wrapper": {
           "result": {
-            "ok": {
-              "record": {
-                "id": "string"
-              }
-            },
+            "ok": null,
             "err": {
               "variant": {
                 "ffqn-parsing-error": "string",
@@ -188,7 +209,7 @@ expression: imports
             }
           }
         },
-        "wit_type": "result<execution-id, schedule-json-error>"
+        "wit_type": "result<_, schedule-json-error>"
       }
     },
     "extension": null,

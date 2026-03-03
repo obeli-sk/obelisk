@@ -1536,4 +1536,47 @@ mod tests {
 
         db_close.close().await;
     }
+
+    /// Test: `obelisk.executionIdGenerate()` and `obelisk.schedule()` to schedule a top-level execution.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_schedule(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        // scheduleAt is optional - omitting it defaults to 'now'
+        let js_source = r"
+        export default function test_schedule(params) {
+            const execId = obelisk.executionIdGenerate();
+            obelisk.schedule(execId, 'testing:stub-activity/activity.foo', ['scheduled-param']);
+            return JSON.stringify({ scheduledExecutionId: execId });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool.clone(), js_source, "test-schedule")
+                .await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        let scheduled_exec_id_str = result["scheduledExecutionId"]
+            .as_str()
+            .expect("scheduledExecutionId should be a string");
+
+        // Verify the scheduled execution was created in the database
+        let scheduled_exec_id =
+            ExecutionId::from_str(scheduled_exec_id_str).expect("should parse execution ID");
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let create_request = db_connection
+            .get_create_request(&scheduled_exec_id)
+            .await
+            .expect("scheduled execution should exist");
+
+        assert_eq!(
+            create_request.ffqn,
+            FunctionFqn::new_static("testing:stub-activity/activity", "foo")
+        );
+
+        db_close.close().await;
+    }
 }
