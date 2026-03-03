@@ -42,7 +42,15 @@ impl ComponentType {
 }
 
 #[derive(
-    derive_more::Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
+    derive_more::Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[display("{component_type}:{name}:{input_digest}")]
 #[debug("{}", self)]

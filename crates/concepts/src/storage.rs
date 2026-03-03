@@ -215,7 +215,14 @@ impl From<&Version> for usize {
 pub struct VersionParseError;
 
 #[derive(
-    Clone, Debug, derive_more::Display, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Clone,
+    Debug,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[display("{event}")]
 pub struct ExecutionEvent {
@@ -263,13 +270,17 @@ pub struct JoinSetResponseEventOuter {
     pub event: JoinSetResponseEvent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct JoinSetResponseEvent {
     pub join_set_id: JoinSetId,
     pub event: JoinSetResponse,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display, schemars::JsonSchema)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display, schemars::JsonSchema,
+)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum JoinSetResponse {
@@ -308,7 +319,14 @@ pub const DUMMY_HISTORY_EVENT: ExecutionRequest = ExecutionRequest::HistoryEvent
 };
 
 #[derive(
-    Clone, derive_more::Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+    Clone,
+    derive_more::Debug,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
@@ -421,7 +439,14 @@ impl ExecutionRequest {
 }
 
 #[derive(
-    Clone, derive_more::Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+    Clone,
+    derive_more::Debug,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[display("Locked(`{lock_expires_at}`, {component_id})")]
@@ -436,7 +461,17 @@ pub struct Locked {
     pub retry_config: ComponentRetryConfig,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PersistKind {
@@ -460,7 +495,14 @@ pub fn from_bytes_to_u64(bytes: [u8; 8]) -> u64 {
 }
 
 #[derive(
-    derive_more::Debug, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
+    derive_more::Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -570,7 +612,14 @@ impl StubRetVal {
 
 /// Hash of a stub return value, stored in history for determinism checks.
 /// Format: 1 byte version + 32 bytes SHA-256 hash.
-#[derive(Clone, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr, schemars::JsonSchema)]
+#[derive(
+    Clone,
+    PartialEq,
+    Eq,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+    schemars::JsonSchema,
+)]
 #[schemars(with = "String")]
 pub struct StubRetValHash([u8; 33]);
 
@@ -617,7 +666,9 @@ pub enum StubRetValHashParseError {
 
 /// Error from the `-stub` extension function.
 /// Mirrors `obelisk:types/execution.{stub-error}` from WIT.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum StubError {
     #[error("execution not found")]
@@ -629,7 +680,9 @@ pub enum StubError {
 }
 
 /// Error from the `schedule-json` function. Persisted in history for determinism.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduleRequestError {
     #[error("function not found")]
@@ -639,7 +692,9 @@ pub enum ScheduleRequestError {
 }
 
 /// Error from the `submit-json` function. Persisted in history for determinism.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ChildExecutionRequestError {
     #[error("function not found")]
@@ -648,7 +703,17 @@ pub enum ChildExecutionRequestError {
     TypeCheckError(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum JoinNextTryOutcome {
@@ -676,7 +741,17 @@ impl From<bool> for JoinNextTryOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryEventScheduleAt {
@@ -711,7 +786,9 @@ impl HistoryEventScheduleAt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum JoinSetRequest {
@@ -2025,7 +2102,17 @@ impl From<&SupportedFunctionReturnValue> for PendingStateFinishedResultKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    derive_more::Display,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingStateFinishedError {
     #[display("execution terminated: {_0}")]

@@ -43,7 +43,9 @@ pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
 pub const SUFFIX_PKG_SCHEDULE: &str = "-obelisk-schedule";
 pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
 
-#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[error("execution error: {kind}")]
 pub struct FinishedExecutionError {
     pub kind: ExecutionFailureKind,
@@ -59,7 +61,17 @@ impl FinishedExecutionError {
     }
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionFailureKind {
     /// Applicable to activities only, because workflows will be retried forever
@@ -73,7 +85,17 @@ pub enum ExecutionFailureKind {
     Uncategorized,
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TrapKind {
     #[display("trap")]
@@ -501,7 +523,13 @@ pub struct FnMarker;
 pub type FnName = Name<FnMarker>;
 
 #[derive(
-    Hash, Clone, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr, schemars::JsonSchema,
+    Hash,
+    Clone,
+    PartialEq,
+    Eq,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+    schemars::JsonSchema,
 )]
 #[schemars(with = "String")]
 pub struct FunctionFqn {
@@ -607,7 +635,9 @@ impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
 pub struct TypeWrapperTopLevel {
     pub ok: Option<Box<TypeWrapper>>,
     pub err: Option<Box<TypeWrapper>>,
@@ -621,7 +651,9 @@ impl From<TypeWrapperTopLevel> for TypeWrapper {
     }
 }
 
-#[derive(Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SupportedFunctionReturnValue {
     Ok(Option<WastValWithType>),
@@ -1460,14 +1492,34 @@ pub mod prefixed_ulid {
         }
     }
 
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr, Clone, schemars::JsonSchema)]
+    #[derive(
+        Hash,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        SerializeDisplay,
+        DeserializeFromStr,
+        Clone,
+        schemars::JsonSchema,
+    )]
     #[schemars(with = "String")]
     pub enum ExecutionId {
         TopLevel(ExecutionIdTopLevel),
         Derived(ExecutionIdDerived),
     }
 
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, SerializeDisplay, DeserializeFromStr, schemars::JsonSchema)]
+    #[derive(
+        Hash,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Clone,
+        SerializeDisplay,
+        DeserializeFromStr,
+        schemars::JsonSchema,
+    )]
     #[schemars(with = "String")]
     pub struct ExecutionIdDerived {
         top_level: ExecutionIdTopLevel,
@@ -1792,7 +1844,17 @@ pub mod prefixed_ulid {
     }
 
     /// Mirrors [`ExecutionId`], with different prefix and `idx` for tracking each delay within the join set.
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, SerializeDisplay, DeserializeFromStr, schemars::JsonSchema)]
+    #[derive(
+        Hash,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Clone,
+        SerializeDisplay,
+        DeserializeFromStr,
+        schemars::JsonSchema,
+    )]
     #[schemars(with = "String")]
     pub struct DelayId {
         top_level: DelayIdTopLevel,
@@ -1959,7 +2021,17 @@ impl JoinSetId {
 pub const CHARSET_ALPHANUMERIC: &str =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, strum::EnumIter, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    strum::EnumIter,
+    schemars::JsonSchema,
+)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[display("{}", self.as_code())]
 pub enum JoinSetKind {
@@ -2234,7 +2306,17 @@ pub trait FunctionRegistry: Send + Sync {
     fn all_exports(&self) -> &[PackageIfcFns];
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, derive_more::Display, PartialEq, Eq, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    schemars::JsonSchema,
+)]
 #[schemars(with = "Option<std::collections::HashMap<String, String>>")]
 #[display("{_0:?}")]
 pub struct ExecutionMetadata(Option<hashbrown::HashMap<String, String>>);
