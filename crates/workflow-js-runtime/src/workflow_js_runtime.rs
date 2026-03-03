@@ -22,10 +22,10 @@ use crate::generated::obelisk::workflow::workflow_support::{
     schedule_json, sleep, stub_json, submit_delay, submit_json,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
+use boa_common::helpers::{extract_error_string, new_object, parse_ffqn};
 use boa_engine::{
-    Context, JsArgs, JsError, JsNativeError, JsObject, JsResult, JsValue, Module, NativeFunction,
-    Source, builtins::promise::PromiseState, js_string, object::builtins::JsFunction,
-    property::Attribute,
+    Context, JsArgs, JsError, JsNativeError, JsResult, JsValue, Module, NativeFunction, Source,
+    builtins::promise::PromiseState, js_string, object::builtins::JsFunction, property::Attribute,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -165,17 +165,6 @@ pub fn execute(
     }
 }
 
-/// Extract a string message from a `JsError`.
-fn extract_error_string(err: &boa_engine::JsError) -> Option<String> {
-    if let Some(js_value) = err.as_opaque()
-        && let Some(string) = js_value.as_string()
-    {
-        let string = string.to_std_string_escaped();
-        return Some(string);
-    }
-    None
-}
-
 /// Errors that can occur when loading or evaluating an ES module for workflows.
 #[derive(Debug)]
 enum EsmErrorWorkflow {
@@ -270,11 +259,6 @@ fn get_default_export_workflow(
     };
 
     JsFunction::from_object(func.clone()).ok_or(EsmErrorWorkflow::DefaultNotCallable)
-}
-
-/// Helper to create a new JS object with the default prototype.
-fn new_object(ctx: &mut Context) -> JsObject {
-    JsObject::default(ctx.intrinsics())
 }
 
 /// Set up the global `obelisk` object with workflow support functions.
@@ -894,28 +878,6 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
     }
 
     Ok(ScheduleAt::Now)
-}
-
-/// Parse FFQN string into interface name and function name.
-fn parse_ffqn(ffqn: &str) -> JsResult<(String, String)> {
-    // Format: "namespace:pkg/interface.function" or "namespace:pkg/interface@version.function"
-    let dot_pos = ffqn.rfind('.').ok_or_else(|| {
-        JsNativeError::error().with_message(format!(
-            "Invalid FFQN '{}': missing function name separator '.'",
-            ffqn
-        ))
-    })?;
-
-    let interface_name = &ffqn[..dot_pos];
-    let function_name = &ffqn[dot_pos + 1..];
-
-    if function_name.is_empty() {
-        return Err(JsNativeError::error()
-            .with_message(format!("Invalid FFQN '{}': empty function name", ffqn))
-            .into());
-    }
-
-    Ok((interface_name.to_string(), function_name.to_string()))
 }
 
 /// Parse submit config from JS value.

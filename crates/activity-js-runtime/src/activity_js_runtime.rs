@@ -12,6 +12,7 @@ use crate::generated::{
 };
 use boa_common::console::{ObeliskLogger, setup_console};
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
+use boa_common::helpers::extract_error_string;
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{Context, JsResult, JsValue, Source};
@@ -151,18 +152,6 @@ fn convert_result(
             }
         }
     }
-}
-
-/// Extract a string message from a `JsError`.
-fn extract_error_string(err: &boa_engine::JsError) -> Option<String> {
-    if let Some(js_value) = err.as_opaque()
-        && let Some(string) = js_value.as_string()
-    {
-        // `throw 'string'` goes here
-        let string = string.to_std_string_escaped();
-        return Some(string);
-    }
-    None
 }
 
 /// Register the `fetch` API backed by WASIp2 HTTP.
