@@ -4,8 +4,8 @@ use generated::exports::testing::fibo_workflow::workflow::Guest;
 use generated::obelisk::types::execution::Function;
 use generated::obelisk::types::time::ScheduleAt;
 use generated::obelisk::workflow::workflow_support::{
-    GetResultJsonError, ScheduleJsonError, SubmitJsonError, get_result_json, join_next,
-    join_set_create, schedule_json, submit_json,
+    GetResultJsonError, ScheduleJsonError, SubmitJsonError, execution_id_generate, get_result_json,
+    join_next, join_set_create, schedule_json, submit_json,
 };
 use generated::testing::{
     fibo::fibo::fibo as fibo_activity,
@@ -228,7 +228,8 @@ impl Guest for Component {
         };
 
         // Test 1: Schedule with ScheduleAt::Now
-        let execution_id = schedule_json(ScheduleAt::Now, &function, "[10]", None)
+        let execution_id = execution_id_generate();
+        schedule_json(&execution_id, ScheduleAt::Now, &function, "[10]", None)
             .map_err(|e| format!("schedule_json failed: {e:?}"))?;
 
         // Test 2: Schedule with unknown FFQN -> FunctionNotFound
@@ -236,36 +237,46 @@ impl Guest for Component {
             interface_name: "testing:nonexistent/ifc".to_string(),
             function_name: "unknown-fn".to_string(),
         };
-        match schedule_json(ScheduleAt::Now, &unknown_function, "[]", None) {
+        let exec_id_2 = execution_id_generate();
+        match schedule_json(&exec_id_2, ScheduleAt::Now, &unknown_function, "[]", None) {
             Err(ScheduleJsonError::FunctionNotFound) => {}
             Err(other) => return Err(format!("2: expected FunctionNotFound, got {other:?}")),
-            Ok(_) => return Err("2: expected error, got Ok".to_string()),
+            Ok(()) => return Err("2: expected error, got Ok".to_string()),
         }
 
         // Test 3: Schedule with malformed JSON params -> ParamsParsingError
-        match schedule_json(ScheduleAt::Now, &function, "not valid json", None) {
+        let exec_id_3 = execution_id_generate();
+        match schedule_json(
+            &exec_id_3,
+            ScheduleAt::Now,
+            &function,
+            "not valid json",
+            None,
+        ) {
             Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("cannot parse params as JSON array") {
                     return Err(format!("3: unexpected error message: {msg}"));
                 }
             }
             Err(other) => return Err(format!("3: expected ParamsParsingError, got {other:?}")),
-            Ok(_) => return Err("3: expected error, got Ok".to_string()),
+            Ok(()) => return Err("3: expected error, got Ok".to_string()),
         }
 
         // Test 4: Schedule with valid JSON but not an array
-        match schedule_json(ScheduleAt::Now, &function, "42", None) {
+        let exec_id_4 = execution_id_generate();
+        match schedule_json(&exec_id_4, ScheduleAt::Now, &function, "42", None) {
             Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if msg.contains("4: params must be a json array") {
                     return Err(format!("4: unexpected error message: {msg}"));
                 }
             }
             Err(other) => return Err(format!("4: expected ParamsParsingError, got {other:?}")),
-            Ok(_) => return Err("4: expected error, got Ok".to_string()),
+            Ok(()) => return Err("4: expected error, got Ok".to_string()),
         }
 
         // Test 5: Schedule with valid JSON but not the expected types
-        match schedule_json(ScheduleAt::Now, &function, r#"["42"]"#, None) {
+        let exec_id_5 = execution_id_generate();
+        match schedule_json(&exec_id_5, ScheduleAt::Now, &function, r#"["42"]"#, None) {
             Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if !msg.starts_with(
                     "params type checking failed: parameters cannot be deserialized: cannot parse 1-th parameter - \
@@ -275,7 +286,7 @@ impl Guest for Component {
                 }
             }
             Err(other) => return Err(format!("5: expected ParamsParsingError, got {other:?}")),
-            Ok(_) => return Err("5: expected error, got Ok".to_string()),
+            Ok(()) => return Err("5: expected error, got Ok".to_string()),
         }
 
         Ok(execution_id)

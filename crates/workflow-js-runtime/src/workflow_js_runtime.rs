@@ -9,6 +9,99 @@
 //! - Does NOT provide `fetch()` (HTTP is not deterministic)
 //! - Uses synchronous execution only (no async/promises)
 //! - Runs on `wasm32-unknown-unknown` target
+//!
+//! # JS API Reference
+//!
+//! ## Basic Workflow
+//! ```js
+//! export default function myWorkflow(params) {
+//!     // params is the input array passed to the workflow
+//!     return "result"; // Return value (or throw for error)
+//! }
+//! ```
+//!
+//! ## Join Sets (Child Executions)
+//! ```js
+//! // Create a join set to manage child executions
+//! const js = obelisk.createJoinSet();
+//! // Or with a name: obelisk.createJoinSet("my-join-set")
+//!
+//! // Submit a child execution
+//! const execId = js.submit("ns:pkg/ifc.func", [arg1, arg2]);
+//!
+//! // Wait for next result (blocks until a child completes)
+//! const response = js.joinNext();
+//! // response = { type: "execution"|"delay", id: string, ok: boolean }
+//!
+//! // Get the actual result value
+//! const result = obelisk.getResult(execId);
+//! // result = { ok: value } or { err: value }
+//!
+//! // Close the join set when done
+//! js.close();
+//! ```
+//!
+//! ## Scheduling Top-Level Executions
+//! ```js
+//! // Generate execution ID first
+//! const execId = obelisk.executionIdGenerate();
+//!
+//! // Schedule immediately (scheduleAt is optional, defaults to now)
+//! obelisk.schedule(execId, "ns:pkg/ifc.func", [arg1, arg2]);
+//!
+//! // Schedule with delay
+//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { seconds: 60 });
+//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { minutes: 5 });
+//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { hours: 1 });
+//! ```
+//!
+//! ## Stubbing (Mock Responses)
+//! ```js
+//! // Stub a child execution with a predetermined result
+//! const js = obelisk.createJoinSet();
+//! const execId = js.submit("ns:pkg/activity.stub_fn", [args]);
+//! obelisk.stub(execId, { ok: "mocked-value" }); // or { err: "error" }
+//! ```
+//!
+//! ## Sleep (Durable Timer)
+//! ```js
+//! // Sleep for a duration (persisted, survives restarts)
+//! obelisk.sleep({ seconds: 30 });
+//! obelisk.sleep({ minutes: 5 });
+//! obelisk.sleep({ milliseconds: 500 });
+//! ```
+//!
+//! ## Random (Deterministic)
+//! ```js
+//! // Random integers (deterministic replay)
+//! const n = obelisk.randomU64(0, 100);        // [0, 100)
+//! const m = obelisk.randomU64Inclusive(1, 6); // [1, 6] (dice roll)
+//!
+//! // Random string (alphanumeric)
+//! const s = obelisk.randomString(8, 16); // length in [8, 16)
+//! ```
+//!
+//! ## Delays in Join Sets
+//! ```js
+//! const js = obelisk.createJoinSet();
+//! const execId = js.submit("ns:pkg/ifc.slow_task", []);
+//! const delayId = js.submitDelay({ seconds: 30 }); // timeout
+//!
+//! const response = js.joinNext();
+//! if (response.type === "delay") {
+//!     // Timeout fired before task completed
+//! } else {
+//!     // Task completed
+//! }
+//! ```
+//!
+//! ## Console Logging
+//! ```js
+//! console.log("info message");
+//! console.debug("debug message");
+//! console.warn("warning");
+//! console.error("error");
+//! ```
 
 use crate::deterministic_executor::DeterministicJobExecutor;
 use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::JsRuntimeError;
@@ -17,9 +110,9 @@ use crate::generated::obelisk::types::execution::{ExecutionId, Function, Respons
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    JoinNextTryError, SubmitConfig, get_result_json, join_next, join_next_try, join_set_close,
-    join_set_create, join_set_create_named, random_string, random_u64, random_u64_inclusive,
-    schedule_json, sleep, stub_json, submit_delay, submit_json,
+    JoinNextTryError, SubmitConfig, execution_id_generate, get_result_json, join_next,
+    join_next_try, join_set_close, join_set_create, join_set_create_named, random_string,
+    random_u64, random_u64_inclusive, schedule_json, sleep, stub_json, submit_delay, submit_json,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{extract_error_string, new_object, parse_ffqn};
@@ -490,10 +583,29 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // obelisk.schedule(ffqn, params, scheduleAt, config?)
+    // obelisk.executionIdGenerate()
+    let exec_id_generate_fn = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
+        let exec_id = execution_id_generate();
+        Ok(JsValue::from(js_string!(exec_id.id)))
+    });
+    obelisk.set(
+        js_string!("executionIdGenerate"),
+        exec_id_generate_fn.to_js_function(context.realm()),
+        false,
+        context,
+    )?;
+
+    // obelisk.schedule(executionId, ffqn, params, scheduleAt?, config?)
     let schedule_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let ffqn = args
+        let exec_id_str = args
             .get_or_undefined(0)
+            .as_string()
+            .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
+            .to_std_string_escaped();
+        let exec_id = ExecutionId { id: exec_id_str };
+
+        let ffqn = args
+            .get_or_undefined(1)
             .as_string()
             .ok_or_else(|| JsNativeError::typ().with_message("ffqn must be a string"))?
             .to_std_string_escaped();
@@ -504,19 +616,19 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             function_name: fn_name,
         };
 
-        let params_val = args.get_or_undefined(1);
+        let params_val = args.get_or_undefined(2);
         let params_json = json_stringify(params_val, ctx)?;
 
-        let schedule = parse_schedule_at(args.get_or_undefined(2), ctx)?;
+        let schedule = parse_schedule_at(args.get_or_undefined(3), ctx)?;
 
-        let config = if let Some(cfg_val) = args.get(3) {
+        let config = if let Some(cfg_val) = args.get(4) {
             parse_submit_config(cfg_val, ctx)?
         } else {
             None
         };
 
-        match schedule_json(schedule, &function, &params_json, config) {
-            Ok(exec_id) => Ok(JsValue::from(js_string!(exec_id.id))),
+        match schedule_json(&exec_id, schedule, &function, &params_json, config) {
+            Ok(()) => Ok(JsValue::undefined()),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("schedule failed: {:?}", e))
                 .into()),
