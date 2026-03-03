@@ -14,62 +14,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "u64",
-                    "err": null
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<u64>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
       }
     },
@@ -87,62 +32,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "u64",
-                    "err": null
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<u64>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
       }
     },
@@ -153,64 +43,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-get",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "result": {
-                "ok": "u64",
-                "err": null
-              }
-            },
-            "err": {
-              "variant": {
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                },
-                "not-found-in-processed-responses": null
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<result<u64>, variant { function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }), not-found-in-processed-responses }>",
         "wit_type": "result<result<u64>, get-extension-error>"
       }
     },
@@ -238,11 +78,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -253,64 +89,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-get",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "result": {
-                "ok": "u64",
-                "err": null
-              }
-            },
-            "err": {
-              "variant": {
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                },
-                "not-found-in-processed-responses": null
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<result<u64>, variant { function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }), not-found-in-processed-responses }>",
         "wit_type": "result<result<u64>, get-extension-error>"
       }
     },
@@ -338,11 +124,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -360,62 +142,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "u64",
-                    "err": null
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<u64>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
       }
     },
@@ -426,64 +153,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit-json-get",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "result": {
-                "ok": "u64",
-                "err": null
-              }
-            },
-            "err": {
-              "variant": {
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                },
-                "not-found-in-processed-responses": null
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<result<u64>, variant { function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }), not-found-in-processed-responses }>",
         "wit_type": "result<result<u64>, get-extension-error>"
       }
     },
@@ -506,11 +183,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -528,62 +201,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "u64",
-                    "err": null
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<u64>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
       }
     },
@@ -594,64 +212,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.fibow-get",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "result": {
-                "ok": "u64",
-                "err": null
-              }
-            },
-            "err": {
-              "variant": {
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                },
-                "not-found-in-processed-responses": null
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<result<u64>, variant { function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }), not-found-in-processed-responses }>",
         "wit_type": "result<result<u64>, get-extension-error>"
       }
     },
@@ -679,11 +247,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -701,62 +265,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": null,
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<_, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<_, string>>, await-next-extension-error>"
       }
     },
@@ -767,64 +276,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.test-get-result-json-before-await-get",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "result": {
-                "ok": null,
-                "err": "string"
-              }
-            },
-            "err": {
-              "variant": {
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                },
-                "not-found-in-processed-responses": null
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<result<_, string>, variant { function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }), not-found-in-processed-responses }>",
         "wit_type": "result<result<_, string>, get-extension-error>"
       }
     },
@@ -842,11 +301,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -864,62 +319,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": null,
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<_, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<_, string>>, await-next-extension-error>"
       }
     },
@@ -930,64 +330,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.test-get-result-json-err-variant-get",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "result": {
-                "ok": null,
-                "err": "string"
-              }
-            },
-            "err": {
-              "variant": {
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                },
-                "not-found-in-processed-responses": null
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<result<_, string>, variant { function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }), not-found-in-processed-responses }>",
         "wit_type": "result<result<_, string>, get-extension-error>"
       }
     },
@@ -1005,11 +355,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1027,66 +373,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": {
-                      "record": {
-                        "id": "string"
-                      }
-                    },
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<record { id: string }, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<execution-id, string>>, await-next-extension-error>"
       }
     },
@@ -1097,68 +384,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.test-schedule-json-get",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "result": {
-                "ok": {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                "err": "string"
-              }
-            },
-            "err": {
-              "variant": {
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                },
-                "not-found-in-processed-responses": null
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<result<record { id: string }, string>, variant { function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }), not-found-in-processed-responses }>",
         "wit_type": "result<result<execution-id, string>, get-extension-error>"
       }
     },
@@ -1176,11 +409,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1198,62 +427,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": null,
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<_, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<_, string>>, await-next-extension-error>"
       }
     },
@@ -1264,64 +438,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.test-submit-json-malformed-params-get",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "result": {
-                "ok": null,
-                "err": "string"
-              }
-            },
-            "err": {
-              "variant": {
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                },
-                "not-found-in-processed-responses": null
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<result<_, string>, variant { function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }), not-found-in-processed-responses }>",
         "wit_type": "result<result<_, string>, get-extension-error>"
       }
     },
@@ -1339,11 +463,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1361,62 +481,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": null,
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<_, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<_, string>>, await-next-extension-error>"
       }
     },
@@ -1427,64 +492,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-ext/workflow.test-submit-json-unknown-ffqn-get",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "result": {
-                "ok": null,
-                "err": "string"
-              }
-            },
-            "err": {
-              "variant": {
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                },
-                "not-found-in-processed-responses": null
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<result<_, string>, variant { function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }), not-found-in-processed-responses }>",
         "wit_type": "result<result<_, string>, get-extension-error>"
       }
     },
@@ -1502,11 +517,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1517,26 +528,7 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-concurrent-schedule",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
       },
@@ -1553,11 +545,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1568,26 +556,7 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-schedule",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
       },
@@ -1604,11 +573,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1619,26 +584,7 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-submit-json-schedule",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
       },
@@ -1650,11 +596,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1665,26 +607,7 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
       },
@@ -1701,11 +624,7 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1716,37 +635,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-before-await-schedule",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1757,37 +653,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-err-variant-schedule",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1798,37 +671,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-schedule-json-schedule",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1839,37 +689,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-malformed-params-schedule",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -1880,37 +707,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-unknown-ffqn-schedule",
     "parameter_types": [
       {
-        "type_wrapper": {
-          "variant": {
-            "at": {
-              "record": {
-                "nanoseconds": "u32",
-                "seconds": "u64"
-              }
-            },
-            "in": {
-              "variant": {
-                "days": "u32",
-                "hours": "u32",
-                "milliseconds": "u64",
-                "minutes": "u32",
-                "seconds": "u64"
-              }
-            },
-            "now": null
-          }
-        },
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -2052,11 +856,7 @@ expression: exports
     "return_type": {
       "extendable": {
         "type_wrapper_tl": {
-          "ok": {
-            "record": {
-              "id": "string"
-            }
-          },
+          "ok": "record { id: string }",
           "err": "string"
         },
         "wit_type": "result<execution-id, string>"

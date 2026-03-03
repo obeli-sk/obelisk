@@ -162,15 +162,7 @@ async fn create_and_append(
 
 const WVWT_RECORD_UNSORTED: &str = r#"
         {
-            "type": {
-                "record": {
-                    "login": "string",
-                    "repo": "string",
-                    "description": {
-                        "option": "string"
-                    }
-                }
-            },
+            "type": "record { login :string, repo: string, description: option<string> }",
             "value": {
                 "login": "login",
                 "repo": "repo",

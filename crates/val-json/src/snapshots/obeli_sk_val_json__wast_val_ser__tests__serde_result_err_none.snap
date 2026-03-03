@@ -3,12 +3,7 @@ source: crates/val-json/src/wast_val_ser.rs
 expression: json
 ---
 {
-  "type": {
-    "result": {
-      "ok": null,
-      "err": null
-    }
-  },
+  "type": "result",
   "value": {
     "err": null
   }

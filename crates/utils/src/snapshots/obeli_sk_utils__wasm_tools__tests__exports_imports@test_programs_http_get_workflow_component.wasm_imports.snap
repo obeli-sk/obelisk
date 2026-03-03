@@ -44,62 +44,7 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "result": {
-            "ok": {
-              "tuple": [
-                {
-                  "record": {
-                    "id": "string"
-                  }
-                },
-                {
-                  "result": {
-                    "ok": "string",
-                    "err": "string"
-                  }
-                }
-              ]
-            },
-            "err": {
-              "variant": {
-                "all-processed": null,
-                "function-mismatch": {
-                  "record": {
-                    "actual-function": {
-                      "option": {
-                        "record": {
-                          "function-name": "string",
-                          "interface-name": "string"
-                        }
-                      }
-                    },
-                    "actual-id": {
-                      "variant": {
-                        "delay-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        },
-                        "execution-id": {
-                          "record": {
-                            "id": "string"
-                          }
-                        }
-                      }
-                    },
-                    "specified-function": {
-                      "record": {
-                        "function-name": "string",
-                        "interface-name": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "type_wrapper": "result<tuple<record { id: string }, result<string, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
         "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
       }
     },
@@ -122,11 +67,7 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": {
-          "record": {
-            "id": "string"
-          }
-        },
+        "type_wrapper": "record { id: string }",
         "wit_type": "execution-id"
       }
     },
@@ -166,14 +107,7 @@ expression: imports
     "return_type": {
       "extendable": {
         "type_wrapper_tl": {
-          "ok": {
-            "record": {
-              "body": {
-                "list": "u8"
-              },
-              "status-code": "u16"
-            }
-          },
+          "ok": "record { body: list<u8>, status-code: u16 }",
           "err": "string"
         },
         "wit_type": "result<response, string>"

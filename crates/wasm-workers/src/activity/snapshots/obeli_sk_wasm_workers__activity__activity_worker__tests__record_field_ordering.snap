@@ -3,16 +3,7 @@ source: crates/wasm-workers/src/activity/activity_worker.rs
 expression: record
 ---
 {
-  "type": {
-    "record": {
-      "a": "bool",
-      "image": "string",
-      "b": "bool",
-      "opt": {
-        "option": "bool"
-      }
-    }
-  },
+  "type": "record { a: bool, image: string, b: bool, opt: option<bool> }",
   "value": {
     "a": false,
     "image": "foo",
