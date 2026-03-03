@@ -1,0 +1,2028 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DbStorageSchema",
+  "description": "Root type for DB schema generation - contains all serialized DB types",
+  "type": "object",
+  "properties": {
+    "execution_event": {
+      "$ref": "#/$defs/ExecutionEvent"
+    },
+    "join_set_response": {
+      "$ref": "#/$defs/JoinSetResponse"
+    },
+    "pending_state": {
+      "$ref": "#/$defs/PendingState"
+    },
+    "wasm_backtrace": {
+      "$ref": "#/$defs/WasmBacktrace"
+    }
+  },
+  "required": [
+    "execution_event",
+    "pending_state",
+    "join_set_response",
+    "wasm_backtrace"
+  ],
+  "$defs": {
+    "ChildExecutionRequestError": {
+      "description": "Error from the `submit-json` function. Persisted in history for determinism.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "function_not_found"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type_check_error": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type_check_error"
+          ]
+        }
+      ]
+    },
+    "ComponentId": {
+      "type": "object",
+      "properties": {
+        "component_type": {
+          "type": "string"
+        },
+        "input_digest": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "component_type",
+        "name",
+        "input_digest"
+      ]
+    },
+    "ComponentRetryConfig": {
+      "type": "object",
+      "properties": {
+        "max_retries": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/Duration"
+        }
+      },
+      "required": [
+        "retry_exp_backoff"
+      ]
+    },
+    "DelayId": {
+      "description": "Mirrors [`ExecutionId`], with different prefix and `idx` for tracking each delay within the join set.",
+      "type": "string"
+    },
+    "Duration": {
+      "type": "object",
+      "properties": {
+        "nanos": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "secs",
+        "nanos"
+      ]
+    },
+    "ExecutionEvent": {
+      "type": "object",
+      "properties": {
+        "backtrace_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event": {
+          "$ref": "#/$defs/ExecutionRequest"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "created_at",
+        "event",
+        "version"
+      ]
+    },
+    "ExecutionFailureKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "uncategorized"
+          ]
+        },
+        {
+          "description": "Applicable to activities only, because workflows will be retried forever",
+          "type": "string",
+          "const": "timed_out"
+        },
+        {
+          "description": "Applicable to workflows",
+          "type": "string",
+          "const": "nondeterminism_detected"
+        },
+        {
+          "description": "Applicable to WASM components",
+          "type": "string",
+          "const": "out_of_fuel"
+        },
+        {
+          "description": "Applicable to activities",
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    },
+    "ExecutionRequest": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "paused",
+            "unpaused"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "created": {
+              "type": "object",
+              "properties": {
+                "component_id": {
+                  "$ref": "#/$defs/ComponentId"
+                },
+                "deployment_id": {
+                  "type": "string"
+                },
+                "ffqn": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "params": {
+                  "type": "array",
+                  "items": true
+                },
+                "parent": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "scheduled_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "scheduled_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "ffqn",
+                "params",
+                "scheduled_at",
+                "component_id",
+                "deployment_id"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "created"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "locked": {
+              "$ref": "#/$defs/Locked"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "locked"
+          ]
+        },
+        {
+          "description": "Returns execution to [`PendingState::PendingAt`] state at the specified time.\nThis can happen when:\n- executor is running out of resources like [`WorkerError::LimitReached`]\n- executor is shutting down",
+          "type": "object",
+          "properties": {
+            "unlocked": {
+              "type": "object",
+              "properties": {
+                "backoff_expires_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "backoff_expires_at",
+                "reason"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "unlocked"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "temporarily_failed": {
+              "type": "object",
+              "properties": {
+                "backoff_expires_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "http_client_traces": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/$defs/HttpClientTrace"
+                  }
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "backoff_expires_at",
+                "reason"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "temporarily_failed"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "temporarily_timed_out": {
+              "type": "object",
+              "properties": {
+                "backoff_expires_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "http_client_traces": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/$defs/HttpClientTrace"
+                  }
+                }
+              },
+              "required": [
+                "backoff_expires_at"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "temporarily_timed_out"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "finished": {
+              "type": "object",
+              "properties": {
+                "http_client_traces": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/$defs/HttpClientTrace"
+                  }
+                },
+                "retval": {
+                  "$ref": "#/$defs/SupportedFunctionReturnValue"
+                }
+              },
+              "required": [
+                "retval"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "finished"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "history_event": {
+              "type": "object",
+              "properties": {
+                "event": {
+                  "$ref": "#/$defs/HistoryEvent"
+                }
+              },
+              "required": [
+                "event"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "history_event"
+          ]
+        }
+      ]
+    },
+    "FinishedExecutionError": {
+      "type": "object",
+      "properties": {
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/ExecutionFailureKind"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "FrameInfo": {
+      "type": "object",
+      "properties": {
+        "func_name": {
+          "type": "string"
+        },
+        "module": {
+          "type": "string"
+        },
+        "symbols": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FrameSymbol"
+          }
+        }
+      },
+      "required": [
+        "module",
+        "func_name",
+        "symbols"
+      ]
+    },
+    "FrameSymbol": {
+      "type": "object",
+      "properties": {
+        "col": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "func_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      }
+    },
+    "HistoryEvent": {
+      "description": "Must be created by the executor in [`PendingState::Locked`].",
+      "oneOf": [
+        {
+          "description": "Persist a generated pseudorandom value.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/PersistKind"
+            },
+            "type": {
+              "type": "string",
+              "const": "persist"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value",
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "join_set_id": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "join_set_create"
+            }
+          },
+          "required": [
+            "type",
+            "join_set_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "join_set_id": {
+              "type": "string"
+            },
+            "request": {
+              "$ref": "#/$defs/JoinSetRequest"
+            },
+            "type": {
+              "type": "string",
+              "const": "join_set_request"
+            }
+          },
+          "required": [
+            "type",
+            "join_set_id",
+            "request"
+          ]
+        },
+        {
+          "description": "Sets the pending state to [`PendingState::BlockedByJoinSet`].\nWhen the response arrives at `resp_time`:\nThe execution is [`PendingState::PendingAt`]`(max(resp_time, lock_expires_at)`, so that the\noriginal executor can continue. After the expiry any executor can continue without\nmarking the execution as timed out.",
+          "type": "object",
+          "properties": {
+            "closing": {
+              "description": "Closing request must never set `requested_ffqn` and is ignored by determinism checks.",
+              "type": "boolean"
+            },
+            "join_set_id": {
+              "type": "string"
+            },
+            "requested_ffqn": {
+              "description": "Set to a specific function when calling `-await-next` extension function, used for\ndeterminism checks.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "run_expires_at": {
+              "description": "Set to a future time if the worker is keeping the execution invocation warm waiting for the result.\nThe pending status will be kept in Locked state until `run_expires_at`.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "type": {
+              "type": "string",
+              "const": "join_next"
+            }
+          },
+          "required": [
+            "type",
+            "join_set_id",
+            "run_expires_at",
+            "closing"
+          ]
+        },
+        {
+          "description": "Attempt to process next response without changing the pending state.",
+          "type": "object",
+          "properties": {
+            "join_set_id": {
+              "type": "string"
+            },
+            "outcome": {
+              "$ref": "#/$defs/JoinNextTryOutcome"
+            },
+            "type": {
+              "type": "string",
+              "const": "join_next_try"
+            }
+          },
+          "required": [
+            "type",
+            "join_set_id",
+            "outcome"
+          ]
+        },
+        {
+          "description": "Records the fact that a join set was awaited more times than its submission count.",
+          "type": "object",
+          "properties": {
+            "join_set_id": {
+              "type": "string"
+            },
+            "requested_ffqn": {
+              "description": "Set to a specific function when calling `-await-next` extension function, used for\ndeterminism checks.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "join_next_too_many"
+            }
+          },
+          "required": [
+            "type",
+            "join_set_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/$defs/Result_of_null_or_ScheduleRequestError"
+            },
+            "schedule_at": {
+              "$ref": "#/$defs/HistoryEventScheduleAt"
+            },
+            "type": {
+              "type": "string",
+              "const": "schedule"
+            }
+          },
+          "required": [
+            "type",
+            "execution_id",
+            "schedule_at",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "result": {
+              "$ref": "#/$defs/Result_of_null_or_StubError"
+            },
+            "retval_hash": {
+              "$ref": "#/$defs/StubRetValHash"
+            },
+            "target_execution_id": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "stub"
+            }
+          },
+          "required": [
+            "type",
+            "target_execution_id",
+            "retval_hash",
+            "result"
+          ]
+        }
+      ]
+    },
+    "HistoryEventScheduleAt": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "now"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "at"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "in": {
+              "$ref": "#/$defs/Duration"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "in"
+          ]
+        }
+      ]
+    },
+    "HttpClientTrace": {
+      "type": "object",
+      "properties": {
+        "req": {
+          "$ref": "#/$defs/RequestTrace"
+        },
+        "resp": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResponseTrace"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "req"
+      ]
+    },
+    "JoinNextTryOutcome": {
+      "oneOf": [
+        {
+          "description": "A response was found and processed.",
+          "type": "string",
+          "const": "found"
+        },
+        {
+          "description": "No response available, but there are still pending requests.",
+          "type": "string",
+          "const": "pending"
+        },
+        {
+          "description": "No response available, and all requests have been processed.",
+          "type": "string",
+          "const": "all_processed"
+        }
+      ]
+    },
+    "JoinSetRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "delay_id": {
+              "$ref": "#/$defs/DelayId"
+            },
+            "expires_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "schedule_at": {
+              "$ref": "#/$defs/HistoryEventScheduleAt"
+            },
+            "type": {
+              "type": "string",
+              "const": "delay_request"
+            }
+          },
+          "required": [
+            "type",
+            "delay_id",
+            "expires_at",
+            "schedule_at"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "child_execution_id": {
+              "type": "string"
+            },
+            "params": {
+              "type": "array",
+              "items": true
+            },
+            "result": {
+              "$ref": "#/$defs/Result_of_null_or_ChildExecutionRequestError"
+            },
+            "target_ffqn": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "child_execution_request"
+            }
+          },
+          "required": [
+            "type",
+            "child_execution_id",
+            "target_ffqn",
+            "params",
+            "result"
+          ]
+        }
+      ]
+    },
+    "JoinSetResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "delay_id": {
+              "$ref": "#/$defs/DelayId"
+            },
+            "result": {
+              "$ref": "#/$defs/Result_of_null_or_null"
+            },
+            "type": {
+              "type": "string",
+              "const": "delay_finished"
+            }
+          },
+          "required": [
+            "type",
+            "delay_id",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "child_execution_id": {
+              "type": "string"
+            },
+            "finished_version": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "result": {
+              "$ref": "#/$defs/SupportedFunctionReturnValue"
+            },
+            "type": {
+              "type": "string",
+              "const": "child_execution_finished"
+            }
+          },
+          "required": [
+            "type",
+            "child_execution_id",
+            "finished_version",
+            "result"
+          ]
+        }
+      ]
+    },
+    "Locked": {
+      "type": "object",
+      "properties": {
+        "component_id": {
+          "$ref": "#/$defs/ComponentId"
+        },
+        "deployment_id": {
+          "type": "string"
+        },
+        "executor_id": {
+          "type": "string"
+        },
+        "lock_expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "retry_config": {
+          "$ref": "#/$defs/ComponentRetryConfig"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "component_id",
+        "executor_id",
+        "deployment_id",
+        "run_id",
+        "lock_expires_at",
+        "retry_config"
+      ]
+    },
+    "LockedBy": {
+      "type": "object",
+      "properties": {
+        "executor_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "executor_id",
+        "run_id"
+      ]
+    },
+    "PendingState": {
+      "oneOf": [
+        {
+          "description": "Caused by [`ExecutionRequest::Locked`].",
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "locked"
+            }
+          },
+          "$ref": "#/$defs/PendingStateLocked",
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "pending_at"
+            }
+          },
+          "$ref": "#/$defs/PendingStatePendingAt",
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "description": "Caused by [`HistoryEvent::JoinNext`]",
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "blocked_by_join_set"
+            }
+          },
+          "$ref": "#/$defs/PendingStateBlockedByJoinSet",
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "description": "State of execution before it was paused.",
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "paused"
+            }
+          },
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "Locked": {
+                  "$ref": "#/$defs/PendingStateLocked"
+                }
+              },
+              "required": [
+                "Locked"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "PendingAt": {
+                  "$ref": "#/$defs/PendingStatePendingAt"
+                }
+              },
+              "required": [
+                "PendingAt"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "BlockedByJoinSet": {
+                  "$ref": "#/$defs/PendingStateBlockedByJoinSet"
+                }
+              },
+              "required": [
+                "BlockedByJoinSet"
+              ]
+            }
+          ],
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "finished"
+            }
+          },
+          "$ref": "#/$defs/PendingStateFinished",
+          "required": [
+            "status"
+          ]
+        }
+      ]
+    },
+    "PendingStateBlockedByJoinSet": {
+      "type": "object",
+      "properties": {
+        "closing": {
+          "description": "Blocked by closing of the join set",
+          "type": "boolean"
+        },
+        "join_set_id": {
+          "type": "string"
+        },
+        "lock_expires_at": {
+          "description": "See [`HistoryEvent::JoinNext::lock_expires_at`].",
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "join_set_id",
+        "lock_expires_at",
+        "closing"
+      ]
+    },
+    "PendingStateFinished": {
+      "type": "object",
+      "properties": {
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "result_kind": {
+          "$ref": "#/$defs/PendingStateFinishedResultKind"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "version",
+        "finished_at",
+        "result_kind"
+      ]
+    },
+    "PendingStateFinishedError": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "error"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "execution_failure": {
+              "$ref": "#/$defs/ExecutionFailureKind"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "execution_failure"
+          ]
+        }
+      ]
+    },
+    "PendingStateFinishedResultKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "err": {
+              "$ref": "#/$defs/PendingStateFinishedError"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "err"
+          ]
+        }
+      ]
+    },
+    "PendingStateLocked": {
+      "type": "object",
+      "properties": {
+        "lock_expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "locked_by": {
+          "$ref": "#/$defs/LockedBy"
+        }
+      },
+      "required": [
+        "locked_by",
+        "lock_expires_at"
+      ]
+    },
+    "PendingStatePendingAt": {
+      "type": "object",
+      "properties": {
+        "last_lock": {
+          "description": "`last_lock` is needed for lock extension.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LockedBy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scheduled_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "scheduled_at"
+      ]
+    },
+    "PersistKind": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "max_inclusive": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "min": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "random_u64"
+            }
+          },
+          "required": [
+            "type",
+            "min",
+            "max_inclusive"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "max_length_exclusive": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "min_length": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "random_string"
+            }
+          },
+          "required": [
+            "type",
+            "min_length",
+            "max_length_exclusive"
+          ]
+        }
+      ]
+    },
+    "RequestTrace": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "sent_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sent_at",
+        "uri",
+        "method"
+      ]
+    },
+    "ResponseTrace": {
+      "type": "object",
+      "properties": {
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "$ref": "#/$defs/Result_of_uint16_or_string"
+        }
+      },
+      "required": [
+        "finished_at",
+        "status"
+      ]
+    },
+    "Result_of_Nullable_WastVal_or_Nullable_WastVal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WastVal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WastVal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "Result_of_null_or_ChildExecutionRequestError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/ChildExecutionRequestError"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "Result_of_null_or_ScheduleRequestError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/ScheduleRequestError"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "Result_of_null_or_StubError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "$ref": "#/$defs/StubError"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "Result_of_null_or_null": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "Result_of_uint16_or_string": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Ok": {
+              "type": "integer",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "Ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Err": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "Err"
+          ]
+        }
+      ]
+    },
+    "ScheduleRequestError": {
+      "description": "Error from the `schedule-json` function. Persisted in history for determinism.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "function_not_found"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type_check_error": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type_check_error"
+          ]
+        }
+      ]
+    },
+    "StubError": {
+      "description": "Error from the `-stub` extension function.\nMirrors `obelisk:types/execution.{stub-error}` from WIT.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "execution_not_found",
+            "conflict"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type_check_error": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type_check_error"
+          ]
+        }
+      ]
+    },
+    "StubRetValHash": {
+      "description": "Hash of a stub return value, stored in history for determinism checks.\nFormat: 1 byte version + 32 bytes SHA-256 hash.",
+      "type": "string"
+    },
+    "SupportedFunctionReturnValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WastValWithType"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "err": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WastValWithType"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "err"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "execution_error": {
+              "$ref": "#/$defs/FinishedExecutionError"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "execution_error"
+          ]
+        }
+      ]
+    },
+    "TypeKey": {
+      "type": "string"
+    },
+    "TypeWrapper": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "bool",
+            "s8",
+            "u8",
+            "s16",
+            "u16",
+            "s32",
+            "u32",
+            "s64",
+            "u64",
+            "f32",
+            "f64",
+            "char",
+            "string",
+            "own",
+            "borrow"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "record": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/TypeWrapper"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "record"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "variant": {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TypeWrapper"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "variant"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "list": {
+              "$ref": "#/$defs/TypeWrapper"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "list"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tuple": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TypeWrapper"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "tuple"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "enum": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TypeKey"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "enum"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "option": {
+              "$ref": "#/$defs/TypeWrapper"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "option"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "object",
+              "properties": {
+                "err": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/TypeWrapper"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ok": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/TypeWrapper"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "flags": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TypeKey"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "flags"
+          ]
+        }
+      ]
+    },
+    "ValKey": {
+      "type": "string"
+    },
+    "WasmBacktrace": {
+      "type": "object",
+      "properties": {
+        "frames": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FrameInfo"
+          }
+        }
+      },
+      "required": [
+        "frames"
+      ]
+    },
+    "WastVal": {
+      "description": "Expression that can be used inside of `invoke` expressions for core wasm\nfunctions.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Bool": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Bool"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "U8": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "U8"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "S8": {
+              "type": "integer",
+              "format": "int8",
+              "maximum": 127,
+              "minimum": -128
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "S8"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "U16": {
+              "type": "integer",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "U16"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "S16": {
+              "type": "integer",
+              "format": "int16",
+              "maximum": 32767,
+              "minimum": -32768
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "S16"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "U32": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "U32"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "S32": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "S32"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "U64": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "U64"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "S64": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "S64"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "F32": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "F32"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "F64": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "F64"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Char": {
+              "type": "string",
+              "maxLength": 1,
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Char"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "String": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "String"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "List": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/WastVal"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "List"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Record": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/WastVal"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Record"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Tuple": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/WastVal"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Tuple"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Variant": {
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/ValKey"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WastVal"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Variant"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Enum": {
+              "$ref": "#/$defs/ValKey"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Enum"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Option": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WastVal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Option"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Result": {
+              "$ref": "#/$defs/Result_of_Nullable_WastVal_or_Nullable_WastVal"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Flags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Flags"
+          ]
+        }
+      ]
+    },
+    "WastValWithType": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/TypeWrapper"
+        },
+        "value": {
+          "$ref": "#/$defs/WastVal"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ]
+    }
+  }
+}

@@ -310,7 +310,7 @@ rusqlite = { version = "0.38.0", features = [
     "chrono",
     "serde_json",
 ] }
-schemars = "1.2.1"
+schemars = { version = "1.2.1", features = ["indexmap2", "chrono04"] }
 secrecy = "0.10.3"
 semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }

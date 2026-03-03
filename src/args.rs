@@ -46,6 +46,12 @@ pub(crate) enum Generate {
         /// Filename to write the schema to, defaults to <stdout>.
         output: Option<PathBuf>,
     },
+    /// Generate the database storage schema in JSON schema format.
+    #[cfg(debug_assertions)]
+    DbSchema {
+        /// Filename to write the schema to, defaults to <stdout>.
+        output: Option<PathBuf>,
+    },
     /// Generate extension WIT files that are automatically implemented by Obelisk
     /// based on the exported interfaces of the component.
     WitExtensions {

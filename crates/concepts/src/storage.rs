@@ -175,8 +175,10 @@ pub type VersionType = u32;
     derive_more::Into,
     serde::Serialize,
     serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(transparent)]
+#[schemars(transparent)]
 pub struct Version(pub VersionType);
 impl Version {
     #[must_use]
@@ -213,7 +215,7 @@ impl From<&Version> for usize {
 pub struct VersionParseError;
 
 #[derive(
-    Clone, Debug, derive_more::Display, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+    Clone, Debug, derive_more::Display, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[display("{event}")]
 pub struct ExecutionEvent {
@@ -233,10 +235,11 @@ pub struct ExecutionEvent {
     derive_more::Display,
     derive_more::Into,
     Serialize, /* webapi */
+    schemars::JsonSchema,
 )]
 pub struct ResponseCursor(pub u32);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */, schemars::JsonSchema)]
 pub struct ResponseWithCursor {
     pub event: JoinSetResponseEventOuter,
     pub cursor: ResponseCursor,
@@ -254,19 +257,19 @@ pub struct ListResponsesResponse {
     pub max_cursor: ResponseCursor,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */, schemars::JsonSchema)]
 pub struct JoinSetResponseEventOuter {
     pub created_at: DateTime<Utc>,
     pub event: JoinSetResponseEvent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct JoinSetResponseEvent {
     pub join_set_id: JoinSetId,
     pub event: JoinSetResponse,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display, schemars::JsonSchema)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum JoinSetResponse {
@@ -305,7 +308,7 @@ pub const DUMMY_HISTORY_EVENT: ExecutionRequest = ExecutionRequest::HistoryEvent
 };
 
 #[derive(
-    Clone, derive_more::Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize,
+    Clone, derive_more::Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
@@ -418,7 +421,7 @@ impl ExecutionRequest {
 }
 
 #[derive(
-    Clone, derive_more::Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize,
+    Clone, derive_more::Debug, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[display("Locked(`{lock_expires_at}`, {component_id})")]
@@ -433,7 +436,7 @@ pub struct Locked {
     pub retry_config: ComponentRetryConfig,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PersistKind {
@@ -457,7 +460,7 @@ pub fn from_bytes_to_u64(bytes: [u8; 8]) -> u64 {
 }
 
 #[derive(
-    derive_more::Debug, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize,
+    derive_more::Debug, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -567,7 +570,8 @@ impl StubRetVal {
 
 /// Hash of a stub return value, stored in history for determinism checks.
 /// Format: 1 byte version + 32 bytes SHA-256 hash.
-#[derive(Clone, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr)]
+#[derive(Clone, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub struct StubRetValHash([u8; 33]);
 
 impl Display for StubRetValHash {
@@ -613,7 +617,7 @@ pub enum StubRetValHashParseError {
 
 /// Error from the `-stub` extension function.
 /// Mirrors `obelisk:types/execution.{stub-error}` from WIT.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StubError {
     #[error("execution not found")]
@@ -625,7 +629,7 @@ pub enum StubError {
 }
 
 /// Error from the `schedule-json` function. Persisted in history for determinism.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduleRequestError {
     #[error("function not found")]
@@ -635,7 +639,7 @@ pub enum ScheduleRequestError {
 }
 
 /// Error from the `submit-json` function. Persisted in history for determinism.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChildExecutionRequestError {
     #[error("function not found")]
@@ -644,7 +648,7 @@ pub enum ChildExecutionRequestError {
     TypeCheckError(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum JoinNextTryOutcome {
@@ -672,7 +676,7 @@ impl From<bool> for JoinNextTryOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryEventScheduleAt {
@@ -707,7 +711,7 @@ impl HistoryEventScheduleAt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum JoinSetRequest {
@@ -1607,19 +1611,19 @@ pub struct BacktraceInfo {
     pub wasm_backtrace: WasmBacktrace,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
 pub struct WasmBacktrace {
     pub frames: Vec<FrameInfo>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
 pub struct FrameInfo {
     pub module: String,
     pub func_name: String,
     pub symbols: Vec<FrameSymbol>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
 pub struct FrameSymbol {
     pub func_name: Option<String>,
     pub file: Option<String>,
@@ -1858,7 +1862,7 @@ pub struct ExpiredDelay {
     pub delay_id: DelayId,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum PendingState {
     /// Caused by [`ExecutionRequest::Locked`].
@@ -1933,14 +1937,14 @@ impl From<PendingState> for PendingStateMergedPause {
     }
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[display("Locked(`{lock_expires_at}`, {}, {})", locked_by.executor_id, locked_by.run_id)]
 pub struct PendingStateLocked {
     pub locked_by: LockedBy,
     pub lock_expires_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[display("`{scheduled_at}`, last_lock={last_lock:?}")]
 pub struct PendingStatePendingAt {
     pub scheduled_at: DateTime<Utc>,
@@ -1948,7 +1952,7 @@ pub struct PendingStatePendingAt {
     pub last_lock: Option<LockedBy>,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[display("{join_set_id}, `{lock_expires_at}`, closing={closing}")]
 pub struct PendingStateBlockedByJoinSet {
     pub join_set_id: JoinSetId,
@@ -1959,7 +1963,7 @@ pub struct PendingStateBlockedByJoinSet {
 }
 
 /// State of execution before it was paused.
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub enum PendingStatePaused {
     #[display("Locked({_0})")]
     Locked(PendingStateLocked),
@@ -1969,7 +1973,7 @@ pub enum PendingStatePaused {
     BlockedByJoinSet(PendingStateBlockedByJoinSet),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LockedBy {
     pub executor_id: ExecutorId,
     pub run_id: RunId,
@@ -1983,7 +1987,7 @@ impl From<&Locked> for LockedBy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[cfg_attr(any(test, feature = "test"), derive(Deserialize))]
 pub struct PendingStateFinished {
     pub version: VersionType, // not Version since it must be Copy
@@ -2000,7 +2004,7 @@ impl Display for PendingStateFinished {
 }
 
 // This is not a Result so that it can be customized for serialization
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingStateFinishedResultKind {
     Ok,
@@ -2021,7 +2025,7 @@ impl From<&SupportedFunctionReturnValue> for PendingStateFinishedResultKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingStateFinishedError {
     #[display("execution terminated: {_0}")]
@@ -2131,24 +2135,33 @@ pub mod http_client_trace {
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct HttpClientTrace {
         pub req: RequestTrace,
         pub resp: Option<ResponseTrace>,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct RequestTrace {
         pub sent_at: DateTime<Utc>,
         pub uri: String,
         pub method: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct ResponseTrace {
         pub finished_at: DateTime<Utc>,
         pub status: Result<u16, String>,
     }
+}
+
+/// Root type for DB schema generation - contains all serialized DB types
+#[derive(schemars::JsonSchema)]
+pub struct DbStorageSchema {
+    pub execution_event: ExecutionEvent,
+    pub pending_state: PendingState,
+    pub join_set_response: JoinSetResponse,
+    pub wasm_backtrace: WasmBacktrace,
 }
 
 #[cfg(test)]

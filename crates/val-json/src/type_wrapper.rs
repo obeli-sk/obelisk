@@ -5,7 +5,7 @@ use std::fmt::{self, Debug, Display};
 use std::str::FromStr;
 
 // TODO: Consider replacing IndexMap with ordermap - https://github.com/indexmap-rs/indexmap/issues/153#issuecomment-2189804150
-#[derive(Clone, Eq, Serialize, Deserialize)]
+#[derive(Clone, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TypeWrapper {
     Bool,
@@ -36,7 +36,7 @@ pub enum TypeWrapper {
     Flags(IndexSet<TypeKey>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, schemars::JsonSchema)]
 pub struct TypeKey(Box<str>);
 impl TypeKey {
     pub fn new_kebab(s: impl Into<Box<str>>) -> Self {
