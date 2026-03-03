@@ -2129,7 +2129,7 @@ pub(crate) mod tests {
         #[expand_enum_database]
         #[rstest]
         #[tokio::test]
-        async fn direct_call_should_work_nondeterministic(
+        async fn direct_call_should_work(
             db: Database,
             #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
             locking_strategy: LockingStrategy,
@@ -2372,9 +2372,6 @@ pub(crate) mod tests {
             let child_execution_id_str = lines.next().expect("response must contain execution id");
             let child_execution_id = ExecutionId::from_str(child_execution_id_str).unwrap();
 
-            // Give a moment for close() to persist the Finished event
-            tokio::time::sleep(Duration::from_millis(500)).await;
-
             // Find the webhook execution via the child's scheduled_by
             let conn = db_pool.connection().await.unwrap();
             let create_req = conn.get_create_request(&child_execution_id).await.unwrap();
@@ -2382,13 +2379,16 @@ pub(crate) mod tests {
                 .scheduled_by
                 .expect("child must have scheduled_by set");
 
-            // Get the webhook execution log and check the Finished event
-            let exec_log = conn.get(&webhook_exec_id).await.unwrap();
-            let finished_event = match &exec_log.last_event().event {
-                ExecutionRequest::Finished {
+            // Poll until the Finished event is persisted
+            let finished_event = loop {
+                let exec_log = conn.get(&webhook_exec_id).await.unwrap();
+                if let ExecutionRequest::Finished {
                     http_client_traces, ..
-                } => http_client_traces,
-                other => panic!("expected Finished event, got {other:?}"),
+                } = &exec_log.last_event().event
+                {
+                    break http_client_traces.clone();
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             };
 
             let http_client_traces = finished_event
@@ -3070,11 +3070,10 @@ pub(crate) mod tests {
                     .unwrap()
             });
 
-            // Wait for request to hit the server and block on obelisk.call
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-            // Run the activity to complete fibo(10)
-            assert_eq!(1, harness.tick_activity().await);
+            // Poll until the activity is pending and execute it
+            while harness.tick_activity().await == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
 
             // Get the response
             let resp = fetch_task.await.unwrap();
@@ -3216,10 +3215,10 @@ pub(crate) mod tests {
                     .unwrap()
             });
 
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-            // Run activity - it will return Err(()) for fibo(50)
-            assert_eq!(1, harness.tick_activity().await);
+            // Poll until the activity is pending and execute it
+            while harness.tick_activity().await == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
 
             let resp = fetch_task.await.unwrap();
             assert_eq!(resp.status().as_u16(), 200);
