@@ -198,6 +198,12 @@
           ],
           "default": null
         },
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml"
         },

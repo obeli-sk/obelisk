@@ -1099,6 +1099,8 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) forward_stderr: ComponentStdOutputToml,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
+    #[serde(default)]
+    pub(crate) env_vars: Vec<EnvVarConfig>,
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
@@ -1204,13 +1206,17 @@ impl ActivityJsComponentConfigToml {
             InputContentDigest(content_digest),
         )?;
 
+        let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
         let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
+
+        // Validate no collision between env_vars and secret env names
+        validate_no_env_collision(&env_vars, &allowed_hosts)?;
 
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
-            env_vars: Arc::from([]),
+            env_vars,
             directories_config: None,
             fuel,
             allowed_hosts,
@@ -1931,7 +1937,6 @@ pub(crate) mod webhook {
     #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookComponentConfigToml {
-        // TODO: Rename to WebhookComponentConfigToml
         #[serde(flatten)]
         pub(crate) common: ComponentCommon,
         pub(crate) http_server: ConfigName,

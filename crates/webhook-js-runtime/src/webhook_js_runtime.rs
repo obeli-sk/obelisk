@@ -68,6 +68,15 @@
 //! }
 //! ```
 //!
+//! ## Environment Variables
+//! ```js
+//! // Get environment variable value (returns string or undefined)
+//! const value = obelisk.env("MY_VAR");
+//! if (value !== undefined) {
+//!     console.log("MY_VAR =", value);
+//! }
+//! ```
+//!
 //! ## Console Logging
 //! ```js
 //! console.log("info message");
@@ -85,6 +94,7 @@ use crate::generated::obelisk::webhook::webhook_support::{
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
 use boa_common::helpers::{new_object, parse_ffqn};
+use boa_common::obelisk_env::register_env;
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{
@@ -519,24 +529,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     )?;
 
     // obelisk.env(key) - get environment variable
-    let env_fn = NativeFunction::from_fn_ptr(|_this, args, _ctx| {
-        let key = args
-            .get_or_undefined(0)
-            .as_string()
-            .ok_or_else(|| JsNativeError::typ().with_message("key must be a string"))?
-            .to_std_string_escaped();
-
-        match std::env::var(&key) {
-            Ok(value) => Ok(JsValue::from(js_string!(value))),
-            Err(_) => Ok(JsValue::undefined()),
-        }
-    });
-    obelisk.set(
-        js_string!("env"),
-        env_fn.to_js_function(context.realm()),
-        false,
-        context,
-    )?;
+    register_env(&obelisk, context)?;
 
     // Set obelisk as global
     context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
