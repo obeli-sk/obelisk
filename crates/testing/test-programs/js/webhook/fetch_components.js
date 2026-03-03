@@ -1,6 +1,6 @@
 export default async function handle(request) {
-    const port = request.headers["x-target-port"]?.[0] || "5005";
-    const resp = await fetch(`http://127.0.0.1:${port}/v1/components`, {
+    const addr = request.headers["x-target-addr"]?.[0] || "127.0.0.1:5005";
+    const resp = await fetch(`http://${addr}/v1/components`, {
         headers: {
             "accept": "application/json"
         }

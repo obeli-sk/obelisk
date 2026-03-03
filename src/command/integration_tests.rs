@@ -2,8 +2,10 @@
 //!
 //! Each test spins up a full Obelisk server (compile → DB → HTTP) against a
 //! temporary TOML config that references the JS test-program fixtures.
-//! The server binds to a free port discovered at test start, so tests can
-//! run in parallel without conflicts.
+//!
+//! Each test uses a unique loopback address in the 127.1.0.0/16 range with
+//! fixed ports, allowing parallel test execution without conflicts.
+//! The `test_addr!` macro ensures unique addresses at link time.
 
 use crate::{
     command::server::{RunParams, run_internal},
@@ -17,10 +19,11 @@ use tracing::debug;
 
 #[cfg(test)]
 mod populate_js_codegen_cache {
+    use super::test_addr;
 
     #[tokio::test]
     async fn test_server() {
-        super::TestServer::start().await;
+        super::TestServer::start(test_addr!(1)).await;
     }
 }
 
@@ -28,21 +31,38 @@ fn get_workspace_dir() -> PathBuf {
     PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
 }
 
-/// Bind to port 0, capture the assigned port, then drop the listener.
-fn free_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().port()
+/// Fixed ports used by all integration tests.
+/// Each test uses a unique IP address in 127.1.0.0/16, so ports don't conflict.
+const API_PORT: u16 = 9080;
+const WEBHOOK_PORT: u16 = 9081;
+
+/// Generate a unique loopback address for a test.
+///
+/// Uses `127.1.{id/256}.{id%256}` to derive the address from the ID.
+/// The macro also generates a static symbol that will cause a linker error
+/// if two tests use the same ID.
+macro_rules! test_addr {
+    ($id:literal) => {{
+        paste::paste! {
+            #[used]
+            #[unsafe(no_mangle)]
+            #[allow(non_upper_case_globals)]
+            static [<__obelisk_it_addr_ $id>]: () = ();
+        }
+        format!("127.1.{}.{}", ($id as u16) / 256, ($id as u16) % 256)
+    }};
 }
+pub(crate) use test_addr;
 
 /// Write a minimal TOML config to a temp file and return the path.
 /// The config references the JS fixtures from the workspace tree and
 /// places the `SQLite` database in a unique temp directory.
-fn write_test_toml(port: u16, webhook_port: u16) -> (tempfile::TempDir, PathBuf) {
+fn write_test_toml(ip: &str) -> (tempfile::TempDir, PathBuf) {
     let workspace = get_workspace_dir();
     let db_dir = tempfile::tempdir().unwrap();
     let toml_contents = format!(
         r#"
-api.listening_addr = "127.0.0.1:{port}"
+api.listening_addr = "{ip}:{API_PORT}"
 
 [wasm.codegen_cache]
 directory = "${{CACHE_DIR}}/codegen-it"
@@ -89,7 +109,7 @@ params.inline = [
 ]
 max_retries = 0
 [[activity_js.allowed_host]]
-pattern = "http://127.0.0.1:{port}"
+pattern = "http://{ip}:{API_PORT}"
 methods = ["GET"]
 
 [[activity_js]]
@@ -131,7 +151,7 @@ params.inline = [
 
 [[http_server]]
 name = "test_webhook_server"
-listening_addr = "127.0.0.1:{webhook_port}"
+listening_addr = "{ip}:{WEBHOOK_PORT}"
 
 [[webhook_endpoint_js]]
 name = "test_hello_webhook"
@@ -151,7 +171,7 @@ location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
 http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/fetch-allowed" }}]
 [[webhook_endpoint_js.allowed_host]]
-pattern = "http://127.0.0.1:{port}"
+pattern = "http://{ip}:{API_PORT}"
 methods = ["GET"]
 
 [[webhook_endpoint_js]]
@@ -166,8 +186,9 @@ location = "{ws}/crates/testing/test-programs/js/webhook/call_activity.js"
 http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/call-activity/:a/:b" }}]
 "#,
-        port = port,
-        webhook_port = webhook_port,
+        ip = ip,
+        API_PORT = API_PORT,
+        WEBHOOK_PORT = WEBHOOK_PORT,
         db_dir = db_dir.path().display(),
         ws = workspace.display(),
     );
@@ -178,6 +199,7 @@ routes = [{{ methods = ["GET"], route = "/call-activity/:a/:b" }}]
 }
 
 struct TestServer {
+    ip: String,
     base_url: String,
     webhook_base_url: String,
     client: reqwest::Client,
@@ -186,12 +208,10 @@ struct TestServer {
 }
 
 impl TestServer {
-    async fn start() -> Self {
+    async fn start(ip: String) -> Self {
         test_utils::set_up();
 
-        let port = free_port();
-        let webhook_port = free_port();
-        let (tmp_dir, toml_path) = write_test_toml(port, webhook_port);
+        let (tmp_dir, toml_path) = write_test_toml(&ip);
 
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
@@ -222,7 +242,7 @@ impl TestServer {
             .await
         });
 
-        let base_url = format!("http://127.0.0.1:{port}");
+        let base_url = format!("http://{ip}:{API_PORT}");
         let client = reqwest::Client::new();
 
         // Poll until the server is ready.
@@ -246,8 +266,9 @@ impl TestServer {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
-        let webhook_base_url = format!("http://127.0.0.1:{webhook_port}");
+        let webhook_base_url = format!("http://{ip}:{WEBHOOK_PORT}");
         TestServer {
+            ip,
             base_url,
             webhook_base_url,
             client,
@@ -258,8 +279,8 @@ impl TestServer {
 
     // ---- helper methods ------------------------------------------------
 
-    fn api_port(&self) -> u16 {
-        self.base_url.rsplit(':').next().unwrap().parse().unwrap()
+    fn api_addr(&self) -> String {
+        format!("{}:{}", self.ip, API_PORT)
     }
 
     async fn submit_follow(&self, ffqn: &str, params: Vec<Value>) -> reqwest::Response {
@@ -434,7 +455,7 @@ fn sanitize_json(value: &Value) -> Value {
 
 #[tokio::test]
 async fn list_components() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(2)).await;
 
     let components = server.list_components().await;
     let components = sanitize_json(&components);
@@ -443,7 +464,7 @@ async fn list_components() {
 
 #[tokio::test]
 async fn list_functions() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(3)).await;
 
     let functions = server.list_functions().await;
     let functions = sanitize_json(&functions);
@@ -454,7 +475,7 @@ async fn list_functions() {
 
 #[tokio::test]
 async fn submit_activity_and_get_result() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(4)).await;
 
     let resp = server
         .submit_follow(
@@ -471,7 +492,7 @@ async fn submit_activity_and_get_result() {
 
 #[tokio::test]
 async fn greet_activity_events() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(5)).await;
     let exec_id = server.generate_execution_id().await;
 
     let resp = server
@@ -494,7 +515,7 @@ async fn greet_activity_events() {
 
 #[tokio::test]
 async fn greet_activity_logs() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(6)).await;
     let exec_id = server.generate_execution_id().await;
 
     let resp = server
@@ -519,7 +540,7 @@ async fn greet_activity_logs() {
 
 #[tokio::test]
 async fn greet_activity_status() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(7)).await;
     let exec_id = server.generate_execution_id().await;
 
     let resp = server
@@ -542,7 +563,7 @@ async fn greet_activity_status() {
 
 #[tokio::test]
 async fn submit_workflow_and_replay() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(8)).await;
     let exec_id = server.generate_execution_id().await;
 
     // JS workflows return result<string, string>.
@@ -580,7 +601,7 @@ async fn submit_workflow_and_replay() {
 
 #[tokio::test]
 async fn submit_workflow_with_get_result() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(9)).await;
     let exec_id = server.generate_execution_id().await;
 
     let resp = server
@@ -603,7 +624,7 @@ async fn submit_workflow_with_get_result() {
 
 #[tokio::test]
 async fn submit_workflow_with_call() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(10)).await;
     let exec_id = server.generate_execution_id().await;
 
     let resp = server
@@ -626,7 +647,7 @@ async fn submit_workflow_with_call() {
 
 #[tokio::test]
 async fn list_executions_after_submit() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(11)).await;
 
     let resp = server
         .submit_follow(
@@ -651,7 +672,7 @@ async fn list_executions_after_submit() {
 
 #[tokio::test]
 async fn submit_with_wrong_params_returns_error() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(12)).await;
 
     let resp = server
         .client
@@ -669,7 +690,7 @@ async fn submit_with_wrong_params_returns_error() {
 
 #[tokio::test]
 async fn submit_nonexistent_function_returns_404() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(13)).await;
 
     let resp = server
         .client
@@ -687,15 +708,15 @@ async fn submit_nonexistent_function_returns_404() {
 
 #[tokio::test]
 async fn replay_nonexistent_execution_returns_404() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(14)).await;
     let resp = server.replay("E_01AAAAAAAAAAAAAAAAAAAAAAAA").await;
     assert_eq!(resp.status().as_u16(), 404);
 }
 
 #[tokio::test]
 async fn activity_js_fetch_denied() {
-    let server = TestServer::start().await;
-    let param_url = format!("http://127.0.0.1:{}/v1/components", server.api_port());
+    let server = TestServer::start(test_addr!(15)).await;
+    let param_url = format!("http://{}/v1/components", server.api_addr());
     let resp = server
         .submit_follow(
             "testing:integration/fetch-get-denied.fetch-get",
@@ -713,8 +734,8 @@ async fn activity_js_fetch_denied() {
 
 #[tokio::test]
 async fn activity_js_fetch_allowed() {
-    let server = TestServer::start().await;
-    let param_url = format!("http://127.0.0.1:{}/v1/components", server.api_port());
+    let server = TestServer::start(test_addr!(16)).await;
+    let param_url = format!("http://{}/v1/components", server.api_addr());
     let resp = server
         .submit_follow(
             "testing:integration/fetch-get-allowed.fetch-get",
@@ -732,7 +753,7 @@ async fn activity_js_fetch_allowed() {
 
 #[tokio::test]
 async fn activity_js_read_env() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(17)).await;
     let resp = server
         .submit_follow(
             "testing:integration/activities.read-env",
@@ -748,7 +769,7 @@ async fn activity_js_read_env() {
 
 #[tokio::test]
 async fn idempotent_submit_same_execution_id() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(18)).await;
     let exec_id = server.generate_execution_id().await;
 
     let resp1 = server
@@ -777,7 +798,7 @@ async fn idempotent_submit_same_execution_id() {
 
 #[tokio::test]
 async fn webhook_js_hello() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(19)).await;
     let resp = server
         .client
         .get(format!("{}/hello", server.webhook_base_url))
@@ -791,7 +812,7 @@ async fn webhook_js_hello() {
 
 #[tokio::test]
 async fn webhook_js_request_headers() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(20)).await;
     let resp = server
         .client
         .get(format!("{}/headers", server.webhook_base_url))
@@ -808,11 +829,11 @@ async fn webhook_js_request_headers() {
 
 #[tokio::test]
 async fn webhook_js_fetch_allowed() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(21)).await;
     let resp = server
         .client
         .get(format!("{}/fetch-allowed", server.webhook_base_url))
-        .header("x-target-port", server.api_port().to_string())
+        .header("x-target-addr", server.api_addr())
         .send()
         .await
         .expect("webhook request failed");
@@ -825,11 +846,11 @@ async fn webhook_js_fetch_allowed() {
 
 #[tokio::test]
 async fn webhook_js_fetch_denied() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(22)).await;
     let resp = server
         .client
         .get(format!("{}/fetch-denied", server.webhook_base_url))
-        .header("x-target-port", server.api_port().to_string())
+        .header("x-target-addr", server.api_addr())
         .send()
         .await
         .expect("webhook request failed");
@@ -843,7 +864,7 @@ async fn webhook_js_fetch_denied() {
 
 #[tokio::test]
 async fn webhook_js_call_activity() {
-    let server = TestServer::start().await;
+    let server = TestServer::start(test_addr!(23)).await;
     let resp = server
         .client
         .get(format!("{}/call-activity/5/7", server.webhook_base_url))

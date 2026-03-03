@@ -3228,6 +3228,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
+ "paste",
  "prost",
  "prost-wkt-types",
  "rand 0.9.2",
