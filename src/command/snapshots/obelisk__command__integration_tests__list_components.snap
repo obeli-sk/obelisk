@@ -79,5 +79,12 @@ expression: components
       "input_digest": "sha256:<REDACTED>",
       "name": "test_fetch_denied_webhook"
     }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_call_activity_webhook"
+    }
   }
 ]

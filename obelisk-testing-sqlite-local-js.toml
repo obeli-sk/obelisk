@@ -12,6 +12,16 @@ name = "external_webhook"
 listening_addr = "127.0.0.1:9090"
 
 [[activity_js]]
+name = "test_add_activity"
+location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/add.js"
+ffqn = "testing:integration/activities.add"
+params.inline = [
+  { name = "a", type = "u32" },
+  { name = "b", type = "u32" },
+]
+max_retries = 0
+
+[[activity_js]]
 name = "activity_js_fetch_get"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/fetch_get.js"
 ffqn = "testing:js/activity.fetch-get"
@@ -44,3 +54,9 @@ routes = [{ methods = ["GET"], route = "/fetch" }]
 [[webhook_endpoint_js.allowed_host]]
 pattern = "http://localhost:5005"
 methods = ["GET"]
+
+[[webhook_endpoint_js]]
+name = "webhook_js_call_activity"
+location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/call_activity.js"
+http_server = "external_webhook"
+routes = [{ methods = ["GET"], route = "/call-activity/:a/:b" }]

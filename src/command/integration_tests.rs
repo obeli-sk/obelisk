@@ -149,6 +149,12 @@ name = "test_fetch_denied_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
 http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/fetch-denied" }}]
+
+[[webhook_endpoint_js]]
+name = "test_call_activity_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/call_activity.js"
+http_server = "test_webhook_server"
+routes = [{{ methods = ["GET"], route = "/call-activity/:a/:b" }}]
 "#,
         port = port,
         webhook_port = webhook_port,
@@ -809,4 +815,19 @@ async fn webhook_js_fetch_denied() {
         body.contains("HttpRequestDenied"),
         "Expected body to contain 'HttpRequestDenied', got: {body}"
     );
+}
+
+#[tokio::test]
+async fn webhook_js_call_activity() {
+    let server = TestServer::start().await;
+    let resp = server
+        .client
+        .get(format!("{}/call-activity/5/7", server.webhook_base_url))
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: Value = resp.json().await.unwrap();
+    // The add activity returns the sum as a string
+    assert_eq!(body["result"], "12");
 }

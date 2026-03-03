@@ -1,1 +1,1 @@
-oci://docker.io/getobelisk/webhook-js-runtime:2026-02-27@sha256:3071fc73108951fe353eb61ee12fd858ee255ab3a3cee161617e12d285a3cc2d
+oci://docker.io/getobelisk/webhook-js-runtime:2026-03-03@sha256:57ce9b9013f305ba6e8b332fd28140dad4a7502da568fda164b3e8f755674e3f

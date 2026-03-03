@@ -1,0 +1,102 @@
+package obelisk:webhook@4.2.0;
+
+@since(version = 4.2.0)
+interface webhook-support {
+    use obelisk:types/time@4.2.0.{schedule-at, datetime};
+    use obelisk:types/execution@4.2.0.{execution-id, function, submit-config, schedule-json-error};
+
+    /// Error variants that may occur when calling `get-status`.
+    @since(version = 4.2.0)
+    variant get-status-error {
+        /// Cannot parse the execution ID.
+        execution-id-parsing-error(string),
+        /// The execution was not found.
+        not-found,
+    }
+
+    /// Error variants that may occur when calling `get`.
+    @since(version = 4.2.0)
+    variant get-error {
+        /// Cannot parse the execution ID.
+        execution-id-parsing-error(string),
+        /// The execution was not found.
+        not-found,
+    }
+
+    /// Error variants that may occur when calling `try-get`.
+    @since(version = 4.2.0)
+    variant try-get-error {
+        /// Cannot parse the execution ID.
+        execution-id-parsing-error(string),
+        /// The execution was not found.
+        not-found,
+        /// The execution has not finished yet.
+        not-finished-yet,
+    }
+
+    /// The status of an execution.
+    @since(version = 4.2.0)
+    variant execution-status {
+        /// Execution is scheduled to run at a specific time.
+        pending-at(datetime),
+        /// Execution is currently being processed.
+        locked,
+        /// Execution is waiting for child executions to complete (workflows only).
+        blocked-by-join-set,
+        /// Execution has finished.
+        finished(execution-status-finished),
+    }
+
+    /// The finished status of an execution.
+    @since(version = 4.2.0)
+    variant execution-status-finished {
+        /// Execution has finished with a successful result.
+        ok,
+        /// Execution has finished with an error result (user-level error).
+        err,
+        /// Execution has terminated due to an execution failure (system-level error).
+        execution-failure,
+    }
+
+    /// Generate a new top-level execution ID.
+    @since(version = 4.2.0)
+    execution-id-generate: func() -> execution-id;
+
+    /// Call a function and wait for the result.
+    /// Creates a child execution, waits for it to complete, and returns the result.
+    /// Parameters are serialized as a JSON array.
+    /// Returns Ok(Some(json)) for successful result with value,
+    /// Ok(None) for successful result with no value,
+    /// Err(Some(json)) for error result with value,
+    /// Err(None) for error result with no value.
+    @since(version = 4.2.0)
+    call-json: func(function: function, params: string, config: option<submit-config>) -> result<result<option<string>, option<string>>, schedule-json-error>;
+
+    /// Schedule a new top-level execution with its parameters serialized as JSON array.
+    /// Use the execution ID returned by `execution-id-generate`.
+    @since(version = 4.2.0)
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>) -> result<_, schedule-json-error>;
+
+    /// Get the current status of an execution.
+    @since(version = 4.2.0)
+    get-status: func(execution-id: execution-id) -> result<execution-status, get-status-error>;
+
+    /// Get the result of an execution, blocking until it finishes.
+    /// Returns Ok(Some(json)) for successful result with value,
+    /// Ok(None) for successful result with no value,
+    /// Err(Some(json)) for error result with value,
+    /// Err(None) for error result with no value.
+    /// Outer result indicates lookup success/failure.
+    @since(version = 4.2.0)
+    get: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-error>;
+
+    /// Try to get the result of an execution without blocking.
+    /// Returns immediately if the execution has finished, or `not-finished-yet` error otherwise.
+    /// Returns Ok(Some(json)) for successful result with value,
+    /// Ok(None) for successful result with no value,
+    /// Err(Some(json)) for error result with value,
+    /// Err(None) for error result with no value.
+    /// Outer result indicates lookup success/failure.
+    @since(version = 4.2.0)
+    try-get: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, try-get-error>;
+}

@@ -12,9 +12,11 @@ use concepts::prefixed_ulid::{
     DeploymentId, ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX, RunId,
 };
 use concepts::storage::{
-    AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric,
-    DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent, JoinSetRequest,
-    LogInfoAppendRow, LogLevel, LogStreamType, TimeoutOutcome, Version,
+    AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric, DbErrorRead,
+    DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent,
+    HistoryEventScheduleAt, JoinSetRequest, LogInfoAppendRow, LogLevel, LogStreamType,
+    PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, TimeoutOutcome,
+    Version,
     http_client_trace::{HttpClientTrace, RequestTrace, ResponseTrace},
 };
 use concepts::time::{ClockFn, Sleep};
@@ -31,6 +33,7 @@ use hyper::{Method, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use route_recognizer::{Match, Router};
 use std::ops::Deref;
+use std::str::FromStr;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
@@ -41,6 +44,7 @@ use tracing::{
 };
 use types::obelisk::types::execution::Host as ExecutionHost;
 use types::obelisk::types::join_set::HostJoinSet;
+use types::obelisk::webhook::webhook_support::Host as WebhookSupportHost;
 use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::types::ComponentFunc;
@@ -67,15 +71,115 @@ pub(crate) mod types {
                     import obelisk:types/time@4.2.0;
                     import obelisk:types/execution@4.2.0;
                     import obelisk:types/join-set@4.2.0;
+                    import obelisk:webhook/webhook-support@4.2.0;
                 }",
         world: "any:any/bindings",
-        exports: {
-            default: trappable | async,
+        imports: {
+            // Make webhook-support functions async and trappable for infrastructure errors
+            "obelisk:webhook/webhook-support": async | trappable,
         },
         with: {
             "obelisk:types/join-set.join-set": concepts::JoinSetId,
-        }
+        },
+        trappable_error_type: {
+            "obelisk:types/execution.schedule-json-error" => crate::webhook::webhook_trigger::ScheduleJsonErrorTrappable,
+            "obelisk:webhook/webhook-support.get-error" => crate::webhook::webhook_trigger::GetErrorTrappable,
+            "obelisk:webhook/webhook-support.get-status-error" => crate::webhook::webhook_trigger::GetStatusErrorTrappable,
+            "obelisk:webhook/webhook-support.try-get-error" => crate::webhook::webhook_trigger::TryGetErrorTrappable,
+        },
     });
+}
+
+/// Trappable wrapper for `ScheduleJsonError` - user errors vs infrastructure failures.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ScheduleJsonErrorTrappable {
+    #[error(transparent)]
+    Normal(#[from] types::obelisk::types::execution::ScheduleJsonError),
+    #[error(transparent)]
+    Trap(#[from] wasmtime::Error),
+}
+
+/// Trappable wrapper for `GetError` - user errors vs infrastructure failures.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum GetErrorTrappable {
+    #[error(transparent)]
+    Normal(#[from] types::obelisk::webhook::webhook_support::GetError),
+    #[error(transparent)]
+    Trap(#[from] wasmtime::Error),
+}
+
+/// Trappable wrapper for `GetStatusError` - user errors vs infrastructure failures.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum GetStatusErrorTrappable {
+    #[error(transparent)]
+    Normal(#[from] types::obelisk::webhook::webhook_support::GetStatusError),
+    #[error(transparent)]
+    Trap(#[from] wasmtime::Error),
+}
+
+/// Trappable wrapper for `TryGetError` - user errors vs infrastructure failures.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum TryGetErrorTrappable {
+    #[error(transparent)]
+    Normal(#[from] types::obelisk::webhook::webhook_support::TryGetError),
+    #[error(transparent)]
+    Trap(#[from] wasmtime::Error),
+}
+
+// Conversions from webhook types to internal types
+/// Convert `SupportedFunctionReturnValue` to the JSON result format expected by webhook-support.
+/// Returns Ok(Some(json)) for successful result with value,
+/// Ok(None) for successful result with no value,
+/// Err(Some(json)) for error result with value,
+/// Err(None) for error result with no value.
+fn supported_return_value_to_json_result(
+    retval: &SupportedFunctionReturnValue,
+) -> Result<Option<String>, Option<String>> {
+    match retval {
+        SupportedFunctionReturnValue::Ok(Some(val_with_type)) => {
+            let json =
+                serde_json::to_string(&val_with_type.value).unwrap_or_else(|_| "null".to_string());
+            Ok(Some(json))
+        }
+        SupportedFunctionReturnValue::Ok(None) => Ok(None),
+        SupportedFunctionReturnValue::Err(Some(val_with_type)) => {
+            let json =
+                serde_json::to_string(&val_with_type.value).unwrap_or_else(|_| "null".to_string());
+            Err(Some(json))
+        }
+        SupportedFunctionReturnValue::Err(None) => Err(None),
+        SupportedFunctionReturnValue::ExecutionError(err) => {
+            Err(Some(format!("execution error: {err}")))
+        }
+    }
+}
+
+fn schedule_at_from_webhook(
+    schedule_at: types::obelisk::webhook::webhook_support::ScheduleAt,
+) -> HistoryEventScheduleAt {
+    use chrono::{DateTime, Utc};
+    use std::time::UNIX_EPOCH;
+    use types::obelisk::webhook::webhook_support::ScheduleAt;
+
+    match schedule_at {
+        ScheduleAt::Now => HistoryEventScheduleAt::Now,
+        ScheduleAt::At(datetime) => {
+            let duration = Duration::new(datetime.seconds, datetime.nanoseconds);
+            let systemtime = UNIX_EPOCH + duration;
+            HistoryEventScheduleAt::At(DateTime::<Utc>::from(systemtime))
+        }
+        ScheduleAt::In(duration) => {
+            use types::obelisk::types::time::Duration as WitDuration;
+            let std_duration = match duration {
+                WitDuration::Milliseconds(millis) => Duration::from_millis(millis),
+                WitDuration::Seconds(secs) => Duration::from_secs(secs),
+                WitDuration::Minutes(mins) => Duration::from_secs(u64::from(mins * 60)),
+                WitDuration::Hours(hours) => Duration::from_secs(u64::from(hours * 60 * 60)),
+                WitDuration::Days(days) => Duration::from_secs(u64::from(days * 24 * 60 * 60)),
+            };
+            HistoryEventScheduleAt::In(std_duration)
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -446,7 +550,541 @@ impl<S: Sleep> HostJoinSet for WebhookEndpointCtx<S> {
     }
 }
 
-impl<S: Sleep> ExecutionHost for WebhookEndpointCtx<S> {}
+impl<S: Sleep> ExecutionHost for WebhookEndpointCtx<S> {
+    fn convert_schedule_json_error(
+        &mut self,
+        err: ScheduleJsonErrorTrappable,
+    ) -> wasmtime::Result<types::obelisk::types::execution::ScheduleJsonError> {
+        match err {
+            ScheduleJsonErrorTrappable::Normal(err) => Ok(err),
+            ScheduleJsonErrorTrappable::Trap(err) => Err(err),
+        }
+    }
+}
+
+impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
+    async fn execution_id_generate(
+        &mut self,
+    ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::ExecutionId> {
+        let execution_id = ExecutionId::generate();
+        Ok(types::obelisk::webhook::webhook_support::ExecutionId {
+            id: execution_id.to_string(),
+        })
+    }
+
+    fn convert_get_status_error(
+        &mut self,
+        err: GetStatusErrorTrappable,
+    ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::GetStatusError> {
+        match err {
+            GetStatusErrorTrappable::Normal(err) => Ok(err),
+            GetStatusErrorTrappable::Trap(err) => Err(err),
+        }
+    }
+
+    fn convert_get_error(
+        &mut self,
+        err: GetErrorTrappable,
+    ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::GetError> {
+        match err {
+            GetErrorTrappable::Normal(err) => Ok(err),
+            GetErrorTrappable::Trap(err) => Err(err),
+        }
+    }
+
+    fn convert_try_get_error(
+        &mut self,
+        err: TryGetErrorTrappable,
+    ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::TryGetError> {
+        match err {
+            TryGetErrorTrappable::Normal(err) => Ok(err),
+            TryGetErrorTrappable::Trap(err) => Err(err),
+        }
+    }
+
+    async fn schedule_json(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+        schedule_at: types::obelisk::webhook::webhook_support::ScheduleAt,
+        function: types::obelisk::webhook::webhook_support::Function,
+        params: String,
+        _config: Option<types::obelisk::webhook::webhook_support::SubmitConfig>,
+    ) -> Result<(), ScheduleJsonErrorTrappable> {
+        use types::obelisk::types::execution::ScheduleJsonError;
+
+        // Parse the execution ID
+        let execution_id = match concepts::ExecutionId::from_str(&execution_id.id) {
+            Ok(id) => id,
+            Err(err) => {
+                return Err(ScheduleJsonError::FfqnParsingError(format!(
+                    "invalid execution ID: {err}"
+                ))
+                .into());
+            }
+        };
+
+        // Parse the function FFQN
+        let ffqn =
+            match FunctionFqn::try_from_tuple(&function.interface_name, &function.function_name) {
+                Ok(ffqn) => ffqn,
+                Err(err) => {
+                    return Err(ScheduleJsonError::FfqnParsingError(err.to_string()).into());
+                }
+            };
+
+        // Look up function in registry
+        let (fn_metadata, component_id) = match self.fn_registry.get_by_exported_function(&ffqn) {
+            Some(found) => found,
+            None => {
+                return Err(ScheduleJsonError::FunctionNotFound.into());
+            }
+        };
+
+        // Parse params JSON array
+        let params_json: Vec<serde_json::Value> = match serde_json::from_str(&params) {
+            Ok(serde_json::Value::Array(arr)) => arr,
+            Ok(_) => {
+                return Err(ScheduleJsonError::TypeCheckError(
+                    "params must be a JSON array".to_string(),
+                )
+                .into());
+            }
+            Err(err) => {
+                return Err(ScheduleJsonError::TypeCheckError(format!(
+                    "cannot parse params as JSON: {err}"
+                ))
+                .into());
+            }
+        };
+
+        // Type check and convert params
+        let params = match Params::from_json_values(
+            Arc::from(params_json),
+            fn_metadata
+                .parameter_types
+                .iter()
+                .map(|param_type| &param_type.type_wrapper),
+        ) {
+            Ok(params) => params,
+            Err(err) => {
+                return Err(ScheduleJsonError::TypeCheckError(format!(
+                    "params type checking failed: {err}"
+                ))
+                .into());
+            }
+        };
+
+        // Convert schedule_at
+        let schedule_at = schedule_at_from_webhook(schedule_at);
+        let created_at = self.clock_fn.now();
+        let scheduled_at = match schedule_at.as_date_time(created_at) {
+            Ok(dt) => dt,
+            Err(err) => {
+                return Err(ScheduleJsonError::TypeCheckError(format!(
+                    "invalid schedule-at: {err:?}"
+                ))
+                .into());
+            }
+        };
+
+        // Create execution in database
+        let version = match self.get_version_or_create().await {
+            Ok(v) => v,
+            Err(err) => {
+                return Err(wasmtime::Error::msg(format!("database error: {err:?}")).into());
+            }
+        };
+
+        let event = HistoryEvent::Schedule {
+            execution_id: execution_id.clone(),
+            schedule_at,
+            result: Ok(()),
+        };
+        let append_req = AppendRequest {
+            event: ExecutionRequest::HistoryEvent { event },
+            created_at,
+        };
+        let create_req = CreateRequest {
+            created_at,
+            execution_id: execution_id.clone(),
+            ffqn,
+            params,
+            parent: None,
+            metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
+            scheduled_at,
+            component_id: component_id.clone(),
+            deployment_id: self.deployment_id,
+            scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
+        };
+
+        let db_connection = match self.db_pool.connection().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                return Err(
+                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
+                );
+            }
+        };
+
+        match db_connection
+            .append_batch_create_new_execution(
+                created_at,
+                vec![append_req],
+                ExecutionId::TopLevel(self.execution_id),
+                version.clone(),
+                vec![create_req],
+                vec![],
+            )
+            .await
+        {
+            Ok(new_version) => {
+                self.version = Some(new_version);
+                Ok(())
+            }
+            Err(err) => Err(wasmtime::Error::msg(format!("database write error: {err:?}")).into()),
+        }
+    }
+
+    async fn call_json(
+        &mut self,
+        function: types::obelisk::webhook::webhook_support::Function,
+        params: String,
+        _config: Option<types::obelisk::webhook::webhook_support::SubmitConfig>,
+    ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
+        use types::obelisk::types::execution::ScheduleJsonError;
+
+        // Parse the function FFQN
+        let ffqn =
+            match FunctionFqn::try_from_tuple(&function.interface_name, &function.function_name) {
+                Ok(ffqn) => ffqn,
+                Err(err) => {
+                    return Err(ScheduleJsonError::FfqnParsingError(err.to_string()).into());
+                }
+            };
+
+        // Look up function in registry
+        let (fn_metadata, component_id) = match self.fn_registry.get_by_exported_function(&ffqn) {
+            Some(found) => found,
+            None => {
+                return Err(ScheduleJsonError::FunctionNotFound.into());
+            }
+        };
+
+        // Parse params JSON array
+        let params_json: Vec<serde_json::Value> = match serde_json::from_str(&params) {
+            Ok(serde_json::Value::Array(arr)) => arr,
+            Ok(_) => {
+                return Err(ScheduleJsonError::TypeCheckError(
+                    "params must be a JSON array".to_string(),
+                )
+                .into());
+            }
+            Err(err) => {
+                return Err(ScheduleJsonError::TypeCheckError(format!(
+                    "cannot parse params as JSON: {err}"
+                ))
+                .into());
+            }
+        };
+
+        // Type check and convert params
+        let params = match Params::from_json_values(
+            Arc::from(params_json),
+            fn_metadata
+                .parameter_types
+                .iter()
+                .map(|param_type| &param_type.type_wrapper),
+        ) {
+            Ok(params) => params,
+            Err(err) => {
+                return Err(ScheduleJsonError::TypeCheckError(format!(
+                    "params type checking failed: {err}"
+                ))
+                .into());
+            }
+        };
+
+        // Get or create version
+        let version = match self.get_version_or_create().await {
+            Ok(v) => v,
+            Err(err) => {
+                return Err(wasmtime::Error::msg(format!("database error: {err:?}")).into());
+            }
+        };
+
+        // Create a OneOff join set and child execution ID
+        let (join_set_id, child_execution_id) = self.create_oneoff_join_set();
+
+        let created_at = self.clock_fn.now();
+
+        // 1. Create join set
+        let req_join_set_created = AppendRequest {
+            created_at,
+            event: ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinSetCreate {
+                    join_set_id: join_set_id.clone(),
+                },
+            },
+        };
+
+        // 2. Create child execution request
+        let req_child_exec = AppendRequest {
+            created_at,
+            event: ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinSetRequest {
+                    join_set_id: join_set_id.clone(),
+                    request: JoinSetRequest::ChildExecutionRequest {
+                        child_execution_id: child_execution_id.clone(),
+                        target_ffqn: ffqn.clone(),
+                        params: params.clone(),
+                        result: Ok(()),
+                    },
+                },
+            },
+        };
+
+        // 3. Add JoinNext to wait for result
+        let req_join_next = AppendRequest {
+            created_at,
+            event: ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinNext {
+                    join_set_id: join_set_id.clone(),
+                    run_expires_at: created_at,
+                    closing: false,
+                    requested_ffqn: Some(ffqn.clone()),
+                },
+            },
+        };
+
+        // Create the child execution
+        let req_create_child = CreateRequest {
+            created_at,
+            execution_id: ExecutionId::Derived(child_execution_id.clone()),
+            ffqn,
+            params,
+            parent: Some((ExecutionId::TopLevel(self.execution_id), join_set_id)),
+            metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
+            scheduled_at: created_at,
+            component_id: component_id.clone(),
+            deployment_id: self.deployment_id,
+            scheduled_by: None,
+        };
+
+        let db_connection = match self.db_pool.connection().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                return Err(
+                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
+                );
+            }
+        };
+
+        let appended = vec![req_join_set_created, req_child_exec, req_join_next];
+
+        match db_connection
+            .append_batch_create_new_execution(
+                created_at,
+                appended,
+                ExecutionId::TopLevel(self.execution_id),
+                version,
+                vec![req_create_child],
+                vec![],
+            )
+            .await
+        {
+            Ok(new_version) => {
+                self.version = Some(new_version);
+            }
+            Err(err) => {
+                return Err(wasmtime::Error::msg(format!("database write error: {err:?}")).into());
+            }
+        }
+
+        // Wait for the result
+        let result = Self::wait_for_finished_result(
+            self.subscription_interruption,
+            &self.sleep,
+            db_connection.as_ref(),
+            &ExecutionId::Derived(child_execution_id),
+            &self.connection_drop_watcher,
+            &self.server_termination_watcher,
+        )
+        .await;
+
+        match result {
+            Ok(retval) => Ok(supported_return_value_to_json_result(&retval)),
+            Err(err) => Err(wasmtime::Error::msg(format!("execution error: {err:?}")).into()),
+        }
+    }
+
+    async fn get_status(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+    ) -> Result<types::obelisk::webhook::webhook_support::ExecutionStatus, GetStatusErrorTrappable>
+    {
+        use types::obelisk::webhook::webhook_support::{
+            ExecutionStatus, ExecutionStatusFinished, GetStatusError,
+        };
+
+        // Parse the execution ID
+        let execution_id = match concepts::ExecutionId::from_str(&execution_id.id) {
+            Ok(id) => id,
+            Err(err) => {
+                return Err(GetStatusError::ExecutionIdParsingError(err.to_string()).into());
+            }
+        };
+
+        // Get execution status from database
+        let db_connection = match self.db_pool.connection().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                return Err(
+                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
+                );
+            }
+        };
+
+        let execution_with_state = match db_connection.get_pending_state(&execution_id).await {
+            Ok(state) => state,
+            Err(DbErrorRead::NotFound) => {
+                return Err(GetStatusError::NotFound.into());
+            }
+            Err(err) => {
+                return Err(wasmtime::Error::msg(format!("database read error: {err:?}")).into());
+            }
+        };
+
+        // Convert PendingState to ExecutionStatus
+        let status = match execution_with_state.pending_state {
+            PendingState::PendingAt(state) => {
+                ExecutionStatus::PendingAt(types::obelisk::webhook::webhook_support::Datetime {
+                    seconds: state.scheduled_at.timestamp() as u64,
+                    nanoseconds: state.scheduled_at.timestamp_subsec_nanos(),
+                })
+            }
+            PendingState::Locked(_) => ExecutionStatus::Locked,
+            PendingState::BlockedByJoinSet(_) => ExecutionStatus::BlockedByJoinSet,
+            PendingState::Paused(_) => ExecutionStatus::Locked, // Treat paused as locked for simplicity
+            PendingState::Finished(finished) => {
+                let finished_status = match finished.result_kind {
+                    PendingStateFinishedResultKind::Ok => ExecutionStatusFinished::Ok,
+                    PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error) => {
+                        ExecutionStatusFinished::Err
+                    }
+                    PendingStateFinishedResultKind::Err(
+                        PendingStateFinishedError::ExecutionFailure(_),
+                    ) => ExecutionStatusFinished::ExecutionFailure,
+                };
+                ExecutionStatus::Finished(finished_status)
+            }
+        };
+
+        Ok(status)
+    }
+
+    async fn get(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+    ) -> Result<Result<Option<String>, Option<String>>, GetErrorTrappable> {
+        use types::obelisk::webhook::webhook_support::GetError;
+
+        // Parse the execution ID
+        let parsed_execution_id: concepts::ExecutionId =
+            match concepts::ExecutionId::from_str(&execution_id.id) {
+                Ok(id) => id,
+                Err(err) => {
+                    return Err(GetError::ExecutionIdParsingError(err.to_string()).into());
+                }
+            };
+
+        // Get database connection
+        let db_connection = match self.db_pool.connection().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                return Err(
+                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
+                );
+            }
+        };
+
+        // Extract needed values before the async call to avoid borrowing issues
+        let subscription_interruption = self.subscription_interruption;
+        let sleep = self.sleep.clone();
+        let connection_drop_watcher = self.connection_drop_watcher.clone();
+        let server_termination_watcher = self.server_termination_watcher.clone();
+
+        // Wait for the execution to finish
+        let result = Self::wait_for_finished_result(
+            subscription_interruption,
+            &sleep,
+            db_connection.as_ref(),
+            &parsed_execution_id,
+            &connection_drop_watcher,
+            &server_termination_watcher,
+        )
+        .await;
+
+        match result {
+            Ok(retval) => Ok(supported_return_value_to_json_result(&retval)),
+            Err(err) => Err(wasmtime::Error::msg(format!("execution error: {err:?}")).into()),
+        }
+    }
+
+    async fn try_get(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+    ) -> Result<Result<Option<String>, Option<String>>, TryGetErrorTrappable> {
+        use types::obelisk::webhook::webhook_support::TryGetError;
+
+        // Parse the execution ID
+        let parsed_execution_id: concepts::ExecutionId =
+            match concepts::ExecutionId::from_str(&execution_id.id) {
+                Ok(id) => id,
+                Err(err) => {
+                    return Err(TryGetError::ExecutionIdParsingError(err.to_string()).into());
+                }
+            };
+
+        // Get database connection
+        let db_connection = match self.db_pool.connection().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                return Err(
+                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
+                );
+            }
+        };
+
+        // Get execution state
+        let execution_with_state = match db_connection.get_pending_state(&parsed_execution_id).await
+        {
+            Ok(state) => state,
+            Err(DbErrorRead::NotFound) => {
+                return Err(TryGetError::NotFound.into());
+            }
+            Err(err) => {
+                return Err(wasmtime::Error::msg(format!("database read error: {err:?}")).into());
+            }
+        };
+
+        // Check if finished
+        match execution_with_state.pending_state {
+            PendingState::Finished(_) => {
+                // Get the actual result
+                match db_connection
+                    .wait_for_finished_result(&parsed_execution_id, None)
+                    .await
+                {
+                    Ok(retval) => Ok(supported_return_value_to_json_result(&retval)),
+                    Err(err) => {
+                        Err(wasmtime::Error::msg(format!("database read error: {err:?}")).into())
+                    }
+                }
+            }
+            _ => Err(TryGetError::NotFinishedYet.into()),
+        }
+    }
+}
 
 #[derive(thiserror::Error, Debug, Clone)]
 
@@ -495,6 +1133,18 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
         let version = conn.create(create_request).await?;
         self.version = Some(version.clone());
         Ok(version)
+    }
+
+    /// Create a new `OneOff` join set and return its ID along with a child execution ID.
+    fn create_oneoff_join_set(&mut self) -> (JoinSetId, ExecutionIdDerived) {
+        let join_set_id = JoinSetId::new(
+            JoinSetKind::OneOff,
+            StrVariant::from(self.next_join_set_idx.to_string()),
+        )
+        .expect("numeric names must be allowed");
+        self.next_join_set_idx += 1;
+        let child_execution_id = ExecutionId::TopLevel(self.execution_id).next_level(&join_set_id);
+        (join_set_id, child_execution_id)
     }
 
     #[instrument(skip_all, fields(%ffqn, version, %execution_id = self.execution_id))]
@@ -626,15 +1276,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
             let version = self.get_version_or_create().await?;
             let span = Span::current();
             span.record("version", tracing::field::display(&version));
-            let join_set_id_direct = JoinSetId::new(
-                JoinSetKind::OneOff,
-                StrVariant::from(self.next_join_set_idx.to_string()),
-            )
-            .expect("numeric names must be allowed");
-            self.next_join_set_idx += 1;
-            // Create oneoff execution id: next_join_set_idx_1
-            let child_execution_id =
-                ExecutionId::TopLevel(self.execution_id).next_level(&join_set_id_direct);
+            let (join_set_id_direct, child_execution_id) = self.create_oneoff_join_set();
             let created_at = self.clock_fn.now();
             let (fn_metadata, child_component_id) = self
                 .fn_registry
@@ -720,7 +1362,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
                 self.subscription_interruption,
                 &self.sleep,
                 db_connection.as_ref(),
-                child_execution_id,
+                &ExecutionId::Derived(child_execution_id),
                 &self.connection_drop_watcher,
                 &self.server_termination_watcher,
             )
@@ -736,11 +1378,10 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
         subscription_interruption: Option<Duration>,
         sleep: &S,
         db_connection: &dyn DbConnection,
-        child_execution_id: ExecutionIdDerived,
+        execution_id: &ExecutionId,
         connection_drop_watcher: &watch::Receiver<()>,
         server_termination_watcher: &watch::Receiver<()>,
     ) -> Result<SupportedFunctionReturnValue, WebhookEndpointFunctionError> {
-        let child_execution_id = ExecutionId::Derived(child_execution_id);
         let timeout_factory = move || {
             let subscription_interruption = subscription_interruption.unwrap_or(Duration::MAX);
             let sleep = sleep.clone();
@@ -758,7 +1399,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
         loop {
             let timeout = timeout_factory();
             let res = db_connection
-                .wait_for_finished_result(&child_execution_id, Some(timeout))
+                .wait_for_finished_result(execution_id, Some(timeout))
                 .await;
             match res {
                 Ok(ok) => {
@@ -787,6 +1428,12 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
         // link obelisk:types
         types::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx<S>>(linker, |x| x)
             .map_err(|err| WasmFileError::linking_error("cannot link obelisk:types", err))?;
+        // link obelisk:webhook/webhook-support
+        types::obelisk::webhook::webhook_support::add_to_linker::<_, WebhookEndpointCtx<S>>(
+            linker,
+            |x| x,
+        )
+        .map_err(|err| WasmFileError::linking_error("cannot link obelisk:webhook", err))?;
         Ok(())
     }
 
@@ -2216,6 +2863,369 @@ pub(crate) mod tests {
             assert_eq!(status, 200);
             let headers: Vec<String> = serde_json::from_str(&body).unwrap();
             assert_eq!(headers, vec!["value1", "value2"]);
+        }
+
+        #[tokio::test]
+        async fn webhook_js_env_var() {
+            test_utils::set_up();
+            let js_source = r#"
+                export default function handle(request) {
+                    const jsSource = obelisk.env("__OBELISK_JS_SOURCE__");
+                    const missing = obelisk.env("MISSING_VAR");
+                    return {
+                        status: 200,
+                        headers: [],
+                        body: JSON.stringify({
+                            hasJsSource: jsSource !== undefined,
+                            missingIsUndefined: missing === undefined
+                        })
+                    };
+                }
+            "#;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            assert_eq!(body["hasJsSource"], serde_json::json!(true));
+            assert_eq!(body["missingIsUndefined"], serde_json::json!(true));
+        }
+
+        #[tokio::test]
+        async fn webhook_js_generate_execution_id() {
+            test_utils::set_up();
+            let js_source = r#"
+                export default function handle(request) {
+                    const id1 = obelisk.generateExecutionId();
+                    const id2 = obelisk.generateExecutionId();
+                    return {
+                        status: 200,
+                        headers: [],
+                        body: JSON.stringify({
+                            id1,
+                            id2,
+                            different: id1 !== id2,
+                            hasPrefix: id1.startsWith("E_")
+                        })
+                    };
+                }
+            "#;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            assert_eq!(body["different"], serde_json::json!(true));
+            assert_eq!(body["hasPrefix"], serde_json::json!(true));
+        }
+
+        /// Test harness for JS webhook tests that need to call activities/workflows.
+        struct JsWebhookWithActivitiesHarness {
+            #[expect(dead_code)]
+            server_set: tokio::task::JoinSet<Result<(), WebhookServerError>>,
+            server_addr: SocketAddr,
+            activity_exec: executor::executor::ExecTask,
+            sim_clock: SimClock,
+            db_pool: Arc<dyn concepts::storage::DbPool>,
+            #[expect(dead_code)]
+            db_close: db_tests::DbPoolCloseableWrapper,
+            #[expect(dead_code)]
+            server_termination_sender: watch::Sender<()>,
+        }
+
+        impl JsWebhookWithActivitiesHarness {
+            async fn new(js_source: &str) -> Self {
+                use crate::activity::activity_worker::test::compile_activity;
+                use crate::activity::activity_worker::tests::new_activity_fibo;
+                use concepts::time::TokioSleep;
+                use executor::executor::LockingStrategy;
+
+                let sim_clock = SimClock::default();
+                let (_guard, db_pool, db_close) = db_tests::Database::Memory.set_up().await;
+
+                // Set up fibo activity worker
+                let activity_exec = new_activity_fibo(
+                    db_pool.clone(),
+                    sim_clock.clone_box(),
+                    TokioSleep,
+                    LockingStrategy::ByComponentDigest,
+                )
+                .await;
+
+                // Create fn_registry with fibo activity
+                let fn_registry = TestingFnRegistry::new_from_components(vec![
+                    compile_activity(
+                        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+                    )
+                    .await,
+                ]);
+
+                let engine =
+                    Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+                let (db_forwarder_sender, _) = mpsc::channel(1);
+                let wasm_file = webhook_js_runtime_builder::WEBHOOK_JS_RUNTIME;
+
+                let router = {
+                    let runnable_component =
+                        RunnableComponent::new(wasm_file, &engine, ComponentType::WebhookEndpoint)
+                            .unwrap();
+                    let instance = WebhookEndpointCompiled::new(
+                        WebhookEndpointConfig {
+                            component_id: ComponentId::new(
+                                ComponentType::WebhookEndpoint,
+                                StrVariant::empty(),
+                                InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
+                            )
+                            .unwrap(),
+                            forward_stdout: None,
+                            forward_stderr: None,
+                            env_vars: Arc::from([]),
+                            fuel: None,
+                            backtrace_persist: false,
+                            subscription_interruption: None,
+                            logs_store_min_level: None,
+                            allowed_hosts: Arc::from([]),
+                            js_config: Some(WebhookEndpointJsConfig {
+                                source: js_source.to_string(),
+                            }),
+                        },
+                        runnable_component,
+                    )
+                    .unwrap()
+                    .link(&engine, fn_registry.as_ref())
+                    .unwrap()
+                    .build(&db_forwarder_sender);
+                    let mut router = MethodAwareRouter::default();
+                    router.add(None, "", instance);
+                    router
+                };
+
+                let tcp_listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+                    .await
+                    .unwrap();
+                let server_addr = tcp_listener.local_addr().unwrap();
+                info!(
+                    "JS webhook with activities listening on port {}",
+                    server_addr.port()
+                );
+                let (server_termination_sender, server_termination_watcher) = watch::channel(());
+                let mut server_set = tokio::task::JoinSet::new();
+                server_set.spawn(webhook_trigger::server(
+                    DEPLOYMENT_ID_DUMMY,
+                    StrVariant::Static("test-js-activities"),
+                    tcp_listener,
+                    engine,
+                    router,
+                    db_pool.clone(),
+                    sim_clock.clone_box(),
+                    TokioSleep,
+                    fn_registry,
+                    None,
+                    server_termination_watcher,
+                ));
+
+                Self {
+                    server_set,
+                    server_addr,
+                    activity_exec,
+                    sim_clock,
+                    db_pool,
+                    db_close,
+                    server_termination_sender,
+                }
+            }
+
+            async fn tick_activity(&self) -> usize {
+                use concepts::prefixed_ulid::RunId;
+                self.activity_exec
+                    .tick_test_await(self.sim_clock.now(), RunId::generate())
+                    .await
+                    .len()
+            }
+        }
+
+        #[tokio::test]
+        async fn webhook_js_call_activity() {
+            test_utils::set_up();
+            let js_source = r#"
+                export default function handle(request) {
+                    // Call fibo(10) directly
+                    const result = obelisk.call("testing:fibo/fibo.fibo", [10]);
+                    return {
+                        status: 200,
+                        headers: [],
+                        body: JSON.stringify({ result })
+                    };
+                }
+            "#;
+
+            let harness = JsWebhookWithActivitiesHarness::new(js_source).await;
+
+            // Start the webhook request in background
+            let server_addr = harness.server_addr;
+            let fetch_task = tokio::spawn(async move {
+                reqwest::get(format!("http://{server_addr}/"))
+                    .await
+                    .unwrap()
+            });
+
+            // Wait for request to hit the server and block on obelisk.call
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Run the activity to complete fibo(10)
+            assert_eq!(1, harness.tick_activity().await);
+
+            // Get the response
+            let resp = fetch_task.await.unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            assert_eq!(body["result"], serde_json::json!(55)); // fibo(10) = 55
+        }
+
+        #[tokio::test]
+        async fn webhook_js_schedule_activity() {
+            use std::str::FromStr as _;
+
+            test_utils::set_up();
+            let js_source = r#"
+                export default function handle(request) {
+                    // Schedule fibo(10) for later execution
+                    const execId = obelisk.schedule("testing:fibo/fibo.fibo", [10], { seconds: 60 });
+                    return {
+                        status: 200,
+                        headers: [],
+                        body: JSON.stringify({ execId })
+                    };
+                }
+            "#;
+
+            let harness = JsWebhookWithActivitiesHarness::new(js_source).await;
+            let resp = reqwest::get(format!("http://{}/", harness.server_addr))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+
+            // Verify an execution ID was returned
+            let exec_id_str = body["execId"].as_str().unwrap();
+            assert!(
+                exec_id_str.starts_with("E_"),
+                "Expected execution ID prefix"
+            );
+
+            // Verify the execution was created in the database
+            let exec_id = concepts::ExecutionId::from_str(exec_id_str).unwrap();
+            let conn = harness.db_pool.connection().await.unwrap();
+            let create_req = conn.get_create_request(&exec_id).await.unwrap();
+            assert_eq!(
+                "testing:fibo/fibo.fibo",
+                create_req.ffqn.to_string().as_str()
+            );
+        }
+
+        #[tokio::test]
+        async fn webhook_js_get_status() {
+            test_utils::set_up();
+            let js_source = r#"
+                export default function handle(request) {
+                    // Schedule for later, then check status
+                    const execId = obelisk.schedule("testing:fibo/fibo.fibo", [10], { seconds: 60 });
+                    const status = obelisk.getStatus(execId);
+                    return {
+                        status: 200,
+                        headers: [],
+                        body: JSON.stringify({ execId, executionStatus: status })
+                    };
+                }
+            "#;
+
+            let harness = JsWebhookWithActivitiesHarness::new(js_source).await;
+            let resp = reqwest::get(format!("http://{}/", harness.server_addr))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+
+            // Verify status is "pendingAt" (scheduled for later)
+            assert_eq!(
+                body["executionStatus"]["status"],
+                serde_json::json!("pendingAt")
+            );
+        }
+
+        #[tokio::test]
+        async fn webhook_js_try_get_pending() {
+            test_utils::set_up();
+            let js_source = r#"
+                export default function handle(request) {
+                    // Schedule now but don't wait for completion
+                    const execId = obelisk.schedule("testing:fibo/fibo.fibo", [10]);
+                    const result = obelisk.tryGet(execId);
+                    return {
+                        status: 200,
+                        headers: [],
+                        body: JSON.stringify({ result })
+                    };
+                }
+            "#;
+
+            let harness = JsWebhookWithActivitiesHarness::new(js_source).await;
+            let resp = reqwest::get(format!("http://{}/", harness.server_addr))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+
+            // Should return pending since activity hasn't run yet
+            assert_eq!(body["result"]["pending"], serde_json::json!(true));
+        }
+
+        #[tokio::test]
+        async fn webhook_js_call_with_error() {
+            test_utils::set_up();
+            // fibo(50) returns Err(()) in the test activity (n > 40 returns error)
+            let js_source = r#"
+                export default function handle(request) {
+                    try {
+                        obelisk.call("testing:fibo/fibo.fibo", [50]);
+                        return {
+                            status: 200,
+                            headers: [],
+                            body: JSON.stringify({ result: "unexpected success" })
+                        };
+                    } catch (e) {
+                        return {
+                            status: 200,
+                            headers: [],
+                            body: JSON.stringify({ error: e.message })
+                        };
+                    }
+                }
+            "#;
+
+            let harness = JsWebhookWithActivitiesHarness::new(js_source).await;
+
+            let server_addr = harness.server_addr;
+            let fetch_task = tokio::spawn(async move {
+                reqwest::get(format!("http://{server_addr}/"))
+                    .await
+                    .unwrap()
+            });
+
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Run activity - it will return Err(()) for fibo(50)
+            assert_eq!(1, harness.tick_activity().await);
+
+            let resp = fetch_task.await.unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            // Should have caught the error
+            assert!(body["error"].is_string());
         }
     }
 

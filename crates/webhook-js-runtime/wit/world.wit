@@ -1,5 +1,6 @@
 package any:any;
 
 world any {
+    import obelisk:webhook/webhook-support@4.2.0;
     import obelisk:log/log@1.0.0;
 }

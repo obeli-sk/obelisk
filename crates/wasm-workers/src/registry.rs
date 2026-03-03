@@ -159,7 +159,7 @@ impl ComponentConfigRegistry {
                 }
             }
             ComponentType::Workflow => {
-                // log + workflow(-support) + types
+                // log + workflow support + types
                 matches!(
                     import.ffqn.ifc_fqn.pkg_fqn_name().to_string().as_str(),
                     "obelisk:log@1.0.0"
@@ -172,12 +172,13 @@ impl ComponentConfigRegistry {
                 )
             }
             ComponentType::WebhookEndpoint => {
-                // wasi + log + types (needed for scheduling)
+                // webhook support + wasi + log + types (needed for scheduling)
                 match import.ffqn.ifc_fqn.namespace() {
                     "wasi" => true,
                     "obelisk" => matches!(
                         import.ffqn.ifc_fqn.pkg_fqn_name().to_string().as_str(),
-                        "obelisk:log@1.0.0"
+                        "obelisk:webhook@4.2.0"
+                            | "obelisk:log@1.0.0"
                             | "obelisk:types@4.0.0"
                             | "obelisk:types@4.1.0"
                             | "obelisk:types@4.2.0"
