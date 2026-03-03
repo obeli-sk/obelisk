@@ -633,11 +633,9 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
             };
 
         // Look up function in registry
-        let (fn_metadata, component_id) = match self.fn_registry.get_by_exported_function(&ffqn) {
-            Some(found) => found,
-            None => {
-                return Err(ScheduleJsonError::FunctionNotFound.into());
-            }
+        let Some((fn_metadata, component_id)) = self.fn_registry.get_by_exported_function(&ffqn)
+        else {
+            return Err(ScheduleJsonError::FunctionNotFound.into());
         };
 
         // Parse params JSON array
@@ -675,9 +673,9 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
         };
 
         // Convert schedule_at
-        let schedule_at = schedule_at_from_webhook(schedule_at);
+        let history_event_schedule_at = schedule_at_from_webhook(schedule_at);
         let created_at = self.clock_fn.now();
-        let scheduled_at = match schedule_at.as_date_time(created_at) {
+        let schedule_at = match history_event_schedule_at.as_date_time(created_at) {
             Ok(dt) => dt,
             Err(err) => {
                 return Err(ScheduleJsonError::TypeCheckError(format!(
@@ -697,7 +695,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
 
         let event = HistoryEvent::Schedule {
             execution_id: execution_id.clone(),
-            schedule_at,
+            schedule_at: history_event_schedule_at,
             result: Ok(()),
         };
         let append_req = AppendRequest {
@@ -711,7 +709,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
             params,
             parent: None,
             metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
-            scheduled_at,
+            scheduled_at: schedule_at,
             component_id: component_id.clone(),
             deployment_id: self.deployment_id,
             scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
@@ -763,11 +761,9 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
             };
 
         // Look up function in registry
-        let (fn_metadata, component_id) = match self.fn_registry.get_by_exported_function(&ffqn) {
-            Some(found) => found,
-            None => {
-                return Err(ScheduleJsonError::FunctionNotFound.into());
-            }
+        let Some((fn_metadata, component_id)) = self.fn_registry.get_by_exported_function(&ffqn)
+        else {
+            return Err(ScheduleJsonError::FunctionNotFound.into());
         };
 
         // Parse params JSON array
@@ -957,8 +953,9 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
         // Convert PendingState to ExecutionStatus
         let status = match execution_with_state.pending_state {
             PendingState::PendingAt(state) => {
-                ExecutionStatus::PendingAt(types::obelisk::webhook::webhook_support::Datetime {
-                    seconds: state.scheduled_at.timestamp() as u64,
+                ExecutionStatus::PendingAt(types::obelisk::types::time::Datetime {
+                    seconds: u64::try_from(state.scheduled_at.timestamp())
+                        .expect("pending at before unix epoch is unsupported"),
                     nanoseconds: state.scheduled_at.timestamp_subsec_nanos(),
                 })
             }
