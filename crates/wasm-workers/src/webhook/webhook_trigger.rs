@@ -3094,7 +3094,8 @@ pub(crate) mod tests {
             let js_source = r#"
                 export default function handle(request) {
                     // Schedule fibo(10) for later execution
-                    const execId = obelisk.schedule("testing:fibo/fibo.fibo", [10], { seconds: 60 });
+                    const execId = obelisk.generateExecutionId();
+                    obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10], { seconds: 60 });
                     return {
                         status: 200,
                         headers: [],
@@ -3133,7 +3134,8 @@ pub(crate) mod tests {
             let js_source = r#"
                 export default function handle(request) {
                     // Schedule for later, then check status
-                    const execId = obelisk.schedule("testing:fibo/fibo.fibo", [10], { seconds: 60 });
+                    const execId = obelisk.generateExecutionId();
+                    obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10], { seconds: 60 });
                     const status = obelisk.getStatus(execId);
                     return {
                         status: 200,
@@ -3163,7 +3165,8 @@ pub(crate) mod tests {
             let js_source = r#"
                 export default function handle(request) {
                     // Schedule now but don't wait for completion
-                    const execId = obelisk.schedule("testing:fibo/fibo.fibo", [10]);
+                    const execId = obelisk.generateExecutionId();
+                    obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10]);
                     const result = obelisk.tryGet(execId);
                     return {
                         status: 200,

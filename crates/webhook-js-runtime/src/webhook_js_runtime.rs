@@ -3,9 +3,12 @@
 //! This is a WASI HTTP handler that runs JavaScript code to process HTTP requests.
 //! The JS code is provided via the `JS_SOURCE` environment variable.
 //!
-//! The JS handler uses ES module syntax with a default export:
+//! # JS API Reference
+//!
+//! ## Basic Handler
 //! ```js
 //! export default function(request) {
+//!     // request = { method, uri, headers, body }
 //!     return {
 //!         status: 200,
 //!         headers: [["content-type", "text/plain"]],
@@ -14,7 +17,7 @@
 //! }
 //! ```
 //!
-//! Async handlers with fetch are also supported:
+//! ## Async Handlers with Fetch
 //! ```js
 //! export default async function(request) {
 //!     const resp = await fetch("https://example.com/api");
@@ -23,20 +26,54 @@
 //! }
 //! ```
 //!
-//! The `obelisk` global object provides execution API integration:
+//! ## Scheduling Executions
 //! ```js
-//! export default async function(request) {
-//!     // Call another function and wait for result
-//!     const result = await obelisk.call("ns:pkg/ifc.func", [arg1, arg2]);
+//! // Generate execution ID first
+//! const execId = obelisk.generateExecutionId();
 //!
-//!     // Schedule for later execution
-//!     const execId = await obelisk.schedule("ns:pkg/ifc.func", [arg1], { seconds: 60 });
+//! // Schedule immediately (scheduleAt is optional, defaults to now)
+//! obelisk.schedule(execId, "ns:pkg/ifc.func", [arg1, arg2]);
 //!
-//!     // Check status or get result
-//!     const status = await obelisk.getStatus(execId);
+//! // Schedule with delay
+//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { seconds: 60 });
+//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { minutes: 5 });
+//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { hours: 1 });
+//! ```
 //!
-//!     return { status: 200, headers: [], body: JSON.stringify(result) };
+//! ## Call and Wait for Result
+//! ```js
+//! // Synchronous call - blocks until completion
+//! const result = obelisk.call("ns:pkg/ifc.func", [arg1, arg2]);
+//! // result = { ok: value } or { err: value }
+//! ```
+//!
+//! ## Check Execution Status
+//! ```js
+//! const status = obelisk.getStatus(execId);
+//! // status.type = "pending" | "locked" | "blockedByJoinSet" | "finished"
+//! // If finished: status.finished = "ok" | "err" | "executionFailure"
+//! ```
+//!
+//! ## Get Execution Result
+//! ```js
+//! // Blocking - waits until execution completes
+//! const result = obelisk.get(execId);
+//! // result = { ok: value } or { err: value }
+//!
+//! // Non-blocking - returns immediately or throws if not finished
+//! try {
+//!     const result = obelisk.tryGet(execId);
+//! } catch (e) {
+//!     // "not finished yet" or "not found"
 //! }
+//! ```
+//!
+//! ## Console Logging
+//! ```js
+//! console.log("info message");
+//! console.debug("debug message");
+//! console.warn("warning");
+//! console.error("error");
 //! ```
 
 use crate::generated::obelisk::log::log;
@@ -220,10 +257,17 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // obelisk.schedule(ffqn, params, scheduleAt?, config?)
+    // obelisk.schedule(executionId, ffqn, params, scheduleAt?, config?)
     let schedule_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let ffqn = args
+        let exec_id_str = args
             .get_or_undefined(0)
+            .as_string()
+            .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
+            .to_std_string_escaped();
+        let exec_id = ExecutionId { id: exec_id_str };
+
+        let ffqn = args
+            .get_or_undefined(1)
             .as_string()
             .ok_or_else(|| JsNativeError::typ().with_message("ffqn must be a string"))?
             .to_std_string_escaped();
@@ -234,26 +278,23 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             function_name: fn_name,
         };
 
-        let params_val = args.get_or_undefined(1);
+        let params_val = args.get_or_undefined(2);
         let params_json = json_stringify(params_val, ctx)?;
 
-        let schedule = if let Some(schedule_val) = args.get(2) {
+        let schedule = if let Some(schedule_val) = args.get(3) {
             parse_schedule_at(schedule_val, ctx)?
         } else {
             ScheduleAt::Now
         };
 
-        let config = if let Some(cfg_val) = args.get(3) {
+        let config = if let Some(cfg_val) = args.get(4) {
             parse_submit_config(cfg_val, ctx)?
         } else {
             None
         };
 
-        // Generate execution ID
-        let exec_id = webhook_support::execution_id_generate();
-
         match webhook_support::schedule_json(&exec_id, schedule, &function, &params_json, config) {
-            Ok(()) => Ok(JsValue::from(js_string!(exec_id.id))),
+            Ok(()) => Ok(JsValue::undefined()),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("schedule failed: {:?}", e))
                 .into()),
