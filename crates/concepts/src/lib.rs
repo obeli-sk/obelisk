@@ -43,7 +43,9 @@ pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
 pub const SUFFIX_PKG_SCHEDULE: &str = "-obelisk-schedule";
 pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
 
-#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[error("execution error: {kind}")]
 pub struct FinishedExecutionError {
     pub kind: ExecutionFailureKind,
@@ -59,7 +61,17 @@ impl FinishedExecutionError {
     }
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionFailureKind {
     /// Applicable to activities only, because workflows will be retried forever
@@ -73,7 +85,17 @@ pub enum ExecutionFailureKind {
     Uncategorized,
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TrapKind {
     #[display("trap")]
@@ -86,7 +108,8 @@ pub enum TrapKind {
     HostFunctionError,
 }
 
-#[derive(Clone, Eq, derive_more::Display)]
+#[derive(Clone, Eq, derive_more::Display, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub enum StrVariant {
     Static(&'static str),
     Arc(Arc<str>),
@@ -500,8 +523,15 @@ pub struct FnMarker;
 pub type FnName = Name<FnMarker>;
 
 #[derive(
-    Hash, Clone, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
+    Hash,
+    Clone,
+    PartialEq,
+    Eq,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+    schemars::JsonSchema,
 )]
+#[schemars(with = "String")]
 pub struct FunctionFqn {
     // TODO: Consider storing parsed IfcFqn instead.
     pub ifc_fqn: IfcFqnName,
@@ -605,7 +635,9 @@ impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
 pub struct TypeWrapperTopLevel {
     pub ok: Option<Box<TypeWrapper>>,
     pub err: Option<Box<TypeWrapper>>,
@@ -619,7 +651,9 @@ impl From<TypeWrapperTopLevel> for TypeWrapper {
     }
 }
 
-#[derive(Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, derive_more::Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SupportedFunctionReturnValue {
     Ok(Option<WastValWithType>),
@@ -854,7 +888,8 @@ impl SupportedFunctionReturnValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, schemars::JsonSchema)]
+#[schemars(with = "Vec<serde_json::Value>")]
 pub struct Params(ParamsInternal);
 
 #[derive(derive_more::Debug, Clone)]
@@ -1303,7 +1338,8 @@ pub mod prefixed_ulid {
     };
     use ulid::Ulid;
 
-    #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr)]
+    #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr, schemars::JsonSchema)]
+    #[schemars(with = "String")]
     #[derive_where::derive_where(Clone, Copy)]
     #[display("{}_{ulid}", Self::prefix())]
     pub struct PrefixedUlid<T: 'static> {
@@ -1456,13 +1492,35 @@ pub mod prefixed_ulid {
         }
     }
 
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr, Clone)]
+    #[derive(
+        Hash,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        SerializeDisplay,
+        DeserializeFromStr,
+        Clone,
+        schemars::JsonSchema,
+    )]
+    #[schemars(with = "String")]
     pub enum ExecutionId {
         TopLevel(ExecutionIdTopLevel),
         Derived(ExecutionIdDerived),
     }
 
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, SerializeDisplay, DeserializeFromStr)]
+    #[derive(
+        Hash,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Clone,
+        SerializeDisplay,
+        DeserializeFromStr,
+        schemars::JsonSchema,
+    )]
+    #[schemars(with = "String")]
     pub struct ExecutionIdDerived {
         top_level: ExecutionIdTopLevel,
         infix: Arc<str>,
@@ -1786,7 +1844,18 @@ pub mod prefixed_ulid {
     }
 
     /// Mirrors [`ExecutionId`], with different prefix and `idx` for tracking each delay within the join set.
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, SerializeDisplay, DeserializeFromStr)]
+    #[derive(
+        Hash,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Clone,
+        SerializeDisplay,
+        DeserializeFromStr,
+        schemars::JsonSchema,
+    )]
+    #[schemars(with = "String")]
     pub struct DelayId {
         top_level: DelayIdTopLevel,
         infix: Arc<str>,
@@ -1930,7 +1999,9 @@ pub mod prefixed_ulid {
     derive_more::Display,
     serde_with::SerializeDisplay,
     serde_with::DeserializeFromStr,
+    schemars::JsonSchema,
 )]
+#[schemars(with = "String")]
 #[non_exhaustive] // force using the constructor as much as possible due to validation
 #[display("{kind}{JOIN_SET_ID_INFIX}{name}")]
 pub struct JoinSetId {
@@ -1950,7 +2021,17 @@ impl JoinSetId {
 pub const CHARSET_ALPHANUMERIC: &str =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, strum::EnumIter)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    strum::EnumIter,
+    schemars::JsonSchema,
+)]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[display("{}", self.as_code())]
 pub enum JoinSetKind {
@@ -2181,7 +2262,7 @@ pub struct PackageIfcFns {
     pub fns: IndexMap<FnName, FunctionMetadata>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ComponentRetryConfig {
     pub max_retries: Option<u32>,
     pub retry_exp_backoff: Duration,
@@ -2225,7 +2306,18 @@ pub trait FunctionRegistry: Send + Sync {
     fn all_exports(&self) -> &[PackageIfcFns];
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, derive_more::Display, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    schemars::JsonSchema,
+)]
+#[schemars(with = "Option<std::collections::HashMap<String, String>>")]
 #[display("{_0:?}")]
 pub struct ExecutionMetadata(Option<hashbrown::HashMap<String, String>>);
 

@@ -7,7 +7,7 @@ use std::fmt::Debug;
 
 /// Expression that can be used inside of `invoke` expressions for core wasm
 /// functions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, schemars::JsonSchema)]
 #[allow(missing_docs)]
 pub enum WastVal {
     Bool(bool),
@@ -34,7 +34,7 @@ pub enum WastVal {
     // TODO: Add Map(IndexMap<MapKey, WastVal>), when wasmtime supports it
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct ValKey(Box<str>);
 impl ValKey {
     pub fn new_snake(val: impl Into<Box<str>>) -> Self {
@@ -61,7 +61,7 @@ impl From<&TypeKey> for ValKey {
     }
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct WastValWithType {
     pub r#type: TypeWrapper,
     pub value: WastVal,

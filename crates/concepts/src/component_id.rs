@@ -18,7 +18,9 @@ use std::{
     Hash,
     serde_with::SerializeDisplay,
     serde_with::DeserializeFromStr,
+    schemars::JsonSchema,
 )]
+#[schemars(with = "String")]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentType {
     ActivityWasm,
@@ -40,7 +42,15 @@ impl ComponentType {
 }
 
 #[derive(
-    derive_more::Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Serialize, Deserialize,
+    derive_more::Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[display("{component_type}:{name}:{input_digest}")]
 #[debug("{}", self)]
@@ -125,7 +135,9 @@ pub struct InvalidNameError<T> {
     Hash,
     serde_with::SerializeDisplay,
     serde_with::DeserializeFromStr,
+    schemars::JsonSchema,
 )]
+#[schemars(with = "String")]
 pub struct InputContentDigest(pub ContentDigest);
 
 #[derive(
@@ -139,7 +151,9 @@ pub struct InputContentDigest(pub ContentDigest);
     Hash,
     serde_with::SerializeDisplay,
     serde_with::DeserializeFromStr,
+    schemars::JsonSchema,
 )]
+#[schemars(with = "String")]
 pub struct ContentDigest(pub Digest);
 pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest([0; 32]));
 

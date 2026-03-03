@@ -45,3 +45,11 @@ jobs:
             echo "::error::Uncommitted changes after running 'update-openapi-schema.sh'"
             exit 1
           fi
+
+      - name: Run `update-db-schema.sh`
+        run: |
+          nix develop --command scripts/update-db-schema.sh
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Uncommitted changes after running 'update-db-schema.sh'"
+            exit 1
+          fi

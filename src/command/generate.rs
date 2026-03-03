@@ -23,6 +23,8 @@ impl Generate {
         match self {
             #[cfg(debug_assertions)]
             Generate::ConfigSchema { output } => generate_toml_schema(output),
+            #[cfg(debug_assertions)]
+            Generate::DbSchema { output } => generate_db_schema(output),
             Generate::Config { config, overwrite } => {
                 let config_file = ConfigHolder::generate_default_config(config, overwrite).await?;
                 println!("Generated {config_file:?}");
@@ -83,6 +85,24 @@ pub(crate) fn generate_toml_schema(output: Option<PathBuf>) -> Result<(), anyhow
         serde_json::to_writer_pretty(&mut writer, &schema)?;
         writer.write_all(b"\n")?;
         writer.flush()?; // Do not swallow errors
+    } else {
+        serde_json::to_writer_pretty(stdout().lock(), &schema)?;
+    }
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn generate_db_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    use std::{
+        fs::File,
+        io::{BufWriter, Write as _, stdout},
+    };
+    let schema = schemars::schema_for!(concepts::storage::DbStorageSchema);
+    if let Some(output) = output {
+        let mut writer = BufWriter::new(File::create(&output)?);
+        serde_json::to_writer_pretty(&mut writer, &schema)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
     } else {
         serde_json::to_writer_pretty(stdout().lock(), &schema)?;
     }
