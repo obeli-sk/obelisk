@@ -33,6 +33,13 @@ expression: components
   },
   {
     "component_id": {
+      "component_type": "activity_wasm",
+      "input_digest": "sha256:<REDACTED>",
+      "name": "test_read_env_activity"
+    }
+  },
+  {
+    "component_id": {
       "component_type": "workflow",
       "input_digest": "sha256:<REDACTED>",
       "name": "test_add_workflow"

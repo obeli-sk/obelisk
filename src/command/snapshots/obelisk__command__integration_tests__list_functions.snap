@@ -16,6 +16,9 @@ expression: functions
     "ffqn": "testing:integration/fetch-get-allowed.fetch-get"
   },
   {
+    "ffqn": "testing:integration/activities.read-env"
+  },
+  {
     "ffqn": "testing:integration/workflows.add-workflow"
   },
   {

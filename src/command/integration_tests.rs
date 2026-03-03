@@ -92,6 +92,16 @@ max_retries = 0
 pattern = "http://127.0.0.1:{port}"
 methods = ["GET"]
 
+[[activity_js]]
+name = "test_read_env_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/read_env.js"
+ffqn = "testing:integration/activities.read-env"
+params.inline = [
+  {{ name = "key", type = "string" }},
+]
+max_retries = 0
+env_vars = ["TEST_ENV_VAR=hello_from_env"]
+
 [[workflow_js]]
 name = "test_add_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
@@ -718,6 +728,20 @@ async fn activity_js_fetch_allowed() {
     // The response should be a JSON array of components
     let components: Value = serde_json::from_str(result).unwrap();
     assert!(components.is_array());
+}
+
+#[tokio::test]
+async fn activity_js_read_env() {
+    let server = TestServer::start().await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/activities.read-env",
+            vec![json!("TEST_ENV_VAR")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": "hello_from_env" }));
 }
 
 // ---- Idempotency ----

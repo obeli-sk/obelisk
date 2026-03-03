@@ -3,7 +3,27 @@
 //! This runtime provides:
 //! - `console.*` → `obelisk:log` routing
 //! - `fetch()` → WASIp2 HTTP outgoing requests
+//! - `obelisk.env(key)` → environment variable access
 //! - ES Module support with `export default`
+//!
+//! # JS API Reference
+//!
+//! ## Environment Variables
+//! ```js
+//! // Get environment variable value (returns string or undefined)
+//! const value = obelisk.env("MY_VAR");
+//! if (value !== undefined) {
+//!     console.log("MY_VAR =", value);
+//! }
+//! ```
+//!
+//! ## Console Logging
+//! ```js
+//! console.log("info message");
+//! console.debug("debug message");
+//! console.warn("warning");
+//! console.error("error");
+//! ```
 
 use crate::generated::obelisk::log::log as obelisk_log;
 use crate::generated::{
@@ -12,10 +32,11 @@ use crate::generated::{
 };
 use boa_common::console::{ObeliskLogger, setup_console};
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
-use boa_common::helpers::extract_error_string;
+use boa_common::helpers::{extract_error_string, new_object};
+use boa_common::obelisk_env::register_env;
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
-use boa_engine::{Context, JsResult, JsValue, Source};
+use boa_engine::{Context, JsResult, JsValue, Source, js_string, property::Attribute};
 use boa_runtime::extensions::FetchExtension;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -61,6 +82,9 @@ pub fn execute(
 
     // Set up fetch
     setup_fetch(&mut context).expect("fetch setup must work");
+
+    // Set up obelisk global object with env function
+    setup_obelisk(&mut context).expect("obelisk setup must work");
 
     // Run the async execution inside a single wstd reactor
     wstd::runtime::block_on(execute_async(js_code, params_json, &mut context, &executor))
@@ -157,4 +181,12 @@ fn convert_result(
 /// Register the `fetch` API backed by WASIp2 HTTP.
 fn setup_fetch(context: &mut Context) -> JsResult<()> {
     boa_runtime::register(FetchExtension(WasiFetcher), None, context)
+}
+
+/// Set up the global `obelisk` object with the env function.
+fn setup_obelisk(context: &mut Context) -> JsResult<()> {
+    let obelisk = new_object(context);
+    register_env(&obelisk, context)?;
+    context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
+    Ok(())
 }
