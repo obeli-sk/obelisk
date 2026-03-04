@@ -10,165 +10,98 @@ use serde::{
     de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
 };
 
-fn extract_u8_list(list: &[WastVal]) -> Result<Vec<u8>, ()> {
+/// Extracts bytes from a list if all elements are `WastVal::U8`.
+/// Returns `None` if the list is empty or contains non-U8 elements.
+fn extract_u8_list(list: &[WastVal]) -> Option<Vec<u8>> {
+    if list.is_empty() {
+        return None;
+    }
     let mut bytes = Vec::with_capacity(list.len());
     for val in list {
         match val {
             WastVal::U8(b) => bytes.push(*b),
-            _ => return Err(()),
+            _ => return None,
         }
     }
-    Ok(bytes)
+    Some(bytes)
 }
 
-impl Serialize for WastValWithType {
+impl Serialize for WastVal {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        match (&self.r#type, &self.value) {
-            (TypeWrapper::Bool, WastVal::Bool(v)) => serializer.serialize_bool(*v),
-            (TypeWrapper::S8, WastVal::S8(v)) => serializer.serialize_i8(*v),
-            (TypeWrapper::U8, WastVal::U8(v)) => serializer.serialize_u8(*v),
-            (TypeWrapper::S16, WastVal::S16(v)) => serializer.serialize_i16(*v),
-            (TypeWrapper::U16, WastVal::U16(v)) => serializer.serialize_u16(*v),
-            (TypeWrapper::S32, WastVal::S32(v)) => serializer.serialize_i32(*v),
-            (TypeWrapper::U32, WastVal::U32(v)) => serializer.serialize_u32(*v),
-            (TypeWrapper::S64, WastVal::S64(v)) => serializer.serialize_i64(*v),
-            (TypeWrapper::U64, WastVal::U64(v)) => serializer.serialize_u64(*v),
-            (TypeWrapper::F32, WastVal::F32(v)) => serializer.serialize_f32(*v),
-            (TypeWrapper::F64, WastVal::F64(v)) => serializer.serialize_f64(*v),
-            (TypeWrapper::Char, WastVal::Char(v)) => serializer.serialize_char(*v),
-            (TypeWrapper::String, WastVal::String(v)) => serializer.serialize_str(v),
-            (TypeWrapper::List(ty), WastVal::List(list)) if **ty == TypeWrapper::U8 => {
+        match self {
+            WastVal::Bool(v) => serializer.serialize_bool(*v),
+            WastVal::S8(v) => serializer.serialize_i8(*v),
+            WastVal::U8(v) => serializer.serialize_u8(*v),
+            WastVal::S16(v) => serializer.serialize_i16(*v),
+            WastVal::U16(v) => serializer.serialize_u16(*v),
+            WastVal::S32(v) => serializer.serialize_i32(*v),
+            WastVal::U32(v) => serializer.serialize_u32(*v),
+            WastVal::S64(v) => serializer.serialize_i64(*v),
+            WastVal::U64(v) => serializer.serialize_u64(*v),
+            WastVal::F32(v) => serializer.serialize_f32(*v),
+            WastVal::F64(v) => serializer.serialize_f64(*v),
+            WastVal::Char(v) => serializer.serialize_char(*v),
+            WastVal::String(v) => serializer.serialize_str(v),
+            WastVal::List(list) => {
                 // Serialize list<u8> as base64 string for compact representation
-                if let Ok(bytes) = extract_u8_list(&list) {
+                if let Some(bytes) = extract_u8_list(list) {
                     serializer.serialize_str(&BASE64.encode(bytes))
                 } else {
-                    todo!()
+                    use serde::ser::SerializeSeq;
+                    let mut seq = serializer.serialize_seq(Some(list.len()))?;
+                    for val in list {
+                        seq.serialize_element(val)?;
+                    }
+                    seq.end()
                 }
             }
-            (TypeWrapper::List(ty), WastVal::List(list)) => {
+            WastVal::Tuple(list) => {
                 use serde::ser::SerializeSeq;
                 let mut seq = serializer.serialize_seq(Some(list.len()))?;
-                for value in list {
-                    seq.serialize_element(&WastValWithType {
-                        value: value.clone(),
-                        r#type: *ty.clone(),
-                    })?;
+                for val in list {
+                    seq.serialize_element(val)?;
                 }
                 seq.end()
             }
-            (TypeWrapper::Tuple(types), WastVal::Tuple(list)) => {
-                use serde::ser::SerializeSeq;
-                if types.len() != list.len() {
-                    todo!()
-                }
-
-                let mut seq = serializer.serialize_seq(Some(list.len()))?;
-                for (value, ty) in list.into_iter().zip(types.into_iter()) {
-                    seq.serialize_element(&WastValWithType {
-                        value: value.clone(),
-                        r#type: ty.clone(),
-                    })?;
-                }
-                seq.end()
-            }
-            (TypeWrapper::Record(types), WastVal::Record(record)) => {
+            WastVal::Record(record) => {
                 use serde::ser::SerializeMap;
-                // FIXME
                 let mut ser = serializer.serialize_map(Some(record.len()))?;
                 for (key, value) in record {
-                    // ser.serialize_entry(key, value)?;
+                    ser.serialize_entry(key, value)?;
                 }
                 ser.end()
             }
-            (TypeWrapper::Enum(name_variants), WastVal::Enum(val_key)) => {
-                if name_variants.contains(&TypeKey::from(val_key)) {
-                    serializer.serialize_str(val_key.as_snake_str())
-                } else {
-                    todo!()
-                }
+            WastVal::Enum(key) | WastVal::Variant(key, None) => {
+                serializer.serialize_str(key.as_snake_str())
             }
-            (TypeWrapper::Variant(types), WastVal::Variant(val_key, None)) => {
-                if types.get(&TypeKey::from(val_key)) == Some(&None) {
-                    serializer.serialize_str(val_key.as_snake_str())
-                } else {
-                    todo!()
-                }
-            }
-            (TypeWrapper::Variant(types), WastVal::Variant(val_key, Some(value))) => {
+            WastVal::Variant(key, Some(value)) => {
                 use serde::ser::SerializeMap;
-                if let Some(&Some(ref found_ty)) = types.get(&TypeKey::from(val_key)) {
-                    let mut ser = serializer.serialize_map(Some(1))?;
-                    ser.serialize_entry(
-                        &val_key,
-                        &WastValWithType {
-                            // Not type checking the value here, will be type checked in inner `serialize`
-                            r#type: found_ty.clone(),
-                            value: *value.clone(),
-                        },
-                    )?;
-                    ser.end()
+                let mut ser = serializer.serialize_map(Some(1))?;
+                ser.serialize_entry(key, value)?;
+                ser.end()
+            }
+            WastVal::Option(option) => {
+                if let Some(some) = option {
+                    serializer.serialize_some(some)
                 } else {
-                    todo!()
+                    serializer.serialize_none()
                 }
             }
-            (TypeWrapper::Option(ty), WastVal::Option(None)) => serializer.serialize_none(),
-            (TypeWrapper::Option(ty), WastVal::Option(Some(value))) => {
-                serializer.serialize_some(&WastValWithType {
-                    // Not type checking the value here, will be type checked in inner `serialize`
-                    r#type: *ty.clone(),
-                    value: *value.clone(),
-                })
-            }
-            (
-                TypeWrapper::Result {
-                    ok: ty_ok,
-                    err: ty_err,
-                },
-                WastVal::Result(result),
-            ) => match (ty_ok, ty_err, result) {
-                // Ok(None)
-                (None, _, Ok(None)) => todo!(),
-                // Ok(Some)
-                (Some(ty_ok), _, Ok(Some(ok))) => serializer.serialize_newtype_variant(
-                    "Result",
-                    0,
-                    "ok",
-                    &WastValWithType {
-                        // Not type checking the value here, will be type checked in inner `serialize`
-                        r#type: *ty_ok.clone(),
-                        value: *ok.clone(),
-                    },
-                ),
-                // Err(None)
-                (_, None, Err(None)) => todo!(),
-                // Err(Some)
-                (_, Some(ty_err), Err(Some(err))) => serializer.serialize_newtype_variant(
-                    "Result",
-                    0,
-                    "err",
-                    &WastValWithType {
-                        r#type: *ty_err.clone(),
-                        value: *err.clone(),
-                    },
-                ),
-                _ => todo!(),
+            WastVal::Result(result) => match result {
+                Ok(ok) => serializer.serialize_newtype_variant("Result", 0, "ok", ok),
+                Err(err) => serializer.serialize_newtype_variant("Result", 0, "err", err),
             },
-            (TypeWrapper::Flags(name_variants), WastVal::Flags(flag_val_keys)) => {
+            WastVal::Flags(flags) => {
                 use serde::ser::SerializeSeq;
-                let mut seq = serializer.serialize_seq(Some(flag_val_keys.len()))?;
-                for val_key in flag_val_keys {
-                    if name_variants.contains(&TypeKey::from(val_key)) {
-                        seq.serialize_element(val_key.as_snake_str())?;
-                    } else {
-                        todo!()
-                    }
+                let mut seq = serializer.serialize_seq(Some(flags.len()))?;
+                for val in flags {
+                    seq.serialize_element(val)?;
                 }
                 seq.end()
             }
-            _ => todo!(),
         }
     }
 }
