@@ -3107,7 +3107,6 @@ version = "0.35.4"
 dependencies = [
  "anyhow",
  "assert_matches",
- "base64 0.22.1",
  "hashbrown 0.16.1",
  "indexmap 2.13.0",
  "insta",
