@@ -1508,9 +1508,6 @@
         }
       ]
     },
-    "ValKey": {
-      "type": "string"
-    },
     "WasmBacktrace": {
       "type": "object",
       "properties": {
@@ -1760,7 +1757,7 @@
               "minItems": 2,
               "prefixItems": [
                 {
-                  "$ref": "#/$defs/ValKey"
+                  "type": "string"
                 },
                 {
                   "anyOf": [
@@ -1784,7 +1781,7 @@
           "type": "object",
           "properties": {
             "Enum": {
-              "$ref": "#/$defs/ValKey"
+              "type": "string"
             }
           },
           "additionalProperties": false,
