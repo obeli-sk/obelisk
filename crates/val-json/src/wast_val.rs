@@ -36,6 +36,7 @@ pub enum WastVal {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub struct ValKey(Box<str>);
 impl ValKey {
     pub fn new_snake(val: impl Into<Box<str>>) -> Self {
