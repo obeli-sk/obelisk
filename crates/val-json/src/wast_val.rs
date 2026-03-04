@@ -73,7 +73,7 @@ impl Display for ValKey {
     }
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
 pub struct WastValWithType {
     pub r#type: TypeWrapper,
     pub value: WastVal,
@@ -287,7 +287,11 @@ impl WastVal {
                 Ok(v) => Ok(Self::payload_val(v.as_deref())),
                 Err(v) => Err(Self::payload_val(v.as_deref())),
             }),
-            Self::Flags(v) => Val::Flags(v.iter().map(ValKey::to_kebab_string).collect()),
+            Self::Flags(v) => Val::Flags(
+                v.iter()
+                    .map(|flag_key| flag_key.to_kebab_string())
+                    .collect(),
+            ),
         }
     }
 
