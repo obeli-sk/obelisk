@@ -4,6 +4,7 @@ use crate::type_wrapper::TypeWrapper;
 use indexmap::IndexMap;
 use serde::Serialize;
 use std::fmt::Debug;
+use std::fmt::Display;
 
 /// Expression that can be used inside of `invoke` expressions for core wasm
 /// functions.
@@ -30,11 +31,12 @@ pub enum WastVal {
     Enum(ValKey),
     Option(Option<Box<WastVal>>),
     Result(Result<Option<Box<WastVal>>, Option<Box<WastVal>>>),
-    Flags(Vec<String>),
+    Flags(Vec<ValKey>),
     // TODO: Add Map(IndexMap<MapKey, WastVal>), when wasmtime supports it
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub struct ValKey(Box<str>);
 impl ValKey {
     pub fn new_snake(val: impl Into<Box<str>>) -> Self {
@@ -58,6 +60,16 @@ impl ValKey {
 impl From<&TypeKey> for ValKey {
     fn from(value: &TypeKey) -> Self {
         ValKey::from_kebab(value.as_kebab_str())
+    }
+}
+impl From<&ValKey> for TypeKey {
+    fn from(value: &ValKey) -> TypeKey {
+        TypeKey::new_kebab(value.to_kebab_string())
+    }
+}
+impl Display for ValKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -152,7 +164,11 @@ impl TryFrom<wasmtime::component::Val> for WastVal {
                 Ok(v) => Ok(v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new)),
                 Err(v) => Err(v.map(|v| WastVal::try_from(*v)).transpose()?.map(Box::new)),
             })),
-            Val::Flags(v) => Ok(Self::Flags(v)),
+            Val::Flags(v) => Ok(Self::Flags(
+                v.into_iter()
+                    .map(|flag_kebab| ValKey::from_kebab(&flag_kebab))
+                    .collect(),
+            )),
             Val::Resource(_) => Err(WastValConversionError("resource")),
             Val::Future(_) => Err(WastValConversionError("future")),
             Val::Stream(_) => Err(WastValConversionError("stream")),
@@ -271,7 +287,7 @@ impl WastVal {
                 Ok(v) => Ok(Self::payload_val(v.as_deref())),
                 Err(v) => Err(Self::payload_val(v.as_deref())),
             }),
-            Self::Flags(v) => Val::Flags(v.iter().map(std::string::ToString::to_string).collect()),
+            Self::Flags(v) => Val::Flags(v.iter().map(ValKey::to_kebab_string).collect()),
         }
     }
 

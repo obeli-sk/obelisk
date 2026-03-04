@@ -38,6 +38,7 @@ pub enum TypeWrapper {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub struct TypeKey(Box<str>);
 impl TypeKey {
     pub fn new_kebab(s: impl Into<Box<str>>) -> Self {
