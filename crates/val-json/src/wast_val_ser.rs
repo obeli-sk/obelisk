@@ -615,11 +615,12 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                 } else if let TypeWrapper::Flags(possible_flags) = self.0 {
                     let mut vec = Vec::with_capacity(possible_flags.len());
                     while let Some(element) = seq.next_element::<String>()? {
+                        let element = ValKey::new_snake(element);
                         if vec.contains(&element) {
                             return Err(Error::custom(format!(
                                 "cannot deserialize flags: flag `{element}` was found more than once"
                             )));
-                        } else if possible_flags.contains(&TypeKey::from_snake(&element)) {
+                        } else if possible_flags.contains(&TypeKey::from(&element)) {
                             vec.push(element);
                         } else {
                             return Err(Error::custom(format!(
@@ -1299,7 +1300,7 @@ mod tests {
             r#type: TypeWrapper::Flags(
                 indexset! {TypeKey::new_kebab("a-a"), TypeKey::new_kebab("b"), TypeKey::new_kebab("c")},
             ),
-            value: WastVal::Flags(vec!["a_a".to_string(), "b".to_string()]),
+            value: WastVal::Flags(vec![ValKey::new_snake("a_a"), ValKey::new_snake("b")]),
         };
         let json = serde_json::to_string_pretty(&expected).unwrap();
         insta::assert_snapshot!(json);
