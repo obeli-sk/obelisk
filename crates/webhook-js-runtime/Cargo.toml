@@ -10,9 +10,9 @@ version.workspace = true
 
 [dependencies]
 boa-common.workspace = true
-boa_engine = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false }
-boa_gc = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0" }
-boa_runtime = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false, features = ["fetch"] }
+boa_engine.workspace = true
+boa_gc.workspace = true
+boa_runtime.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 wit-bindgen.workspace = true

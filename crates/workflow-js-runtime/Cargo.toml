@@ -10,7 +10,7 @@ version.workspace = true
 
 [dependencies]
 boa-common.workspace = true
-boa_engine = { git = "https://github.com/boa-dev/boa.git", rev = "f6601a0", default-features = false }
+boa_engine.workspace = true
 futures-concurrency.workspace = true
 futures-lite.workspace = true
 serde_json.workspace = true
