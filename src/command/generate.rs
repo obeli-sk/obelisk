@@ -253,7 +253,7 @@ pub(crate) async fn generate_wit_deps(
     let _guard = init::init(&mut config)?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
-    let (compiled_and_linked, _component_source_map) = Box::pin(verify_config_compile_link(
+    let compiled_and_linked = Box::pin(verify_config_compile_link(
         config,
         Arc::new(config_holder.path_prefixes),
         DeploymentId::generate(),

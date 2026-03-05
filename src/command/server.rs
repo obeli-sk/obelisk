@@ -40,12 +40,10 @@ use crate::init;
 use crate::init::Guard;
 use crate::project_dirs;
 use crate::server::grpc_server::GrpcServer;
-use crate::server::grpc_server::IGNORING_COMPONENT_DIGEST;
 use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
 use anyhow::Context;
 use anyhow::bail;
-use concepts::ComponentId;
 use concepts::ComponentType;
 use concepts::ExecutionId;
 use concepts::FnName;
@@ -122,6 +120,7 @@ use wasm_workers::registry::ComponentConfigImportable;
 use wasm_workers::registry::ComponentConfigRegistry;
 use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::registry::JsWorkflowReplayInfo;
+use wasm_workers::registry::MatchableSourceMap;
 use wasm_workers::registry::WorkflowReplayInfo;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
@@ -148,8 +147,6 @@ pub(crate) const WORKFLOW_JS_LOCATION: &str =
 #[cfg(not(feature = "webhook-js-local"))]
 pub(crate) const WEBHOOK_JS_LOCATION: &str =
     include_str!("../../assets/webhook-js-runtime-version.txt");
-
-pub(crate) type ComponentSourceMap = hashbrown::HashMap<ComponentId, MatchableSourceMap>;
 
 impl Server {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
@@ -446,7 +443,7 @@ async fn verify_with_db_schema(
     deployment_id: DeploymentId,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
-) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
+) -> Result<ServerCompiledLinked, anyhow::Error> {
     let database = config.database.clone();
     let ok = Box::pin(verify_config_compile_link(
         config,
@@ -494,7 +491,7 @@ pub(crate) async fn verify_config_compile_link(
     deployment_id: DeploymentId, // only to distinguish when writing to the same log file as running server
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
-) -> Result<(ServerCompiledLinked, ComponentSourceMap), anyhow::Error> {
+) -> Result<ServerCompiledLinked, anyhow::Error> {
     Span::current().record("deployment_id", tracing::field::display(&deployment_id));
     info!("Verifying configuration, compiling WASM components");
     debug!("Using toml config: {config:#?}");
@@ -549,7 +546,7 @@ pub(crate) async fn verify_config_compile_link(
         .await
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
 
-    let (server_verified, component_source_map) = Box::pin(ServerVerified::new(
+    let server_verified = Box::pin(ServerVerified::new(
         config,
         codegen_cache,
         Arc::from(wasm_cache_dir),
@@ -570,7 +567,7 @@ pub(crate) async fn verify_config_compile_link(
     } else {
         warn!("Obelisk configuration was verified with supressed errors");
     }
-    Ok((compiled_and_linked, component_source_map))
+    Ok(compiled_and_linked)
 }
 
 pub(crate) async fn run_internal(
@@ -591,7 +588,7 @@ pub(crate) async fn run_internal(
     let cancel_watcher = config.cancel_watcher;
     let path_prefixes = Arc::new(config_holder.path_prefixes);
     let database = config.database.clone();
-    let (compiled_and_linked, component_source_map) = Box::pin(verify_config_compile_link(
+    let compiled_and_linked = Box::pin(verify_config_compile_link(
         config,
         path_prefixes.clone(),
         deployment_id,
@@ -685,7 +682,6 @@ pub(crate) async fn run_internal(
         server_init.db_pool.clone(),
         termination_watcher.clone(),
         component_registry_ro.clone(),
-        component_source_map,
         cancel_registry.clone(),
         server_init.engines.clone(),
         server_init.log_forwarder_sender.clone(),
@@ -801,7 +797,7 @@ impl ServerVerified {
         ignore_missing_env_vars: bool,
         path_prefixes: Arc<PathPrefixes>,
         termination_watcher: &mut watch::Receiver<()>,
-    ) -> Result<(Self, ComponentSourceMap), anyhow::Error> {
+    ) -> Result<Self, anyhow::Error> {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let workflows_lock_extension_leeway =
             config.workflows_global_config.lock_extension_leeway.into();
@@ -882,7 +878,7 @@ impl ServerVerified {
             .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
 
-        let mut config = Box::pin(ConfigVerified::fetch_and_verify_all(
+        let config = Box::pin(ConfigVerified::fetch_and_verify_all(
             config.activities_wasm,
             config.activities_js,
             config.activities_stub,
@@ -908,40 +904,15 @@ impl ServerVerified {
         ))
         .await?;
         debug!("Verified config: {config:#?}");
-        let component_source_map = {
-            let mut map = hashbrown::HashMap::new();
-            for workflow in &config.workflows {
-                let inner_map = workflow.backtrace_config.frame_files_to_sources.clone();
-                let matchable_source_map = MatchableSourceMap::new(inner_map);
-                let mut component_id = workflow.component_id().clone();
-                if workflow.backtrace_config.ignore_component_digest {
-                    component_id.input_digest = IGNORING_COMPONENT_DIGEST;
-                }
-                map.insert(component_id, matchable_source_map);
-            }
-            for webhook in config.webhooks_by_names.values_mut() {
-                let inner_map = webhook.backtrace_config.frame_files_to_sources.clone();
-                let matchable_source_map = MatchableSourceMap::new(inner_map);
-                let mut component_id = webhook.component_id.clone();
-                if webhook.backtrace_config.ignore_component_digest {
-                    component_id.input_digest = IGNORING_COMPONENT_DIGEST;
-                }
-                map.insert(component_id, matchable_source_map);
-            }
-            map
-        };
 
-        Ok((
-            Self {
-                config,
-                engines,
-                parent_preopen_dir,
-                activities_cleanup,
-                build_semaphore,
-                workflows_lock_extension_leeway,
-            },
-            component_source_map,
-        ))
+        Ok(Self {
+            config,
+            engines,
+            parent_preopen_dir,
+            activities_cleanup,
+            build_semaphore,
+            workflows_lock_extension_leeway,
+        })
     }
 }
 
@@ -1581,6 +1552,7 @@ enum CompiledComponent {
         webhook_name: ConfigName,
         webhook_compiled: WebhookEndpointCompiled,
         routes: Vec<WebhookRouteVerified>,
+        backtrace_frame_files: HashMap<String, PathBuf>,
     },
     ActivityStubOrExternal {
         component_config: ComponentConfig,
@@ -1747,6 +1719,7 @@ async fn compile_and_verify(
                         workflow_or_activity_config: Some(component_config_importable),
                         wit,
                         workflow_replay_info: None,
+                        source: None,
                     };
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
                 })
@@ -1822,6 +1795,7 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook.routes,
+                                backtrace_frame_files: webhook.backtrace_config.frame_files_to_sources,
                             })
                         })
                     })
@@ -1861,6 +1835,7 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook_js.routes,
+                                backtrace_frame_files: HashMap::new(),
                             })
                         })
                     })
@@ -1883,7 +1858,9 @@ async fn compile_and_verify(
                         component_registry.insert(component_config)?;
                         workers_compiled.push(worker);
                     },
-                    CompiledComponent::Webhook{ webhook_name, webhook_compiled, routes } => {
+                    CompiledComponent::Webhook{ webhook_name, webhook_compiled, routes, backtrace_frame_files } => {
+                        let source = (!backtrace_frame_files.is_empty())
+                            .then(|| MatchableSourceMap::new(backtrace_frame_files));
                         let component = ComponentConfig {
                             component_id: webhook_compiled.config.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
@@ -1892,6 +1869,7 @@ async fn compile_and_verify(
                                 .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
                                 .ok(),
                             workflow_replay_info: None,
+                            source,
                         };
                         component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
@@ -2240,6 +2218,7 @@ impl WorkerCompiled {
             imports: worker.imported_functions().to_vec(),
             wit,
             workflow_replay_info: None,
+            source: None,
         };
         (
             WorkerCompiled {
@@ -2266,6 +2245,7 @@ impl WorkerCompiled {
             imports: worker.imported_functions().to_vec(),
             wit,
             workflow_replay_info: None,
+            source: None,
         };
         (
             WorkerCompiled {
@@ -2290,6 +2270,8 @@ impl WorkerCompiled {
             engine,
             Now.clone_box(),
         )?;
+        let source = (!workflow.backtrace_config.frame_files_to_sources.is_empty())
+            .then(|| MatchableSourceMap::new(workflow.backtrace_config.frame_files_to_sources));
         let component = ComponentConfig {
             component_id: workflow.exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -2303,6 +2285,7 @@ impl WorkerCompiled {
                 logs_store_min_level: workflow.logs_store_min_level,
                 js_workflow_info: None,
             }),
+            source,
         };
         Ok((
             WorkerCompiled {
@@ -2344,6 +2327,7 @@ impl WorkerCompiled {
                     user_params,
                 }),
             }),
+            source: None,
         };
         (
             WorkerCompiled {
@@ -2476,55 +2460,6 @@ impl WorkerLinked {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct MatchableSourceMap {
-    exact_matches: HashMap<String, PathBuf>,
-    suffix_matches: HashMap<String, PathBuf>,
-}
-impl MatchableSourceMap {
-    fn new(config_map: HashMap<String, PathBuf>) -> Self {
-        let mut exact_matches = HashMap::new();
-        let mut suffix_matches = HashMap::new();
-
-        for (k, v) in config_map {
-            if let Some(stripped) = k.strip_prefix(".../") {
-                // Ensure that all suffixes start with a slash, so the `ends_with` below will only matches full path segments.
-                suffix_matches.insert(format!("/{stripped}"), v);
-            } else {
-                exact_matches.insert(k, v);
-            }
-        }
-
-        Self {
-            exact_matches,
-            suffix_matches,
-        }
-    }
-
-    pub(crate) fn find_matching(&self, frame_symbol_path: &str) -> Option<&PathBuf> {
-        if let Some(v) = self.exact_matches.get(frame_symbol_path) {
-            return Some(v);
-        }
-
-        let mut matches = vec![];
-
-        for (suffix, v) in &self.suffix_matches {
-            if frame_symbol_path.ends_with(suffix) {
-                matches.push(v);
-            }
-        }
-
-        match matches.len() {
-            0 => None,
-            1 => Some(matches[0]),
-            _ => {
-                warn!("Multiple suffix matches for '{frame_symbol_path}', returning None",);
-                None
-            }
-        }
-    }
-}
-
 pub(crate) fn gen_trace_id() -> String {
     use rand::SeedableRng;
     let mut rng = rand::rngs::SmallRng::from_os_rng();
@@ -2585,7 +2520,7 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
 
-        let (server_verified, _component_source_map) = Box::pin(ServerVerified::new(
+        let server_verified = Box::pin(ServerVerified::new(
             config,
             codegen_cache,
             Arc::from(wasm_cache_dir),

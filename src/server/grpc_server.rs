@@ -1,6 +1,4 @@
 use crate::command::server;
-use crate::command::server::ComponentSourceMap;
-use crate::command::server::MatchableSourceMap;
 use crate::command::server::SubmitError;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
@@ -12,7 +10,6 @@ use concepts::FunctionExtension;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::SupportedFunctionReturnValue;
-use concepts::component_id::CONTENT_DIGEST_DUMMY;
 use concepts::component_id::InputContentDigest;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::DeploymentId;
@@ -75,9 +72,6 @@ use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
 use wasm_workers::workflow::workflow_worker::WorkflowWorker;
 
-pub(crate) const IGNORING_COMPONENT_DIGEST: InputContentDigest =
-    InputContentDigest(CONTENT_DIGEST_DUMMY);
-
 #[derive(derive_more::Debug)]
 pub(crate) struct GrpcServer {
     deployment_id: DeploymentId,
@@ -85,7 +79,6 @@ pub(crate) struct GrpcServer {
     db_pool: Arc<dyn DbPool>,
     termination_watcher: watch::Receiver<()>,
     component_registry_ro: ComponentConfigRegistryRO,
-    component_source_map: ComponentSourceMap,
     #[debug(skip)]
     cancel_registry: CancelRegistry,
     #[debug(skip)]
@@ -95,13 +88,11 @@ pub(crate) struct GrpcServer {
 }
 
 impl GrpcServer {
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         deployment_id: DeploymentId,
         db_pool: Arc<dyn DbPool>,
         termination_watcher: watch::Receiver<()>,
         component_registry_ro: ComponentConfigRegistryRO,
-        component_source_map: ComponentSourceMap,
         cancel_registry: CancelRegistry,
         engines: Engines,
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
@@ -111,7 +102,6 @@ impl GrpcServer {
             db_pool,
             termination_watcher,
             component_registry_ro,
-            component_source_map,
             cancel_registry,
             engines,
             log_forwarder_sender,
@@ -658,44 +648,34 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         &self,
         request: tonic::Request<grpc_gen::GetBacktraceSourceRequest>,
     ) -> Result<tonic::Response<grpc_gen::GetBacktraceSourceResponse>, tonic::Status> {
-        async fn find_in_source_map(
-            matchable_source_map: &MatchableSourceMap,
-            component_id: &ComponentId,
-            file: &str,
-        ) -> Result<tonic::Response<grpc_gen::GetBacktraceSourceResponse>, tonic::Status> {
-            if let Some(actual_path) = matchable_source_map.find_matching(file) {
-                match tokio::fs::read_to_string(actual_path).await {
-                    Ok(content) => Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
-                        content,
-                    })),
-                    Err(err) => {
-                        error!(%component_id, "Cannot read backtrace source {actual_path:?} - {err:?}");
-                        Err(tonic::Status::internal("cannot read source file"))
-                    }
-                }
-            } else {
-                debug!("Backtrace file mapping not found for {component_id}, src {file}");
-                Err(tonic::Status::not_found("backtrace file mapping not found"))
-            }
-        }
-
         let request = request.into_inner();
         let component_id =
             ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
-        if let Some(matchable_source_map) = self.component_source_map.get(&component_id) {
-            find_in_source_map(matchable_source_map, &component_id, &request.file).await
-        } else {
-            // Disregard input digest
-            let mut component_id = component_id;
-            component_id.input_digest = IGNORING_COMPONENT_DIGEST;
-            if let Some(matchable_source_map) = self.component_source_map.get(&component_id) {
-                find_in_source_map(matchable_source_map, &component_id, &request.file).await
-            } else {
-                debug!("Component {component_id} not found");
-                Err(tonic::Status::not_found(format!(
-                    "component {component_id} not found in source map"
-                )))
+        let Some(matchable_source_map) = self
+            .component_registry_ro
+            .get_source(&component_id.input_digest)
+        else {
+            debug!("Component {component_id} not found in source map");
+            return Err(tonic::Status::not_found(format!(
+                "component {component_id} not found in source map"
+            )));
+        };
+        if let Some(actual_path) = matchable_source_map.find_matching(&request.file) {
+            match tokio::fs::read_to_string(actual_path).await {
+                Ok(content) => Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
+                    content,
+                })),
+                Err(err) => {
+                    error!(%component_id, "Cannot read backtrace source {actual_path:?} - {err:?}");
+                    Err(tonic::Status::internal("cannot read source file"))
+                }
             }
+        } else {
+            debug!(
+                "Backtrace file mapping not found for {component_id}, src {}",
+                request.file
+            );
+            Err(tonic::Status::not_found("backtrace file mapping not found"))
         }
     }
 
