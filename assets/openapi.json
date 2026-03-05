@@ -113,7 +113,7 @@
           {
             "name": "digest",
             "in": "path",
-            "description": "Component digest",
+            "description": "Component content digest",
             "required": true,
             "schema": {
               "type": "string"

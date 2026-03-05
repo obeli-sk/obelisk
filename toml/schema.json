@@ -546,10 +546,6 @@
     "ComponentBacktraceConfig": {
       "type": "object",
       "properties": {
-        "ignore_component_digest": {
-          "type": "boolean",
-          "default": false
-        },
         "sources": {
           "type": "object",
           "additionalProperties": {

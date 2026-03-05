@@ -1742,7 +1742,7 @@ pub(crate) mod components {
         path = "/v1/components/{digest}/wit",
         tag = "components",
         params(
-            ("digest" = String, Path, description = "Component digest")
+            ("digest" = String, Path, description = "Component content digest")
         ),
         responses(
             (status = 200, description = "WIT definition", body = String),

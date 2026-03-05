@@ -1,3 +1,42 @@
+//! Component registry for a single deployment.
+//!
+//! # Indexing: name vs. digest
+//!
+//! [`ComponentId`] carries two independent identifiers that serve different purposes:
+//!
+//! - **`name`** — operator-assigned, mutable label. Unique within a deployment.
+//!   Used as the primary key in [`ComponentConfigRegistryInner::names_to_components`].
+//!   Good for current-deployment queries (list, import/export resolution) but meaningless
+//!   for historical queries: a component can be renamed between deployments without
+//!   changing its code.
+//!
+//! - **`input_digest`** — SHA-256 of the component's content (WASM binary or JS source).
+//!   Content-addressed: same code → same digest, regardless of the operator-assigned name.
+//!   Used as the key in three purpose-specific secondary indexes:
+//!
+//!   | Index | Consumer | Notes |
+//!   |---|---|---|
+//!   | [`digests_to_wit`] | `GetWit` RPC, `GetFunctionWit` web API | Supports both current and historical deployments |
+//!   | [`digests_to_replay_info`] | Workflow/activity replay and mid-execution upgrade | Executor stores the digest in execution records; must resolve back to the compiled component |
+//!   | [`digests_to_source`] | `GetBacktraceSource` RPC | Client sends the `ComponentId` from an execution record, which carries the digest at submission time |
+//!
+//! # Digest uniqueness
+//!
+//! For non-webhook components (`workflow_or_activity_config.is_some()`) digest uniqueness is
+//! enforced on insert: two components with identical content would export the same functions
+//! and replay against the same binary, making a second registration redundant and confusing.
+//!
+//! [`WebhookEndpoint`]s are exempt: multiple webhooks may intentionally share the same JS or
+//! WASM source (e.g. `hook-prod` and `hook-staging`) while differing only in their runtime
+//! configuration (routes, env vars). The digest maps use `entry().or_insert()` semantics —
+//! the first registered webhook wins — because all instances of the same code have identical
+//! WIT and source maps.
+//!
+//! [`digests_to_wit`]: ComponentConfigRegistryInner::digests_to_wit
+//! [`digests_to_replay_info`]: ComponentConfigRegistryInner::digests_to_replay_info
+//! [`digests_to_source`]: ComponentConfigRegistryInner::digests_to_source
+//! [`WebhookEndpoint`]: concepts::ComponentType::WebhookEndpoint
+
 use crate::RunnableComponent;
 use concepts::ComponentId;
 use concepts::ComponentType;
@@ -9,10 +48,63 @@ use concepts::StrVariant;
 use concepts::component_id::InputContentDigest;
 use concepts::storage::LogLevel;
 use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::error;
+use tracing::warn;
+
+/// Source map for backtrace file resolution.
+#[derive(Debug, Clone)]
+pub struct MatchableSourceMap {
+    exact_matches: HashMap<String, PathBuf>,
+    suffix_matches: HashMap<String, PathBuf>,
+}
+impl MatchableSourceMap {
+    pub fn new(config_map: impl IntoIterator<Item = (String, PathBuf)>) -> Self {
+        let mut exact_matches = HashMap::new();
+        let mut suffix_matches = HashMap::new();
+
+        for (k, v) in config_map {
+            if let Some(stripped) = k.strip_prefix(".../") {
+                // Ensure that all suffixes start with a slash, so the `ends_with` below will only match full path segments.
+                suffix_matches.insert(format!("/{stripped}"), v);
+            } else {
+                exact_matches.insert(k, v);
+            }
+        }
+
+        Self {
+            exact_matches,
+            suffix_matches,
+        }
+    }
+
+    pub fn find_matching(&self, frame_symbol_path: &str) -> Option<&PathBuf> {
+        if let Some(v) = self.exact_matches.get(frame_symbol_path) {
+            return Some(v);
+        }
+
+        let mut matches = vec![];
+
+        for (suffix, v) in &self.suffix_matches {
+            if frame_symbol_path.ends_with(suffix.as_str()) {
+                matches.push(v);
+            }
+        }
+
+        match matches.len() {
+            0 => None,
+            1 => Some(matches[0]),
+            _ => {
+                warn!("Multiple suffix matches for '{frame_symbol_path}', returning None");
+                None
+            }
+        }
+    }
+}
 
 /// Holds information about components, used for gRPC services like `ListComponents`
 #[derive(Debug, Clone)]
@@ -22,6 +114,8 @@ pub struct ComponentConfig {
     pub workflow_or_activity_config: Option<ComponentConfigImportable>,
     pub wit: Option<String>,
     pub workflow_replay_info: Option<WorkflowReplayInfo>,
+    /// Backtrace source map for `GetBacktraceSource` RPC.
+    pub source: Option<MatchableSourceMap>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +148,12 @@ pub struct ComponentConfigRegistry {
 struct ComponentConfigRegistryInner {
     exported_ffqns_ext: IndexMap<FunctionFqn, (ComponentId, FunctionMetadata)>,
     export_hierarchy: Vec<PackageIfcFns>,
-    ids_to_components: IndexMap<InputContentDigest, ComponentConfig>,
+    /// Primary index: component name → component config. Names are unique across all component types.
+    names_to_components: IndexMap<StrVariant, ComponentConfig>,
+    /// Digest-keyed secondary indexes.
+    digests_to_wit: IndexMap<InputContentDigest, Option<String>>,
+    digests_to_replay_info: IndexMap<InputContentDigest, (ComponentId, WorkflowReplayInfo)>,
+    digests_to_source: IndexMap<InputContentDigest, MatchableSourceMap>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -63,21 +162,34 @@ pub struct ComponentInsertionError(StrVariant);
 
 impl ComponentConfigRegistry {
     pub fn insert(&mut self, component: ComponentConfig) -> Result<(), ComponentInsertionError> {
-        // verify that the component or its exports are not already present
-        if self
-            .inner
-            .ids_to_components
-            .contains_key(&component.component_id.input_digest)
-        {
+        let name = &component.component_id.name;
+        // verify that the component is not already present by name
+        if self.inner.names_to_components.contains_key(name) {
             return Err(ComponentInsertionError(
-                format!(
-                    "component {} is already inserted with the same digest",
-                    component.component_id
-                )
-                .into(),
+                format!("component with name `{name}` is already registered",).into(),
             ));
         }
+
+        // component.workflow_or_activity_config == None implies webhook.
+        // Webhooks do not have to have a unique component digest.
+        // The same webhook source can be configured differently.
+        // Webhooks need just to provide source and WIT, so duplication is OK.
+
         if let Some(workflow_or_activity_config) = &component.workflow_or_activity_config {
+            if self
+                .inner
+                .digests_to_wit
+                .contains_key(&component.component_id.input_digest)
+            {
+                return Err(ComponentInsertionError(
+                    format!(
+                        "component {} is already inserted with the same digest",
+                        component.component_id
+                    )
+                    .into(),
+                ));
+            }
+
             for exported_ffqn in workflow_or_activity_config
                 .exports_ext
                 .iter()
@@ -100,15 +212,50 @@ impl ComponentConfigRegistry {
                 );
                 assert!(old.is_none());
             }
-            // insert to `export_hierarchy`
+            // insert into `export_hierarchy`
             self.inner
                 .export_hierarchy
                 .extend_from_slice(&workflow_or_activity_config.exports_hierarchy_ext);
+
+            // Insert into `digests_to_wit`
+            let old = self.inner.digests_to_wit.insert(
+                component.component_id.input_digest.clone(),
+                component.wit.clone(),
+            );
+            assert!(old.is_none());
+            // Insert into `workflow_replay_info`
+            if let Some(replay_info) = component.workflow_replay_info.clone() {
+                let old = self.inner.digests_to_replay_info.insert(
+                    component.component_id.input_digest.clone(),
+                    (component.component_id.clone(), replay_info),
+                );
+                assert!(old.is_none());
+            }
+            // Insert into `digests_to_source`
+            if let Some(source) = component.source.clone() {
+                let old = self
+                    .inner
+                    .digests_to_source
+                    .insert(component.component_id.input_digest.clone(), source);
+                assert!(old.is_none());
+            }
+        } else {
+            // For WebhookEndpoints: first wins for digest-keyed maps (same code = same WIT/source)
+            self.inner
+                .digests_to_wit
+                .entry(component.component_id.input_digest.clone())
+                .or_insert(component.wit.clone());
+            if let Some(source) = component.source.clone() {
+                self.inner
+                    .digests_to_source
+                    .entry(component.component_id.input_digest.clone())
+                    .or_insert(source);
+            }
         }
 
         self.inner
-            .ids_to_components
-            .insert(component.component_id.input_digest.clone(), component);
+            .names_to_components
+            .insert(name.clone(), component);
 
         Ok(())
     }
@@ -124,7 +271,7 @@ impl ComponentConfigRegistry {
         Option<String>, /* supressed_errors */
     ) {
         let mut errors = Vec::new();
-        for examined_component in self.inner.ids_to_components.values() {
+        for examined_component in self.inner.names_to_components.values() {
             self.verify_imports_component(examined_component, &mut errors);
         }
         let errors = if !errors.is_empty() {
@@ -247,13 +394,14 @@ pub struct ComponentConfigRegistryRO {
 }
 
 impl ComponentConfigRegistryRO {
-    /// Return `None` if component is not found, `Some(None)` if component has no WIT content.
+    /// Look up WIT by content digest.
+    /// Returns `None` if the digest is not found, `Some(None)` if the component has no WIT content.
     #[must_use]
     pub fn get_wit(&self, input_digest: &InputContentDigest) -> Option<Option<&str>> {
         self.inner
-            .ids_to_components
+            .digests_to_wit
             .get(input_digest)
-            .map(|component_config| component_config.wit.as_deref())
+            .map(|w| w.as_deref())
     }
 
     #[must_use]
@@ -262,14 +410,14 @@ impl ComponentConfigRegistryRO {
         input_digest: &InputContentDigest,
     ) -> Option<(&ComponentId, &WorkflowReplayInfo)> {
         self.inner
-            .ids_to_components
+            .digests_to_replay_info
             .get(input_digest)
-            .and_then(|component_config| {
-                component_config
-                    .workflow_replay_info
-                    .as_ref()
-                    .map(|it| (&component_config.component_id, it))
-            })
+            .map(|(id, ri)| (id, ri))
+    }
+
+    #[must_use]
+    pub fn get_source(&self, input_digest: &InputContentDigest) -> Option<&MatchableSourceMap> {
+        self.inner.digests_to_source.get(input_digest)
     }
 
     #[must_use]
@@ -318,11 +466,11 @@ impl ComponentConfigRegistryRO {
             })
     }
 
-    /// List comopnents. When `extensions` is set to true, exteded functions are stripped from exports in each component.
+    /// List components. When `extensions` is set to false, extended functions are stripped from exports in each component.
     #[must_use]
     pub fn list(&self, extensions: bool) -> Vec<ComponentConfig> {
         self.inner
-            .ids_to_components
+            .names_to_components
             .values()
             .cloned()
             .map(|mut component| {

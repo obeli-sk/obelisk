@@ -1465,8 +1465,6 @@ pub(crate) struct ComponentBacktraceConfig {
     #[serde(rename = "sources")]
     #[schemars(with = "std::collections::HashMap<String, String>")]
     pub(crate) frame_files_to_sources: HashMap<String, String>,
-    #[serde(default)]
-    pub(crate) ignore_component_digest: bool,
 }
 impl ComponentBacktraceConfig {
     fn verify(self, path_prefixes: &PathPrefixes) -> ComponentBacktraceConfigVerified {
@@ -1490,7 +1488,6 @@ impl ComponentBacktraceConfig {
 
         ComponentBacktraceConfigVerified {
             frame_files_to_sources,
-            ignore_component_digest: self.ignore_component_digest,
         }
     }
 }
@@ -1498,7 +1495,6 @@ impl ComponentBacktraceConfig {
 #[derive(Debug)]
 pub(crate) struct ComponentBacktraceConfigVerified {
     pub(crate) frame_files_to_sources: HashMap<String, PathBuf>,
-    pub(crate) ignore_component_digest: bool,
 }
 
 #[derive(Debug)]
@@ -2127,11 +2123,10 @@ pub(crate) mod webhook {
                 )
                 .await?;
 
-            // Compute content digest from source
+            // Compute content digest from source - FFQN is same for all webhooks
             use sha2::{Digest as _, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(b"webhook_js:");
-            hasher.update(self.name.0.as_bytes());
             hasher.update(js_source.as_bytes());
             let hash: [u8; 32] = hasher.finalize().into();
             let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
