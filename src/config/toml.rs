@@ -2127,11 +2127,10 @@ pub(crate) mod webhook {
                 )
                 .await?;
 
-            // Compute content digest from source
+            // Compute content digest from source - FFQN is same for all webhooks
             use sha2::{Digest as _, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(b"webhook_js:");
-            hasher.update(self.name.0.as_bytes());
             hasher.update(js_source.as_bytes());
             let hash: [u8; 32] = hasher.finalize().into();
             let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
