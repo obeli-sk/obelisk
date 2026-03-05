@@ -9,12 +9,23 @@
 //! ```js
 //! export default function(request) {
 //!     // request = { method, uri, headers, body }
+//!     // headers can be a plain object (idiomatic) or an array of [name, value] pairs
 //!     return {
 //!         status: 200,
-//!         headers: [["content-type", "text/plain"]],
+//!         headers: { "content-type": "text/plain" },
 //!         body: "Hello from JS!"
 //!     };
 //! }
+//! ```
+//!
+//! Headers can also be specified as an array of `[name, value]` pairs (legacy form):
+//! ```js
+//! return { status: 200, headers: [["content-type", "text/plain"]], body: "Hello" };
+//! ```
+//!
+//! Multiple values for the same header name are supported with an array value:
+//! ```js
+//! return { status: 200, headers: { "set-cookie": ["a=1", "b=2"] }, body: "" };
 //! ```
 //!
 //! ## Async Handlers with Fetch
@@ -22,7 +33,7 @@
 //! export default async function(request) {
 //!     const resp = await fetch("https://example.com/api");
 //!     const data = await resp.text();
-//!     return { status: 200, headers: [], body: data };
+//!     return { status: 200, headers: {}, body: data };
 //! }
 //! ```
 //!
@@ -671,16 +682,81 @@ fn json_to_response(json: &str) -> Result<Response<Body>, wstd::http::Error> {
     struct ResponseJson {
         status: u16,
         #[serde(default)]
-        headers: Vec<(String, String)>,
+        headers: serde_json::Value,
         #[serde(default)]
         body: String,
     }
 
+    /// Accept headers in two idiomatic JS forms:
+    /// - Plain object:  `{ "content-type": "text/plain" }` or `{ "set-cookie": ["a=1", "b=2"] }`
+    /// - Array of pairs: `[["content-type", "text/plain"], …]`
+    fn parse_headers(value: serde_json::Value) -> Result<Vec<(String, String)>, String> {
+        match value {
+            serde_json::Value::Null => Ok(vec![]),
+            serde_json::Value::Object(map) => {
+                let mut headers = Vec::with_capacity(map.len());
+                for (name, val) in map {
+                    match val {
+                        serde_json::Value::String(s) => headers.push((name, s)),
+                        serde_json::Value::Array(vals) => {
+                            for v in vals {
+                                let s = v
+                                    .as_str()
+                                    .ok_or_else(|| {
+                                        format!("header '{name}' array contains a non-string value")
+                                    })?
+                                    .to_string();
+                                headers.push((name.clone(), s));
+                            }
+                        }
+                        _ => {
+                            return Err(format!(
+                                "header '{name}' value must be a string or array of strings"
+                            ));
+                        }
+                    }
+                }
+                Ok(headers)
+            }
+            serde_json::Value::Array(arr) => {
+                // Legacy array-of-tuples: [["name", "value"], …]
+                arr.into_iter()
+                    .map(|item| match item {
+                        serde_json::Value::Array(pair) if pair.len() == 2 => {
+                            let name = pair[0]
+                                .as_str()
+                                .ok_or("header name must be a string")?
+                                .to_string();
+                            let value = pair[1]
+                                .as_str()
+                                .ok_or("header value must be a string")?
+                                .to_string();
+                            Ok((name, value))
+                        }
+                        _ => Err("each header entry must be a [name, value] pair"),
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())
+            }
+            _ => Err("headers must be an object or an array of [name, value] pairs".to_string()),
+        }
+    }
+
     match serde_json::from_str::<ResponseJson>(json) {
         Ok(r) => {
+            let headers = match parse_headers(r.headers) {
+                Ok(h) => h,
+                Err(e) => {
+                    log::error(&format!("Invalid headers format: {e}"));
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::from(format!("Invalid headers format: {e}")))
+                        .map_err(wstd::http::Error::new);
+                }
+            };
             let mut builder = Response::builder()
                 .status(StatusCode::from_u16(r.status).unwrap_or(StatusCode::OK));
-            for (k, v) in r.headers {
+            for (k, v) in headers {
                 builder = builder.header(k, v);
             }
             builder

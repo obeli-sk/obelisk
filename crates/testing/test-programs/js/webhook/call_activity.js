@@ -8,7 +8,7 @@ export default function handle(request) {
 
     return {
         status: 200,
-        headers: [["content-type", "application/json"]],
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ result: result })
     };
 }
