@@ -316,7 +316,9 @@ fn get_default_export_workflow(
         .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::LinkError))?;
 
     // 4. Evaluate the module
-    let eval_promise = module.evaluate(context);
+    let eval_promise = module
+        .evaluate(context)
+        .map_err(|err| EsmErrorWorkflow::EvalError(err.to_string()))?;
     context
         .run_jobs()
         .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::EvalError))?;

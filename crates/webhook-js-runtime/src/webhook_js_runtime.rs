@@ -7,33 +7,25 @@
 //!
 //! ## Basic Handler
 //! ```js
-//! export default function(request) {
-//!     // request = { method, uri, headers, body }
-//!     // headers can be a plain object (idiomatic) or an array of [name, value] pairs
-//!     return {
+//! export default function handle(request) {
+//!     return new Response("Hello from JS!", {
 //!         status: 200,
 //!         headers: { "content-type": "text/plain" },
-//!         body: "Hello from JS!"
-//!     };
+//!     });
 //! }
 //! ```
 //!
-//! Headers can also be specified as an array of `[name, value]` pairs (legacy form):
+//! ## JSON Response
 //! ```js
-//! return { status: 200, headers: [["content-type", "text/plain"]], body: "Hello" };
+//! export default function handle(request) {
+//!     return Response.json({ ok: true });
+//! }
 //! ```
 //!
-//! Multiple values for the same header name are supported with an array value:
+//! ## Async Handler — Pass-Through Fetch
 //! ```js
-//! return { status: 200, headers: { "set-cookie": ["a=1", "b=2"] }, body: "" };
-//! ```
-//!
-//! ## Async Handlers with Fetch
-//! ```js
-//! export default async function(request) {
-//!     const resp = await fetch("https://example.com/api");
-//!     const data = await resp.text();
-//!     return { status: 200, headers: {}, body: data };
+//! export default async function handle(request) {
+//!     return fetch("https://api.example.com/data");
 //! }
 //! ```
 //!
@@ -113,6 +105,7 @@ use boa_engine::{
     property::Attribute,
 };
 use boa_runtime::extensions::FetchExtension;
+use boa_runtime::fetch::response::JsResponse;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -159,15 +152,7 @@ async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Erro
     let request_json = request_to_json(&request);
 
     // Run JS and get response
-    match run_js_handler_async(&js_source, &request_json).await {
-        Ok(response_json) => json_to_response(&response_json),
-        Err(err) => {
-            log::error(&format!("JS error: {err}"));
-            Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(format!("JS error: {err}")))?)
-        }
-    }
+    run_js_handler_async(&js_source, &request_json).await
 }
 
 /// Convert HTTP request to JSON string for JS consumption.
@@ -199,8 +184,28 @@ fn request_to_json(request: &Request<Body>) -> String {
     .to_string()
 }
 
-/// Run the JS handler function and return the response JSON (async version).
-async fn run_js_handler_async(js_source: &str, request_json: &str) -> Result<String, String> {
+/// Run the JS handler and return the HTTP response.
+/// JS-level errors are converted to 500 responses; only transport errors propagate as `Err`.
+async fn run_js_handler_async(
+    js_source: &str,
+    request_json: &str,
+) -> Result<Response<Body>, wstd::http::Error> {
+    match run_js_handler_inner(js_source, request_json).await {
+        Ok(response) => Ok(response),
+        Err(msg) => {
+            log::error(&msg);
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from(msg))
+                .map_err(wstd::http::Error::new)
+        }
+    }
+}
+
+async fn run_js_handler_inner(
+    js_source: &str,
+    request_json: &str,
+) -> Result<Response<Body>, String> {
     let executor = Rc::new(WasiJobExecutor::default());
     let mut context = Context::builder()
         .job_executor(executor.clone())
@@ -252,9 +257,20 @@ async fn run_js_handler_async(js_source: &str, request_json: &str) -> Result<Str
         .await
         .map_err(|e| format!("Promise resolution failed: {e}"))?;
 
-    // Stringify the result
-    json_stringify(&result, *context.borrow_mut())
-        .map_err(|e| format!("Failed to stringify result: {e}"))
+    // Extract the Response object returned by the handler.
+    let obj = result
+        .as_object()
+        .ok_or("handler must return a Response object")?;
+
+    let js_response = obj.downcast_ref::<JsResponse>().ok_or(
+        "handler must return a Response (e.g. `new Response(...)` or `Response.json(...)`)",
+    )?;
+
+    let (mut parts, body) =
+        Response::new(Body::from(js_response.body().as_ref().clone())).into_parts();
+    parts.status = StatusCode::from_u16(js_response.status()).unwrap_or(StatusCode::OK);
+    parts.headers = js_response.headers().as_header_map().borrow().clone();
+    Ok(Response::from_parts(parts, body))
 }
 
 /// Register the `fetch` API backed by WASIp2 HTTP.
@@ -674,101 +690,4 @@ fn parse_duration(value: &JsValue, ctx: &mut Context) -> JsResult<Duration> {
     Err(JsNativeError::typ()
         .with_message("duration must have milliseconds, seconds, minutes, hours, or days")
         .into())
-}
-
-/// Convert JSON response from JS to HTTP Response.
-fn json_to_response(json: &str) -> Result<Response<Body>, wstd::http::Error> {
-    #[derive(serde::Deserialize)]
-    struct ResponseJson {
-        status: u16,
-        #[serde(default)]
-        headers: serde_json::Value,
-        #[serde(default)]
-        body: String,
-    }
-
-    /// Accept headers in two idiomatic JS forms:
-    /// - Plain object:  `{ "content-type": "text/plain" }` or `{ "set-cookie": ["a=1", "b=2"] }`
-    /// - Array of pairs: `[["content-type", "text/plain"], …]`
-    fn parse_headers(value: serde_json::Value) -> Result<Vec<(String, String)>, String> {
-        match value {
-            serde_json::Value::Null => Ok(vec![]),
-            serde_json::Value::Object(map) => {
-                let mut headers = Vec::with_capacity(map.len());
-                for (name, val) in map {
-                    match val {
-                        serde_json::Value::String(s) => headers.push((name, s)),
-                        serde_json::Value::Array(vals) => {
-                            for v in vals {
-                                let s = v
-                                    .as_str()
-                                    .ok_or_else(|| {
-                                        format!("header '{name}' array contains a non-string value")
-                                    })?
-                                    .to_string();
-                                headers.push((name.clone(), s));
-                            }
-                        }
-                        _ => {
-                            return Err(format!(
-                                "header '{name}' value must be a string or array of strings"
-                            ));
-                        }
-                    }
-                }
-                Ok(headers)
-            }
-            serde_json::Value::Array(arr) => {
-                // Legacy array-of-tuples: [["name", "value"], …]
-                arr.into_iter()
-                    .map(|item| match item {
-                        serde_json::Value::Array(pair) if pair.len() == 2 => {
-                            let name = pair[0]
-                                .as_str()
-                                .ok_or("header name must be a string")?
-                                .to_string();
-                            let value = pair[1]
-                                .as_str()
-                                .ok_or("header value must be a string")?
-                                .to_string();
-                            Ok((name, value))
-                        }
-                        _ => Err("each header entry must be a [name, value] pair"),
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())
-            }
-            _ => Err("headers must be an object or an array of [name, value] pairs".to_string()),
-        }
-    }
-
-    match serde_json::from_str::<ResponseJson>(json) {
-        Ok(r) => {
-            let headers = match parse_headers(r.headers) {
-                Ok(h) => h,
-                Err(e) => {
-                    log::error(&format!("Invalid headers format: {e}"));
-                    return Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Body::from(format!("Invalid headers format: {e}")))
-                        .map_err(wstd::http::Error::new);
-                }
-            };
-            let mut builder = Response::builder()
-                .status(StatusCode::from_u16(r.status).unwrap_or(StatusCode::OK));
-            for (k, v) in headers {
-                builder = builder.header(k, v);
-            }
-            builder
-                .body(Body::from(r.body))
-                .map_err(wstd::http::Error::new)
-        }
-        Err(err) => {
-            log::error(&format!("Failed to parse response JSON: {err}"));
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(format!("Invalid response format: {err}")))
-                .map_err(wstd::http::Error::new)
-        }
-    }
 }

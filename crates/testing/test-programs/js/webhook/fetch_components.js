@@ -5,10 +5,5 @@ export default async function handle(request) {
             "accept": "application/json"
         }
     });
-    const text = await resp.text();
-    return {
-        status: 200,
-        headers: [],
-        body: text
-    };
+    return resp;
 }
