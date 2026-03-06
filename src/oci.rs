@@ -88,6 +88,7 @@ pub(crate) async fn pull_to_cache_dir(
         // Create new file in the metadata directory.
         let metadata_file =
             digest_to_metadata_file(metadata_dir, &Digest::from_str(&metadata_digest)?);
+        debug!("Writing WASM digest {layer_content_digest} to metadata file {metadata_file:?}");
         tokio::fs::write(&metadata_file, layer_content_digest.to_string()).await?;
         (layer, layer_content_digest)
     };
