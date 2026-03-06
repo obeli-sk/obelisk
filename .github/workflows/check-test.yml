@@ -31,9 +31,9 @@ jobs:
       matrix:
         include:
           - report: junit-default.xml
-            additional: ""
+            script: "scripts/test.sh"
           - report: junit-js-local.xml
-            additional: "-F activity-js-local -F workflow-js-local"
+            script: "scripts/test-js-local.sh"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -56,22 +56,14 @@ jobs:
       - name: Build tests
         run: nix develop --command cargo nextest run --workspace --no-run
 
-      - name: Populate the codegen cache
-        run: nix develop --command scripts/test-phase1.sh
+      - name: Run tests
+        run: nix develop --command ${{ matrix.script }}
         env:
-          CI: true
-          ADDITIONAL_FEATURES: "${{ matrix.additional }}"
-
-      - name: test
-        run: nix develop --command scripts/test-phase2.sh
-        env:
-          RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
           CI: true
           TEST_POSTGRES_HOST: "localhost"
           TEST_POSTGRES_USER: "postgres"
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
-          ADDITIONAL_FEATURES: "${{ matrix.additional }}"
 
       - name: Rename test report
         run: mv target/nextest/ci-test/junit.xml target/nextest/ci-test/${{ matrix.report }}
