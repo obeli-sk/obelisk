@@ -29,7 +29,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tracing::{info, instrument, trace, warn};
+use tracing::{debug, info, instrument, trace, warn};
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::http_request_policy::HostPatternError;
 use wasm_workers::{
@@ -513,12 +513,14 @@ impl ComponentLocationToml {
     ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
         use utils::sha256sum::calculate_sha256_file;
 
+        debug!("Fetching {self:?}");
+        let stopwatch = std::time::Instant::now();
         // Happy path: if content_digest is known and file exists in cache, return immediately
         if let Some(expected_digest) = expected_digest
             && let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, expected_digest)
             && wasm_path.exists()
         {
-            trace!("Using cached file for known content digest");
+            debug!("Using cached file for known content digest");
             return Ok((expected_digest.clone(), wasm_path));
         }
 
@@ -557,6 +559,8 @@ impl ComponentLocationToml {
                 "content digest mismatch: expected {expected_digest}, got {actual_digest}"
             );
         }
+        let stopwatch = stopwatch.elapsed();
+        debug!("Fetching done in {stopwatch:?}");
         Ok((actual_digest, path))
     }
 }

@@ -2088,6 +2088,7 @@ async fn fetch_webhook_js_runtime(
 
 /// Fetch the webhook-js runtime WASM from OCI.
 #[cfg(not(feature = "webhook-js-local"))]
+#[instrument(skip_all)]
 async fn fetch_webhook_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
