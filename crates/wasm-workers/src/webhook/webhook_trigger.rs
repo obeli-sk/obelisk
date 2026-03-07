@@ -1943,6 +1943,7 @@ pub(crate) mod tests {
         use crate::activity::cancel_registry::CancelRegistry;
         use crate::engines::{EngineConfig, Engines};
         use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
+        use crate::std_output_stream::StdOutputConfig;
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, WebhookEndpointCompiled, WebhookEndpointConfig, WebhookServerError,
@@ -2041,8 +2042,8 @@ pub(crate) mod tests {
                                 InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
                             )
                             .unwrap(),
-                            forward_stdout: None,
-                            forward_stderr: None,
+                            forward_stdout: Some(StdOutputConfig::Stdout),
+                            forward_stderr: Some(StdOutputConfig::Stdout),
                             env_vars: Arc::from([]),
                             fuel: None,
                             backtrace_persist: false,
@@ -2312,8 +2313,8 @@ pub(crate) mod tests {
                             ),
                         )
                         .unwrap(),
-                        forward_stdout: None,
-                        forward_stderr: None,
+                        forward_stdout: Some(StdOutputConfig::Stdout),
+                        forward_stderr: Some(StdOutputConfig::Stdout),
                         env_vars: Arc::from([]),
                         fuel: None,
                         backtrace_persist: false,
@@ -2488,8 +2489,8 @@ pub(crate) mod tests {
                             ),
                         )
                         .unwrap(),
-                        forward_stdout: None,
-                        forward_stderr: None,
+                        forward_stdout: Some(StdOutputConfig::Stdout),
+                        forward_stderr: Some(StdOutputConfig::Stdout),
                         env_vars: Arc::from([]),
                         fuel: None,
                         backtrace_persist: false,
@@ -2551,6 +2552,7 @@ pub(crate) mod tests {
     pub(crate) mod js_runtime {
         use crate::RunnableComponent;
         use crate::engines::{EngineConfig, Engines};
+        use crate::std_output_stream::StdOutputConfig;
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, MethodAwareRouter, WebhookEndpointCompiled, WebhookEndpointConfig,
@@ -2593,8 +2595,8 @@ pub(crate) mod tests {
                             InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
                         )
                         .unwrap(),
-                        forward_stdout: None,
-                        forward_stderr: None,
+                        forward_stdout: Some(StdOutputConfig::Stdout),
+                        forward_stderr: Some(StdOutputConfig::Stdout),
                         env_vars: Arc::from([]),
                         fuel: None,
                         backtrace_persist: false,
@@ -2725,8 +2727,8 @@ pub(crate) mod tests {
                             InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
                         )
                         .unwrap(),
-                        forward_stdout: None,
-                        forward_stderr: None,
+                        forward_stdout: Some(StdOutputConfig::Stdout),
+                        forward_stderr: Some(StdOutputConfig::Stdout),
                         env_vars: Arc::from([]),
                         fuel: None,
                         backtrace_persist: false,
@@ -2997,8 +2999,8 @@ pub(crate) mod tests {
                                 InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
                             )
                             .unwrap(),
-                            forward_stdout: None,
-                            forward_stderr: None,
+                            forward_stdout: Some(StdOutputConfig::Stdout),
+                            forward_stderr: Some(StdOutputConfig::Stdout),
                             env_vars: Arc::from([]),
                             fuel: None,
                             backtrace_persist: false,
