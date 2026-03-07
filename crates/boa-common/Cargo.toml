@@ -16,6 +16,3 @@ futures-concurrency.workspace = true
 futures-lite.workspace = true
 http.workspace = true
 wstd.workspace = true
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(getrandom_backend, values("custom"))'] }

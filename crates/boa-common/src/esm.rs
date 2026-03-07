@@ -90,7 +90,9 @@ pub async fn get_default_export(
         .map_err(|err| EsmError::from_js_error(err, EsmError::LinkError))?;
 
     // 4. Evaluate the module
-    let eval_promise = module.evaluate(*context.borrow_mut());
+    let eval_promise = module
+        .evaluate(*context.borrow_mut())
+        .map_err(|err| EsmError::EvalError(err.to_string()))?;
 
     // Drive the evaluate promise to completion using async executor
     executor

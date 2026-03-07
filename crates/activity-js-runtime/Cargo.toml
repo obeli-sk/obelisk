@@ -11,7 +11,6 @@ version.workspace = true
 [dependencies]
 boa-common.workspace = true
 boa_engine.workspace = true
-boa_gc.workspace = true
 boa_runtime.workspace = true
 futures-concurrency.workspace = true
 futures-lite = "2.6.1"
@@ -27,6 +26,3 @@ wit-bindgen-rust.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(getrandom_backend, values("custom"))'] }

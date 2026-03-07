@@ -1,1 +1,1 @@
-oci://docker.io/getobelisk/activity-js-runtime:2026-03-03@sha256:8e236fdfd7994cd4756c0f52492e2c275b5f9f62ce9260069734b13ca45ea7bb
+oci://docker.io/getobelisk/activity-js-runtime:2026-03-07@sha256:d46bad06a9f782ce9721502f2a63209a4af5f5ca73f3565586fb198ec582f0cc

@@ -6,9 +6,5 @@ export default function handle(request) {
     // Call the add activity and wait for result
     const result = obelisk.call("testing:integration/activities.add", [a, b]);
 
-    return {
-        status: 200,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ result: result })
-    };
+    return Response.json({ result });
 }

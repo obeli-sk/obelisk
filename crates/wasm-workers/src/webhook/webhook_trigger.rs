@@ -2643,11 +2643,10 @@ pub(crate) mod tests {
             test_utils::set_up();
             let js_source = r#"
                 export default function handle(request) {
-                    return {
+                    return new Response("Hello from JS!", {
                         status: 200,
-                        headers: [["content-type", "text/plain"]],
-                        body: "Hello from JS!"
-                    };
+                        headers: { "content-type": "text/plain" },
+                    });
                 }
             "#;
             let (_server, server_addr, _termination_sender) =
@@ -2664,11 +2663,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let js_source = r#"
                 export default function handle(request) {
-                    return {
-                        status: 200,
-                        headers: [],
-                        body: request.method + " " + request.url
-                    };
+                    return new Response(request.method + " " + request.url);
                 }
             "#;
             let (_server, server_addr, _termination_sender) =
@@ -2689,11 +2684,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let js_source = r#"
                 export default function handle(request) {
-                    return {
-                        status: 201,
-                        headers: [],
-                        body: "created"
-                    };
+                    return new Response("created", { status: 201 });
                 }
             "#;
             let (_server, server_addr, _termination_sender) =
@@ -2807,11 +2798,7 @@ pub(crate) mod tests {
                 export default async function handle(request) {{
                     const resp = await fetch("{url}/hello");
                     const text = await resp.text();
-                    return {{
-                        status: 200,
-                        headers: [],
-                        body: text
-                    }};
+                    return new Response(text);
                 }}
                 "#
             );
@@ -2830,15 +2817,13 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn webhook_js_request_headers() {
             test_utils::set_up();
-            // JS handler that returns the x-custom headers as JSON
+            // JS handler that returns the x-custom header values as a JSON array.
+            // request.headers is a proper Headers object; multiple values for the
+            // same header name are combined with a comma by Headers.get().
             let js_source = r#"
                 export default function handle(request) {
-                    const customHeaders = request.headers["x-custom"] || [];
-                    return {
-                        status: 200,
-                        headers: [["content-type", "application/json"]],
-                        body: JSON.stringify(customHeaders)
-                    };
+                    const value = request.headers.get("x-custom");
+                    return Response.json(value !== null ? value.split(",") : []);
                 }
                 "#;
 
@@ -2863,20 +2848,58 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
+        async fn webhook_js_fetch_proxy_headers() {
+            use wiremock::{
+                Mock, MockServer, ResponseTemplate,
+                matchers::{header, method},
+            };
+            test_utils::set_up();
+            let mock_server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(header("x-forwarded", "proxy-value"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("proxied"))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let url = mock_server.uri();
+            let js_source = format!(
+                r#"
+                export default async function handle(request) {{
+                    console.log("Got headers", [...request.headers]);
+                    return fetch("{url}/", {{ headers: request.headers }});
+                }}
+                "#
+            );
+
+            let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_http(&js_source, &allowed).await;
+
+            let client = reqwest::Client::new();
+            let resp = client
+                .get(format!("http://{server_addr}/"))
+                .header("x-forwarded", "proxy-value")
+                .send()
+                .await
+                .unwrap();
+
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap();
+            assert_eq!((status, body.as_str()), (200, "proxied"));
+        }
+
+        #[tokio::test]
         async fn webhook_js_env_var() {
             test_utils::set_up();
             let js_source = r#"
                 export default function handle(request) {
                     const jsSource = obelisk.env("__OBELISK_JS_SOURCE__");
                     const missing = obelisk.env("MISSING_VAR");
-                    return {
-                        status: 200,
-                        headers: [],
-                        body: JSON.stringify({
-                            hasJsSource: jsSource !== undefined,
-                            missingIsUndefined: missing === undefined
-                        })
-                    };
+                    return Response.json({
+                        hasJsSource: jsSource !== undefined,
+                        missingIsUndefined: missing === undefined,
+                    });
                 }
             "#;
             let (_server, server_addr, _termination_sender) =
@@ -2897,16 +2920,12 @@ pub(crate) mod tests {
                 export default function handle(request) {
                     const id1 = obelisk.generateExecutionId();
                     const id2 = obelisk.generateExecutionId();
-                    return {
-                        status: 200,
-                        headers: [],
-                        body: JSON.stringify({
-                            id1,
-                            id2,
-                            different: id1 !== id2,
-                            hasPrefix: id1.startsWith("E_")
-                        })
-                    };
+                    return Response.json({
+                        id1,
+                        id2,
+                        different: id1 !== id2,
+                        hasPrefix: id1.startsWith("E_"),
+                    });
                 }
             "#;
             let (_server, server_addr, _termination_sender) =
@@ -3052,11 +3071,7 @@ pub(crate) mod tests {
                 export default function handle(request) {
                     // Call fibo(10) directly
                     const result = obelisk.call("testing:fibo/fibo.fibo", [10]);
-                    return {
-                        status: 200,
-                        headers: [],
-                        body: JSON.stringify({ result })
-                    };
+                    return Response.json({ result });
                 }
             "#;
 
@@ -3092,11 +3107,7 @@ pub(crate) mod tests {
                     // Schedule fibo(10) for later execution
                     const execId = obelisk.generateExecutionId();
                     obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10], { seconds: 60 });
-                    return {
-                        status: 200,
-                        headers: [],
-                        body: JSON.stringify({ execId })
-                    };
+                    return Response.json({ execId });
                 }
             "#;
 
@@ -3133,11 +3144,7 @@ pub(crate) mod tests {
                     const execId = obelisk.generateExecutionId();
                     obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10], { seconds: 60 });
                     const status = obelisk.getStatus(execId);
-                    return {
-                        status: 200,
-                        headers: [],
-                        body: JSON.stringify({ execId, executionStatus: status })
-                    };
+                    return Response.json({ execId, executionStatus: status });
                 }
             "#;
 
@@ -3164,11 +3171,7 @@ pub(crate) mod tests {
                     const execId = obelisk.generateExecutionId();
                     obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10]);
                     const result = obelisk.tryGet(execId);
-                    return {
-                        status: 200,
-                        headers: [],
-                        body: JSON.stringify({ result })
-                    };
+                    return Response.json({ result });
                 }
             "#;
 
@@ -3191,17 +3194,9 @@ pub(crate) mod tests {
                 export default function handle(request) {
                     try {
                         obelisk.call("testing:fibo/fibo.fibo", [50]);
-                        return {
-                            status: 200,
-                            headers: [],
-                            body: JSON.stringify({ result: "unexpected success" })
-                        };
+                        return Response.json({ result: "unexpected success" });
                     } catch (e) {
-                        return {
-                            status: 200,
-                            headers: [],
-                            body: JSON.stringify({ error: e.message })
-                        };
+                        return Response.json({ error: e.message });
                     }
                 }
             "#;
