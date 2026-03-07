@@ -65,16 +65,16 @@ jobs:
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
 
+      # Report results
       - name: Rename test report
+        if: always()
         run: mv target/nextest/ci-test/junit.xml target/nextest/ci-test/${{ matrix.report }}
-
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: ${{ matrix.report }}
           path: target/nextest/ci-test/${{ matrix.report }}
-
       - name: Report results in GitHub UI
         uses: dorny/test-reporter@3d76b34a4535afbd0600d347b09a6ee5deb3ed7f
         if: always()
