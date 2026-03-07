@@ -107,7 +107,6 @@ use boa_engine::{
 use boa_runtime::extensions::FetchExtension;
 use boa_runtime::fetch::response::JsResponse;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 use wstd::http::body::Body;
 use wstd::http::{Request, Response, StatusCode};
@@ -156,20 +155,17 @@ async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Erro
 }
 
 /// Convert HTTP request to JSON string for JS consumption.
+/// Headers are serialized as a flat array of `[name, value]` pairs so that
+/// duplicate header names are preserved and can be fed directly to `new Headers(...)`.
 fn request_to_json(request: &Request<Body>) -> String {
     let method = request.method().as_str();
     let uri = request.uri().to_string();
 
-    let headers: HashMap<String, Vec<String>> =
-        request
-            .headers()
-            .iter()
-            .fold(HashMap::new(), |mut acc, (k, v)| {
-                acc.entry(k.to_string())
-                    .or_default()
-                    .push(v.to_str().unwrap_or_default().to_string());
-                acc
-            });
+    let headers: Vec<(String, String)> = request
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or_default().to_string()))
+        .collect();
 
     // For now, we don't read the body to keep it simple
     // TODO: Add body reading support
@@ -178,7 +174,7 @@ fn request_to_json(request: &Request<Body>) -> String {
     serde_json::json!({
         "method": method,
         "url": uri,
-        "headers": headers,
+        "_headers": headers,
         "body": body,
     })
     .to_string()
@@ -237,10 +233,12 @@ async fn run_js_handler_inner(
         }
     };
 
-    // Parse the request JSON as a JS value
+    // Parse the request JSON and wrap the flat `_headers` array into a proper `Headers` object.
     let request_value = context
         .borrow_mut()
-        .eval(Source::from_bytes(&format!("({request_json})")))
+        .eval(Source::from_bytes(&format!(
+            "(()=>{{ const r={request_json}; r.headers=new Headers(r._headers); delete r._headers; return r; }})()"
+        )))
         .map_err(|e| format!("Failed to parse request: {e}"))?;
 
     // Call the default export function with the request (may return a Promise for async handlers)

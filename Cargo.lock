@@ -392,7 +392,7 @@ dependencies = [
 [[package]]
 name = "boa_ast"
 version = "1.0.0-dev"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 dependencies = [
  "bitflags",
  "boa_interner",
@@ -407,7 +407,7 @@ dependencies = [
 [[package]]
 name = "boa_engine"
 version = "1.0.0-dev"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 dependencies = [
  "aligned-vec",
  "arrayvec",
@@ -457,7 +457,7 @@ dependencies = [
 [[package]]
 name = "boa_gc"
 version = "1.0.0-dev"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 dependencies = [
  "arrayvec",
  "boa_macros",
@@ -470,7 +470,7 @@ dependencies = [
 [[package]]
 name = "boa_interner"
 version = "1.0.0-dev"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 dependencies = [
  "boa_gc",
  "boa_macros",
@@ -485,7 +485,7 @@ dependencies = [
 [[package]]
 name = "boa_macros"
 version = "1.0.0-dev"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 dependencies = [
  "cfg-if",
  "cow-utils",
@@ -498,7 +498,7 @@ dependencies = [
 [[package]]
 name = "boa_parser"
 version = "1.0.0-dev"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 dependencies = [
  "bitflags",
  "boa_ast",
@@ -515,7 +515,7 @@ dependencies = [
 [[package]]
 name = "boa_runtime"
 version = "1.0.0-dev"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 dependencies = [
  "boa_engine",
  "boa_gc",
@@ -531,7 +531,7 @@ dependencies = [
 [[package]]
 name = "boa_string"
 version = "1.0.0-dev"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 dependencies = [
  "fast-float2",
  "itoa",
@@ -4825,7 +4825,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "small_btree"
 version = "0.1.0"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 dependencies = [
  "arrayvec",
 ]
@@ -4977,7 +4977,7 @@ dependencies = [
 [[package]]
 name = "tag_ptr"
 version = "0.1.0"
-source = "git+https://github.com/tomasol/boa.git?rev=a616ec0d#a616ec0d9025522b7ea1545d67fd56fb41b4a51f"
+source = "git+https://github.com/tomasol/boa.git?rev=237e1f06#237e1f065c6625e42b26e56986e3dee869860207"
 
 [[package]]
 name = "tap"

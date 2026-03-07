@@ -2817,11 +2817,13 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn webhook_js_request_headers() {
             test_utils::set_up();
-            // JS handler that returns the x-custom headers as JSON
+            // JS handler that returns the x-custom header values as a JSON array.
+            // request.headers is a proper Headers object; multiple values for the
+            // same header name are combined with a comma by Headers.get().
             let js_source = r#"
                 export default function handle(request) {
-                    const customHeaders = request.headers["x-custom"] || [];
-                    return Response.json(customHeaders);
+                    const value = request.headers.get("x-custom");
+                    return Response.json(value !== null ? value.split(",") : []);
                 }
                 "#;
 
@@ -2843,6 +2845,48 @@ pub(crate) mod tests {
             assert_eq!(status, 200);
             let headers: Vec<String> = serde_json::from_str(&body).unwrap();
             assert_eq!(headers, vec!["value1", "value2"]);
+        }
+
+        #[tokio::test]
+        async fn webhook_js_fetch_proxy_headers() {
+            use wiremock::{
+                Mock, MockServer, ResponseTemplate,
+                matchers::{header, method},
+            };
+            test_utils::set_up();
+            let mock_server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(header("x-forwarded", "proxy-value"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("proxied"))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let url = mock_server.uri();
+            let js_source = format!(
+                r#"
+                export default async function handle(request) {{
+                    console.log("Got headers", [...request.headers]);
+                    return fetch("{url}/", {{ headers: request.headers }});
+                }}
+                "#
+            );
+
+            let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_http(&js_source, &allowed).await;
+
+            let client = reqwest::Client::new();
+            let resp = client
+                .get(format!("http://{server_addr}/"))
+                .header("x-forwarded", "proxy-value")
+                .send()
+                .await
+                .unwrap();
+
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap();
+            assert_eq!((status, body.as_str()), (200, "proxied"));
         }
 
         #[tokio::test]
