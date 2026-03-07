@@ -286,7 +286,7 @@ itertools = "0.14"
 jsonwebtoken = { version = "10", default-features = false }
 lazy_static = "1.5"
 libc = "0.2.182"
-oci-client = { version = "0.16.0", default-features = false }
+oci-client = { version = "0.16.1", default-features = false }
 oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
 prost = "0.14.3"
@@ -335,8 +335,8 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.18"
-toml = { version = "1.0.3", features = ["preserve_order"] }
-toml_edit = "0.25.3"
+toml = { version = "1.0.6", features = ["preserve_order"] }
+toml_edit = "0.25.4"
 tonic = { version = "0.14.5", default-features = false }
 tonic-prost = "0.14.5"
 tonic-prost-build = "0.14.5"
