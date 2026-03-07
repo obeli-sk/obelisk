@@ -11,7 +11,7 @@ version.workspace = true
 [dependencies]
 boa-common.workspace = true
 boa_engine.workspace = true
-boa_runtime.workspace = true
+boa_runtime = { workspace = true, features = ["url"] }
 futures-concurrency.workspace = true
 futures-lite = "2.6.1"
 http.workspace = true
