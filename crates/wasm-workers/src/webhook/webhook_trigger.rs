@@ -2894,8 +2894,8 @@ pub(crate) mod tests {
             test_utils::set_up();
             let js_source = r#"
                 export default function handle(request) {
-                    const jsSource = obelisk.env("__OBELISK_JS_SOURCE__");
-                    const missing = obelisk.env("MISSING_VAR");
+                    const jsSource = process.env["__OBELISK_JS_SOURCE__"];
+                    const missing = process.env["MISSING_VAR"];
                     return Response.json({
                         hasJsSource: jsSource !== undefined,
                         missingIsUndefined: missing === undefined,

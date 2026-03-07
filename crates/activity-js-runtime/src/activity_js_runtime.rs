@@ -3,7 +3,7 @@
 //! This runtime provides:
 //! - `console.*` → `obelisk:log` routing
 //! - `fetch()` → WASIp2 HTTP outgoing requests
-//! - `obelisk.env(key)` → environment variable access
+//! - `process.env["MY_VAR"]` → environment variable access
 //! - ES Module support with `export default`
 //!
 //! # JS API Reference
@@ -11,10 +11,7 @@
 //! ## Environment Variables
 //! ```js
 //! // Get environment variable value (returns string or undefined)
-//! const value = obelisk.env("MY_VAR");
-//! if (value !== undefined) {
-//!     console.log("MY_VAR =", value);
-//! }
+//! const value = process.env["MY_VAR"];
 //! ```
 //!
 //! ## Console Logging
@@ -33,7 +30,6 @@ use crate::generated::{
 use boa_common::console::{ObeliskLogger, setup_console};
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
 use boa_common::helpers::{extract_error_string, new_object};
-use boa_common::obelisk_env::register_env;
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{Context, JsResult, JsValue, Source, js_string, property::Attribute};
@@ -186,7 +182,6 @@ fn setup_fetch(context: &mut Context) -> JsResult<()> {
 /// Set up the global `obelisk` object with the env function.
 fn setup_obelisk(context: &mut Context) -> JsResult<()> {
     let obelisk = new_object(context);
-    register_env(&obelisk, context)?;
     context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
     Ok(())
 }
