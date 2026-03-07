@@ -122,19 +122,6 @@ impl OutOrErr {
     }
 }
 
-impl StdOutput {
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), std::io::Error> {
-        match self {
-            StdOutput::Stdout => OutOrErr::Stdout.write_all(buf),
-            StdOutput::Stderr => OutOrErr::Stderr.write_all(buf),
-            StdOutput::Db(db_output) => {
-                db_output.write(buf);
-                Ok(())
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct LogStream {
     output: StdOutput,
@@ -179,8 +166,7 @@ impl wasmtime_wasi::cli::IsTerminal for LogStream {
 
 impl wasmtime_wasi::p2::OutputStream for LogStream {
     fn write(&mut self, bytes: bytes::Bytes) -> StreamResult<()> {
-        self.output
-            .write_all(&bytes)
+        self.write_all(&bytes)
             .map_err(|e| StreamError::LastOperationFailed(e.into()))?;
         Ok(())
     }
