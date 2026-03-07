@@ -11,7 +11,7 @@ version.workspace = true
 [dependencies]
 boa-common.workspace = true
 boa_engine.workspace = true
-boa_runtime.workspace = true
+boa_runtime = { workspace = true, features = ["url", "process"] }
 serde_json.workspace = true
 serde.workspace = true
 wit-bindgen.workspace = true

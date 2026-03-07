@@ -74,10 +74,7 @@
 //! ## Environment Variables
 //! ```js
 //! // Get environment variable value (returns string or undefined)
-//! const value = obelisk.env("MY_VAR");
-//! if (value !== undefined) {
-//!     console.log("MY_VAR =", value);
-//! }
+//! const value = process.env["MY_VAR"];
 //! ```
 //!
 //! ## Console Logging
@@ -97,7 +94,6 @@ use crate::generated::obelisk::webhook::webhook_support::{
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
 use boa_common::helpers::{new_object, parse_ffqn};
-use boa_common::obelisk_env::register_env;
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{
@@ -552,9 +548,6 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         false,
         context,
     )?;
-
-    // obelisk.env(key) - get environment variable
-    register_env(&obelisk, context)?;
 
     // Set obelisk as global
     context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;

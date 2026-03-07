@@ -526,6 +526,7 @@ dependencies = [
  "http",
  "rustc-hash",
  "serde_json",
+ "url",
 ]
 
 [[package]]
