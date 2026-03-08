@@ -111,10 +111,10 @@ use crate::generated::obelisk::types::execution::{ExecutionId, Function, Respons
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    JoinNextTryError, SubmitConfig, execution_id_generate, get_result_json_bt, join_next_bt,
-    join_next_try_bt, join_set_close_bt, join_set_create_bt, join_set_create_named_bt,
-    random_string_bt, random_u64_bt, random_u64_inclusive_bt, schedule_json, sleep_bt, stub_json,
-    submit_delay_bt, submit_json_bt,
+    JoinNextTryError, SubmitConfig, call_json, execution_id_generate, get_result_json_bt,
+    join_next_bt, join_next_try_bt, join_set_close_bt, join_set_create_bt,
+    join_set_create_named_bt, random_string_bt, random_u64_bt, random_u64_inclusive_bt,
+    schedule_json, sleep_bt, stub_json, submit_delay_bt, submit_json_bt,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{extract_error_string, new_object, parse_ffqn};
@@ -543,44 +543,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             None
         };
 
-        // 1. Create a one-off join set
         let backtrace = capture_backtrace(ctx);
-        let js = join_set_create_bt(Some(&backtrace));
-
-        // 2. Submit
-        let exec_id = submit_json_bt(&js, &function, &params_json, config, Some(&backtrace))
-            .map_err(|e| JsNativeError::error().with_message(format!("submit failed: {:?}", e)))?;
-
-        // 3. Join next
-        let (_response_id, result) = join_next_bt(&js, Some(&backtrace)).map_err(|e| {
-            JsNativeError::error().with_message(format!("join_next failed: {:?}", e))
-        })?;
-
-        // 4. Close the join set
-        join_set_close_bt(js, Some(&backtrace));
-
-        // 5. Check result
-        if result.is_err() {
-            // Get the error details
-            match get_result_json_bt(&exec_id, Some(&backtrace)) {
-                Ok(Err(Some(err_str))) => {
-                    return Err(JsNativeError::error().with_message(err_str).into());
-                }
-                Ok(Err(None)) => {
-                    return Err(JsNativeError::error()
-                        .with_message("child execution failed")
-                        .into());
-                }
-                _ => {
-                    return Err(JsNativeError::error()
-                        .with_message("child execution failed")
-                        .into());
-                }
-            }
-        }
-
-        // 6. Get result
-        match get_result_json_bt(&exec_id, Some(&backtrace)) {
+        match call_json(&function, &params_json, config, Some(&backtrace)) {
             Ok(Ok(Some(json_str))) => {
                 let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
                 Ok(parsed)
@@ -591,7 +555,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                 .with_message("child execution failed")
                 .into()),
             Err(e) => Err(JsNativeError::error()
-                .with_message(format!("get_result failed: {:?}", e))
+                .with_message(format!("call failed: {:?}", e))
                 .into()),
         }
     });

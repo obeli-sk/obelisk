@@ -1908,7 +1908,7 @@ impl EventHistory {
         (self.join_set_count(kind) + 1).to_string()
     }
 
-    fn next_join_set_one_off_named(
+    pub(crate) fn next_join_set_one_off_named(
         &self,
         suffix: &str,
     ) -> Result<JoinSetId, InvalidNameError<JoinSetId>> {
