@@ -1393,6 +1393,42 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function schedule-json", err))?;
 
+        // call-json: func(function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "call-json",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (function, params, _config, wit_backtrace): (
+                    typesTypes::execution::Function,
+                    String,
+                    Option<typesTypes::execution::SubmitConfig>, // TODO: Implement SubmitConfig
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let ffqn = match FunctionFqn::try_from_tuple(
+                            &function.interface_name,
+                            &function.function_name,
+                        ) {
+                            Ok(ffqn) => ffqn,
+                            Err(err) => {
+                                use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
+                                return Ok((Err(ScheduleJsonError::FfqnParsingError(
+                                    err.to_string(),
+                                )),));
+                            }
+                        };
+                        let wit_result = host.call_json(ffqn, params, backtrace).await?;
+                        Ok((wit_result,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function call-json", err))?;
+
         // stub-json: func(execution-id: execution-id, result-json: string) -> result<_, stub-json-error>
         inst_workflow_support
             .func_wrap_async(
@@ -2520,6 +2556,84 @@ pub(crate) mod workflow_support {
                 Ok(()) => Ok(Ok(())),
                 Err(err) => Ok(Err(StubJsonError::from(err))),
             }
+        }
+
+        /// Call a function and block until the result is available.
+        /// Equivalent to join-set-create + submit-json + join-next + close, but with a single backtrace entry.
+        pub(crate) async fn call_json(
+            &mut self,
+            target_ffqn: FunctionFqn,
+            params_json: String,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> wasmtime::Result<
+            Result<
+                Result<Option<String>, Option<String>>,
+                latest::obelisk::workflow::workflow_support::ScheduleJsonError,
+            >,
+        > {
+            use crate::workflow::event_history::{OneOffChildExecutionRequest, SubmitChildIntent};
+            use concepts::storage::ChildExecutionRequestError;
+            use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
+
+            // Parse params, returning early on malformed input without touching state
+            let params_json_arr = match serde_json::from_str(&params_json) {
+                Ok(serde_json::Value::Array(params)) => params,
+                Ok(_other) => {
+                    return Ok(Err(ScheduleJsonError::TypeCheckError(
+                        "params must be a json array".to_string(),
+                    )));
+                }
+                Err(err) => {
+                    return Ok(Err(ScheduleJsonError::TypeCheckError(format!(
+                        "cannot parse params as JSON array: {err}"
+                    ))));
+                }
+            };
+
+            // Look up function and type-check params (same logic as submit_json)
+            let intent = self.get_submit_child_intent(&target_ffqn, params_json_arr);
+            let (fn_component_id, params) = match intent {
+                SubmitChildIntent::Ok {
+                    fn_component_id,
+                    params,
+                } => (fn_component_id, params),
+                SubmitChildIntent::Err(ChildExecutionRequestError::FunctionNotFound) => {
+                    return Ok(Err(ScheduleJsonError::FunctionNotFound));
+                }
+                SubmitChildIntent::Err(ChildExecutionRequestError::TypeCheckError(msg)) => {
+                    return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
+                }
+            };
+
+            // Pre-compute the child execution ID using the same logic as OneOffChildExecutionRequest::apply,
+            // so we can look up the result afterwards.
+            let join_set_id = self
+                .event_history
+                .next_join_set_one_off_named(&target_ffqn.function_name)
+                .expect("function names only contain alphanumeric and dash, no illegal chars");
+            let child_execution_id = self
+                .db_connection
+                .execution_id
+                .next_level(&join_set_id);
+
+            let called_at = self.clock_fn.now();
+            OneOffChildExecutionRequest::apply(
+                target_ffqn,
+                fn_component_id,
+                params,
+                wasm_backtrace,
+                &mut self.event_history,
+                &mut self.db_connection,
+                called_at,
+            )
+            .await
+            .map_err(wasmtime::Error::new)?;
+
+            // The child result is now in processed responses; convert to JSON.
+            let json_result = self
+                .get_result_json(&child_execution_id)
+                .expect("result must be in processed responses after OneOffChildExecutionRequest");
+            Ok(Ok(json_result))
         }
 
         /// Obtain child execution result as JSON after it has been awaited.
