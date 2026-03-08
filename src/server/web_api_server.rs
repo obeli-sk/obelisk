@@ -100,7 +100,8 @@ pub(crate) struct WebApiState {
         deployment::get_current_deployment_id,
     ),
     components(schemas(
-        PaginationDirection,
+        PaginationDirectionSortedFromLatest,
+        PaginationDirectionSortedFromOldest,
         ExecutionWithStateSer,
         ExecutionEventsResponse,
         ExecutionResponsesResponse,
@@ -284,16 +285,26 @@ struct ExecutionsListParams {
     including_cursor: bool,
     /// Pagination direction
     #[serde(default)]
-    direction: PaginationDirection,
+    direction: PaginationDirectionSortedFromLatest,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Default, ToSchema)]
 #[serde(rename_all = "snake_case")]
-enum PaginationDirection {
+enum PaginationDirectionSortedFromLatest {
+    /// Fetch items older than cursor
+    #[default] // Default = last few items from newest
+    Older,
+    /// Fetch items newer than cursor
+    Newer,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum PaginationDirectionSortedFromOldest {
     /// Fetch items older than cursor
     Older,
     /// Fetch items newer than cursor
-    #[default] // everything is newer than 0
+    #[default] // Default = start from 0
     Newer,
 }
 
@@ -383,12 +394,12 @@ async fn executions_list(
         match cursor {
             Some(ExecutionListCursorDeser::CreatedBy(cursor)) => {
                 ExecutionListPagination::CreatedBy(match direction {
-                    PaginationDirection::Older => Pagination::OlderThan {
+                    PaginationDirectionSortedFromLatest::Older => Pagination::OlderThan {
                         length,
                         cursor: Some(cursor),
                         including_cursor,
                     },
-                    PaginationDirection::Newer => Pagination::NewerThan {
+                    PaginationDirectionSortedFromLatest::Newer => Pagination::NewerThan {
                         length,
                         cursor: Some(cursor),
                         including_cursor,
@@ -397,12 +408,12 @@ async fn executions_list(
             }
             Some(ExecutionListCursorDeser::ExecutionId(cursor)) => {
                 ExecutionListPagination::ExecutionId(match direction {
-                    PaginationDirection::Older => Pagination::OlderThan {
+                    PaginationDirectionSortedFromLatest::Older => Pagination::OlderThan {
                         length,
                         cursor: Some(cursor),
                         including_cursor,
                     },
-                    PaginationDirection::Newer => Pagination::NewerThan {
+                    PaginationDirectionSortedFromLatest::Newer => Pagination::NewerThan {
                         length,
                         cursor: Some(cursor),
                         including_cursor,
@@ -412,13 +423,13 @@ async fn executions_list(
             None => ExecutionListPagination::CreatedBy(
                 // CreatedBy because it is the current default
                 match direction {
-                    PaginationDirection::Older => Pagination::OlderThan {
+                    PaginationDirectionSortedFromLatest::Older => Pagination::OlderThan {
                         length,
                         cursor: None,
                         including_cursor, // does not matter
                     },
 
-                    PaginationDirection::Newer => Pagination::NewerThan {
+                    PaginationDirectionSortedFromLatest::Newer => Pagination::NewerThan {
                         length,
                         cursor: None,
                         including_cursor, // does not matter
@@ -601,7 +612,7 @@ struct ExecutionEventsParams {
     including_cursor: bool,
     /// Pagination direction
     #[serde(default)]
-    direction: PaginationDirection,
+    direction: PaginationDirectionSortedFromOldest,
     /// Include backtrace IDs in events
     #[serde(default)]
     include_backtrace_id: bool,
@@ -645,12 +656,12 @@ async fn execution_events(
         .map_err(|e| ErrorWrapper(e, accept))?;
     let length = params.length.unwrap_or(DEFAULT_LENGTH);
     let pagination = match params.direction {
-        PaginationDirection::Older => Pagination::OlderThan {
+        PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
             length,
             cursor: params.version.unwrap_or(VersionType::MAX),
             including_cursor: params.including_cursor,
         },
-        PaginationDirection::Newer => Pagination::NewerThan {
+        PaginationDirectionSortedFromOldest::Newer => Pagination::NewerThan {
             length,
             cursor: params.version.unwrap_or(0),
             including_cursor: params.including_cursor,
@@ -719,7 +730,7 @@ mod logs {
         including_cursor: bool,
         /// Pagination direction
         #[serde(default)]
-        direction: PaginationDirection,
+        direction: PaginationDirectionSortedFromOldest,
     }
 
     fn default_true() -> bool {
@@ -916,12 +927,12 @@ mod logs {
         let length = MAX_LENGTH_INCLUSIVE.min(params.length.unwrap_or(DEFAULT_LENGTH));
 
         let pagination = match params.direction {
-            PaginationDirection::Older => Pagination::OlderThan {
+            PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
                 length,
                 cursor: params.cursor.unwrap_or(0),
                 including_cursor: params.including_cursor,
             },
-            PaginationDirection::Newer => Pagination::NewerThan {
+            PaginationDirectionSortedFromOldest::Newer => Pagination::NewerThan {
                 length,
                 cursor: params.cursor.unwrap_or(0),
                 including_cursor: params.including_cursor,
@@ -998,7 +1009,7 @@ struct ExecutionResponsesParams {
     including_cursor: bool,
     /// Pagination direction
     #[serde(default)]
-    direction: PaginationDirection,
+    direction: PaginationDirectionSortedFromOldest,
 }
 
 /// Response containing execution responses
@@ -1039,12 +1050,12 @@ async fn execution_responses(
         .map_err(|e| ErrorWrapper(e, accept))?;
     let length = params.length.unwrap_or(DEFAULT_LENGTH);
     let pagination = match params.direction {
-        PaginationDirection::Older => Pagination::OlderThan {
+        PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
             length,
             cursor: params.cursor.unwrap_or(u32::MAX),
             including_cursor: params.including_cursor,
         },
-        PaginationDirection::Newer => Pagination::NewerThan {
+        PaginationDirectionSortedFromOldest::Newer => Pagination::NewerThan {
             length,
             cursor: params.cursor.unwrap_or(0),
             including_cursor: params.including_cursor,
