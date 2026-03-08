@@ -2611,10 +2611,7 @@ pub(crate) mod workflow_support {
                 .event_history
                 .next_join_set_one_off_named(&target_ffqn.function_name)
                 .expect("function names only contain alphanumeric and dash, no illegal chars");
-            let child_execution_id = self
-                .db_connection
-                .execution_id
-                .next_level(&join_set_id);
+            let child_execution_id = self.db_connection.execution_id.next_level(&join_set_id);
 
             let called_at = self.clock_fn.now();
             OneOffChildExecutionRequest::apply(
