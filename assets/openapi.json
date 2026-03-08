@@ -362,7 +362,7 @@
             "description": "Pagination direction",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/PaginationDirection"
+              "$ref": "#/components/schemas/PaginationDirectionSortedFromLatest"
             }
           }
         ],
@@ -602,7 +602,7 @@
             "description": "Pagination direction",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/PaginationDirection"
+              "$ref": "#/components/schemas/PaginationDirectionSortedFromOldest"
             }
           },
           {
@@ -725,7 +725,7 @@
             "description": "Pagination direction",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/PaginationDirection"
+              "$ref": "#/components/schemas/PaginationDirectionSortedFromOldest"
             }
           }
         ],
@@ -856,7 +856,7 @@
             "description": "Pagination direction",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/PaginationDirection"
+              "$ref": "#/components/schemas/PaginationDirectionSortedFromOldest"
             }
           }
         ],
@@ -1496,7 +1496,14 @@
           "stderr"
         ]
       },
-      "PaginationDirection": {
+      "PaginationDirectionSortedFromLatest": {
+        "type": "string",
+        "enum": [
+          "older",
+          "newer"
+        ]
+      },
+      "PaginationDirectionSortedFromOldest": {
         "type": "string",
         "enum": [
           "older",
