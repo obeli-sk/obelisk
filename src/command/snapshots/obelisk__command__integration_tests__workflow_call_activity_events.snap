@@ -33,7 +33,7 @@ expression: events
       "event": {
         "history_event": {
           "event": {
-            "join_set_id": "g:1",
+            "join_set_id": "o:1-add",
             "type": "join_set_create"
           }
         }
@@ -45,7 +45,7 @@ expression: events
       "event": {
         "history_event": {
           "event": {
-            "join_set_id": "g:1",
+            "join_set_id": "o:1-add",
             "request": {
               "child_execution_id": "E_<REDACTED>",
               "params": [
@@ -70,8 +70,8 @@ expression: events
         "history_event": {
           "event": {
             "closing": false,
-            "join_set_id": "g:1",
-            "requested_ffqn": null,
+            "join_set_id": "o:1-add",
+            "requested_ffqn": "testing:integration/activities.add",
             "run_expires_at": "<TIMESTAMP>",
             "type": "join_next"
           }
