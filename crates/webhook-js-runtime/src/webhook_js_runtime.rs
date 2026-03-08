@@ -287,7 +287,9 @@ fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
             let loc = frame.position();
             let module = match &loc.path {
                 SourcePath::Path(p) => p.display().to_string(),
-                _ => js_file_name.clone().unwrap_or_else(|| "unknown".to_string()),
+                _ => js_file_name
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
             };
             let file = match &loc.path {
                 SourcePath::Path(p) => Some(p.display().to_string()),
