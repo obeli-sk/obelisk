@@ -70,6 +70,7 @@ pub(crate) mod types {
                 world bindings {
                     import obelisk:types/time@4.2.0;
                     import obelisk:types/execution@4.2.0;
+                    import obelisk:types/backtrace@4.2.0;
                     import obelisk:types/join-set@4.2.0;
                     import obelisk:webhook/webhook-support@4.2.0;
                 }",
@@ -499,6 +500,7 @@ pub struct WebhookEndpointConfig {
 #[derive(Debug, Clone)]
 pub struct WebhookEndpointJsConfig {
     pub source: String,
+    pub file_name: String,
 }
 
 struct WebhookEndpointCtx<S: Sleep> {
@@ -562,6 +564,31 @@ impl<S: Sleep> ExecutionHost for WebhookEndpointCtx<S> {
     }
 }
 
+fn wit_backtrace_to_storage(
+    bt: types::obelisk::types::backtrace::WasmBacktrace,
+) -> concepts::storage::WasmBacktrace {
+    concepts::storage::WasmBacktrace {
+        frames: bt
+            .frames
+            .into_iter()
+            .map(|f| concepts::storage::FrameInfo {
+                module: f.module,
+                func_name: f.func_name,
+                symbols: f
+                    .symbols
+                    .into_iter()
+                    .map(|s| concepts::storage::FrameSymbol {
+                        func_name: s.func_name,
+                        file: s.file,
+                        line: s.line,
+                        col: s.col,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
     async fn execution_id_generate(
         &mut self,
@@ -609,6 +636,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
         function: types::obelisk::webhook::webhook_support::Function,
         params: String,
         _config: Option<types::obelisk::webhook::webhook_support::SubmitConfig>,
+        backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<(), ScheduleJsonErrorTrappable> {
         use types::obelisk::types::execution::ScheduleJsonError;
 
@@ -724,6 +752,17 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
             }
         };
 
+        let backtrace_infos: Vec<BacktraceInfo> = backtrace
+            .map(|bt| BacktraceInfo {
+                execution_id: ExecutionId::TopLevel(self.execution_id),
+                component_id: self.component_id.clone(),
+                version_min_including: version.clone(),
+                version_max_excluding: Version(version.0 + 1),
+                wasm_backtrace: wit_backtrace_to_storage(bt),
+            })
+            .into_iter()
+            .collect();
+
         match db_connection
             .append_batch_create_new_execution(
                 created_at,
@@ -731,7 +770,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
                 ExecutionId::TopLevel(self.execution_id),
                 version.clone(),
                 vec![create_req],
-                vec![],
+                backtrace_infos,
             )
             .await
         {
@@ -748,6 +787,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
         function: types::obelisk::webhook::webhook_support::Function,
         params: String,
         _config: Option<types::obelisk::webhook::webhook_support::SubmitConfig>,
+        backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
         use types::obelisk::types::execution::ScheduleJsonError;
 
@@ -877,6 +917,17 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
 
         let appended = vec![req_join_set_created, req_child_exec, req_join_next];
 
+        let backtrace_infos: Vec<BacktraceInfo> = backtrace
+            .map(|bt| BacktraceInfo {
+                execution_id: ExecutionId::TopLevel(self.execution_id),
+                component_id: self.component_id.clone(),
+                version_min_including: version.clone(),
+                version_max_excluding: Version(version.0 + 3),
+                wasm_backtrace: wit_backtrace_to_storage(bt),
+            })
+            .into_iter()
+            .collect();
+
         match db_connection
             .append_batch_create_new_execution(
                 created_at,
@@ -884,7 +935,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
                 ExecutionId::TopLevel(self.execution_id),
                 version,
                 vec![req_create_child],
-                vec![],
+                backtrace_infos,
             )
             .await
         {
@@ -916,6 +967,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
     async fn get_status(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+        _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<types::obelisk::webhook::webhook_support::ExecutionStatus, GetStatusErrorTrappable>
     {
         use types::obelisk::webhook::webhook_support::{
@@ -982,6 +1034,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
     async fn get(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+        _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, GetErrorTrappable> {
         use types::obelisk::webhook::webhook_support::GetError;
 
@@ -1030,6 +1083,7 @@ impl<S: Sleep + Send> WebhookSupportHost for WebhookEndpointCtx<S> {
     async fn try_get(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+        _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, TryGetErrorTrappable> {
         use types::obelisk::webhook::webhook_support::TryGetError;
 
@@ -1480,6 +1534,7 @@ impl<S: Sleep> WebhookEndpointCtx<S> {
         }
         if let Some(js_config) = &config.js_config {
             wasi_ctx.env("__OBELISK_JS_SOURCE__", &js_config.source);
+            wasi_ctx.env("__OBELISK_JS_FILE_NAME__", &js_config.file_name);
         }
 
         // Generate fresh placeholders for this execution run
@@ -2605,6 +2660,7 @@ pub(crate) mod tests {
                         allowed_hosts: Arc::from([]),
                         js_config: Some(WebhookEndpointJsConfig {
                             source: source.to_string(),
+                            file_name: String::new(),
                         }),
                     },
                     runnable_component,
@@ -2741,6 +2797,7 @@ pub(crate) mod tests {
                         }]),
                         js_config: Some(WebhookEndpointJsConfig {
                             source: source.to_string(),
+                            file_name: String::new(),
                         }),
                     },
                     runnable_component,
@@ -3009,6 +3066,7 @@ pub(crate) mod tests {
                             allowed_hosts: Arc::from([]),
                             js_config: Some(WebhookEndpointJsConfig {
                                 source: js_source.to_string(),
+                                file_name: String::new(),
                             }),
                         },
                         runnable_component,

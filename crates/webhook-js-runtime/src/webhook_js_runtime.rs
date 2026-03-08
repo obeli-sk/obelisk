@@ -86,6 +86,7 @@
 //! ```
 
 use crate::generated::obelisk::log::log;
+use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
 use crate::generated::obelisk::types::execution::{ExecutionId, Function, SubmitConfig};
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::webhook::webhook_support::{
@@ -272,6 +273,42 @@ fn setup_fetch(context: &mut Context) -> JsResult<()> {
     boa_runtime::register(FetchExtension(WasiFetcher), None, context)
 }
 
+/// Capture the current Boa JS stack trace as a `WasmBacktrace`.
+///
+/// The `module` and `file` fields are populated from the `__OBELISK_JS_FILE_NAME__`
+/// environment variable, since JS source is loaded from memory and Boa does not
+/// track a file path for in-memory sources.
+fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
+    use boa_engine::vm::SourcePath;
+    let js_file_name = std::env::var("__OBELISK_JS_FILE_NAME__").ok();
+    let frames = ctx
+        .stack_trace()
+        .map(|frame| {
+            let loc = frame.position();
+            let module = match &loc.path {
+                SourcePath::Path(p) => p.display().to_string(),
+                _ => js_file_name.clone().unwrap_or_else(|| "unknown".to_string()),
+            };
+            let file = match &loc.path {
+                SourcePath::Path(p) => Some(p.display().to_string()),
+                _ => js_file_name.clone(),
+            };
+            let symbol = FrameSymbol {
+                func_name: None,
+                file,
+                line: loc.position.map(|p| p.line_number()),
+                col: loc.position.map(|p| p.column_number()),
+            };
+            FrameInfo {
+                module,
+                func_name: loc.function_name.to_std_string_escaped(),
+                symbols: vec![symbol],
+            }
+        })
+        .collect();
+    WasmBacktrace { frames }
+}
+
 /// Set up the global `obelisk` object with webhook support functions.
 fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     let obelisk = new_object(context);
@@ -324,7 +361,15 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             None
         };
 
-        match webhook_support::schedule_json(&exec_id, schedule, &function, &params_json, config) {
+        let backtrace = capture_backtrace(ctx);
+        match webhook_support::schedule_json(
+            &exec_id,
+            schedule,
+            &function,
+            &params_json,
+            config,
+            Some(&backtrace),
+        ) {
             Ok(()) => Ok(JsValue::undefined()),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("schedule failed: {:?}", e))
@@ -348,7 +393,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
         let exec_id = ExecutionId { id: exec_id_str };
 
-        match webhook_support::get_status(&exec_id) {
+        let backtrace = capture_backtrace(ctx);
+        match webhook_support::get_status(&exec_id, Some(&backtrace)) {
             Ok(status) => {
                 let result_obj = new_object(ctx);
                 match status {
@@ -422,7 +468,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
         let exec_id = ExecutionId { id: exec_id_str };
 
-        match webhook_support::get(&exec_id) {
+        let backtrace = capture_backtrace(ctx);
+        match webhook_support::get(&exec_id, Some(&backtrace)) {
             Ok(inner_result) => {
                 let result_obj = new_object(ctx);
                 match inner_result {
@@ -465,7 +512,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
         let exec_id = ExecutionId { id: exec_id_str };
 
-        match webhook_support::try_get(&exec_id) {
+        let backtrace = capture_backtrace(ctx);
+        match webhook_support::try_get(&exec_id, Some(&backtrace)) {
             Ok(inner_result) => {
                 let result_obj = new_object(ctx);
                 match inner_result {
@@ -505,6 +553,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
     // obelisk.call(ffqn, params, config?) - call child execution and wait for result
     let call_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+        let backtrace = capture_backtrace(ctx);
+
         let ffqn = args
             .get_or_undefined(0)
             .as_string()
@@ -527,7 +577,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         };
 
         // Call child execution and wait for result
-        match webhook_support::call_json(&function, &params_json, config) {
+        match webhook_support::call_json(&function, &params_json, config, Some(&backtrace)) {
             Ok(Ok(Some(json_str))) => {
                 let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
                 Ok(parsed)
