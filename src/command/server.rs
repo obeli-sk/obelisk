@@ -1824,6 +1824,7 @@ async fn compile_and_verify(
                                 allowed_hosts: webhook_js.allowed_hosts,
                                 js_config: Some(WebhookEndpointJsConfig {
                                     source: webhook_js.js_source,
+                                    file_name: webhook_js.js_file_name.clone(),
                                 }),
                             };
 
@@ -1835,7 +1836,10 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook_js.routes,
-                                backtrace_frame_files: HashMap::new(),
+                                backtrace_frame_files: HashMap::from([(
+                                    webhook_js.js_file_name,
+                                    webhook_js.js_file_path,
+                                )]),
                             })
                         })
                     })

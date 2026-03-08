@@ -133,6 +133,28 @@ package obelisk:types@4.2.0 {
       type-check-error(string),
     }
   }
+  @since(version = 4.2.0)
+  interface backtrace {
+    @since(version = 4.2.0)
+    record frame-symbol {
+      func-name: option<string>,
+      file: option<string>,
+      line: option<u32>,
+      col: option<u32>,
+    }
+
+    @since(version = 4.2.0)
+    record frame-info {
+      module: string,
+      func-name: string,
+      symbols: list<frame-symbol>,
+    }
+
+    @since(version = 4.2.0)
+    record wasm-backtrace {
+      frames: list<frame-info>,
+    }
+  }
   @since(version = 4.0.0)
   interface join-set {
     use time.{schedule-at};

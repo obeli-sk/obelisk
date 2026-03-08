@@ -4,7 +4,13 @@ export default function handle(request) {
     const b = Number(process.env['b']);
 
     // Call the add activity and wait for result
-    const result = obelisk.call("testing:integration/activities.add", [a, b]);
+    const result = call(a, b);
 
     return Response.json({ result });
+}
+
+function call(a, b) {
+    return function (a, b) {
+        return obelisk.call("testing:integration/activities.add", [a, b]);
+    }(a, b)
 }

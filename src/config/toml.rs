@@ -622,7 +622,19 @@ impl FromStr for JsLocationToml {
 }
 
 impl JsLocationToml {
-    /// Fetch the JS source file and return its content as a string.
+    /// Returns just the file name (without directory) of the JS source location.
+    pub(crate) fn file_name(&self) -> String {
+        match self {
+            JsLocationToml::Path(path) => std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path)
+                .to_string(),
+            JsLocationToml::GitHub(github_ref) => github_ref.asset_name.clone(),
+        }
+    }
+
+    /// Fetch the JS source file and return its content as a string together with the resolved path.
     ///
     /// For local files, reads directly from the filesystem.
     /// For GitHub releases, downloads to `wasm_cache_dir` (reusing the existing cache),
@@ -632,7 +644,7 @@ impl JsLocationToml {
         wasm_cache_dir: &Path,
         path_prefixes: &PathPrefixes,
         expected_digest: Option<&ContentDigest>,
-    ) -> Result<String, anyhow::Error> {
+    ) -> Result<(String, PathBuf), anyhow::Error> {
         let file_path = match self {
             JsLocationToml::Path(path) => path_prefixes.replace_file_prefix_verify_exists(path)?,
             JsLocationToml::GitHub(github_ref) => {
@@ -641,9 +653,11 @@ impl JsLocationToml {
                     let cached = content_digest_to_wasm_file(wasm_cache_dir, expected);
                     if cached.exists() {
                         trace!("Using cached JS source for known content digest");
-                        return tokio::fs::read_to_string(&cached).await.with_context(|| {
-                            format!("cannot read cached JS source file `{cached:?}`")
-                        });
+                        let content =
+                            tokio::fs::read_to_string(&cached).await.with_context(|| {
+                                format!("cannot read cached JS source file `{cached:?}`")
+                            })?;
+                        return Ok((content, cached));
                     }
                 }
                 let (actual_digest, cached_path) =
@@ -667,7 +681,7 @@ impl JsLocationToml {
         let content = tokio::fs::read_to_string(&file_path)
             .await
             .with_context(|| format!("cannot read JS source file `{file_path:?}`"))?;
-        Ok(content)
+        Ok((content, file_path))
     }
 }
 
@@ -1183,7 +1197,7 @@ impl ActivityJsComponentConfigToml {
                 .collect::<Result<Vec<_>, anyhow::Error>>()?,
         };
 
-        let js_source = self
+        let (js_source, _) = self
             .location
             .read_to_string(
                 &wasm_cache_dir,
@@ -1330,7 +1344,7 @@ impl WorkflowJsComponentConfigToml {
                 .collect::<Result<Vec<_>, anyhow::Error>>()?,
         };
 
-        let js_source = self
+        let (js_source, _) = self
             .location
             .read_to_string(
                 &wasm_cache_dir,
@@ -2101,6 +2115,8 @@ pub(crate) mod webhook {
         pub(crate) wasm_path: Arc<Path>,
         pub(crate) component_id: ComponentId,
         pub(crate) js_source: String,
+        pub(crate) js_file_name: String,
+        pub(crate) js_file_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,
         pub(crate) forward_stdout: Option<StdOutputConfig>,
         pub(crate) forward_stderr: Option<StdOutputConfig>,
@@ -2118,7 +2134,7 @@ pub(crate) mod webhook {
             ignore_missing_env_vars: bool,
         ) -> Result<(ConfigName /* name */, WebhookJsConfigVerified), anyhow::Error> {
             // Read JS source
-            let js_source = self
+            let (js_source, js_file_path) = self
                 .location
                 .read_to_string(
                     &wasm_cache_dir,
@@ -2148,6 +2164,8 @@ pub(crate) mod webhook {
                 WebhookJsConfigVerified {
                     wasm_path,
                     component_id,
+                    js_file_name: self.location.file_name(),
+                    js_file_path,
                     js_source,
                     routes: self
                         .routes
