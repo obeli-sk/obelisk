@@ -7,6 +7,7 @@ package root:component;
 world root {
   import obelisk:types/time@4.2.0;
   import obelisk:types/execution@4.2.0;
+  import obelisk:types/backtrace@4.2.0;
   import obelisk:types/join-set@4.2.0;
   import obelisk:workflow/workflow-support@4.2.0;
   import testing:fibo/fibo;
@@ -202,6 +203,7 @@ package obelisk:workflow@4.2.0 {
     use obelisk:types/join-set@4.2.0.{join-set};
     use obelisk:types/execution@4.2.0.{function, submit-config, execution-id};
     use obelisk:types/time@4.2.0.{schedule-at};
+    use obelisk:types/backtrace@4.2.0.{wasm-backtrace};
     use obelisk:types/execution@4.2.0.{schedule-json-error, response-id};
 
     variant submit-json-error {
@@ -225,11 +227,11 @@ package obelisk:workflow@4.2.0 {
 
     get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
 
-    execution-id-generate: func() -> execution-id;
-
-    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>) -> result<_, schedule-json-error>;
-
     join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
+
+    execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id;
+
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
   }
 }
 

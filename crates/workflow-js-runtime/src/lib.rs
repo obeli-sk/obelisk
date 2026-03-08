@@ -32,7 +32,8 @@ impl Guest for Component {
     fn run(
         js_code: String,
         params_json: Vec<String>,
+        js_file_name: Option<String>,
     ) -> Result<Result<String, String>, JsRuntimeError> {
-        workflow_js_runtime::execute(&js_code, &params_json)
+        workflow_js_runtime::execute(&js_code, &params_json, js_file_name)
     }
 }

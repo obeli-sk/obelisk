@@ -24,7 +24,7 @@ max_retries = 0
 
 [[workflow]]
 name = "test_programs_fibo_workflow"
-location = "oci://docker.io/getobelisk/test_programs_fibo_workflow:2026-03-03@sha256:1170128a48825c7d5490174ec19ba4bd89b775fcccc7ff0020d595bcb433c5be"
+location = "oci://docker.io/getobelisk/test_programs_fibo_workflow:2026-03-08@sha256:d2f53ebdc0a9939cb9b086e825aef1f10b8cfab98442f38b8e6900f741a2133a"
 exec.lock_expiry.seconds = 2
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 

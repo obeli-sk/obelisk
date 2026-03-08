@@ -595,7 +595,7 @@ impl GetFnCall {
         })
     }
 
-    // Never interrupts the execution
+    // Stateless, never interrupts the execution
     fn call_imported_fn(self, ctx: &mut WorkflowCtx) -> wasmtime::component::Val {
         let GetFnCall {
             target_ffqn,
@@ -1099,7 +1099,32 @@ impl WorkflowCtx {
         Ok(())
     }
 
-    /// Register workflow-support functions for 4.1.0
+    fn wit_wasm_backtrace_to_storage(
+        bt: typesTypes::backtrace::WasmBacktrace,
+    ) -> storage::WasmBacktrace {
+        storage::WasmBacktrace {
+            frames: bt
+                .frames
+                .into_iter()
+                .map(|f| storage::FrameInfo {
+                    module: f.module,
+                    func_name: f.func_name,
+                    symbols: f
+                        .symbols
+                        .into_iter()
+                        .map(|s| storage::FrameSymbol {
+                            func_name: s.func_name,
+                            file: s.file,
+                            line: s.line,
+                            col: s.col,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Register workflow-support functions for 4.2.0
     fn add_to_linker_workflow_support(
         linker: &mut Linker<Self>,
         ifc_fqn: &'static str,
@@ -1294,11 +1319,12 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function get-result-json", err))?;
 
-        // execution-id-generate: func() -> execution-id
+        // execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id
         inst_workflow_support
             .func_wrap_async(
                 "execution-id-generate",
-                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, (): ()| {
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (_backtrace,): (Option<typesTypes::backtrace::WasmBacktrace>,)| {
                     Box::new(async move {
                         let (host, _wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
@@ -1321,18 +1347,22 @@ impl WorkflowCtx {
             .func_wrap_async(
                 "schedule-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (execution_id, schedule_at, function, params, _config): (
+                      (execution_id, schedule_at, function, params, _config, wit_backtrace): (
                     typesTypes::execution::ExecutionId,
                     ScheduleAtTypes,
                     typesTypes::execution::Function,
                     String,                                      // params JSON
                     Option<typesTypes::execution::SubmitConfig>, // TODO: Implement SubmitConfig
+                    Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
                         use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let wasm_backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
                         // Parse the execution ID
                         let execution_id = match ExecutionId::try_from(execution_id) {
                             Ok(id) => id,
@@ -1368,15 +1398,19 @@ impl WorkflowCtx {
             .func_wrap_async(
                 "stub-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (execution_id, result_json): (
+                      (execution_id, result_json, wit_backtrace): (
                     typesTypes::execution::ExecutionId,
                     String,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
                         let wit_result = host
-                            .stub_json(execution_id, result_json, wasm_backtrace)
+                            .stub_json(execution_id, result_json, backtrace)
                             .await
                             .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
                         Ok((wit_result,))
@@ -1445,6 +1479,323 @@ impl WorkflowCtx {
                 },
             )
             .map_err(|err| WasmFileError::linking_error("linking function join-next-try", err))?;
+
+        // --- backtrace-aware variants (new at 4.2.0) ---
+
+        inst_workflow_support
+            .func_wrap_async(
+                "random-u64-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (min, max_exclusive, wit_backtrace): (
+                    u64,
+                    u64,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let random_u64 = host
+                            .random_u64_exclusive(min, max_exclusive, backtrace)
+                            .await?;
+                        Ok((random_u64,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function random-u64-bt", err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "random-u64-inclusive-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (min, max_inclusive, wit_backtrace): (
+                    u64,
+                    u64,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let random_u64 = host
+                            .random_u64_inclusive(min, max_inclusive, backtrace)
+                            .await?;
+                        Ok((random_u64,))
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function random-u64-inclusive-bt", err)
+            })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "random-string-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (min_length, max_length_exclusive, wit_backtrace): (
+                    u16,
+                    u16,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let random_string = host
+                            .random_string(min_length, max_length_exclusive, backtrace)
+                            .await?;
+                        Ok((random_string,))
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function random-string-bt", err)
+            })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "sleep-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (schedule_at, wit_backtrace): (
+                    ScheduleAtTypes,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let expires_at = host.sleep(schedule_at, backtrace).await?;
+                        Ok((expires_at,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function sleep-bt", err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "join-set-create-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (wit_backtrace,): (Option<typesTypes::backtrace::WasmBacktrace>,)| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace =
+                            wit_backtrace.map(Self::wit_wasm_backtrace_to_storage).or(wasm_backtrace);
+                        let resource_js = host.join_set_create_generated(backtrace).await?;
+                        Ok((resource_js,))
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function join-set-create-bt", err)
+            })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "join-set-create-named-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (name, wit_backtrace): (
+                    String,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let resource_js = host.join_set_create_named(name, backtrace).await?;
+                        Ok((resource_js,))
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function join-set-create-named-bt", err)
+            })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "join-set-close-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, wit_backtrace): (
+                    Resource<JoinSetId>,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        host.join_set_close_resource(join_set_resource, backtrace)
+                            .await?;
+                        Ok(())
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function join-set-close-bt", err)
+            })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "submit-json-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, function, params, _config, wit_backtrace): (
+                    Resource<JoinSetId>,
+                    typesTypes::execution::Function,
+                    String,
+                    Option<typesTypes::execution::SubmitConfig>,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        use latest::obelisk::workflow::workflow_support::SubmitJsonError;
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let ffqn = match FunctionFqn::try_from_tuple(
+                            &function.interface_name,
+                            &function.function_name,
+                        ) {
+                            Ok(ffqn) => ffqn,
+                            Err(err) => {
+                                let wit_result =
+                                    Err(SubmitJsonError::FfqnParsingError(err.to_string()));
+                                return Ok((wit_result,));
+                            }
+                        };
+                        let wit_result = host
+                            .submit_json(join_set_id, ffqn, params, backtrace)
+                            .await?;
+                        Ok((wit_result,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function submit-json-bt", err))?;
+
+        inst_workflow_support
+            .func_wrap(
+                "get-result-json-bt",
+                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (execution_id, _wit_backtrace): (
+                    ExecutionIdTypes,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    use concepts::ExecutionId;
+                    use latest::obelisk::workflow::workflow_support::GetResultJsonError;
+                    let host = caller.data();
+                    let execution_id = ExecutionId::try_from(execution_id);
+                    let execution_id = match execution_id {
+                        Ok(ExecutionId::Derived(derived)) => derived,
+                        Ok(ExecutionId::TopLevel(_)) => {
+                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
+                                "must not be a top-level execution id".to_string(),
+                            )),));
+                        }
+                        Err(err) => {
+                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
+                                err.to_string(),
+                            )),));
+                        }
+                    };
+                    let wit_result = host.get_result_json(&execution_id);
+                    Ok((wit_result,))
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function get-result-json-bt", err)
+            })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "submit-delay-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, schedule_at, wit_backtrace): (
+                    Resource<JoinSetId>,
+                    ScheduleAtTypes,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let delay_id: DelayIdTypes = host
+                            .submit_delay(join_set_id, schedule_at, backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((delay_id,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function submit-delay-bt", err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "join-next-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, wit_backtrace): (
+                    Resource<JoinSetId>,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let res = host
+                            .join_next(join_set_id, backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((res,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function join-next-bt", err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "join-next-try-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, wit_backtrace): (
+                    Resource<JoinSetId>,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                        let backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let res = host
+                            .join_next_try(join_set_id, backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((res,))
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function join-next-try-bt", err)
+            })?;
 
         Ok(())
     }
@@ -2172,6 +2523,7 @@ pub(crate) mod workflow_support {
         }
 
         /// Obtain child execution result as JSON after it has been awaited.
+        /// Stateless, never interrupts the execution, same as `-get` extension.
         pub(crate) fn get_result_json(
             &self,
             child_execution_id: &ExecutionIdDerived,

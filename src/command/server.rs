@@ -2167,6 +2167,7 @@ fn prespawn_js_workflow(
     let worker = WorkflowJsWorkerCompiled::new(
         inner,
         workflow_js.js_source.clone(),
+        workflow_js.js_file_name.clone(),
         &workflow_js.ffqn,
         workflow_js.params.clone(),
     )
@@ -2180,6 +2181,8 @@ fn prespawn_js_workflow(
         workflows_lock_extension_leeway,
         wit,
         workflow_js.js_source,
+        workflow_js.js_file_name,
+        workflow_js.js_file_path,
         workflow_js.params,
     ))
 }
@@ -2314,6 +2317,8 @@ impl WorkerCompiled {
         workflows_lock_extension_leeway: Duration,
         wit: Option<String>,
         js_source: String,
+        js_file_name: String,  // as it would appear in a backtrace
+        js_file_path: PathBuf, // to be served by GetBacktraceSource
         user_params: Vec<concepts::ParameterType>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2332,7 +2337,10 @@ impl WorkerCompiled {
                     user_params,
                 }),
             }),
-            source: None,
+            source: Some(MatchableSourceMap::new(std::iter::once((
+                js_file_name,
+                js_file_path,
+            )))),
         };
         (
             WorkerCompiled {
