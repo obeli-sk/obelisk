@@ -34,6 +34,7 @@ use wasmtime::Engine;
 pub struct WorkflowJsWorkerCompiled {
     inner: WorkflowWorkerCompiled,
     js_source: String,
+    js_file_name: String,
     user_params: Vec<ParameterType>,
     /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
     user_wasm_component: WasmComponent,
@@ -43,6 +44,7 @@ impl WorkflowJsWorkerCompiled {
     pub fn new(
         inner: WorkflowWorkerCompiled,
         js_source: String,
+        js_file_name: String,
         user_ffqn: &FunctionFqn,
         user_params: Vec<ParameterType>,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
@@ -52,6 +54,7 @@ impl WorkflowJsWorkerCompiled {
         Ok(Self {
             inner,
             js_source,
+            js_file_name,
             user_params,
             user_wasm_component,
         })
@@ -87,6 +90,7 @@ impl WorkflowJsWorkerCompiled {
         Ok(WorkflowJsWorkerLinked {
             inner: linked,
             js_source: self.js_source,
+            js_file_name: self.js_file_name,
             user_params: self.user_params,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
         })
@@ -96,6 +100,7 @@ impl WorkflowJsWorkerCompiled {
 pub struct WorkflowJsWorkerLinked {
     inner: super::workflow_worker::WorkflowWorkerLinked,
     js_source: String,
+    js_file_name: String,
     user_params: Vec<ParameterType>,
     user_exports_noext: Vec<FunctionMetadata>,
 }
@@ -119,6 +124,7 @@ impl WorkflowJsWorkerLinked {
         WorkflowJsWorker {
             inner,
             js_source: self.js_source,
+            js_file_name: self.js_file_name,
             user_params: self.user_params,
             user_exports_noext: self.user_exports_noext,
         }
@@ -128,6 +134,7 @@ impl WorkflowJsWorkerLinked {
 pub struct WorkflowJsWorker {
     inner: WorkflowWorker,
     js_source: String,
+    js_file_name: String,
     user_params: Vec<ParameterType>,
     user_exports_noext: Vec<FunctionMetadata>,
 }
@@ -164,14 +171,16 @@ impl Worker for WorkflowJsWorker {
             // Copied from workflow_js_runtime_builder::exports::obelisk_workflow::workflow_js_runtime::execute::RUN
             FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(self.js_source.clone()),
-            serde_json::Value::Array(params_json_list),
+            serde_json::Value::String(self.js_source.clone()), // js-code: string
+            serde_json::Value::Array(params_json_list),        // params-json: list<string>
+            serde_json::Value::String(self.js_file_name.clone()), // js-file-name: option<string>
         ]);
         ctx.params = Params::from_json_values(
             boa_params,
             [
-                &TypeWrapper::String,
-                &TypeWrapper::List(Box::new(TypeWrapper::String)),
+                &TypeWrapper::String,                                // js-code: string
+                &TypeWrapper::List(Box::new(TypeWrapper::String)),   // params-json: list<string>
+                &TypeWrapper::Option(Box::new(TypeWrapper::String)), // js-file-name: option<string>
             ]
             .into_iter(),
         )
@@ -367,12 +376,14 @@ impl WorkflowJsWorker {
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(js_source),
             serde_json::Value::Array(params_json_list),
+            serde_json::Value::Null, // no backtrace is going to be persisted anyway
         ]);
         let transformed_params = Params::from_json_values(
             boa_params,
             [
-                &TypeWrapper::String,
-                &TypeWrapper::List(Box::new(TypeWrapper::String)),
+                &TypeWrapper::String,                                // js-code: string
+                &TypeWrapper::List(Box::new(TypeWrapper::String)),   // params-json: list<string>
+                &TypeWrapper::Option(Box::new(TypeWrapper::String)), // js-file-name: option<string>
             ]
             .into_iter(),
         )
@@ -534,6 +545,7 @@ mod tests {
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
             js_source.to_string(),
+            String::new(),
             user_ffqn,
             vec![ParameterType {
                 type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
@@ -785,6 +797,7 @@ mod tests {
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
             js_source.to_string(),
+            String::new(),
             user_ffqn,
             vec![ParameterType {
                 type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),

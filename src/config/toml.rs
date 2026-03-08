@@ -1297,6 +1297,8 @@ pub(crate) struct WorkflowJsComponentConfigToml {
 pub(crate) struct WorkflowJsConfigVerified {
     pub(crate) wasm_path: Arc<Path>, // same for all JS workflows
     pub(crate) js_source: String,
+    pub(crate) js_file_name: String,
+    pub(crate) js_file_path: PathBuf,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) workflow_config: WorkflowConfig,
@@ -1344,7 +1346,7 @@ impl WorkflowJsComponentConfigToml {
                 .collect::<Result<Vec<_>, anyhow::Error>>()?,
         };
 
-        let (js_source, _) = self
+        let (js_source, js_file_path) = self
             .location
             .read_to_string(
                 &wasm_cache_dir,
@@ -1389,6 +1391,8 @@ impl WorkflowJsComponentConfigToml {
         Ok(WorkflowJsConfigVerified {
             wasm_path,
             js_source,
+            js_file_name: self.location.file_name(),
+            js_file_path,
             ffqn: self.ffqn,
             params: parsed_params,
             workflow_config,

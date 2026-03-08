@@ -23,5 +23,5 @@ interface execute {
     ///
     /// Returns Ok(Ok(result)) on success, Ok(Err(error_message)) on user error,
     /// or Err(js-runtime-error) on runtime error.
-    run: func(js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>;
+    run: func(js-code: string, params-json: list<string>, js-file-name: option<string>) -> result<result<string, string>, js-runtime-error>;
 }

@@ -106,13 +106,15 @@
 use crate::deterministic_executor::DeterministicJobExecutor;
 use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::JsRuntimeError;
 use crate::generated::obelisk::log::log as obelisk_log;
+use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
 use crate::generated::obelisk::types::execution::{ExecutionId, Function, ResponseId};
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    JoinNextTryError, SubmitConfig, execution_id_generate, get_result_json, join_next,
-    join_next_try, join_set_close, join_set_create, join_set_create_named, random_string,
-    random_u64, random_u64_inclusive, schedule_json, sleep, stub_json, submit_delay, submit_json,
+    JoinNextTryError, SubmitConfig, execution_id_generate, get_result_json_bt, join_next_bt,
+    join_next_try_bt, join_set_close_bt, join_set_create_bt, join_set_create_named_bt,
+    random_string_bt, random_u64_bt, random_u64_inclusive_bt, schedule_json, sleep_bt, stub_json,
+    submit_delay_bt, submit_json_bt,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{extract_error_string, new_object, parse_ffqn};
@@ -145,9 +147,10 @@ impl ObeliskLogger for Logger {
     }
 }
 
-// Thread-local storage for JoinSets (WASM is single-threaded)
+// Thread-local storage for JoinSet resources and the JS file name (WASM is single-threaded)
 thread_local! {
     static JOIN_SETS: RefCell<Vec<Option<JoinSet>>> = const { RefCell::new(Vec::new()) };
+    static JS_FILE_NAME: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 fn store_join_set(js: JoinSet) -> usize {
@@ -159,11 +162,13 @@ fn store_join_set(js: JoinSet) -> usize {
     })
 }
 
-fn with_join_set<T, F: FnOnce(&JoinSet) -> T>(idx: usize, f: F) -> Option<T> {
-    JOIN_SETS.with(|sets| {
-        let sets = sets.borrow();
-        sets.get(idx).and_then(|opt| opt.as_ref()).map(f)
-    })
+fn with_join_set<T, F: FnOnce(&JoinSet) -> T>(idx: usize, f: F) -> Result<T, JsNativeError> {
+    JOIN_SETS
+        .with(|sets| {
+            let sets = sets.borrow();
+            sets.get(idx).and_then(|opt| opt.as_ref()).map(f)
+        })
+        .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))
 }
 
 fn take_join_set(idx: usize) -> Option<JoinSet> {
@@ -173,14 +178,63 @@ fn take_join_set(idx: usize) -> Option<JoinSet> {
     })
 }
 
+/// Capture the current Boa JS stack trace as a `WasmBacktrace`.
+///
+/// The `module` and `file` fields are populated from `JS_FILE_NAME` (set from
+/// the `js-file-name` parameter passed to `execute`), since JS source is loaded
+/// from memory and Boa does not track a file path for in-memory sources.
+fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
+    use boa_engine::vm::SourcePath;
+    let js_file_name = JS_FILE_NAME.with(|s| s.borrow().clone());
+    let js_file_name_opt: Option<&str> = if js_file_name.is_empty() {
+        None
+    } else {
+        Some(&js_file_name)
+    };
+    let frames = ctx
+        .stack_trace()
+        .map(|frame| {
+            let loc = frame.position();
+            let module = match &loc.path {
+                SourcePath::Path(p) => p.display().to_string(),
+                _ => js_file_name_opt
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+            };
+            let file = match &loc.path {
+                SourcePath::Path(p) => Some(p.display().to_string()),
+                _ => js_file_name_opt.map(|s| s.to_string()),
+            };
+            let symbol = FrameSymbol {
+                func_name: None,
+                file,
+                line: loc.position.map(|p| p.line_number()),
+                col: loc.position.map(|p| p.column_number()),
+            };
+            FrameInfo {
+                module,
+                func_name: loc.function_name.to_std_string_escaped(),
+                symbols: vec![symbol],
+            }
+        })
+        .collect();
+    WasmBacktrace { frames }
+}
+
 /// Execute JavaScript code with the given parameters.
 ///
+/// `js_file_name` is the source file name used in backtraces (from `__OBELISK_JS_FILE_NAME__`).
 /// `params_json` is a list of JSON-serialized parameter values.
 /// Each element is passed as a positional argument to the default export function.
 pub fn execute(
     js_code: &str,
     params_json: &[String],
+    js_file_name: Option<String>,
 ) -> Result<Result<String, String>, JsRuntimeError> {
+    if let Some(js_file_name) = js_file_name {
+        JS_FILE_NAME.with(|s| *s.borrow_mut() = js_file_name);
+    }
+
     let executor = Rc::new(DeterministicJobExecutor::default());
     let mut context = Context::builder()
         .job_executor(executor.clone())
@@ -369,7 +423,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             && let Some(name) = name_val.as_string()
         {
             let name_str = name.to_std_string_escaped();
-            return match join_set_create_named(&name_str) {
+            let backtrace = capture_backtrace(ctx);
+            return match join_set_create_named_bt(&name_str, Some(&backtrace)) {
                 Ok(js) => Ok(create_join_set_object(js, ctx)?),
                 Err(e) => Err(JsNativeError::error()
                     .with_message(format!("Failed to create named join set: {:?}", e))
@@ -377,7 +432,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             };
         }
 
-        let js = join_set_create();
+        let backtrace = capture_backtrace(ctx);
+        let js = join_set_create_bt(Some(&backtrace));
         create_join_set_object(js, ctx)
     });
     obelisk.set(
@@ -390,7 +446,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     // obelisk.sleep(schedule)
     let sleep_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
-        match sleep(schedule) {
+        let backtrace = capture_backtrace(ctx);
+        match sleep_bt(schedule, Some(&backtrace)) {
             Ok(dt) => {
                 let result = new_object(ctx);
                 result.set(js_string!("seconds"), JsValue::from(dt.seconds), false, ctx)?;
@@ -420,7 +477,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     let random_u64_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let min = args.get_or_undefined(0).to_number(ctx)? as u64;
         let max = args.get_or_undefined(1).to_number(ctx)? as u64;
-        let result = random_u64(min, max);
+        let backtrace = capture_backtrace(ctx);
+        let result = random_u64_bt(min, max, Some(&backtrace));
         Ok(JsValue::from(result))
     });
     obelisk.set(
@@ -435,7 +493,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     let random_u64_inclusive_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let min = args.get_or_undefined(0).to_number(ctx)? as u64;
         let max = args.get_or_undefined(1).to_number(ctx)? as u64;
-        let result = random_u64_inclusive(min, max);
+        let backtrace = capture_backtrace(ctx);
+        let result = random_u64_inclusive_bt(min, max, Some(&backtrace));
         Ok(JsValue::from(result))
     });
     obelisk.set(
@@ -449,7 +508,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     let random_string_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let min_len = args.get_or_undefined(0).to_u32(ctx)? as u16;
         let max_len = args.get_or_undefined(1).to_u32(ctx)? as u16;
-        let result = random_string(min_len, max_len);
+        let backtrace = capture_backtrace(ctx);
+        let result = random_string_bt(min_len, max_len, Some(&backtrace));
         Ok(JsValue::from(js_string!(result)))
     });
     obelisk.set(
@@ -484,24 +544,25 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         };
 
         // 1. Create a one-off join set
-        let js = join_set_create();
+        let backtrace = capture_backtrace(ctx);
+        let js = join_set_create_bt(Some(&backtrace));
 
         // 2. Submit
-        let exec_id = submit_json(&js, &function, &params_json, config)
+        let exec_id = submit_json_bt(&js, &function, &params_json, config, Some(&backtrace))
             .map_err(|e| JsNativeError::error().with_message(format!("submit failed: {:?}", e)))?;
 
         // 3. Join next
-        let (_response_id, result) = join_next(&js).map_err(|e| {
+        let (_response_id, result) = join_next_bt(&js, Some(&backtrace)).map_err(|e| {
             JsNativeError::error().with_message(format!("join_next failed: {:?}", e))
         })?;
 
         // 4. Close the join set
-        join_set_close(js);
+        join_set_close_bt(js, Some(&backtrace));
 
         // 5. Check result
         if result.is_err() {
             // Get the error details
-            match get_result_json(&exec_id) {
+            match get_result_json_bt(&exec_id, Some(&backtrace)) {
                 Ok(Err(Some(err_str))) => {
                     return Err(JsNativeError::error().with_message(err_str).into());
                 }
@@ -519,7 +580,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         }
 
         // 6. Get result
-        match get_result_json(&exec_id) {
+        match get_result_json_bt(&exec_id, Some(&backtrace)) {
             Ok(Ok(Some(json_str))) => {
                 let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
                 Ok(parsed)
@@ -550,8 +611,9 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             .to_std_string_escaped();
 
         let exec_id = ExecutionId { id: exec_id_str };
+        let backtrace = capture_backtrace(ctx);
 
-        match get_result_json(&exec_id) {
+        match get_result_json_bt(&exec_id, Some(&backtrace)) {
             Ok(inner_result) => {
                 let result_obj = new_object(ctx);
                 match inner_result {
@@ -586,8 +648,9 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     )?;
 
     // obelisk.executionIdGenerate()
-    let exec_id_generate_fn = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
-        let exec_id = execution_id_generate();
+    let exec_id_generate_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
+        let backtrace = capture_backtrace(ctx);
+        let exec_id = execution_id_generate(Some(&backtrace));
         Ok(JsValue::from(js_string!(exec_id.id)))
     });
     obelisk.set(
@@ -629,7 +692,15 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             None
         };
 
-        match schedule_json(&exec_id, schedule, &function, &params_json, config) {
+        let backtrace = capture_backtrace(ctx);
+        match schedule_json(
+            &exec_id,
+            schedule,
+            &function,
+            &params_json,
+            config,
+            Some(&backtrace),
+        ) {
             Ok(()) => Ok(JsValue::undefined()),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("schedule failed: {:?}", e))
@@ -655,7 +726,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let result_val = args.get_or_undefined(1);
         let result_json = json_stringify(result_val, ctx)?;
 
-        match stub_json(&exec_id, &result_json) {
+        let backtrace = capture_backtrace(ctx);
+        match stub_json(&exec_id, &result_json, Some(&backtrace)) {
             Ok(()) => Ok(JsValue::undefined()),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("stub failed: {:?}", e))
@@ -747,8 +819,10 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             None
         };
 
-        let result = with_join_set(idx, |js| submit_json(js, &function, &params_json, config))
-            .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))?;
+        let backtrace = capture_backtrace(ctx);
+        let result = with_join_set(idx, |js| {
+            submit_json_bt(js, &function, &params_json, config, Some(&backtrace))
+        })?;
 
         match result {
             Ok(exec_id) => Ok(JsValue::from(js_string!(exec_id.id))),
@@ -774,9 +848,9 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             .to_u32(ctx)? as usize;
 
         let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
+        let backtrace = capture_backtrace(ctx);
 
-        let delay_id = with_join_set(idx, |js| submit_delay(js, schedule))
-            .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))?;
+        let delay_id = with_join_set(idx, |js| submit_delay_bt(js, schedule, Some(&backtrace)))?;
 
         Ok(JsValue::from(js_string!(delay_id.id)))
     });
@@ -796,8 +870,8 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             .get(js_string!(JOIN_SET_IDX_KEY), ctx)?
             .to_u32(ctx)? as usize;
 
-        let join_result = with_join_set(idx, join_next)
-            .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))?;
+        let backtrace = capture_backtrace(ctx);
+        let join_result = with_join_set(idx, |js| join_next_bt(js, Some(&backtrace)))?;
 
         match join_result {
             Ok((response_id, result)) => {
@@ -852,8 +926,8 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             .get(js_string!(JOIN_SET_IDX_KEY), ctx)?
             .to_u32(ctx)? as usize;
 
-        let join_result = with_join_set(idx, join_next_try)
-            .ok_or_else(|| JsNativeError::error().with_message("JoinSet has been closed"))?;
+        let backtrace = capture_backtrace(ctx);
+        let join_result = with_join_set(idx, |js| join_next_try_bt(js, Some(&backtrace)))?;
 
         match join_result {
             Ok((response_id, result)) => {
@@ -916,7 +990,8 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             .to_u32(ctx)? as usize;
 
         if let Some(js) = take_join_set(idx) {
-            join_set_close(js);
+            let backtrace = capture_backtrace(ctx);
+            join_set_close_bt(js, Some(&backtrace));
         }
         Ok(JsValue::undefined())
     });

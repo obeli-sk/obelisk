@@ -5,7 +5,13 @@ expression: imports
 {
   "obelisk:workflow/workflow-support@4.2.0.execution-id-generate": {
     "ffqn": "obelisk:workflow/workflow-support@4.2.0.execution-id-generate",
-    "parameter_types": [],
+    "parameter_types": [
+      {
+        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
+        "name": "backtrace",
+        "wit_type": "option<wasm-backtrace>"
+      }
+    ],
     "return_type": {
       "non_extendable": {
         "type_wrapper": "record { id: string }",
@@ -90,6 +96,11 @@ expression: imports
         "type_wrapper": "option<record { timeout: option<variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }> }>",
         "name": "config",
         "wit_type": "option<submit-config>"
+      },
+      {
+        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
+        "name": "backtrace",
+        "wit_type": "option<wasm-backtrace>"
       }
     ],
     "return_type": {
