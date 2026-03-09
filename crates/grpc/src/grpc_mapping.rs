@@ -10,7 +10,7 @@ use concepts::{
         HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy, LogEntry, LogEntryRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStateLocked, PendingStatePendingAt, VersionParseError,
+        PendingStateLocked, PendingStatePendingAt, PersistKind, VersionParseError,
         http_client_trace::HttpClientTrace,
     },
 };
@@ -676,12 +676,15 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                                 value,
                             }),
                             kind: Some(history_event::persist::PersistKind { variant: Some(match kind {
-                                concepts::storage::PersistKind::RandomU64 { .. } =>
+                                PersistKind::RandomU64 { .. } =>
                                 history_event::persist::persist_kind::Variant::RandomU64(
                                     history_event::persist::persist_kind::RandomU64 {  }),
-                                concepts::storage::PersistKind::RandomString { .. } =>
+                                PersistKind::RandomString { .. } =>
                                 history_event::persist::persist_kind::Variant::RandomString(
                                     history_event::persist::persist_kind::RandomString {  }),
+                                PersistKind::ExecutionId =>
+                                history_event::persist::persist_kind::Variant::ExecutionId(
+                                    history_event::persist::persist_kind::ExecutionId {  }),
                             }) })
                         }),
                         HistoryEvent::JoinSetCreate { join_set_id } =>

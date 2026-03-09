@@ -382,9 +382,12 @@ message ExecutionEvent {
                 }
                 message RandomU64 {
                 }
+                message ExecutionId {
+                }
                 oneof variant {
                     RandomString random_string = 1;
                     RandomU64 random_u64 = 2;
+                    ExecutionId execution_id = 3;
                 }
             }
             google.protobuf.Any data = 1;

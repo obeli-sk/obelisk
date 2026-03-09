@@ -1324,14 +1324,17 @@ impl WorkflowCtx {
             .func_wrap_async(
                 "execution-id-generate",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (_backtrace,): (Option<typesTypes::backtrace::WasmBacktrace>,)| {
+                      (wit_backtrace,): (Option<typesTypes::backtrace::WasmBacktrace>,)| {
                     Box::new(async move {
-                        let (host, _wasm_backtrace) =
+                        let (host, wasm_backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let execution_id = ExecutionId::from_parts(
-                            host.execution_id.get_top_level().timestamp_part(),
-                            host.next_u128(),
-                        );
+
+                        let wasm_backtrace = wit_backtrace
+                            .map(Self::wit_wasm_backtrace_to_storage)
+                            .or(wasm_backtrace);
+
+                        let execution_id = host.execution_id_generate(wasm_backtrace).await?;
+
                         Ok((typesTypes::execution::ExecutionId {
                             id: execution_id.to_string(),
                         },))
@@ -1902,7 +1905,7 @@ pub(crate) mod workflow_support {
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, latest};
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4_2, JoinSetCreateError};
-    use concepts::prefixed_ulid::ExecutionIdDerived;
+    use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
     use concepts::storage::{DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, StubRetVal};
     use concepts::{CHARSET_ALPHANUMERIC, ComponentType, JoinSetId, JoinSetKind, Params};
     use concepts::{ExecutionId, ReturnType, SupportedFunctionReturnValue};
@@ -1968,7 +1971,7 @@ pub(crate) mod workflow_support {
                 return Err(wasmtime::Error::msg("range must not be empty"));
             }
             let value = rand::Rng::random_range(&mut self.rng, range);
-            let value = Persist::apply_u64(
+            Persist::apply_u64(
                 value,
                 min,
                 max_inclusive,
@@ -1978,8 +1981,26 @@ pub(crate) mod workflow_support {
                 self.clock_fn.now(),
             )
             .await?;
-
             Ok(value)
+        }
+
+        pub(crate) async fn execution_id_generate(
+            &mut self,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> wasmtime::Result<ExecutionIdTopLevel> {
+            let execution_id = ExecutionIdTopLevel::from_parts(
+                self.execution_id.get_top_level().timestamp_part(),
+                self.next_u128(),
+            );
+            Persist::apply_execution_id(
+                &execution_id,
+                wasm_backtrace,
+                &mut self.event_history,
+                &mut self.db_connection,
+                self.clock_fn.now(),
+            )
+            .await?;
+            Ok(execution_id)
         }
 
         pub(crate) fn generate_random_string(
@@ -2016,8 +2037,8 @@ pub(crate) mod workflow_support {
             let value =
                 Self::generate_random_string(&mut self.rng, min_length, max_length_exclusive)?;
             // Persist
-            let value = Persist::apply_string(
-                value,
+            Persist::apply_string(
+                &value,
                 u64::from(min_length),
                 u64::from(max_length_exclusive),
                 wasm_backtrace,

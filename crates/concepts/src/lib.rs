@@ -1381,6 +1381,11 @@ pub mod prefixed_ulid {
         pub fn random_part(&self) -> u128 {
             self.ulid.random()
         }
+
+        #[must_use]
+        pub fn ulid(&self) -> Ulid {
+            self.ulid
+        }
     }
 
     #[derive(Debug, thiserror::Error)]

@@ -476,22 +476,21 @@ pub struct Locked {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PersistKind {
     #[display("RandomU64({min}, {max_inclusive})")]
-    RandomU64 { min: u64, max_inclusive: u64 },
+    RandomU64 {
+        min: u64,
+        max_inclusive: u64,
+    },
     #[display("RandomString({min_length}, {max_length_exclusive})")]
     RandomString {
         min_length: u64,
         max_length_exclusive: u64,
     },
+    ExecutionId,
 }
 
 #[must_use]
 pub fn from_u64_to_bytes(value: u64) -> [u8; 8] {
     value.to_be_bytes()
-}
-
-#[must_use]
-pub fn from_bytes_to_u64(bytes: [u8; 8]) -> u64 {
-    u64::from_be_bytes(bytes)
 }
 
 #[derive(
