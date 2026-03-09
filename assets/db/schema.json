@@ -1191,6 +1191,18 @@
             "min_length",
             "max_length_exclusive"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "execution_id"
+            }
+          },
+          "required": [
+            "type"
+          ]
         }
       ]
     },

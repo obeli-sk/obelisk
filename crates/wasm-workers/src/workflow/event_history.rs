@@ -25,13 +25,13 @@ use concepts::InvalidNameError;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
 use concepts::SupportedFunctionReturnValue;
+use concepts::prefixed_ulid::ExecutionIdTopLevel;
 use concepts::prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived};
 use concepts::storage;
 use concepts::storage::AppendEventsToExecution;
 use concepts::storage::AppendResponseToExecution;
 use concepts::storage::BacktraceInfo;
 use concepts::storage::ChildExecutionRequestError;
-use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbErrorReadWithTimeout;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbErrorWriteNonRetriable;
@@ -54,15 +54,13 @@ use hashbrown::HashMap;
 use indexmap::IndexMap;
 use indexmap::indexmap;
 use std::fmt::Debug;
-use std::panic::Location;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::Level;
 use tracing::Span;
 use tracing::info;
 use tracing::instrument;
-use tracing::{debug, error, trace};
-use tracing_error::SpanTrace;
+use tracing::{debug, trace};
 use val_json::wast_val::ValKey;
 use val_json::wast_val::WastVal;
 use wasmtime::component::Val;
@@ -82,6 +80,7 @@ enum ChildReturnValue {
     Stub(Result<(), StubError>),
     Schedule(Result<(), ScheduleRequestError>),
     SubmitChild(Result<(), ChildExecutionRequestError>),
+    Persist,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -676,7 +675,6 @@ impl EventHistory {
             ) if *join_set_id == *found_join_set_id => {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
-                // if this is a [`EventCall::CreateJoinSet`] , return join set id
                 Ok(FindMatchingResponse::Found(
                     ChildReturnValue::JoinSetCreate(join_set_id.clone()),
                 ))
@@ -691,41 +689,7 @@ impl EventHistory {
             ) if *value == *found_value && *kind == *found_kind => {
                 trace!("Matched Persist");
                 self.event_history[found_idx].1 = Processed;
-                // if this is a [`EventCall::CreateJoinSet`] , return join set id
-                Ok(FindMatchingResponse::Found(ChildReturnValue::WastVal(
-                    match kind {
-                        PersistKind::RandomString { .. } => {
-                            WastVal::String(String::from_utf8(value.clone()).map_err(|err| {
-                                error!("Persisted string must be UTF-8 - {err:?}");
-                                ApplyError::DbError(DbErrorWrite::from(
-                                    DbErrorGeneric::Uncategorized {
-                                        reason: StrVariant::from(format!(
-                                            "persisted string must be UTF-8 - {err:?}"
-                                        )),
-                                        context: SpanTrace::capture(),
-                                        source: Some(Arc::new(err)),
-                                        loc: Location::caller(),
-                                    },
-                                ))
-                            })?)
-                        }
-                        PersistKind::RandomU64 { .. } => {
-                            if value.len() != 8 {
-                                return Err(ApplyError::DbError(DbErrorWrite::from(
-                                    DbErrorGeneric::Uncategorized {
-                                        reason: "value cannot be deserialized to u64".into(),
-                                        context: SpanTrace::capture(),
-                                        source: None,
-                                        loc: Location::caller(),
-                                    },
-                                )));
-                            }
-                            let value: [u8; 8] = value[..8].try_into().expect("size checked above");
-                            let value = storage::from_bytes_to_u64(value);
-                            WastVal::U64(value)
-                        }
-                    },
-                )))
+                Ok(FindMatchingResponse::Found(ChildReturnValue::Persist))
             }
 
             (
@@ -2653,19 +2617,18 @@ pub(crate) struct Persist {
 }
 impl Persist {
     pub(crate) async fn apply_string(
-        value: String,
+        value: &str,
         min_length: u64,
         max_length_exclusive: u64,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<String, WorkflowFunctionError> {
-        let value = Vec::from_iter(value.bytes());
-        let value = event_history
+    ) -> Result<(), WorkflowFunctionError> {
+        let ret = event_history
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::Persist(Persist {
-                    value,
+                    value: Vec::from_iter(value.bytes()),
                     kind: PersistKind::RandomString {
                         min_length,
                         max_length_exclusive,
@@ -2676,9 +2639,8 @@ impl Persist {
                 called_at,
             )
             .await?;
-        let value =
-            assert_matches!(value, ChildReturnValue::WastVal(WastVal::String(value)) => value);
-        Ok(value)
+        assert_matches!(ret, ChildReturnValue::Persist);
+        Ok(())
     }
 
     pub(crate) async fn apply_u64(
@@ -2689,12 +2651,11 @@ impl Persist {
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<u64, WorkflowFunctionError> {
-        let value = Vec::from(storage::from_u64_to_bytes(value));
-        let value = event_history
+    ) -> Result<(), WorkflowFunctionError> {
+        let ret = event_history
             .apply(
                 EventCall::NonBlocking(EventCallNonBlocking::Persist(Persist {
-                    value,
+                    value: Vec::from(storage::from_u64_to_bytes(value)),
                     kind: PersistKind::RandomU64 { min, max_inclusive },
                     wasm_backtrace,
                 })),
@@ -2702,8 +2663,30 @@ impl Persist {
                 called_at,
             )
             .await?;
-        let value = assert_matches!(value, ChildReturnValue::WastVal(WastVal::U64(value)) => value);
-        Ok(value)
+        assert_matches!(ret, ChildReturnValue::Persist);
+        Ok(())
+    }
+
+    pub(crate) async fn apply_execution_id(
+        value: &ExecutionIdTopLevel,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        event_history: &mut EventHistory,
+        db_connection: &mut CachingDbConnection,
+        called_at: DateTime<Utc>,
+    ) -> Result<(), WorkflowFunctionError> {
+        let ret = event_history
+            .apply(
+                EventCall::NonBlocking(EventCallNonBlocking::Persist(Persist {
+                    value: Vec::from(value.ulid().0.to_be_bytes()),
+                    kind: PersistKind::ExecutionId,
+                    wasm_backtrace,
+                })),
+                db_connection,
+                called_at,
+            )
+            .await?;
+        assert_matches!(ret, ChildReturnValue::Persist);
+        Ok(())
     }
 }
 
