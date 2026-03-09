@@ -29,10 +29,10 @@ use crate::generated::{
 };
 use boa_common::console::{ObeliskLogger, setup_console};
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
-use boa_common::helpers::{extract_error_string, new_object};
+use boa_common::helpers::extract_error_string;
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
-use boa_engine::{Context, JsResult, JsValue, Source, js_string, property::Attribute};
+use boa_engine::{Context, JsResult, JsValue, Source};
 use boa_runtime::extensions::FetchExtension;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -78,9 +78,6 @@ pub fn execute(
 
     // Set up fetch
     setup_fetch(&mut context).expect("fetch setup must work");
-
-    // Set up obelisk global object with env function
-    setup_obelisk(&mut context).expect("obelisk setup must work");
 
     // Run the async execution inside a single wstd reactor
     wstd::runtime::block_on(execute_async(js_code, params_json, &mut context, &executor))
@@ -177,11 +174,4 @@ fn convert_result(
 /// Register the `fetch` API backed by WASIp2 HTTP.
 fn setup_fetch(context: &mut Context) -> JsResult<()> {
     boa_runtime::register(FetchExtension(WasiFetcher), None, context)
-}
-
-/// Set up the global `obelisk` object with the env function.
-fn setup_obelisk(context: &mut Context) -> JsResult<()> {
-    let obelisk = new_object(context);
-    context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
-    Ok(())
 }
