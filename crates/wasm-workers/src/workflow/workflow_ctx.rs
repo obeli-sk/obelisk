@@ -973,13 +973,18 @@ impl WorkflowCtx {
 
     fn get_host_maybe_capture_backtrace<'a>(
         caller: &'a mut wasmtime::StoreContextMut<'_, Self>,
+        wit_backtrace: Option<typesTypes::backtrace::WasmBacktrace>,
     ) -> (&'a mut WorkflowCtx, Option<storage::WasmBacktrace>) {
-        let backtrace = if caller.data().backtrace_persist {
-            let backtrace = wasmtime::WasmBacktrace::capture(&caller);
-            WasmBacktrace::maybe_from(&backtrace)
-        } else {
-            None
-        };
+        let backtrace = wit_backtrace
+            .map(Self::wit_wasm_backtrace_to_storage)
+            .or_else(|| {
+                if caller.data().backtrace_persist {
+                    let backtrace = wasmtime::WasmBacktrace::capture(&caller);
+                    WasmBacktrace::maybe_from(&backtrace)
+                } else {
+                    None
+                }
+            });
         let host = caller.data_mut();
         (host, backtrace)
     }
@@ -1025,7 +1030,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, rep: u32| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let resource: Resource<JoinSetId> =
                             wasmtime::component::Resource::new_own(rep);
                         host.join_set_close_resource(resource, wasm_backtrace).await
@@ -1060,7 +1065,7 @@ impl WorkflowCtx {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let join_set_id = host.resource_to_join_set_id(&resource)?.clone();
                         let delay_id: DelayIdTypes = host
                             .submit_delay(join_set_id, schedule_at, wasm_backtrace)
@@ -1084,7 +1089,7 @@ impl WorkflowCtx {
                       (resource,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let join_set_id = host.resource_to_join_set_id(&resource)?.clone();
                         let res = host
                             .join_next(join_set_id, wasm_backtrace)
@@ -1140,7 +1145,7 @@ impl WorkflowCtx {
                       (min, max_exclusive): (u64, u64)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let random_u64 = host
                             .random_u64_exclusive(min, max_exclusive, wasm_backtrace)
                             .await?;
@@ -1157,7 +1162,7 @@ impl WorkflowCtx {
                       (min, max_inclusive): (u64, u64)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let random_u64 = host
                             .random_u64_inclusive(min, max_inclusive, wasm_backtrace)
                             .await?;
@@ -1176,7 +1181,7 @@ impl WorkflowCtx {
                       (min_length, max_length_exclusive): (u16, u16)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let random_string = host
                             .random_string(min_length, max_length_exclusive, wasm_backtrace)
                             .await?;
@@ -1194,7 +1199,7 @@ impl WorkflowCtx {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let expires_at = host.sleep(schedule_at, wasm_backtrace).await?;
                         Ok((expires_at,))
                     })
@@ -1209,7 +1214,7 @@ impl WorkflowCtx {
                       (name,): (String,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let resource_js = host.join_set_create_named(name, wasm_backtrace).await?;
                         Ok((resource_js,))
                     })
@@ -1225,7 +1230,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, ()| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let resource_js = host.join_set_create_generated(wasm_backtrace).await?;
                         Ok((resource_js,))
                     })
@@ -1240,7 +1245,7 @@ impl WorkflowCtx {
                       (join_set_resource,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         host.join_set_close_resource(join_set_resource, wasm_backtrace)
                             .await?;
 
@@ -1266,7 +1271,7 @@ impl WorkflowCtx {
                     Box::new(async move {
                         use latest::obelisk::workflow::workflow_support::SubmitJsonError;
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
                         let ffqn = match FunctionFqn::try_from_tuple(
                             &function.interface_name,
@@ -1327,11 +1332,7 @@ impl WorkflowCtx {
                       (wit_backtrace,): (Option<typesTypes::backtrace::WasmBacktrace>,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-
-                        let wasm_backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
 
                         let execution_id = host.execution_id_generate(wasm_backtrace).await?;
 
@@ -1362,10 +1363,7 @@ impl WorkflowCtx {
                     Box::new(async move {
                         use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let wasm_backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         // Parse the execution ID
                         let execution_id = match ExecutionId::try_from(execution_id) {
                             Ok(id) => id,
@@ -1408,11 +1406,8 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let ffqn = match FunctionFqn::try_from_tuple(
                             &function.interface_name,
                             &function.function_name,
@@ -1443,11 +1438,8 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let wit_result = host
                             .stub_json(execution_id, result_json, backtrace)
                             .await
@@ -1467,7 +1459,7 @@ impl WorkflowCtx {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
                         let delay_id: DelayIdTypes = host
                             .submit_delay(join_set_id, schedule_at, wasm_backtrace)
@@ -1487,7 +1479,7 @@ impl WorkflowCtx {
                       (join_set_resource,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
                         let res = host
                             .join_next(join_set_id, wasm_backtrace)
@@ -1507,7 +1499,7 @@ impl WorkflowCtx {
                       (join_set_resource,): (Resource<JoinSetId>,)| {
                     Box::new(async move {
                         let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
                         let res = host
                             .join_next_try(join_set_id, wasm_backtrace)
@@ -1531,11 +1523,8 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let random_u64 = host
                             .random_u64_exclusive(min, max_exclusive, backtrace)
                             .await?;
@@ -1555,11 +1544,8 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let random_u64 = host
                             .random_u64_inclusive(min, max_inclusive, backtrace)
                             .await?;
@@ -1581,11 +1567,8 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let random_string = host
                             .random_string(min_length, max_length_exclusive, backtrace)
                             .await?;
@@ -1607,11 +1590,8 @@ impl WorkflowCtx {
                 )| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let expires_at = host.sleep(schedule_at, backtrace).await?;
                         Ok((expires_at,))
                     })
@@ -1625,10 +1605,8 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (wit_backtrace,): (Option<typesTypes::backtrace::WasmBacktrace>,)| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace =
-                            wit_backtrace.map(Self::wit_wasm_backtrace_to_storage).or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let resource_js = host.join_set_create_generated(backtrace).await?;
                         Ok((resource_js,))
                     })
@@ -1647,11 +1625,8 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let resource_js = host.join_set_create_named(name, backtrace).await?;
                         Ok((resource_js,))
                     })
@@ -1670,11 +1645,8 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         host.join_set_close_resource(join_set_resource, backtrace)
                             .await?;
                         Ok(())
@@ -1698,11 +1670,8 @@ impl WorkflowCtx {
                 )| {
                     Box::new(async move {
                         use latest::obelisk::workflow::workflow_support::SubmitJsonError;
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
                         let ffqn = match FunctionFqn::try_from_tuple(
                             &function.interface_name,
@@ -1768,11 +1737,8 @@ impl WorkflowCtx {
                 )| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
                         let delay_id: DelayIdTypes = host
                             .submit_delay(join_set_id, schedule_at, backtrace)
@@ -1793,11 +1759,8 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
                         let res = host
                             .join_next(join_set_id, backtrace)
@@ -1818,11 +1781,8 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        let (host, wasm_backtrace) =
-                            Self::get_host_maybe_capture_backtrace(&mut caller);
-                        let backtrace = wit_backtrace
-                            .map(Self::wit_wasm_backtrace_to_storage)
-                            .or(wasm_backtrace);
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
                         let res = host
                             .join_next_try(join_set_id, backtrace)
