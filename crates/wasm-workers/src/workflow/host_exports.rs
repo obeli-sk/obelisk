@@ -43,7 +43,7 @@ pub(crate) mod latest {
         path: "host-wit-workflow/",
         inline: "package any:any;
         world bindings {
-            import obelisk:workflow/workflow-support@4.2.0;
+            import obelisk:workflow/workflow-support@5.0.0;
             }",
         world: "any:any/bindings",
         with: {

@@ -833,7 +833,7 @@ impl WasiView for WorkflowCtx {
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT_4_2: &str = "obelisk:workflow/workflow-support@4.2.0";
+const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@5.0.0";
 
 impl WorkflowCtx {
     #[expect(clippy::too_many_arguments)]
@@ -909,7 +909,7 @@ impl WorkflowCtx {
             .as_date_time(self.clock_fn.now())
             .map_err(|err| {
                 const FFQN: FunctionFqn =
-                    FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4_2, "sleep");
+                    FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT, "sleep");
                 WorkflowFunctionError::ImportedFunctionCallError {
                     ffqn: FFQN,
                     reason: "schedule-at conversion error".into(),
@@ -1006,7 +1006,7 @@ impl WorkflowCtx {
             })?;
 
         // link obelisk:workflow/workflow-support interface
-        Self::add_to_linker_workflow_support(linker, IFC_FQN_WORKFLOW_SUPPORT_4_2)?;
+        Self::add_to_linker_workflow_support(linker, IFC_FQN_WORKFLOW_SUPPORT)?;
 
         // link obelisk:types/join-set interface
         Self::add_to_linker_join_set(linker)?;
@@ -1864,7 +1864,7 @@ pub(crate) mod workflow_support {
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, latest};
-    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT_4_2, JoinSetCreateError};
+    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT, JoinSetCreateError};
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
     use concepts::storage::{DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, StubRetVal};
     use concepts::{CHARSET_ALPHANUMERIC, ComponentType, JoinSetId, JoinSetKind, Params};
@@ -2024,7 +2024,7 @@ pub(crate) mod workflow_support {
                     .as_date_time(self.clock_fn.now())
                     .map_err(|err| {
                         const FFQN: FunctionFqn =
-                            FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT_4_2, "submit-delay");
+                            FunctionFqn::new_static(IFC_FQN_WORKFLOW_SUPPORT, "submit-delay");
 
                         WorkflowFunctionError::ImportedFunctionCallError {
                             ffqn: FFQN,
