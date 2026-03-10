@@ -50,10 +50,10 @@
     "ComponentId": {
       "type": "object",
       "properties": {
-        "component_type": {
+        "component_digest": {
           "type": "string"
         },
-        "input_digest": {
+        "component_type": {
           "type": "string"
         },
         "name": {
@@ -63,7 +63,7 @@
       "required": [
         "component_type",
         "name",
-        "input_digest"
+        "component_digest"
       ]
     },
     "ComponentRetryConfig": {
