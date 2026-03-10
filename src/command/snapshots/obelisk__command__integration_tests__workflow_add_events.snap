@@ -9,8 +9,8 @@ expression: events
       "event": {
         "locked": {
           "component_id": {
+            "component_digest": "sha256:<REDACTED>",
             "component_type": "workflow",
-            "input_digest": "sha256:<REDACTED>",
             "name": "test_add_workflow"
           },
           "deployment_id": "Dep_<REDACTED>",

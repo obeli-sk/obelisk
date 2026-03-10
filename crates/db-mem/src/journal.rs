@@ -516,7 +516,7 @@ impl ExecutionJournal {
             next_version: self.version(),
             pending_state: self.pending_state.clone(),
             responses: self.responses.clone(),
-            component_digest: self.component_id.input_digest.clone(),
+            component_digest: self.component_id.component_digest.clone(),
             component_type: self.component_id.component_type,
             deployment_id: self.deployment_id,
         }

@@ -45,7 +45,7 @@ use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::PackageIfcFns;
 use concepts::StrVariant;
-use concepts::component_id::InputContentDigest;
+use concepts::component_id::ComponentDigest;
 use concepts::storage::LogLevel;
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -151,9 +151,9 @@ struct ComponentConfigRegistryInner {
     /// Primary index: component name → component config. Names are unique across all component types.
     names_to_components: IndexMap<StrVariant, ComponentConfig>,
     /// Digest-keyed secondary indexes.
-    digests_to_wit: IndexMap<InputContentDigest, Option<String>>,
-    digests_to_replay_info: IndexMap<InputContentDigest, (ComponentId, WorkflowReplayInfo)>,
-    digests_to_source: IndexMap<InputContentDigest, MatchableSourceMap>,
+    digests_to_wit: IndexMap<ComponentDigest, Option<String>>,
+    digests_to_replay_info: IndexMap<ComponentDigest, (ComponentId, WorkflowReplayInfo)>,
+    digests_to_source: IndexMap<ComponentDigest, MatchableSourceMap>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -179,7 +179,7 @@ impl ComponentConfigRegistry {
             if self
                 .inner
                 .digests_to_wit
-                .contains_key(&component.component_id.input_digest)
+                .contains_key(&component.component_id.component_digest)
             {
                 return Err(ComponentInsertionError(
                     format!(
@@ -219,14 +219,14 @@ impl ComponentConfigRegistry {
 
             // Insert into `digests_to_wit`
             let old = self.inner.digests_to_wit.insert(
-                component.component_id.input_digest.clone(),
+                component.component_id.component_digest.clone(),
                 component.wit.clone(),
             );
             assert!(old.is_none());
             // Insert into `workflow_replay_info`
             if let Some(replay_info) = component.workflow_replay_info.clone() {
                 let old = self.inner.digests_to_replay_info.insert(
-                    component.component_id.input_digest.clone(),
+                    component.component_id.component_digest.clone(),
                     (component.component_id.clone(), replay_info),
                 );
                 assert!(old.is_none());
@@ -236,19 +236,19 @@ impl ComponentConfigRegistry {
                 let old = self
                     .inner
                     .digests_to_source
-                    .insert(component.component_id.input_digest.clone(), source);
+                    .insert(component.component_id.component_digest.clone(), source);
                 assert!(old.is_none());
             }
         } else {
             // For WebhookEndpoints: first wins for digest-keyed maps (same code = same WIT/source)
             self.inner
                 .digests_to_wit
-                .entry(component.component_id.input_digest.clone())
+                .entry(component.component_id.component_digest.clone())
                 .or_insert(component.wit.clone());
             if let Some(source) = component.source.clone() {
                 self.inner
                     .digests_to_source
-                    .entry(component.component_id.input_digest.clone())
+                    .entry(component.component_id.component_digest.clone())
                     .or_insert(source);
             }
         }
@@ -391,7 +391,7 @@ impl ComponentConfigRegistryRO {
     /// Look up WIT by content digest.
     /// Returns `None` if the digest is not found, `Some(None)` if the component has no WIT content.
     #[must_use]
-    pub fn get_wit(&self, input_digest: &InputContentDigest) -> Option<Option<&str>> {
+    pub fn get_wit(&self, input_digest: &ComponentDigest) -> Option<Option<&str>> {
         self.inner
             .digests_to_wit
             .get(input_digest)
@@ -401,7 +401,7 @@ impl ComponentConfigRegistryRO {
     #[must_use]
     pub fn get_workflow_replay_info(
         &self,
-        input_digest: &InputContentDigest,
+        input_digest: &ComponentDigest,
     ) -> Option<(&ComponentId, &WorkflowReplayInfo)> {
         self.inner
             .digests_to_replay_info
@@ -410,7 +410,7 @@ impl ComponentConfigRegistryRO {
     }
 
     #[must_use]
-    pub fn get_source(&self, input_digest: &InputContentDigest) -> Option<&MatchableSourceMap> {
+    pub fn get_source(&self, input_digest: &ComponentDigest) -> Option<&MatchableSourceMap> {
         self.inner.digests_to_source.get(input_digest)
     }
 

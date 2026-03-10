@@ -203,7 +203,7 @@ impl ExecTask {
                 if let Ok(db_exec) = res {
                     let _ = task.tick(db_exec.as_ref(), clock_fn.now(), RunId::generate(), deployment_id).await;
                     db_exec
-                        .wait_for_pending_by_component_digest(clock_fn.now(), &task.config.component_id.input_digest, {
+                        .wait_for_pending_by_component_digest(clock_fn.now(), &task.config.component_id.component_digest, {
                             let sleep = sleep.clone();
                             Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })})
                         .await;

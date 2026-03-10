@@ -1,5 +1,5 @@
 use crate::{
-    component_id::InputContentDigest,
+    component_id::ComponentDigest,
     storage::{
         DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
     },
@@ -69,7 +69,7 @@ impl From<deadpool_postgres::PoolError> for DbErrorGeneric {
     }
 }
 
-impl ToSql for InputContentDigest {
+impl ToSql for ComponentDigest {
     fn to_sql(
         &self,
         ty: &tokio_postgres::types::Type,

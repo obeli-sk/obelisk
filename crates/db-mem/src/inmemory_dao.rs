@@ -8,7 +8,7 @@ use crate::journal::ExecutionJournal;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::component_id::InputContentDigest;
+use concepts::component_id::ComponentDigest;
 use concepts::prefixed_ulid::{DelayId, DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
@@ -192,7 +192,7 @@ impl DbExecutor for InMemoryDbConnection {
     async fn wait_for_pending_by_component_digest(
         &self,
         _pending_at_or_sooner: DateTime<Utc>,
-        _component_digest: &InputContentDigest,
+        _component_digest: &ComponentDigest,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         timeout_fut.await;
@@ -467,7 +467,7 @@ impl concepts::storage::DbConnectionTest for InMemoryDbConnection {
 mod index {
     use super::{BTreeMap, DateTime, ExecutionId, HashMap, HashSet, JoinSetId, PendingState, Utc};
     use crate::journal::ExecutionJournal;
-    use concepts::component_id::InputContentDigest;
+    use concepts::component_id::ComponentDigest;
     use concepts::prefixed_ulid::DelayId;
     use concepts::storage::{
         HistoryEvent, JoinSetRequest, JoinSetResponse, PendingStateLocked, PendingStatePendingAt,
@@ -511,7 +511,7 @@ mod index {
             journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
             batch_size: u32,
             expiring_at_or_before: DateTime<Utc>,
-            component_digest: &InputContentDigest,
+            component_digest: &ComponentDigest,
         ) -> Vec<(&'a ExecutionJournal, DateTime<Utc> /* scheduled at */)> {
             let mut pending = self
                 .pending_scheduled
@@ -523,7 +523,7 @@ mod index {
                 .collect::<Vec<_>>();
             // filter by ffqn
             pending.retain(|(journal, _)| {
-                *component_digest == journal.component_id_last().input_digest
+                *component_digest == journal.component_id_last().component_digest
             });
             pending.truncate(usize::try_from(batch_size).expect("16 bit systems are unsupported"));
             pending
@@ -778,7 +778,7 @@ impl DbHolder {
             &self.journals,
             batch_size,
             pending_at_or_sooner,
-            &component_id.input_digest,
+            &component_id.component_digest,
         );
         let mut resp = Vec::with_capacity(pending.len());
         for (journal, _scheduled_at) in pending {

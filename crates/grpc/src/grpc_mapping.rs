@@ -1,8 +1,8 @@
 use crate::grpc_gen::{self, execution_event::history_event, result_kind};
 use concepts::{
-    ComponentId, ComponentType, ContentDigest, ExecutionFailureKind, ExecutionId,
-    FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
-    component_id::{Digest, InputContentDigest},
+    ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionError,
+    FunctionFqn, SupportedFunctionReturnValue,
+    component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
@@ -109,24 +109,24 @@ impl From<ComponentId> for grpc_gen::ComponentId {
         Self {
             component_type: grpc_gen::ComponentType::from(value.component_type).into(),
             name: value.name.to_string(),
-            digest: Some(value.input_digest.into()),
+            digest: Some(value.component_digest.into()),
         }
     }
 }
 
-impl From<InputContentDigest> for grpc_gen::ContentDigest {
-    fn from(value: InputContentDigest) -> Self {
+impl From<ComponentDigest> for grpc_gen::ContentDigest {
+    fn from(value: ComponentDigest) -> Self {
         grpc_gen::ContentDigest::from(&value)
     }
 }
-impl From<&InputContentDigest> for grpc_gen::ContentDigest {
-    fn from(value: &InputContentDigest) -> Self {
+impl From<&ComponentDigest> for grpc_gen::ContentDigest {
+    fn from(value: &ComponentDigest) -> Self {
         grpc_gen::ContentDigest {
             digest: value.to_string(),
         }
     }
 }
-impl TryFrom<grpc_gen::ContentDigest> for InputContentDigest {
+impl TryFrom<grpc_gen::ContentDigest> for ComponentDigest {
     type Error = tonic::Status;
 
     fn try_from(value: grpc_gen::ContentDigest) -> Result<Self, Self::Error> {
@@ -134,7 +134,7 @@ impl TryFrom<grpc_gen::ContentDigest> for InputContentDigest {
             warn!("`Digest` cannot be parsed - {parse_err:?}");
             tonic::Status::invalid_argument(format!("`Digest` cannot be parsed - {parse_err}"))
         })?;
-        Ok(InputContentDigest(ContentDigest(digest)))
+        Ok(ComponentDigest(digest))
     }
 }
 
@@ -155,7 +155,7 @@ impl TryFrom<grpc_gen::ComponentId> for ComponentId {
                 "`input_digest` is mandatory",
             ));
         };
-        let input_digest = InputContentDigest::try_from(input_digest)?;
+        let input_digest = ComponentDigest::try_from(input_digest)?;
         ComponentId::new(component_type, value.name.into(), input_digest).map_err(|parse_err| {
             warn!("`name` is invalid - {parse_err:?}");
             tonic::Status::invalid_argument(format!("name cannot be parsed - {parse_err}"))

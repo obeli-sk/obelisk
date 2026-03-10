@@ -52,24 +52,24 @@ impl ComponentType {
     Deserialize,
     schemars::JsonSchema,
 )]
-#[display("{component_type}:{name}:{input_digest}")]
+#[display("{component_type}:{name}:{component_digest}")]
 #[debug("{}", self)]
 #[non_exhaustive] // force using the constructor as much as possible due to validation
 pub struct ComponentId {
     pub component_type: ComponentType,
     pub name: StrVariant,
-    pub input_digest: InputContentDigest,
+    pub component_digest: ComponentDigest,
 }
 impl ComponentId {
     pub fn new(
         component_type: ComponentType,
         name: StrVariant,
-        input_digest: InputContentDigest,
+        component_digest: ComponentDigest,
     ) -> Result<Self, InvalidNameError<Self>> {
         Ok(Self {
             component_type,
             name: check_name(name, "_")?,
-            input_digest,
+            component_digest,
         })
     }
 
@@ -78,7 +78,7 @@ impl ComponentId {
         Self {
             component_type: ComponentType::ActivityWasm,
             name: StrVariant::empty(),
-            input_digest: InputContentDigest(CONTENT_DIGEST_DUMMY),
+            component_digest: COMPONENT_DIGEST_DUMMY,
         }
     }
 
@@ -88,7 +88,7 @@ impl ComponentId {
         ComponentId {
             component_type: ComponentType::Workflow,
             name: StrVariant::empty(),
-            input_digest: InputContentDigest(CONTENT_DIGEST_DUMMY),
+            component_digest: COMPONENT_DIGEST_DUMMY,
         }
     }
 }
@@ -138,7 +138,7 @@ pub struct InvalidNameError<T> {
     schemars::JsonSchema,
 )]
 #[schemars(with = "String")]
-pub struct InputContentDigest(pub ContentDigest);
+pub struct ComponentDigest(pub Digest);
 
 #[derive(
     Debug,
@@ -155,7 +155,10 @@ pub struct InputContentDigest(pub ContentDigest);
 )]
 #[schemars(with = "String")]
 pub struct ContentDigest(pub Digest);
-pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest([0; 32]));
+
+pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(DIGEST_DUMMY);
+pub const COMPONENT_DIGEST_DUMMY: ComponentDigest = ComponentDigest(DIGEST_DUMMY);
+pub const DIGEST_DUMMY: Digest = Digest([0; 32]);
 
 #[derive(
     Clone,
@@ -165,8 +168,10 @@ pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(Digest([0; 32]));
     serde_with::SerializeDisplay,
     serde_with::DeserializeFromStr,
     derive_more::Deref,
+    schemars::JsonSchema,
 )]
-pub struct Digest(pub [u8; 32]); // FIXME: Remove pub, use slice
+#[schemars(with = "String")]
+pub struct Digest(pub [u8; 32]);
 impl Digest {
     #[must_use]
     fn digest_base16_without_prefix(&self) -> String {
