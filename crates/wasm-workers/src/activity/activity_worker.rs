@@ -546,7 +546,7 @@ impl<S: Sleep + 'static> ActivityWorker<S> {
 
 #[cfg(any(test, feature = "test"))]
 pub mod test {
-    use concepts::{ComponentId, ComponentType, StrVariant, component_id::InputContentDigest};
+    use concepts::{ComponentId, ComponentType, StrVariant, component_id::ComponentDigest};
     use utils::sha256sum::calculate_sha256_file;
     use wasmtime::Engine;
 
@@ -572,9 +572,13 @@ pub mod test {
         component_type: ComponentType,
     ) -> (RunnableComponent, ComponentId) {
         assert!(component_type.is_activity());
-        let input_digest = InputContentDigest(calculate_sha256_file(wasm_path).await.unwrap());
-        let component_id =
-            ComponentId::new(component_type, StrVariant::empty(), input_digest).unwrap();
+        let file_digest = calculate_sha256_file(wasm_path).await.unwrap();
+        let component_id = ComponentId::new(
+            component_type,
+            StrVariant::empty(),
+            ComponentDigest(file_digest.0),
+        )
+        .unwrap();
         (
             RunnableComponent::new(wasm_path, engine, component_type).unwrap(),
             component_id,

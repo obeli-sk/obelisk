@@ -10,9 +10,10 @@ use crate::{
 };
 use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
+use concepts::component_id::Digest;
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, FunctionFqn, InvalidNameError, StrVariant,
-    check_name, component_id::InputContentDigest, prefixed_ulid::ExecutorId, storage::LogLevel,
+    check_name, component_id::ComponentDigest, prefixed_ulid::ExecutorId, storage::LogLevel,
 };
 use concepts::{ContentDigest, prefixed_ulid::DeploymentId};
 use db_postgres::postgres_dao::{self, PostgresConfig};
@@ -22,6 +23,7 @@ use log::{LoggingConfig, LoggingStyle};
 use schemars::JsonSchema;
 use secrecy::SecretString;
 use serde::{Deserialize, Deserializer, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::str::FromStr;
 use std::{
     net::SocketAddr,
@@ -972,7 +974,7 @@ impl ActivityStubExtComponentConfigToml {
         let component_id = ComponentId::new(
             component_type,
             StrVariant::from(common.name),
-            InputContentDigest(common.content_digest),
+            ComponentDigest(common.content_digest.0), // TODO: Allow overriding the value for external activities.
         )?;
 
         Ok(ActivityStubExtConfigVerified {
@@ -1065,7 +1067,7 @@ impl ActivityWasmComponentConfigToml {
         let component_id = ComponentId::new(
             ComponentType::ActivityWasm,
             StrVariant::from(common.name),
-            InputContentDigest(common.content_digest),
+            ComponentDigest(common.content_digest.0), // TODO: Allow overriding
         )?;
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
@@ -1215,7 +1217,6 @@ impl ActivityJsComponentConfigToml {
             .await?;
 
         // Compute content digest from source + ffqn + params
-        use sha2::{Digest as _, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"activity_js:");
         hasher.update(js_source.as_bytes());
@@ -1224,12 +1225,10 @@ impl ActivityJsComponentConfigToml {
             hasher.update(p.wit_type.as_ref().as_bytes());
         }
         let hash: [u8; 32] = hasher.finalize().into();
-        let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
-
         let component_id = ComponentId::new(
             ComponentType::ActivityWasm,
             StrVariant::from(self.name),
-            InputContentDigest(content_digest),
+            ComponentDigest(Digest(hash)),
         )?;
 
         let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
@@ -1364,7 +1363,6 @@ impl WorkflowJsComponentConfigToml {
             .await?;
 
         // Compute content digest from source + ffqn + params
-        use sha2::{Digest as _, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"workflow_js:");
         hasher.update(js_source.as_bytes());
@@ -1373,12 +1371,11 @@ impl WorkflowJsComponentConfigToml {
             hasher.update(p.wit_type.as_ref().as_bytes());
         }
         let hash: [u8; 32] = hasher.finalize().into();
-        let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
 
         let component_id = ComponentId::new(
             ComponentType::Workflow, // Use Workflow type, not a separate WorkflowJs
             StrVariant::from(self.name),
-            InputContentDigest(content_digest),
+            ComponentDigest(Digest(hash)),
         )?;
 
         let workflow_config = WorkflowConfig {
@@ -1577,7 +1574,8 @@ impl WorkflowComponentConfigToml {
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(common.name),
-            InputContentDigest(common.content_digest), // NB: content digest belongs to the original (untransformed) file.
+            // TODO: Allow overriding
+            ComponentDigest(common.content_digest.0), // NB: content digest belongs to the original (untransformed) file.
         )?;
 
         let workflow_config = WorkflowConfig {
@@ -1937,11 +1935,13 @@ pub(crate) mod webhook {
     };
     use anyhow::Context;
     use concepts::{
-        ComponentId, ComponentType, ContentDigest, StrVariant, component_id::InputContentDigest,
+        ComponentId, ComponentType, ContentDigest, StrVariant,
+        component_id::{ComponentDigest, Digest},
         storage::LogLevel,
     };
     use schemars::JsonSchema;
     use serde::Deserialize;
+    use sha2::{Digest as _, Sha256};
     use std::{
         net::SocketAddr,
         path::{Path, PathBuf},
@@ -2001,7 +2001,7 @@ pub(crate) mod webhook {
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(common.name.clone()),
-                InputContentDigest(common.content_digest),
+                ComponentDigest(common.content_digest.0), // digest for webhooks is identifier only, as no locking strategy can be applied.
             )?;
             let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
             let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
@@ -2156,17 +2156,16 @@ pub(crate) mod webhook {
                 .await?;
 
             // Compute content digest from source - FFQN is same for all webhooks
-            use sha2::{Digest as _, Sha256};
+
             let mut hasher = Sha256::new();
             hasher.update(b"webhook_js:");
             hasher.update(js_source.as_bytes());
             let hash: [u8; 32] = hasher.finalize().into();
-            let content_digest = concepts::ContentDigest(concepts::component_id::Digest(hash));
 
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(self.name.clone()),
-                InputContentDigest(content_digest),
+                ComponentDigest(Digest(hash)),
             )?;
 
             let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;

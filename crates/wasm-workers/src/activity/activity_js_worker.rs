@@ -296,7 +296,7 @@ mod tests {
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
     use concepts::SupportedFunctionReturnValue;
-    use concepts::component_id::{CONTENT_DIGEST_DUMMY, InputContentDigest};
+    use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
     use concepts::storage::{Locked, Version};
     use concepts::time::TokioSleep;
@@ -365,7 +365,7 @@ mod tests {
             let component_id = concepts::ComponentId::new(
                 ComponentType::ActivityWasm,
                 StrVariant::Static("test_js"),
-                InputContentDigest(CONTENT_DIGEST_DUMMY),
+                COMPONENT_DIGEST_DUMMY,
             )
             .unwrap();
 
@@ -433,7 +433,7 @@ mod tests {
         let component_id = concepts::ComponentId::new(
             ComponentType::ActivityWasm,
             StrVariant::Static("test_js"),
-            InputContentDigest(CONTENT_DIGEST_DUMMY),
+            COMPONENT_DIGEST_DUMMY,
         )
         .unwrap();
         WorkerContext {
@@ -464,7 +464,7 @@ mod tests {
         let component_id = concepts::ComponentId::new(
             ComponentType::ActivityWasm,
             StrVariant::Static("test_js"),
-            InputContentDigest(CONTENT_DIGEST_DUMMY),
+            COMPONENT_DIGEST_DUMMY,
         )
         .unwrap();
         WorkerContext {

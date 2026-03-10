@@ -19,7 +19,7 @@ use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
-    component_id::InputContentDigest,
+    component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
     storage::{
         self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
@@ -269,7 +269,7 @@ struct ExecutionsListParams {
     /// Filter by component digest
     #[serde(default)]
     #[param(value_type = Option<String>)]
-    component_digest: Option<InputContentDigest>,
+    component_digest: Option<ComponentDigest>,
     /// Filter by deployment ID
     #[serde(default)]
     #[param(value_type = Option<String>)]
@@ -332,7 +332,7 @@ pub struct ExecutionWithStateSer {
     pub first_scheduled_at: DateTime<Utc>,
     /// Component content digest
     #[schema(value_type = String)]
-    pub component_digest: InputContentDigest,
+    pub component_digest: ComponentDigest,
     /// Type of component (workflow, activity, webhook)
     #[schema(value_type = String)]
     pub component_type: ComponentType,
@@ -1540,7 +1540,7 @@ async fn execution_replay(
 
     let (component_id, replay_info) = state
         .component_registry_ro
-        .get_workflow_replay_info(&component_id.input_digest)
+        .get_workflow_replay_info(&component_id.component_digest)
         .expect("digest taken from found component id");
 
     let logs_storage_config = replay_info
@@ -1599,10 +1599,10 @@ async fn execution_replay(
 struct ExecutionUpgradePayload {
     /// Old component digest to upgrade from
     #[schema(value_type = String)]
-    pub old: InputContentDigest,
+    pub old: ComponentDigest,
     /// New component digest to upgrade to
     #[schema(value_type = String)]
-    pub new: InputContentDigest,
+    pub new: ComponentDigest,
     /// Skip determinism check during upgrade
     #[serde(default)]
     pub skip_determinism_check: bool,
@@ -1717,7 +1717,7 @@ pub(crate) mod components {
     use axum::extract::Path;
     use concepts::{
         ComponentId, ComponentType, FunctionExtension, FunctionMetadata, ParameterType,
-        component_id::InputContentDigest,
+        component_id::ComponentDigest,
     };
     use http::StatusCode;
     use itertools::Itertools;
@@ -1733,7 +1733,7 @@ pub(crate) mod components {
         name: Option<String>,
         /// Filter by component digest
         #[param(value_type = Option<String>)]
-        digest: Option<InputContentDigest>,
+        digest: Option<ComponentDigest>,
         /// Include exports in response
         #[serde(default)]
         exports: bool,
@@ -1762,7 +1762,7 @@ pub(crate) mod components {
         )
     )]
     pub(crate) async fn component_wit(
-        Path(digest): Path<InputContentDigest>,
+        Path(digest): Path<ComponentDigest>,
         state: State<Arc<WebApiState>>,
     ) -> Result<Response, HttpResponse> {
         let Some(wit) = state.component_registry_ro.get_wit(&digest) else {
@@ -1799,7 +1799,7 @@ pub(crate) mod components {
             components.retain(|c| c.component_id.name.as_ref() == name);
         }
         if let Some(digest) = params.digest {
-            components.retain(|c| c.component_id.input_digest == digest);
+            components.retain(|c| c.component_id.component_digest == digest);
         }
         if let Some(ty) = params.r#type {
             components.retain(|c| c.component_id.component_type == ty);
@@ -1854,7 +1854,7 @@ pub(crate) mod components {
                     writeln!(
                         output,
                         "{} {}",
-                        component.component_id, component.component_id.input_digest
+                        component.component_id, component.component_id.component_digest
                     )
                     .expect("writing to string");
                     if let Some(fns) = component.exports {
@@ -2050,7 +2050,7 @@ mod functions {
         // Get the WIT for this component
         let wit = state
             .component_registry_ro
-            .get_wit(&component_id.input_digest)
+            .get_wit(&component_id.component_digest)
             .expect("if function is found, component must be found");
         let Some(wit) = wit else {
             return Err(HttpResponse::not_found(AcceptHeader::Text, Some("wit")));

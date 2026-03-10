@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, JoinSetId,
-    component_id::InputContentDigest,
+    component_id::ComponentDigest,
     prefixed_ulid::{DeploymentId, ExecutorId, RunId},
     storage::{
         DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionWithState, LockedBy,
@@ -23,7 +23,7 @@ pub struct CombinedStateDTO {
     pub execution_id: ExecutionId,
     pub state: String,
     pub ffqn: FunctionFqn,
-    pub component_digest: InputContentDigest,
+    pub component_digest: ComponentDigest,
     pub component_type: ComponentType,
     pub deployment_id: DeploymentId,
     pub created_at: DateTime<Utc>,

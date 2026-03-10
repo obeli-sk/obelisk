@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use concepts::{
-    ExecutionId, FunctionFqn, SupportedFunctionReturnValue, component_id::InputContentDigest,
+    ExecutionId, FunctionFqn, SupportedFunctionReturnValue, component_id::ComponentDigest,
     storage::ResponseWithCursor,
 };
 
@@ -11,7 +11,7 @@ use concepts::{
 pub struct NotifierPendingAt {
     pub scheduled_at: DateTime<Utc>,
     pub ffqn: FunctionFqn,
-    pub component_input_digest: InputContentDigest,
+    pub component_input_digest: ComponentDigest,
 }
 
 /// Notification data for when an execution finishes.

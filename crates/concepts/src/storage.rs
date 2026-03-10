@@ -10,7 +10,7 @@ use crate::JoinSetId;
 use crate::Params;
 use crate::StrVariant;
 use crate::SupportedFunctionReturnValue;
-use crate::component_id::InputContentDigest;
+use crate::component_id::ComponentDigest;
 use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::DeploymentId;
 use crate::prefixed_ulid::ExecutionIdDerived;
@@ -23,7 +23,6 @@ use chrono::{DateTime, Utc};
 use http_client_trace::HttpClientTrace;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::panic::Location;
@@ -48,7 +47,7 @@ pub struct ExecutionLog {
     pub responses: Vec<ResponseWithCursor>,
     pub next_version: Version, // Is not advanced once in Finished state
     pub pending_state: PendingState, // reflecting the current state
-    pub component_digest: InputContentDigest, // reflecting the current state
+    pub component_digest: ComponentDigest, // reflecting the current state
     pub component_type: ComponentType,
     pub deployment_id: DeploymentId, // reflecting the current state
 }
@@ -583,6 +582,7 @@ impl StubRetVal {
     /// Compute a stable hash of the return value for determinism checks.
     #[must_use]
     pub fn hash(&self) -> StubRetValHash {
+        use sha2::{Digest as _, Sha256};
         const STUB_RETVAL_HASH_VERSION: u8 = 1;
         let mut hasher = Sha256::default();
 
@@ -1058,7 +1058,7 @@ pub trait DbExecutor: Send + Sync {
     async fn wait_for_pending_by_component_digest(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
-        component_digest: &InputContentDigest,
+        component_digest: &ComponentDigest,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     );
 
@@ -1163,7 +1163,7 @@ pub struct ListExecutionsFilter {
     pub show_derived: bool,
     pub hide_finished: bool,
     pub execution_id_prefix: Option<String>,
-    pub component_digest: Option<InputContentDigest>,
+    pub component_digest: Option<ComponentDigest>,
     pub deployment_id: Option<DeploymentId>,
 }
 
@@ -1220,8 +1220,8 @@ pub trait DbExternalApi: DbConnection {
     async fn upgrade_execution_component(
         &self,
         execution_id: &ExecutionId,
-        old: &InputContentDigest,
-        new: &InputContentDigest,
+        old: &ComponentDigest,
+        new: &ComponentDigest,
     ) -> Result<(), DbErrorWrite>;
 
     async fn list_logs(
@@ -1770,7 +1770,7 @@ pub struct ExecutionWithState {
     pub pending_state: PendingState,
     pub created_at: DateTime<Utc>,
     pub first_scheduled_at: DateTime<Utc>,
-    pub component_digest: InputContentDigest,
+    pub component_digest: ComponentDigest,
     pub component_type: ComponentType,
     pub deployment_id: DeploymentId,
 }

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, JoinSetId, StrVariant,
     SupportedFunctionReturnValue,
-    component_id::InputContentDigest,
+    component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
@@ -1231,7 +1231,7 @@ impl SqlitePool {
                 ":ffqn": ffqn.to_string(),
                 ":state": STATE_PENDING_AT,
                 ":created_at": created_at,
-                ":component_id_input_digest": component_id.input_digest,
+                ":component_id_input_digest": component_id.component_digest,
                 ":component_type": component_id.component_type,
                 ":deployment_id": deployment_id.to_string(),
                 ":first_scheduled_at": scheduled_at,
@@ -1240,7 +1240,7 @@ impl SqlitePool {
                 pending_at: Some(NotifierPendingAt {
                     scheduled_at,
                     ffqn,
-                    component_input_digest: component_id.input_digest,
+                    component_input_digest: component_id.component_digest,
                 }),
                 execution_finished: None,
                 response: None,
@@ -1255,7 +1255,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         scheduled_at: DateTime<Utc>, // Changing to state PendingAt
-        component_input_digest: InputContentDigest,
+        component_input_digest: ComponentDigest,
     ) -> Result<AppendNotifier, DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after response appended");
         let mut stmt = tx
@@ -1316,7 +1316,7 @@ impl SqlitePool {
         appending_version: &Version,
         scheduled_at: DateTime<Utc>, // Changing to state PendingAt
         intermittent_failure: bool,
-        component_input_digest: InputContentDigest,
+        component_input_digest: ComponentDigest,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
         let mut stmt = tx.prepare_cached(
@@ -1372,7 +1372,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         deployment_id: DeploymentId,
-        component_digest: &InputContentDigest,
+        component_digest: &ComponentDigest,
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
@@ -2063,7 +2063,7 @@ impl SqlitePool {
             tx,
             execution_id,
             deployment_id,
-            &component_id.input_digest,
+            &component_id.component_digest,
             executor_id,
             run_id,
             lock_expires_at,
@@ -3017,7 +3017,7 @@ impl SqlitePool {
         conn: &Connection,
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
-        input_digest: &InputContentDigest,
+        input_digest: &ComponentDigest,
     ) -> Result<Vec<(ExecutionId, Version)>, RusqliteError> {
         let mut stmt = conn.prepare_cached(&format!(
             r#"
@@ -3113,8 +3113,8 @@ impl SqlitePool {
     fn upgrade_execution_component_single_write(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        old: &InputContentDigest,
-        new: &InputContentDigest,
+        old: &ComponentDigest,
+        new: &ComponentDigest,
     ) -> Result<(), DbErrorWrite> {
         debug!("Updating t_state to component {new}");
         let mut stmt = tx.prepare_cached(
@@ -3497,7 +3497,7 @@ impl DbExecutor for SqlitePool {
                             conn,
                             batch_size,
                             pending_at_or_sooner,
-                            &component_id.input_digest,
+                            &component_id.component_digest,
                         )
                     }
                 },
@@ -3739,7 +3739,7 @@ impl DbExecutor for SqlitePool {
     async fn wait_for_pending_by_component_digest(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
-        component_digest: &InputContentDigest,
+        component_digest: &ComponentDigest,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         let unique_tag: u64 = rand::random();
@@ -3974,8 +3974,8 @@ impl DbExternalApi for SqlitePool {
     async fn upgrade_execution_component(
         &self,
         execution_id: &ExecutionId,
-        old: &InputContentDigest,
-        new: &InputContentDigest,
+        old: &ComponentDigest,
+        new: &ComponentDigest,
     ) -> Result<(), DbErrorWrite> {
         let execution_id = execution_id.clone();
         let old = old.clone();

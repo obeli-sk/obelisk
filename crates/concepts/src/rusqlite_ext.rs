@@ -1,6 +1,6 @@
 use crate::{
-    ComponentType, ContentDigest, ExecutionId, FunctionFqn, JoinSetId,
-    component_id::{Digest, InputContentDigest},
+    ComponentType, ExecutionId, FunctionFqn, JoinSetId,
+    component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
@@ -113,12 +113,12 @@ impl FromSql for ExecutorId {
     }
 }
 
-impl ToSql for InputContentDigest {
+impl ToSql for ComponentDigest {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(ToSqlOutput::from(self.0.0.0.as_slice()))
+        Ok(ToSqlOutput::from(self.as_slice()))
     }
 }
-impl FromSql for InputContentDigest {
+impl FromSql for ComponentDigest {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value {
             ValueRef::Blob(b) => {
@@ -129,7 +129,7 @@ impl FromSql for InputContentDigest {
                     );
                     FromSqlError::Other(Box::from(err.to_string()))
                 })?;
-                Ok(InputContentDigest(ContentDigest(digest)))
+                Ok(ComponentDigest(digest))
             }
             _ => Err(FromSqlError::InvalidType),
         }

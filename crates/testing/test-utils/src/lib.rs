@@ -1,4 +1,4 @@
-use concepts::component_id::{CONTENT_DIGEST_DUMMY, InputContentDigest};
+use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest};
 use concepts::storage::{
     ExecutionEvent, ExecutionLog, ExecutionRequest, JoinSetResponseEventOuter, Locked,
     PendingState, Version,
@@ -139,7 +139,7 @@ pub struct ExecutionLogSanitized {
     pub responses: Vec<JoinSetResponseEventOuter>,
     pub next_version: Version,
     pub pending_state: PendingState,
-    pub component_digest: InputContentDigest,
+    pub component_digest: ComponentDigest,
 }
 impl From<ExecutionLog> for ExecutionLogSanitized {
     fn from(mut value: ExecutionLog) -> Self {
@@ -147,7 +147,7 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
             match &mut event.event {
                 ExecutionRequest::Created { component_id, .. }
                 | ExecutionRequest::Locked(Locked { component_id, .. }) => {
-                    component_id.input_digest = InputContentDigest(CONTENT_DIGEST_DUMMY);
+                    component_id.component_digest = COMPONENT_DIGEST_DUMMY;
                 }
                 ExecutionRequest::Finished {
                     retval:
@@ -171,7 +171,7 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
             responses: value.responses.into_iter().map(|resp| resp.event).collect(), // `created_at`, `cursor` removed
             next_version: value.next_version,
             pending_state: value.pending_state,
-            component_digest: InputContentDigest(CONTENT_DIGEST_DUMMY),
+            component_digest: COMPONENT_DIGEST_DUMMY,
         }
     }
 }

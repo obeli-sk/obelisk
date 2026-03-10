@@ -10,7 +10,7 @@ use concepts::FunctionExtension;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::SupportedFunctionReturnValue;
-use concepts::component_id::InputContentDigest;
+use concepts::component_id::ComponentDigest;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage;
@@ -420,7 +420,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             ffqn_prefix: request.function_name_prefix,
             component_digest: request
                 .component_digest
-                .map(InputContentDigest::try_from)
+                .map(ComponentDigest::try_from)
                 .transpose()?,
             deployment_id: request
                 .deployment_id
@@ -653,7 +653,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
         let Some(matchable_source_map) = self
             .component_registry_ro
-            .get_source(&component_id.input_digest)
+            .get_source(&component_id.component_digest)
         else {
             debug!("Component {component_id} not found in source map");
             return Err(tonic::Status::not_found(format!(
@@ -763,7 +763,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         let (component_id, replay_info) = self
             .component_registry_ro
-            .get_workflow_replay_info(&component_id.input_digest)
+            .get_workflow_replay_info(&component_id.component_digest)
             .expect("digest taken from found component id");
 
         let logs_storage_config =
@@ -1224,14 +1224,14 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
         let all_components = self.component_registry_ro.list(request.extensions);
         let component_digest = request
             .component_digest
-            .map(InputContentDigest::try_from)
+            .map(ComponentDigest::try_from)
             .transpose()?;
         let mut res_components = Vec::with_capacity(all_components.len());
         for component in all_components
             .into_iter()
             .filter(|component| match &component_digest {
                 None => true,
-                Some(filter) if *filter == component.component_id.input_digest => true,
+                Some(filter) if *filter == component.component_id.component_digest => true,
                 Some(_) => false,
             })
         {
@@ -1257,7 +1257,7 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
         request: tonic::Request<grpc_gen::GetWitRequest>,
     ) -> TonicRespResult<grpc_gen::GetWitResponse> {
         let request = request.into_inner();
-        let component_digest = InputContentDigest::try_from(
+        let component_digest = ComponentDigest::try_from(
             request
                 .component_digest
                 .argument_must_exist("component_digest")?,

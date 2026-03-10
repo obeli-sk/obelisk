@@ -931,7 +931,7 @@ pub mod test {
         RunnableComponent,
         engines::{EngineConfig, Engines},
     };
-    use concepts::{ComponentId, ComponentType, StrVariant, component_id::InputContentDigest};
+    use concepts::{ComponentId, ComponentType, StrVariant, component_id::ComponentDigest};
     use utils::sha256sum::calculate_sha256_file;
     use wasmtime::Engine;
 
@@ -947,7 +947,7 @@ pub mod test {
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::empty(),
-            InputContentDigest(calculate_sha256_file(wasm_path).await.unwrap()),
+            ComponentDigest(calculate_sha256_file(wasm_path).await.unwrap().0),
         )
         .unwrap();
         (
@@ -3367,8 +3367,8 @@ pub(crate) mod tests {
             )
             .await;
             assert_eq!(
-                activity_component_id_first.input_digest,
-                activity_component_id.input_digest
+                activity_component_id_first.component_digest,
+                activity_component_id.component_digest
             );
             let exec_activity = ExecTask::new_all_ffqns_test(
                 activity_worker,

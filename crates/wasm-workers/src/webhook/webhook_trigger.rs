@@ -2006,7 +2006,7 @@ pub(crate) mod tests {
         use crate::workflow::workflow_worker::JoinNextBlockingStrategy;
         use crate::workflow::workflow_worker::test::compile_workflow;
         use crate::workflow::workflow_worker::tests::{FIBOA_WORKFLOW_FFQN, new_workflow_fibo};
-        use concepts::component_id::InputContentDigest;
+        use concepts::component_id::ComponentDigest;
         use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
         use concepts::storage::DbPoolCloseable;
         use concepts::time::ClockFn;
@@ -2094,7 +2094,7 @@ pub(crate) mod tests {
                             component_id: ComponentId::new(
                                 ComponentType::WebhookEndpoint,
                                 StrVariant::empty(),
-                                InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
+                                ComponentDigest(calculate_sha256_file(wasm_file).await.unwrap().0),
                             )
                             .unwrap(),
                             forward_stdout: Some(StdOutputConfig::Stdout),
@@ -2361,10 +2361,11 @@ pub(crate) mod tests {
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
                             StrVariant::empty(),
-                            concepts::component_id::InputContentDigest(
+                            concepts::component_id::ComponentDigest(
                                 utils::sha256sum::calculate_sha256_file(wasm_file)
                                     .await
-                                    .unwrap(),
+                                    .unwrap()
+                                    .0,
                             ),
                         )
                         .unwrap(),
@@ -2537,10 +2538,11 @@ pub(crate) mod tests {
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
                             StrVariant::empty(),
-                            concepts::component_id::InputContentDigest(
+                            concepts::component_id::ComponentDigest(
                                 utils::sha256sum::calculate_sha256_file(wasm_file)
                                     .await
-                                    .unwrap(),
+                                    .unwrap()
+                                    .0,
                             ),
                         )
                         .unwrap(),
@@ -2613,7 +2615,7 @@ pub(crate) mod tests {
             self, MethodAwareRouter, WebhookEndpointCompiled, WebhookEndpointConfig,
             WebhookEndpointJsConfig, WebhookServerError,
         };
-        use concepts::component_id::InputContentDigest;
+        use concepts::component_id::ComponentDigest;
         use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
         use concepts::time::{ClockFn, TokioSleep};
         use concepts::{ComponentId, ComponentType, StrVariant};
@@ -2647,7 +2649,7 @@ pub(crate) mod tests {
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
                             StrVariant::empty(),
-                            InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
+                            ComponentDigest(calculate_sha256_file(wasm_file).await.unwrap().0),
                         )
                         .unwrap(),
                         forward_stdout: Some(StdOutputConfig::Stdout),
@@ -2780,7 +2782,7 @@ pub(crate) mod tests {
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
                             StrVariant::empty(),
-                            InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
+                            ComponentDigest(calculate_sha256_file(wasm_file).await.unwrap().0),
                         )
                         .unwrap(),
                         forward_stdout: Some(StdOutputConfig::Stdout),
@@ -3053,7 +3055,7 @@ pub(crate) mod tests {
                             component_id: ComponentId::new(
                                 ComponentType::WebhookEndpoint,
                                 StrVariant::empty(),
-                                InputContentDigest(calculate_sha256_file(wasm_file).await.unwrap()),
+                                ComponentDigest(calculate_sha256_file(wasm_file).await.unwrap().0),
                             )
                             .unwrap(),
                             forward_stdout: Some(StdOutputConfig::Stdout),

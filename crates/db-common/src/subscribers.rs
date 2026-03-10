@@ -1,7 +1,7 @@
 //! Subscription management for pending executions.
 
 use crate::NotifierPendingAt;
-use concepts::{FunctionFqn, component_id::InputContentDigest};
+use concepts::{FunctionFqn, component_id::ComponentDigest};
 use hashbrown::HashMap;
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -10,7 +10,7 @@ use tracing::debug;
 #[derive(Default)]
 pub struct PendingFfqnSubscribersHolder {
     by_ffqns: HashMap<FunctionFqn, (mpsc::Sender<()>, u64)>,
-    by_component: HashMap<InputContentDigest /* input digest */, (mpsc::Sender<()>, u64)>,
+    by_component: HashMap<ComponentDigest /* input digest */, (mpsc::Sender<()>, u64)>,
 }
 
 impl PendingFfqnSubscribersHolder {
@@ -41,7 +41,7 @@ impl PendingFfqnSubscribersHolder {
     /// Insert a subscription by component input digest.
     pub fn insert_by_component(
         &mut self,
-        input_content_digest: InputContentDigest,
+        input_content_digest: ComponentDigest,
         value: (mpsc::Sender<()>, u64),
     ) {
         self.by_component.insert(input_content_digest, value);
@@ -50,7 +50,7 @@ impl PendingFfqnSubscribersHolder {
     /// Remove a subscription by component input digest.
     pub fn remove_by_component(
         &mut self,
-        input_content_digest: &InputContentDigest,
+        input_content_digest: &ComponentDigest,
     ) -> Option<(mpsc::Sender<()>, u64)> {
         self.by_component.remove(input_content_digest)
     }

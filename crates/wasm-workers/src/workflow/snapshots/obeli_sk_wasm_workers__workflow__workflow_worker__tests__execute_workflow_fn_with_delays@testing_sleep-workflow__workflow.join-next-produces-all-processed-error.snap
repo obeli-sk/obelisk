@@ -16,7 +16,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "component_id": {
             "component_type": "workflow",
             "name": "",
-            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "deployment_id": "Dep_00000000000000000000000000",
           "metadata": null,
@@ -32,7 +32,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "component_id": {
             "component_type": "workflow",
             "name": "",
-            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "executor_id": "Exr_00000000000000000000000000",
           "deployment_id": "Dep_00000000000000000000000000",
@@ -106,7 +106,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "component_id": {
             "component_type": "workflow",
             "name": "",
-            "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "executor_id": "Exr_00000000000000000000000000",
           "deployment_id": "Dep_00000000000000000000000000",
