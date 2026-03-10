@@ -72,7 +72,7 @@ pub(crate) mod types {
                     import obelisk:types/execution@4.2.0;
                     import obelisk:types/backtrace@4.2.0;
                     import obelisk:types/join-set@4.2.0;
-                    import obelisk:webhook/webhook-support@4.2.0;
+                    import obelisk:webhook/webhook-support@5.0.0;
                 }",
         world: "any:any/bindings",
         imports: {

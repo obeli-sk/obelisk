@@ -324,7 +324,7 @@ impl ComponentConfigRegistry {
                     "wasi" => true,
                     "obelisk" => matches!(
                         import.ffqn.ifc_fqn.pkg_fqn_name().to_string().as_str(),
-                        "obelisk:webhook@4.2.0"
+                        "obelisk:webhook@5.0.0"
                             | "obelisk:log@1.0.0"
                             | "obelisk:types@4.0.0"
                             | "obelisk:types@4.1.0"
