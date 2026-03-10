@@ -1277,32 +1277,17 @@ impl ActivityJsComponentConfigToml {
         let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
         let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
             .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
-        match &return_type_tw {
-            val_json::type_wrapper::TypeWrapper::Result { err: None, .. } => {} // result<T> — ok
-            val_json::type_wrapper::TypeWrapper::Result {
-                err: Some(err_type),
-                ..
-            } => {
-                if !matches!(
-                    err_type.as_ref(),
-                    val_json::type_wrapper::TypeWrapper::String
-                ) {
-                    bail!(
-                        "return_type err must be `string`, got `{err_type}` in `{return_type_str}`"
-                    );
-                }
-            }
-            _ => bail!("return_type must be a `result` type, got `{return_type_str}`"),
-        }
         let return_type = concepts::ReturnType::detect(
             return_type_tw,
             StrVariant::from(return_type_str.to_string()),
         );
-        let return_type = assert_matches::assert_matches!(
-            return_type,
-            ReturnType::Extendable(return_type) => return_type,
-            "already verified that it is a result<?, string>"
-        );
+        let return_type = match return_type {
+            ReturnType::Extendable(rt) => rt,
+            ReturnType::NonExtendable(_) => bail!(
+                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
+                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
+            ),
+        };
 
         // Compute content digest from source + ffqn + params + return_type
         let component_digest = self.component_digest.unwrap_or_else(|| {

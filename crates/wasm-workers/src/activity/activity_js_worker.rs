@@ -14,7 +14,7 @@ use concepts::time::Sleep;
 use concepts::{
     ComponentType, FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterType, Params,
     ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
-    SupportedFunctionReturnValue,
+    SupportedFunctionReturnValue, storage::Version,
 };
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
@@ -224,13 +224,15 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
                         ok: Some(ok_type),
                         err: Some(err_type),
                     },
-                value: WastVal::Result(Err(Some(err_val))), // // js runtime returned {"ok":{"err":"some string"}}
+                value: WastVal::Result(Err(Some(err_val))), // js runtime returned {"ok":{"err":"some string"}}
             })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
+                let WastVal::String(thrown) = *err_val else {
+                    unreachable!("err type is String, so value must be WastVal::String")
+                };
+                let retval =
+                    map_js_throw_to_user_err(thrown, &self.user_return_type, version.clone())?;
                 Ok(WorkerResultOk::RunFinished {
-                    retval: SupportedFunctionReturnValue::Err(Some(WastValWithType {
-                        r#type: *err_type,
-                        value: *err_val,
-                    })),
+                    retval,
                     version,
                     http_client_traces,
                 })
@@ -305,6 +307,55 @@ fn synthesize_wit(
     return_type: &ReturnTypeExtendable,
 ) -> String {
     crate::js_wit_builder::synthesize_wit(ffqn, params, return_type, "js-activity")
+}
+
+/// Maps a JSON-encoded JS throw to the user-configured err type.
+///
+/// The Boa runtime JSON-encodes all thrown values (consistent with ok values), so
+/// `throw null` → `"null"`, `throw "foo"` → `"\"foo\""`, `throw "my-case"` → `"\"my-case\""`.
+///
+/// * `err: None` (void) — only JSON null is accepted → `Err(None)`; anything else is fatal.
+/// * `err: Some(T)` — the JSON is type-checked and deserialized via `deserialize_value`.
+fn map_js_throw_to_user_err(
+    thrown: String,
+    user_return_type: &ReturnTypeExtendable,
+    version: Version,
+) -> Result<SupportedFunctionReturnValue, executor::worker::WorkerError> {
+    let thrown_val: serde_json::Value =
+        serde_json::from_str(&thrown).unwrap_or(serde_json::Value::Null);
+    match user_return_type.type_wrapper_tl.err.as_deref() {
+        None => {
+            if thrown_val == serde_json::Value::Null {
+                Ok(SupportedFunctionReturnValue::Err(None))
+            } else {
+                Err(executor::worker::WorkerError::FatalError(
+                    FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                        ResultParsingErrorFromVal::TypeCheckError(format!(
+                            "thrown value type check failed: return type is `result<T>` (no error type), expected `throw null`, got `{thrown}`"
+                        )),
+                    )),
+                    version,
+                ))
+            }
+        }
+        Some(user_err_type) => {
+            let wvt = val_json::wast_val_ser::deserialize_value(
+                &thrown_val,
+                user_err_type.clone(),
+            )
+            .map_err(|e| {
+                executor::worker::WorkerError::FatalError(
+                    FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                        ResultParsingErrorFromVal::TypeCheckError(format!(
+                            "failed to type check thrown value `{thrown}` as `{user_err_type}`: {e}"
+                        )),
+                    )),
+                    version.clone(),
+                )
+            })?;
+            Ok(SupportedFunctionReturnValue::Err(Some(wvt)))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -735,7 +786,10 @@ mod tests {
                 _version,
             )
             => {
-                assert!(reason.starts_with("expected string, got JsError"), "{reason} should start with: `expected string, got JsError`");
+                assert!(
+                    reason.contains("failed to type check thrown value"),
+                    "{reason} should mention type check failure"
+                );
             }
         );
     }
@@ -1403,6 +1457,120 @@ mod tests {
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
         assert_matches!(retval, SupportedFunctionReturnValue::Ok(None));
+    }
+
+    #[tokio::test]
+    async fn typed_throw_variant_err() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "might-fail");
+        let js_source = r#"
+            export default function might_fail() {
+                throw "not_found";
+            }
+        "#;
+
+        use val_json::type_wrapper::TypeKey;
+        use val_json::type_wrapper::indexmap::IndexMap;
+        let cases: IndexMap<TypeKey, Option<TypeWrapper>> = [
+            (TypeKey::new_kebab("execution-failed"), None),
+            (TypeKey::new_kebab("not-found"), None),
+        ]
+        .into_iter()
+        .collect();
+        let err_variant = TypeWrapper::Variant(cases.clone());
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::U32)),
+                err: Some(Box::new(err_variant.clone())),
+            },
+            wit_type: StrVariant::Static("result<u32, variant { execution-failed, not-found }>"),
+        };
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_return_type(return_type)
+            .build()
+            .await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
+        let err_wvt = assert_matches!(retval, SupportedFunctionReturnValue::Err(Some(wvt)) => wvt);
+        assert_eq!(err_wvt.r#type, err_variant);
+        assert_eq!(
+            err_wvt.value,
+            WastVal::Variant(val_json::wast_val::ValKey::new_snake("not_found"), None)
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_throw_err_none_is_fatal() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "no-err");
+        let js_source = r#"
+            export default function no_err() {
+                throw "oops";
+            }
+        "#;
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::U32)),
+                err: None,
+            },
+            wit_type: StrVariant::Static("result<u32>"),
+        };
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_return_type(return_type)
+            .build()
+            .await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let err = worker.run(ctx).await.unwrap_err();
+        let reason = assert_matches!(
+            err,
+            WorkerError::FatalError(
+                FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                    ResultParsingErrorFromVal::TypeCheckError(reason),
+                )),
+                _version,
+            ) => reason
+        );
+        assert_eq!(
+            reason,
+            "thrown value type check failed: return type is `result<T>` (no error type), expected `throw null`, got `\"oops\"`"
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_throw_null_void_err() {
+        // `throw null` with `result<string>` (err=None) → Err(None)
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "null-throw");
+        let js_source = r"
+            export default function null_throw() {
+                throw null;
+            }
+        ";
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::String)),
+                err: None,
+            },
+            wit_type: StrVariant::Static("result<string>"),
+        };
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_return_type(return_type)
+            .build()
+            .await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
+        assert_matches!(retval, SupportedFunctionReturnValue::Err(None));
     }
 
     #[tokio::test]

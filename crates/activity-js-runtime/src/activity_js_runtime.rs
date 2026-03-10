@@ -29,7 +29,6 @@ use crate::generated::{
 };
 use boa_common::console::{ObeliskLogger, setup_console};
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
-use boa_common::helpers::extract_error_string;
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{Context, JsResult, JsValue, Source};
@@ -160,16 +159,28 @@ fn convert_result(
             }
         }
         Err(js_err) => {
-            if let Ok(native_err) = js_err.try_native(*context.borrow_mut()) {
-                // `throw new Error('foo')` goes here
-                Ok(Err(native_err.message().to_string()))
-            } else if let Some(err_str) = extract_error_string(&js_err) {
-                Ok(Err(err_str))
+            // JSON-encode the thrown value (consistent with ok branch).
+            // `throw new Error("msg")` → JSON-encode the message string.
+            // `throw expr` (null, string, number, object, …) → serialize via to_json.
+            let err_json = if let Ok(native_err) = js_err.try_native(*context.borrow_mut()) {
+                serde_json::to_string(&native_err.message().to_string())
+                    .expect("string serialization is infallible")
             } else {
-                Err(JsRuntimeError::WrongThrownType(format!(
-                    "expected string, got {js_err:?}"
-                )))
-            }
+                let opaque = js_err
+                    .as_opaque()
+                    .expect("non-native JsError must be opaque");
+                match opaque.to_json(*context.borrow_mut()) {
+                    Ok(Some(json_val)) => serde_json::to_string(&json_val)
+                        .expect("serde_json::Value must be serializable"),
+                    Ok(None) => "null".to_string(), // undefined → null
+                    Err(e) => {
+                        return Err(JsRuntimeError::WrongThrownType(format!(
+                            "cannot serialize thrown value to JSON: {e:?}"
+                        )));
+                    }
+                }
+            };
+            Ok(Err(err_json))
         }
     }
 }

@@ -22,6 +22,12 @@ expression: functions
     "ffqn": "testing:integration/activities.make-record"
   },
   {
+    "ffqn": "testing:integration/activities.throw-variant"
+  },
+  {
+    "ffqn": "testing:integration/activities.throw-null"
+  },
+  {
     "ffqn": "testing:integration/workflows.add-workflow"
   },
   {
