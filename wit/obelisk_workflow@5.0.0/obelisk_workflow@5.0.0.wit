@@ -1,4 +1,4 @@
-package obelisk:workflow@4.2.0;
+package obelisk:workflow@5.0.0;
 
 @since(version = 4.0.0)
 interface workflow-support {
@@ -25,7 +25,7 @@ interface workflow-support {
         not-found-in-processed-responses,
     }
 
-    @since(version = 4.1.0)
+    @since(version = 5.0.0)
     variant submit-json-error {
         /// See `Function` definition
         ffqn-parsing-error(string),
@@ -50,7 +50,7 @@ interface workflow-support {
     }
 
     /// Error variants that may occur when calling `stub-json`.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     variant stub-json-error {
         /// Cannot parse the execution ID.
         execution-id-parsing-error(string),
@@ -126,12 +126,12 @@ interface workflow-support {
     join-next-try: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-try-error>;
 
     /// Generate a new top-level execution ID.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id;
 
     /// Schedule a new top-level execution with its parameters serialized as JSON array.
     /// Use the execution ID returned by `execution-id-generate`.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
 
     /// Call a function and block until the result is available. Equivalent to
@@ -140,60 +140,60 @@ interface workflow-support {
     /// Ok(None) for successful result with no value,
     /// Err(Some(json)) for error result with value,
     /// Err(None) for error result with no value.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     call-json: func(function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
 
     /// Write a stub response with a JSON-serialized result for an activity_stub or activity_external execution.
     /// The `execution-id` must be a derived (child) execution ID.
     /// The `result-json` is the JSON-serialized return value.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     stub-json: func(execution-id: execution-id, result-json: string, backtrace: option<wasm-backtrace>) -> result<_, stub-json-error>;
 
     /// Like `random-u64` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     random-u64-bt: func(min: u64, max-exclusive: u64, backtrace: option<wasm-backtrace>) -> u64;
 
     /// Like `random-u64-inclusive` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     random-u64-inclusive-bt: func(min: u64, max-inclusive: u64, backtrace: option<wasm-backtrace>) -> u64;
 
     /// Like `random-string` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     random-string-bt: func(min-length: u16, max-length-exclusive: u16, backtrace: option<wasm-backtrace>) -> string;
 
     /// Like `sleep` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     sleep-bt: func(schedule-at: schedule-at, backtrace: option<wasm-backtrace>) -> result<datetime>;
 
     /// Like `join-set-create` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     join-set-create-bt: func(backtrace: option<wasm-backtrace>) -> join-set;
 
     /// Like `join-set-create-named` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     join-set-create-named-bt: func(name: string, backtrace: option<wasm-backtrace>) -> result<join-set, join-set-create-error>;
 
     /// Like `join-set-close` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     join-set-close-bt: func(self: join-set, backtrace: option<wasm-backtrace>);
 
     /// Like `submit-json` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     submit-json-bt: func(join-set: borrow<join-set>, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<execution-id, submit-json-error>;
 
     /// Like `get-result-json` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     get-result-json-bt: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, get-result-json-error>;
 
     /// Like `submit-delay` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     submit-delay-bt: func(join-set: borrow<join-set>, timeout: schedule-at, backtrace: option<wasm-backtrace>) -> delay-id;
 
     /// Like `join-next` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     join-next-bt: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<tuple<response-id, result>, join-next-error>;
 
     /// Like `join-next-try` but records the call site backtrace.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     join-next-try-bt: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<tuple<response-id, result>, join-next-try-error>;
 }
