@@ -2011,6 +2011,7 @@ fn prespawn_js_activity(
         activity_js.js_source,
         activity_js.ffqn,
         activity_js.params,
+        activity_js.return_type,
     )
     .with_context(|| format!("cannot create JS activity worker for {component_id}"))?;
     let wit = worker.wit();

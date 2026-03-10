@@ -867,7 +867,7 @@ impl SupportedFunctionReturnValue {
                 }
                 _ => {
                     unreachable!(
-                        "unexpected top-level return type {ret_type:?} cannot be ReturnTypeCompatible"
+                        "unexpected top-level return type {ret_type:?} cannot be `ReturnTypeExtendable`"
                     )
                 }
             },

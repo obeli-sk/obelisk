@@ -142,18 +142,21 @@ async fn execute_async(
 }
 
 /// Convert JS result to Rust result.
+///
+/// The ok value is JSON-serialized so the JS worker can deserialize it as any configured type.
 fn convert_result(
     result: JsResult<JsValue>,
     context: &RefCell<&mut Context>,
 ) -> Result<Result<String, String>, JsRuntimeError> {
     match result {
         Ok(js_value) => {
-            if let Some(string) = js_value.as_string() {
-                Ok(Ok(string.to_std_string_escaped()))
-            } else {
-                Err(JsRuntimeError::WrongReturnType(format!(
-                    "expected string, got {js_value:?}"
-                )))
+            match js_value.to_json(*context.borrow_mut()) {
+                Ok(Some(json_val)) => Ok(Ok(serde_json::to_string(&json_val)
+                    .expect("serde_json::Value must be serializable"))),
+                Ok(None) => Ok(Ok("null".to_string())), // undefined → null
+                Err(e) => Err(JsRuntimeError::WrongReturnType(format!(
+                    "cannot serialize to JSON: {e:?}"
+                ))),
             }
         }
         Err(js_err) => {

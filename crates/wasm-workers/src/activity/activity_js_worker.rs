@@ -1,8 +1,8 @@
 //! JS activity worker that wraps an `ActivityWorker` running the Boa WASM component.
 //!
 //! The Boa component exports `obelisk:js-runtime/execute.run(js-code, params-json) -> result<string, string>`.
-//! This wrapper translates the user's typed interface `func(params: list<string>) -> result<string, string>`
-//! into calls to the Boa component.
+//! This wrapper translates the user's typed interface `func(params) -> result<T, string>`
+//! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
 use super::activity_worker::{ActivityWorker, ActivityWorkerCompiled};
 use super::cancel_registry::CancelRegistry;
@@ -13,7 +13,8 @@ use concepts::storage::LogInfoAppendRow;
 use concepts::time::Sleep;
 use concepts::{
     ComponentType, FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterType, Params,
-    ResultParsingError, ResultParsingErrorFromVal, SupportedFunctionReturnValue,
+    ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
+    SupportedFunctionReturnValue,
 };
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
@@ -31,6 +32,7 @@ pub struct ActivityJsWorkerCompiled<S: Sleep> {
     js_source: String,
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
+    user_return_type: ReturnTypeExtendable,
     /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
     user_wasm_component: WasmComponent,
 }
@@ -41,8 +43,9 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
         js_source: String,
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
+        user_return_type: ReturnTypeExtendable,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
-        let wit = synthesize_wit(&user_ffqn, &user_params);
+        let wit = synthesize_wit(&user_ffqn, &user_params, &user_return_type);
         let user_wasm_component =
             WasmComponent::new_from_wit_string(&wit, ComponentType::ActivityWasm)?;
         Ok(Self {
@@ -50,6 +53,7 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
             js_source,
             user_ffqn,
             user_params,
+            user_return_type,
             user_wasm_component,
         })
     }
@@ -87,6 +91,7 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
             js_source: self.js_source,
             user_ffqn: self.user_ffqn,
             user_params: self.user_params,
+            user_return_type: self.user_return_type,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
         }
     }
@@ -98,6 +103,7 @@ pub struct ActivityJsWorker<S: Sleep> {
     #[allow(dead_code)] // Will be used for error context in future
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
+    user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
 }
 
@@ -130,8 +136,8 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
 
         // Rewrite context to call
         ctx.ffqn =
-            // Copied from activity_js_runtime_builder::exports::obelisk_activity::activity_js_runtime::execute::RUN
             FunctionFqn::new_static_tuple(("obelisk-activity:activity-js-runtime/execute", "run"));
+        // run: func(js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(self.js_source.clone()),
             serde_json::Value::Array(params_json_list),
@@ -155,18 +161,58 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
             SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                 r#type:
                     TypeWrapper::Result {
-                        ok: Some(ok_type),
-                        err: Some(_),
+                        ok: Some(ok_type),   // String
+                        err: Some(err_type), // err string was not sent
                     },
-                value: WastVal::Result(Ok(Some(ok_val))),
-            })) => {
-                // js runtime returned {"ok": {"ok":"some string"}}
-                assert_eq!(TypeWrapper::String, *ok_type);
+                value: WastVal::Result(Ok(Some(ok_val))), // activity-js-runtime returned {"ok": {"ok": "<json-encoded value>"}}
+            })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
+                let WastVal::String(ok_val) = *ok_val else {
+                    unreachable!("ok type is String, so value must be WastVal::String")
+                };
+                let Ok(ok_val) = serde_json::from_str(&ok_val) else {
+                    unreachable!("activity-js-runtime always sends JSON-encoded string")
+                };
+                // Do the retval type check here:
+                let retval = match &self.user_return_type.type_wrapper_tl.ok {
+                    Some(configured_ok_type) => {
+                        let wvt = val_json::wast_val_ser::deserialize_value(
+                            &ok_val,
+                            *configured_ok_type.clone(),
+                        )
+                        .map_err(|err| {
+                            WorkerError::FatalError(
+                                FatalError::ResultParsingError(
+                                    ResultParsingError::ResultParsingErrorFromVal(
+                                        ResultParsingErrorFromVal::TypeCheckError(format!(
+                                            "failed to type check the return value `{ok_val}` as `{configured_ok_type}`: {err}"
+                                        )),
+                                    ),
+                                ),
+                                version.clone(),
+                            )
+                        })?;
+                        SupportedFunctionReturnValue::Ok(Some(wvt))
+                    }
+                    None => {
+                        // Type check: value must be `null`
+                        if ok_val == serde_json::Value::Null {
+                            SupportedFunctionReturnValue::Ok(None)
+                        } else {
+                            return Err(WorkerError::FatalError(
+                                FatalError::ResultParsingError(
+                                    ResultParsingError::ResultParsingErrorFromVal(
+                                        ResultParsingErrorFromVal::TypeCheckError(format!(
+                                            "return value type check failed, expected `null`, got `{ok_val}`"
+                                        )),
+                                    ),
+                                ),
+                                version.clone(),
+                            ));
+                        }
+                    }
+                };
                 Ok(WorkerResultOk::RunFinished {
-                    retval: SupportedFunctionReturnValue::Ok(Some(WastValWithType {
-                        r#type: *ok_type,
-                        value: *ok_val,
-                    })),
+                    retval,
                     version,
                     http_client_traces,
                 })
@@ -175,13 +221,11 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
             SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                 r#type:
                     TypeWrapper::Result {
-                        ok: Some(_),
+                        ok: Some(ok_type),
                         err: Some(err_type),
                     },
-                value: WastVal::Result(Err(Some(err_val))),
-            })) => {
-                // js runtime returned {"ok":{"err":"some string"}}
-                assert_eq!(TypeWrapper::String, *err_type);
+                value: WastVal::Result(Err(Some(err_val))), // // js runtime returned {"ok":{"err":"some string"}}
+            })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
                 Ok(WorkerResultOk::RunFinished {
                     retval: SupportedFunctionReturnValue::Err(Some(WastValWithType {
                         r#type: *err_type,
@@ -255,37 +299,12 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
     }
 }
 
-/// Synthesize a WIT string for the JS activity's user-facing interface.
-///
-/// The generated WIT is parsed by `WasmComponent::new_from_wit_string` which runs
-/// `ExIm::decode` and `rebuild_resolve`, producing the same extension metadata
-/// and printable WIT that standard WASM activities get.
-fn synthesize_wit(ffqn: &FunctionFqn, params: &[ParameterType]) -> String {
-    let ifc_fqn = &ffqn.ifc_fqn;
-    let namespace = ifc_fqn.namespace();
-    let package_name = ifc_fqn.package_name();
-    let ifc_name = ifc_fqn.ifc_name();
-    let fn_name = &ffqn.function_name;
-
-    let version_suffix = ifc_fqn.version().map_or(String::new(), |v| format!("@{v}"));
-
-    let wit_params: Vec<String> = params
-        .iter()
-        .map(|p| format!("{}: {}", p.name, p.wit_type.as_ref()))
-        .collect();
-
-    format!(
-        "package {namespace}:{package_name}{version_suffix};\n\
-         \n\
-         interface {ifc_name} {{\n\
-         \x20   {fn_name}: func({params}) -> result<string, string>;\n\
-         }}\n\
-         \n\
-         world js-activity {{\n\
-         \x20   export {ifc_name};\n\
-         }}\n",
-        params = wit_params.join(", "),
-    )
+fn synthesize_wit(
+    ffqn: &FunctionFqn,
+    params: &[ParameterType],
+    return_type: &ReturnTypeExtendable,
+) -> String {
+    crate::js_wit_builder::synthesize_wit(ffqn, params, return_type, "js-activity")
 }
 
 #[cfg(test)]
@@ -295,7 +314,6 @@ mod tests {
     use crate::activity::activity_worker::tests::TestRetryBehavior;
     use crate::engines::{EngineConfig, Engines};
     use assert_matches::assert_matches;
-    use concepts::SupportedFunctionReturnValue;
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
     use concepts::storage::{Locked, Version};
@@ -304,16 +322,28 @@ mod tests {
     use concepts::{
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
     };
+    use concepts::{SupportedFunctionReturnValue, TypeWrapperTopLevel};
     use executor::worker::{WorkerContext, WorkerError, WorkerResultOk};
     use serde_json::json;
     use tokio::sync::mpsc;
     use tracing::info_span;
     use val_json::wast_val::WastVal;
 
+    fn default_return_type() -> ReturnTypeExtendable {
+        ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::String)),
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            wit_type: StrVariant::Static("result<string, string>"),
+        }
+    }
+
     struct JsWorkerBuilder {
         js_source: String,
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
+        user_return_type: ReturnTypeExtendable,
         allowed_hosts: Vec<crate::http_request_policy::AllowedHostConfig>,
         logs_storage_config: Option<crate::component_logger::LogStrageConfig>,
     }
@@ -328,6 +358,7 @@ mod tests {
                     name: StrVariant::Static("params"),
                     wit_type: StrVariant::Static("list<string>"),
                 }],
+                user_return_type: default_return_type(),
                 allowed_hosts: Vec::new(),
                 logs_storage_config: None,
             }
@@ -335,6 +366,11 @@ mod tests {
 
         fn with_params(mut self, params: Vec<ParameterType>) -> Self {
             self.user_params = params;
+            self
+        }
+
+        fn with_return_type(mut self, return_type: ReturnTypeExtendable) -> Self {
+            self.user_return_type = return_type;
             self
         }
 
@@ -400,6 +436,7 @@ mod tests {
                 self.js_source,
                 self.user_ffqn,
                 self.user_params,
+                self.user_return_type,
             )
             .unwrap();
 
@@ -656,6 +693,8 @@ mod tests {
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
         let ctx = make_worker_context(ffqn, &["test".to_string()]);
 
+        // The JS object is JSON-serialized successfully, but fails to deserialize as result<string, string>
+        // because the JSON object `{"name":"test","count":42}` is not a string.
         let err = worker.run(ctx).await.unwrap_err();
         assert_matches!(
             err,
@@ -666,7 +705,9 @@ mod tests {
                 _version,
             )
             => {
-                assert!(reason.starts_with("expected string, got JsValue"), "{reason} should start with: `expexpected string, got JsValue`");
+                assert_eq!(
+                    r#"failed to type check the return value `{"count":42,"name":"test"}` as `string`: invalid type: map, expected value matching "string" at line 1 column 1"#,
+                    reason);
             }
         );
     }
@@ -1230,5 +1271,178 @@ mod tests {
             test_retry_behavior,
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn typed_return_u32() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "get-count");
+        let js_source = r"
+            export default function get_count() {
+                return 42;
+            }
+        ";
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::U32)),
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            wit_type: StrVariant::Static("result<u32, string>"),
+        };
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_return_type(return_type)
+            .build()
+            .await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
+        let wvt = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(wvt)) => wvt);
+        assert_eq!(wvt.r#type, TypeWrapper::U32);
+        assert_eq!(wvt.value, WastVal::U32(42));
+    }
+
+    #[tokio::test]
+    async fn typed_return_list_string() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "get-tags");
+        let js_source = r#"
+            export default function get_tags() {
+                return ["alpha", "beta", "gamma"];
+            }
+        "#;
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::List(Box::new(TypeWrapper::String)))),
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            wit_type: StrVariant::Static("result<list<string>, string>"),
+        };
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_return_type(return_type)
+            .build()
+            .await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
+        let wvt = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(wvt)) => wvt);
+        assert_eq!(wvt.r#type, TypeWrapper::List(Box::new(TypeWrapper::String)));
+        assert_eq!(
+            wvt.value,
+            WastVal::List(vec![
+                WastVal::String("alpha".to_string()),
+                WastVal::String("beta".to_string()),
+                WastVal::String("gamma".to_string()),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_return_throw_with_typed_return() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "might-fail");
+        let js_source = r#"
+            export default function might_fail() {
+                throw "computation failed";
+            }
+        "#;
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::U32)),
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            wit_type: StrVariant::Static("result<u32, string>"),
+        };
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_return_type(return_type)
+            .build()
+            .await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
+        let err_wvt = assert_matches!(retval, SupportedFunctionReturnValue::Err(Some(wvt)) => wvt);
+        assert_eq!(err_wvt.r#type, TypeWrapper::String);
+        assert_eq!(
+            err_wvt.value,
+            WastVal::String("computation failed".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn retval_ok_none_should_accept_null() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "ok-none");
+        let js_source = r"
+            export default function ok_none() {
+                return null;
+            }
+        ";
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: None,
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            wit_type: StrVariant::Static("result<_, string>"),
+        };
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_return_type(return_type)
+            .build()
+            .await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
+        assert_matches!(retval, SupportedFunctionReturnValue::Ok(None));
+    }
+
+    #[tokio::test]
+    async fn typed_return_enum() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "get-status");
+        let js_source = r#"
+            export default function get_status() {
+                return "running";
+            }
+        "#;
+
+        use val_json::type_wrapper::TypeKey;
+        use val_json::type_wrapper::indexmap::IndexSet;
+        let cases: IndexSet<TypeKey> = ["pending", "running", "done"]
+            .iter()
+            .map(|s| TypeKey::new_kebab(*s))
+            .collect();
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::Enum(cases.clone()))),
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            wit_type: StrVariant::Static("result<enum { pending, running, done }, string>"),
+        };
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_return_type(return_type)
+            .build()
+            .await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
+        let wvt = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(wvt)) => wvt);
+        assert_eq!(wvt.r#type, TypeWrapper::Enum(cases));
+        assert_eq!(
+            wvt.value,
+            WastVal::Enum(val_json::wast_val::ValKey::new_snake("running"))
+        );
     }
 }

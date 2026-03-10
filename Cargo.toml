@@ -25,6 +25,7 @@ webhook-js-runtime-builder = { workspace = true, optional = true } # Only for lo
 workflow-js-runtime-builder = { workspace = true, optional = true } # Only for local development
 
 anyhow.workspace = true
+assert_matches.workspace = true
 async-trait.workspace = true
 axum-accept.workspace = true
 axum-extra.workspace = true

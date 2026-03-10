@@ -122,6 +122,16 @@ params.inline = [
 max_retries = 0
 env_vars = ["TEST_ENV_VAR=hello_from_env"]
 
+[[activity_js]]
+name = "test_make_record_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/make_record.js"
+ffqn = "testing:integration/activities.make-record"
+params.inline = [
+  {{ name = "name", type = "string" }},
+]
+return_type = "result<record {{ name: string, count: u32 }}, string>"
+max_retries = 0
+
 [[workflow_js]]
 name = "test_add_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
@@ -763,6 +773,20 @@ async fn activity_js_read_env() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": "hello_from_env" }));
+}
+
+#[tokio::test]
+async fn activity_js_record_return_type() {
+    let server = TestServer::start(test_addr!(24)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/activities.make-record",
+            vec![json!("Alice")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": { "name": "Alice", "count": 42 } }));
 }
 
 // ---- Idempotency ----

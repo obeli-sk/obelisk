@@ -3204,6 +3204,7 @@ version = "0.35.4"
 dependencies = [
  "activity-js-runtime-builder",
  "anyhow",
+ "assert_matches",
  "async-trait",
  "axum",
  "axum-accept",
