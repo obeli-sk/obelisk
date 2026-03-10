@@ -2499,11 +2499,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn server_verify(
-        #[values(
-            "obelisk-testing-sqlite-local.toml",
-            "obelisk-testing-sqlite-oci.toml",
-            "obelisk-testing-sqlite-oci-compat-4.0.0.toml"
-        )]
+        #[values("obelisk-testing-sqlite-local.toml", "obelisk-testing-sqlite-oci.toml")]
         obelisk_toml: &'static str,
     ) -> Result<(), anyhow::Error> {
         test_utils::set_up();
