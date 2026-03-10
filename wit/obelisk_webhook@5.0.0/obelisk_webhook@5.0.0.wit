@@ -1,13 +1,13 @@
-package obelisk:webhook@4.2.0;
+package obelisk:webhook@5.0.0;
 
-@since(version = 4.2.0)
+@since(version = 5.0.0)
 interface webhook-support {
     use obelisk:types/time@4.2.0.{schedule-at, datetime};
     use obelisk:types/execution@4.2.0.{execution-id, function, submit-config, schedule-json-error};
     use obelisk:types/backtrace@4.2.0.{wasm-backtrace};
 
     /// Error variants that may occur when calling `get-status`.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     variant get-status-error {
         /// Cannot parse the execution ID.
         execution-id-parsing-error(string),
@@ -16,7 +16,7 @@ interface webhook-support {
     }
 
     /// Error variants that may occur when calling `get`.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     variant get-error {
         /// Cannot parse the execution ID.
         execution-id-parsing-error(string),
@@ -25,7 +25,7 @@ interface webhook-support {
     }
 
     /// Error variants that may occur when calling `try-get`.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     variant try-get-error {
         /// Cannot parse the execution ID.
         execution-id-parsing-error(string),
@@ -36,7 +36,7 @@ interface webhook-support {
     }
 
     /// The status of an execution.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     variant execution-status {
         /// Execution is scheduled to run at a specific time.
         pending-at(datetime),
@@ -51,7 +51,7 @@ interface webhook-support {
     }
 
     /// The finished status of an execution.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     variant execution-status-finished {
         /// Execution has finished with a successful result.
         ok,
@@ -62,7 +62,7 @@ interface webhook-support {
     }
 
     /// Generate a new top-level execution ID.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     execution-id-generate: func() -> execution-id;
 
     /// Call a function and wait for the result.
@@ -72,16 +72,16 @@ interface webhook-support {
     /// Ok(None) for successful result with no value,
     /// Err(Some(json)) for error result with value,
     /// Err(None) for error result with no value.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     call-json: func(function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
 
     /// Schedule a new top-level execution with its parameters serialized as JSON array.
     /// Use the execution ID returned by `execution-id-generate`.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
 
     /// Get the current status of an execution.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     get-status: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<execution-status, get-status-error>;
 
     /// Get the result of an execution, blocking until it finishes.
@@ -90,7 +90,7 @@ interface webhook-support {
     /// Err(Some(json)) for error result with value,
     /// Err(None) for error result with no value.
     /// Outer result indicates lookup success/failure.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     get: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, get-error>;
 
     /// Try to get the result of an execution without blocking.
@@ -100,6 +100,6 @@ interface webhook-support {
     /// Err(Some(json)) for error result with value,
     /// Err(None) for error result with no value.
     /// Outer result indicates lookup success/failure.
-    @since(version = 4.2.0)
+    @since(version = 5.0.0)
     try-get: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, try-get-error>;
 }
