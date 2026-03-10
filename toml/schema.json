@@ -9,7 +9,7 @@
     "activity_external": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityStubExtComponentConfigToml"
+        "$ref": "#/$defs/ActivityExternalComponentConfigToml"
       }
     },
     "activity_js": {
@@ -21,7 +21,7 @@
     "activity_stub": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityStubExtComponentConfigToml"
+        "$ref": "#/$defs/ActivityStubComponentConfigToml"
       }
     },
     "activity_wasm": {
@@ -180,6 +180,38 @@
         "native"
       ]
     },
+    "ActivityExternalComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content_digest": {
+          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "location": {
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
+      ]
+    },
     "ActivityJsComponentConfigToml": {
       "type": "object",
       "properties": {
@@ -189,6 +221,14 @@
           "items": {
             "$ref": "#/$defs/AllowedHostToml"
           }
+        },
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the digest derived from the JS source, ffqn, and params.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "content_digest": {
           "description": "Content digest of the JS source file.\nRecommended for GitHub releases to enable caching and reproducible builds.",
@@ -247,7 +287,7 @@
         "ffqn"
       ]
     },
-    "ActivityStubExtComponentConfigToml": {
+    "ActivityStubComponentConfigToml": {
       "type": "object",
       "properties": {
         "content_digest": {
@@ -280,6 +320,14 @@
           "items": {
             "$ref": "#/$defs/AllowedHostToml"
           }
+        },
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "content_digest": {
           "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
@@ -1431,6 +1479,14 @@
         "blocking_strategy": {
           "$ref": "#/$defs/BlockingStrategyConfigToml"
         },
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "content_digest": {
           "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
           "type": [
@@ -1473,6 +1529,14 @@
       "properties": {
         "blocking_strategy": {
           "$ref": "#/$defs/BlockingStrategyConfigToml"
+        },
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the digest derived from the JS source, ffqn, and params.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "content_digest": {
           "description": "Content digest of the JS source file.\nRecommended for GitHub releases to enable caching and reproducible builds.",

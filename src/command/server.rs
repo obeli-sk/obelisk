@@ -10,7 +10,8 @@ use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
 use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
 use crate::config::toml::ActivityJsComponentConfigToml;
 use crate::config::toml::ActivityJsConfigVerified;
-use crate::config::toml::ActivityStubExtComponentConfigToml;
+use crate::config::toml::ActivityExternalComponentConfigToml;
+use crate::config::toml::ActivityStubComponentConfigToml;
 use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
@@ -1236,8 +1237,8 @@ impl ConfigVerified {
     async fn fetch_and_verify_all(
         activities_wasm: Vec<ActivityWasmComponentConfigToml>,
         activities_js: Vec<ActivityJsComponentConfigToml>,
-        activities_stub: Vec<ActivityStubExtComponentConfigToml>,
-        activities_external: Vec<ActivityStubExtComponentConfigToml>,
+        activities_stub: Vec<ActivityStubComponentConfigToml>,
+        activities_external: Vec<ActivityExternalComponentConfigToml>,
         workflows: Vec<WorkflowComponentConfigToml>,
         workflows_js: Vec<WorkflowJsComponentConfigToml>,
         http_servers: Vec<webhook::HttpServer>,
@@ -1332,30 +1333,31 @@ impl ConfigVerified {
             })
             .collect::<Vec<_>>();
 
-        let stub_ext_fetch_verify =
-            |activities: Vec<ActivityStubExtComponentConfigToml>, component_type: ComponentType| {
-                activities
-                    .into_iter()
-                    .zip(std::iter::repeat(component_type))
-                    .map(|(activity, component_type)| {
-                        tokio::spawn(
-                            activity
-                                .fetch_and_verify(
-                                    component_type,
-                                    wasm_cache_dir.clone(),
-                                    metadata_dir.clone(),
-                                    path_prefixes.clone(),
-                                )
-                                .in_current_span(),
+        let mut activities_stub_ext = activities_stub
+            .into_iter()
+            .map(|activity| {
+                tokio::spawn(
+                    activity
+                        .fetch_and_verify(
+                            wasm_cache_dir.clone(),
+                            metadata_dir.clone(),
+                            path_prefixes.clone(),
                         )
-                    })
-            };
-        let mut activities_stub_ext =
-            stub_ext_fetch_verify(activities_stub, ComponentType::ActivityStub).collect::<Vec<_>>();
-        activities_stub_ext.extend(stub_ext_fetch_verify(
-            activities_external,
-            ComponentType::ActivityExternal,
-        ));
+                        .in_current_span(),
+                )
+            })
+            .collect::<Vec<_>>();
+        activities_stub_ext.extend(activities_external.into_iter().map(|activity| {
+            tokio::spawn(
+                activity
+                    .fetch_and_verify(
+                        wasm_cache_dir.clone(),
+                        metadata_dir.clone(),
+                        path_prefixes.clone(),
+                    )
+                    .in_current_span(),
+            )
+        }));
 
         let workflows = workflows
             .into_iter()

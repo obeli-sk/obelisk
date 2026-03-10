@@ -90,6 +90,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # [[activity_wasm]]
 ## Common settings for all components - see above.
 ## Common executor settings - see above.
+# component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 ## Specific settings for activity_wasm:
 ## Retry customization: All activities are retried on trap (panic) and timeouts until `max_retries` condition is met.
 # max_retries = 5
@@ -152,6 +153,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # location = "path/to/source.js"
 # location = "gh://user/repo@release/my-activity.js"
 # content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
+# component_digest = "sha256:AA.."           # Optional. Override the component digest used for locking. If omitted, the digest is derived from the JS source, ffqn, and params.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to a single `(params: list<string>)` parameter.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
@@ -178,15 +180,18 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ### External Activity components configuration - only WIT schema is loaded
 # [[activity_external]]
 ## Common settings for all components - see above.
+# component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 
 ### Stub Activity components configuration - same as external activity, but the "stub response" RPC is allowed.
 # [[activity_stub]]
 ## Common settings for all components - see above.
+## Note: component_digest override is not supported for stub activities, as the digest is not used for locking executions.
 
 ### Workflow components configuration
 # [[workflow]]
 ## Common settings for all components - see above.
 ## Common executor settings - see above.
+# component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 
 ## Retry customization: All workflows are retried on trap (panic) and timeouts forever. Therefore, `retry_exp_backoff` must not be zero.
 # retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
@@ -218,6 +223,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # location = "path/to/workflow.js"
 # location = "gh://user/repo@release/my-workflow.js"
 # content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
+# component_digest = "sha256:AA.."           # Optional. Override the component digest used for locking. If omitted, the digest is derived from the JS source, ffqn, and params.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to a single `(params: list<string>)` parameter.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).

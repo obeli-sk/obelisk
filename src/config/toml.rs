@@ -83,9 +83,9 @@ pub(crate) struct ConfigToml {
     #[serde(default, rename = "activity_wasm")]
     pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
     #[serde(default, rename = "activity_stub")]
-    pub(crate) activities_stub: Vec<ActivityStubExtComponentConfigToml>,
+    pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
     #[serde(default, rename = "activity_external")]
-    pub(crate) activities_external: Vec<ActivityStubExtComponentConfigToml>,
+    pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
     #[serde(default, rename = "activity_js")]
     pub(crate) activities_js: Vec<ActivityJsComponentConfigToml>,
     #[serde(default, rename = "workflow")]
@@ -836,6 +836,11 @@ fn locking_strategy(
 pub(crate) struct ActivityWasmComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
+    /// Override the auto-computed component digest used for locking.
+    /// If set, this value is used instead of the content digest of the WASM file.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) component_digest: Option<ComponentDigest>,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
@@ -949,20 +954,30 @@ pub(crate) struct AllowedHostSecretsToml {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ActivityStubExtComponentConfigToml {
+pub(crate) struct ActivityStubComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivityExternalComponentConfigToml {
+    #[serde(flatten)]
+    pub(crate) common: ComponentCommon,
+    /// Override the auto-computed component digest used for locking.
+    /// If set, this value is used instead of the content digest of the WASM file.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) component_digest: Option<ComponentDigest>,
 }
 #[derive(Debug)]
 pub(crate) struct ActivityStubExtConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) component_id: ComponentId,
 }
-impl ActivityStubExtComponentConfigToml {
+impl ActivityStubComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
-        component_type: ComponentType,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         path_prefixes: Arc<PathPrefixes>,
@@ -972,9 +987,36 @@ impl ActivityStubExtComponentConfigToml {
             .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
             .await?;
         let component_id = ComponentId::new(
-            component_type,
+            ComponentType::ActivityStub,
             StrVariant::from(common.name),
-            ComponentDigest(common.content_digest.0), // TODO: Allow overriding the value for external activities.
+            ComponentDigest(common.content_digest.0),
+        )?;
+
+        Ok(ActivityStubExtConfigVerified {
+            wasm_path,
+            component_id,
+        })
+    }
+}
+impl ActivityExternalComponentConfigToml {
+    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
+    pub(crate) async fn fetch_and_verify(
+        self,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
+        path_prefixes: Arc<PathPrefixes>,
+    ) -> Result<ActivityStubExtConfigVerified, anyhow::Error> {
+        let (common, wasm_path) = self
+            .common
+            .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+            .await?;
+        let component_digest = self
+            .component_digest
+            .unwrap_or_else(|| ComponentDigest(common.content_digest.0));
+        let component_id = ComponentId::new(
+            ComponentType::ActivityExternal,
+            StrVariant::from(common.name),
+            component_digest,
         )?;
 
         Ok(ActivityStubExtConfigVerified {
@@ -1064,10 +1106,13 @@ impl ActivityWasmComponentConfigToml {
             (_, false) => None,
         };
 
+        let component_digest = self
+            .component_digest
+            .unwrap_or_else(|| ComponentDigest(common.content_digest.0));
         let component_id = ComponentId::new(
             ComponentType::ActivityWasm,
             StrVariant::from(common.name),
-            ComponentDigest(common.content_digest.0), // TODO: Allow overriding
+            component_digest,
         )?;
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
@@ -1108,6 +1153,11 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
+    /// Override the auto-computed component digest used for locking.
+    /// If set, this value is used instead of the digest derived from the JS source, ffqn, and params.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) component_digest: Option<ComponentDigest>,
     #[schemars(with = "String")]
     pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS function.
@@ -1217,18 +1267,21 @@ impl ActivityJsComponentConfigToml {
             .await?;
 
         // Compute content digest from source + ffqn + params
-        let mut hasher = Sha256::new();
-        hasher.update(b"activity_js:");
-        hasher.update(js_source.as_bytes());
-        hasher.update(self.ffqn.to_string().as_bytes());
-        for p in &parsed_params {
-            hasher.update(p.wit_type.as_ref().as_bytes());
-        }
-        let hash: [u8; 32] = hasher.finalize().into();
+        let component_digest = self.component_digest.unwrap_or_else(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(b"activity_js:");
+            hasher.update(js_source.as_bytes());
+            hasher.update(self.ffqn.to_string().as_bytes());
+            for p in &parsed_params {
+                hasher.update(p.wit_type.as_ref().as_bytes());
+            }
+            let hash: [u8; 32] = hasher.finalize().into();
+            ComponentDigest(Digest(hash))
+        });
         let component_id = ComponentId::new(
             ComponentType::ActivityWasm,
             StrVariant::from(self.name),
-            ComponentDigest(Digest(hash)),
+            component_digest,
         )?;
 
         let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
@@ -1281,6 +1334,11 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
+    /// Override the auto-computed component digest used for locking.
+    /// If set, this value is used instead of the digest derived from the JS source, ffqn, and params.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) component_digest: Option<ComponentDigest>,
     #[schemars(with = "String")]
     pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS workflow function.
@@ -1363,19 +1421,22 @@ impl WorkflowJsComponentConfigToml {
             .await?;
 
         // Compute content digest from source + ffqn + params
-        let mut hasher = Sha256::new();
-        hasher.update(b"workflow_js:");
-        hasher.update(js_source.as_bytes());
-        hasher.update(self.ffqn.to_string().as_bytes());
-        for p in &parsed_params {
-            hasher.update(p.wit_type.as_ref().as_bytes());
-        }
-        let hash: [u8; 32] = hasher.finalize().into();
+        let component_digest = self.component_digest.unwrap_or_else(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(b"workflow_js:");
+            hasher.update(js_source.as_bytes());
+            hasher.update(self.ffqn.to_string().as_bytes());
+            for p in &parsed_params {
+                hasher.update(p.wit_type.as_ref().as_bytes());
+            }
+            let hash: [u8; 32] = hasher.finalize().into();
+            ComponentDigest(Digest(hash))
+        });
 
         let component_id = ComponentId::new(
             ComponentType::Workflow, // Use Workflow type, not a separate WorkflowJs
             StrVariant::from(self.name),
-            ComponentDigest(Digest(hash)),
+            component_digest,
         )?;
 
         let workflow_config = WorkflowConfig {
@@ -1416,6 +1477,11 @@ impl WorkflowJsComponentConfigToml {
 pub(crate) struct WorkflowComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
+    /// Override the auto-computed component digest used for locking.
+    /// If set, this value is used instead of the content digest of the WASM file.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) component_digest: Option<ComponentDigest>,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_retry_exp_backoff")]
@@ -1571,11 +1637,13 @@ impl WorkflowComponentConfigToml {
         .await?
         .unwrap_or(wasm_path); // None means the original is already Component
 
+        let component_digest = self
+            .component_digest
+            .unwrap_or_else(|| ComponentDigest(common.content_digest.0)); // NB: content digest belongs to the original (untransformed) file.
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(common.name),
-            // TODO: Allow overriding
-            ComponentDigest(common.content_digest.0), // NB: content digest belongs to the original (untransformed) file.
+            component_digest,
         )?;
 
         let workflow_config = WorkflowConfig {
