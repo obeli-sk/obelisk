@@ -771,11 +771,6 @@ impl From<executor::executor::LockingStrategy> for LockingStrategy {
         }
     }
 }
-impl Default for LockingStrategy {
-    fn default() -> Self {
-        executor::executor::LockingStrategy::ByComponentDigest.into()
-    }
-}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -787,7 +782,7 @@ pub(crate) struct ExecConfigToml {
     #[serde(default = "default_tick_sleep")]
     tick_sleep: DurationConfig,
     #[serde(default)]
-    locking_strategy: LockingStrategy,
+    locking_strategy: Option<LockingStrategy>,
 }
 
 impl Default for ExecConfigToml {
@@ -796,7 +791,7 @@ impl Default for ExecConfigToml {
             batch_size: default_batch_size(),
             lock_expiry: default_lock_expiry(),
             tick_sleep: default_tick_sleep(),
-            locking_strategy: LockingStrategy::default(),
+            locking_strategy: None,
         }
     }
 }
@@ -812,13 +807,26 @@ impl ExecConfigToml {
             lock_expiry: self.lock_expiry.into(),
             tick_sleep: self.tick_sleep.into(),
             batch_size: self.batch_size,
+            locking_strategy: locking_strategy(self.locking_strategy, component_id.component_type),
             component_id,
             task_limiter: global_executor_instance_limiter,
             executor_id: ExecutorId::generate(),
             retry_config,
-            locking_strategy: self.locking_strategy.into(),
         }
     }
+}
+fn locking_strategy(
+    locking_strategy_override: Option<LockingStrategy>,
+    component_type: ComponentType,
+) -> executor::executor::LockingStrategy {
+    locking_strategy_override.map(executor::executor::LockingStrategy::from).unwrap_or_else(||
+    match component_type {
+        ComponentType::ActivityWasm => executor::executor::LockingStrategy::ByFfqns,
+        ComponentType::Workflow => executor::executor::LockingStrategy::ByComponentDigest,
+        other => unreachable!(
+            "unexpected type {other}, only worklows and activities (wasm,js) expose locking strategy"
+        ),
+    })
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

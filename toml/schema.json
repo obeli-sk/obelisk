@@ -758,8 +758,15 @@
           "$ref": "#/$defs/DurationConfig"
         },
         "locking_strategy": {
-          "$ref": "#/$defs/LockingStrategy",
-          "default": "by_component_digest"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LockingStrategy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tick_sleep": {
           "$ref": "#/$defs/DurationConfig"
