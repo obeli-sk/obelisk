@@ -1012,7 +1012,7 @@ impl ActivityExternalComponentConfigToml {
             .await?;
         let component_digest = self
             .component_digest
-            .unwrap_or_else(|| ComponentDigest(common.content_digest.0));
+            .unwrap_or(ComponentDigest(common.content_digest.0));
         let component_id = ComponentId::new(
             ComponentType::ActivityExternal,
             StrVariant::from(common.name),
@@ -1108,7 +1108,7 @@ impl ActivityWasmComponentConfigToml {
 
         let component_digest = self
             .component_digest
-            .unwrap_or_else(|| ComponentDigest(common.content_digest.0));
+            .unwrap_or(ComponentDigest(common.content_digest.0));
         let component_id = ComponentId::new(
             ComponentType::ActivityWasm,
             StrVariant::from(common.name),
@@ -1639,7 +1639,7 @@ impl WorkflowComponentConfigToml {
 
         let component_digest = self
             .component_digest
-            .unwrap_or_else(|| ComponentDigest(common.content_digest.0)); // NB: content digest belongs to the original (untransformed) file.
+            .unwrap_or(ComponentDigest(common.content_digest.0)); // NB: content digest belongs to the original (untransformed) file.
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(common.name),
