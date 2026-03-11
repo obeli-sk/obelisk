@@ -9,6 +9,7 @@ pub mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
 pub mod http_request_policy;
+pub(crate) mod js_wit_builder;
 pub mod log_db_forwarder;
 pub(crate) mod policy_builder;
 pub mod preopens_cleaner;

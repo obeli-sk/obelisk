@@ -10,6 +10,7 @@ use crate::{
 };
 use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
+use concepts::ReturnType;
 use concepts::component_id::Digest;
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, FunctionFqn, InvalidNameError, StrVariant,
@@ -1182,6 +1183,10 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
+    /// WIT return type. Defaults to `result<string, string>`.
+    /// Must be `result<T, string>` — the error type must be `string` since JS throws strings.
+    #[serde(default)]
+    pub(crate) return_type: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
@@ -1210,6 +1215,7 @@ pub(crate) struct ActivityJsConfigVerified {
     pub(crate) js_source: String,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
+    pub(crate) return_type: concepts::ReturnTypeExtendable,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
@@ -1266,7 +1272,24 @@ impl ActivityJsComponentConfigToml {
             )
             .await?;
 
-        // Compute content digest from source + ffqn + params
+        // Parse and validate return type
+        const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
+        let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
+        let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
+            .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
+        let return_type = concepts::ReturnType::detect(
+            return_type_tw,
+            StrVariant::from(return_type_str.to_string()),
+        );
+        let return_type = match return_type {
+            ReturnType::Extendable(rt) => rt,
+            ReturnType::NonExtendable(_) => bail!(
+                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
+                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
+            ),
+        };
+
+        // Compute content digest from source + ffqn + params + return_type
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_js:");
@@ -1275,6 +1298,7 @@ impl ActivityJsComponentConfigToml {
             for p in &parsed_params {
                 hasher.update(p.wit_type.as_ref().as_bytes());
             }
+            hasher.update(return_type.wit_type.as_bytes());
             let hash: [u8; 32] = hasher.finalize().into();
             ComponentDigest(Digest(hash))
         });
@@ -1310,6 +1334,7 @@ impl ActivityJsComponentConfigToml {
             js_source,
             ffqn: self.ffqn,
             params: parsed_params,
+            return_type,
             activity_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,

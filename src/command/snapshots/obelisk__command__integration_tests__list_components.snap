@@ -41,6 +41,27 @@ expression: components
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity_wasm",
+      "name": "test_make_record_activity"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity_wasm",
+      "name": "test_throw_variant_activity"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity_wasm",
+      "name": "test_throw_null_activity"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
       "name": "test_add_workflow"
     }

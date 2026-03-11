@@ -122,6 +122,32 @@ params.inline = [
 max_retries = 0
 env_vars = ["TEST_ENV_VAR=hello_from_env"]
 
+[[activity_js]]
+name = "test_make_record_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/make_record.js"
+ffqn = "testing:integration/activities.make-record"
+params.inline = [
+  {{ name = "name", type = "string" }},
+]
+return_type = "result<record {{ name: string, count: u32 }}, string>"
+max_retries = 0
+
+[[activity_js]]
+name = "test_throw_variant_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/throw_variant.js"
+ffqn = "testing:integration/activities.throw-variant"
+params.inline = []
+return_type = "result<u32, variant {{ execution-failed, not-found }}>"
+max_retries = 0
+
+[[activity_js]]
+name = "test_throw_null_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/throw_null.js"
+ffqn = "testing:integration/activities.throw-null"
+params.inline = []
+return_type = "result<string>"
+max_retries = 0
+
 [[workflow_js]]
 name = "test_add_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
@@ -763,6 +789,43 @@ async fn activity_js_read_env() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": "hello_from_env" }));
+}
+
+#[tokio::test]
+async fn activity_js_record_return_type() {
+    let server = TestServer::start(test_addr!(24)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/activities.make-record",
+            vec![json!("Alice")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": { "name": "Alice", "count": 42 } }));
+}
+
+#[tokio::test]
+async fn activity_js_throw_null_void_err() {
+    let server = TestServer::start(test_addr!(26)).await;
+    let resp = server
+        .submit_follow("testing:integration/activities.throw-null", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    // `throw null` with void err channel → Err(None) → {"err": null}
+    assert_eq!(body, json!({ "err": null }));
+}
+
+#[tokio::test]
+async fn activity_js_variant_err_throw() {
+    let server = TestServer::start(test_addr!(25)).await;
+    let resp = server
+        .submit_follow("testing:integration/activities.throw-variant", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "err": "not_found" }));
 }
 
 // ---- Idempotency ----
