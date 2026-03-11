@@ -35,5 +35,14 @@ expression: functions
   },
   {
     "ffqn": "testing:integration/workflows.call-activity"
+  },
+  {
+    "ffqn": "testing:integration/workflows.make-record"
+  },
+  {
+    "ffqn": "testing:integration/workflows.throw-variant"
+  },
+  {
+    "ffqn": "testing:integration/workflows.throw-null"
   }
 ]

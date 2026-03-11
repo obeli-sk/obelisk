@@ -117,7 +117,7 @@ use crate::generated::obelisk::workflow::workflow_support::{
     schedule_json, sleep_bt, stub_json, submit_delay_bt, submit_json_bt,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
-use boa_common::helpers::{extract_error_string, new_object, parse_ffqn};
+use boa_common::helpers::{new_object, parse_ffqn};
 use boa_engine::{
     Context, JsArgs, JsError, JsNativeError, JsResult, JsValue, Module, NativeFunction, Source,
     builtins::promise::PromiseState, js_string, object::builtins::JsFunction, property::Attribute,
@@ -287,27 +287,41 @@ pub fn execute(
     // Call the default export function with the params
     let result = default_fn.call(&JsValue::undefined(), &args, &mut context);
 
+    // JSON-serialize the return value so the worker can deserialize it as any configured type.
     match result {
         Ok(js_value) => {
-            if let Some(string) = js_value.as_string() {
-                Ok(Ok(string.to_std_string_escaped()))
-            } else {
-                Err(JsRuntimeError::WrongReturnType(format!(
-                    "expected string, got {js_value:?}"
-                )))
+            match js_value.to_json(&mut context) {
+                Ok(Some(json_val)) => Ok(Ok(serde_json::to_string(&json_val)
+                    .expect("serde_json::Value must be serializable"))),
+                Ok(None) => Ok(Ok("null".to_string())), // undefined → null
+                Err(e) => Err(JsRuntimeError::WrongReturnType(format!(
+                    "cannot serialize to JSON: {e:?}"
+                ))),
             }
         }
         Err(js_err) => {
-            if let Ok(native_err) = js_err.try_native(&mut context) {
-                // `throw new Error('foo')` goes here
-                Ok(Err(native_err.message().to_string()))
-            } else if let Some(err_str) = extract_error_string(&js_err) {
-                Ok(Err(err_str))
+            // JSON-encode the thrown value (consistent with ok branch).
+            // `throw new Error("msg")` → JSON-encode the message string.
+            // `throw expr` (null, string, number, object, …) → serialize via to_json.
+            let err_json = if let Ok(native_err) = js_err.try_native(&mut context) {
+                serde_json::to_string(&native_err.message().to_string())
+                    .expect("string serialization is infallible")
             } else {
-                Err(JsRuntimeError::WrongThrownType(format!(
-                    "expected string, got {js_err:?}"
-                )))
-            }
+                let opaque = js_err
+                    .as_opaque()
+                    .expect("non-native JsError must be opaque");
+                match opaque.to_json(&mut context) {
+                    Ok(Some(json_val)) => serde_json::to_string(&json_val)
+                        .expect("serde_json::Value must be serializable"),
+                    Ok(None) => "null".to_string(), // undefined → null
+                    Err(e) => {
+                        return Err(JsRuntimeError::WrongThrownType(format!(
+                            "cannot serialize thrown value to JSON: {e:?}"
+                        )));
+                    }
+                }
+            };
+            Ok(Err(err_json))
         }
     }
 }

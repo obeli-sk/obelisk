@@ -1579,6 +1579,14 @@
         },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"
+        },
+        "return_type": {
+          "description": "WIT return type. Defaults to `result<string, string>`.\nMust be `result`, `result<T>`, `result<T, string>`, or\n`result<T, variant { execution-failed, ... }>`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "additionalProperties": false,
