@@ -274,7 +274,13 @@
         },
         "params": {
           "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to a single `(params: list<string>)` parameter.",
-          "$ref": "#/$defs/ParamsSpec"
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          }
         },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"
@@ -968,31 +974,6 @@
         "enabled"
       ]
     },
-    "ParamsSpec": {
-      "oneOf": [
-        {
-          "type": "string",
-          "enum": [
-            "default"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "inline": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/JsParamToml"
-              }
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "inline"
-          ]
-        }
-      ]
-    },
     "PostgresConfigToml": {
       "type": "object",
       "properties": {
@@ -1575,7 +1556,13 @@
         },
         "params": {
           "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to a single `(params: list<string>)` parameter.",
-          "$ref": "#/$defs/ParamsSpec"
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          }
         },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig"

@@ -157,7 +157,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to a single `(params: list<string>)` parameter.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
-# params.inline = [
+# params = [
 #   { name = "name", type = "string" },
 #   { name = "count", type = "u32" },
 # ]
@@ -235,7 +235,7 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to a single `(params: list<string>)` parameter.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
-# params.inline = [
+# params = [
 #   { name = "name", type = "string" },
 #   { name = "count", type = "u32" },
 # ]

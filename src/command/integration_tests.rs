@@ -74,7 +74,7 @@ directory = "{db_dir}"
 name = "test_add_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/add.js"
 ffqn = "testing:integration/activities.add"
-params.inline = [
+params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
@@ -84,7 +84,7 @@ max_retries = 0
 name = "test_greet_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/greet.js"
 ffqn = "testing:integration/activities.greet"
-params.inline = [
+params = [
   {{ name = "name", type = "string" }},
 ]
 max_retries = 0
@@ -93,7 +93,7 @@ max_retries = 0
 name = "test_fetch_denied_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/fetch_get.js"
 ffqn = "testing:integration/fetch-get-denied.fetch-get"
-params.inline = [
+params = [
   {{ name = "url", type = "string" }},
   {{ name = "headers", type = "list<tuple<string,string>>" }},
 ]
@@ -103,7 +103,7 @@ max_retries = 0
 name = "test_fetch_allowed_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/fetch_get.js"
 ffqn = "testing:integration/fetch-get-allowed.fetch-get"
-params.inline = [
+params = [
   {{ name = "url", type = "string" }},
   {{ name = "headers", type = "list<tuple<string,string>>" }},
 ]
@@ -116,7 +116,7 @@ methods = ["GET"]
 name = "test_read_env_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/read_env.js"
 ffqn = "testing:integration/activities.read-env"
-params.inline = [
+params = [
   {{ name = "key", type = "string" }},
 ]
 max_retries = 0
@@ -126,7 +126,7 @@ env_vars = ["TEST_ENV_VAR=hello_from_env"]
 name = "test_make_record_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/make_record.js"
 ffqn = "testing:integration/activities.make-record"
-params.inline = [
+params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<record {{ name: string, count: u32 }}, string>"
@@ -136,7 +136,7 @@ max_retries = 0
 name = "test_throw_variant_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/throw_variant.js"
 ffqn = "testing:integration/activities.throw-variant"
-params.inline = []
+params = []
 return_type = "result<u32, variant {{ execution-failed, not-found }}>"
 max_retries = 0
 
@@ -144,7 +144,7 @@ max_retries = 0
 name = "test_throw_null_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/throw_null.js"
 ffqn = "testing:integration/activities.throw-null"
-params.inline = []
+params = []
 return_type = "result<string>"
 max_retries = 0
 
@@ -152,7 +152,7 @@ max_retries = 0
 name = "test_add_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
 ffqn = "testing:integration/workflows.add-workflow"
-params.inline = [
+params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
@@ -161,7 +161,7 @@ params.inline = [
 name = "test_add_via_activity_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_via_activity.js"
 ffqn = "testing:integration/workflows.add-via-activity"
-params.inline = [
+params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
@@ -170,7 +170,7 @@ params.inline = [
 name = "test_call_activity_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/call_activity.js"
 ffqn = "testing:integration/workflows.call-activity"
-params.inline = [
+params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
@@ -179,7 +179,7 @@ params.inline = [
 name = "test_make_record_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/make_record.js"
 ffqn = "testing:integration/workflows.make-record"
-params.inline = [
+params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<record {{ name: string, count: u32 }}, string>"
@@ -188,14 +188,14 @@ return_type = "result<record {{ name: string, count: u32 }}, string>"
 name = "test_throw_variant_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/throw_variant.js"
 ffqn = "testing:integration/workflows.throw-variant"
-params.inline = []
+params = []
 return_type = "result<u32, variant {{ execution-failed, not-found }}>"
 
 [[workflow_js]]
 name = "test_throw_null_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/throw_null.js"
 ffqn = "testing:integration/workflows.throw-null"
-params.inline = []
+params = []
 return_type = "result<string>"
 
 [[http_server]]
