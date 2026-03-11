@@ -220,7 +220,7 @@ impl Worker for WorkflowJsWorker {
                             unreachable!("workflow-js-runtime always sends JSON-encoded string")
                         };
                         let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                            ok_val,
+                            &ok_val,
                             &self.user_return_type,
                             version.clone(),
                         )?;
@@ -455,7 +455,6 @@ fn synthesize_wit(
 ) -> String {
     crate::js_wit_builder::synthesize_wit(ffqn, params, return_type, "js-workflow")
 }
-
 
 #[cfg(test)]
 mod tests {

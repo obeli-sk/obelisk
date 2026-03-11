@@ -289,14 +289,16 @@ pub fn execute(
 
     // JSON-serialize the return value so the worker can deserialize it as any configured type.
     match result {
-        Ok(js_value) => match js_value.to_json(&mut context) {
-            Ok(Some(json_val)) => Ok(Ok(serde_json::to_string(&json_val)
-                .expect("serde_json::Value must be serializable"))),
-            Ok(None) => Ok(Ok("null".to_string())), // undefined → null
-            Err(e) => Err(JsRuntimeError::WrongReturnType(format!(
-                "cannot serialize to JSON: {e:?}"
-            ))),
-        },
+        Ok(js_value) => {
+            match js_value.to_json(&mut context) {
+                Ok(Some(json_val)) => Ok(Ok(serde_json::to_string(&json_val)
+                    .expect("serde_json::Value must be serializable"))),
+                Ok(None) => Ok(Ok("null".to_string())), // undefined → null
+                Err(e) => Err(JsRuntimeError::WrongReturnType(format!(
+                    "cannot serialize to JSON: {e:?}"
+                ))),
+            }
+        }
         Err(js_err) => {
             // JSON-encode the thrown value (consistent with ok branch).
             // `throw new Error("msg")` → JSON-encode the message string.

@@ -15,14 +15,14 @@ use executor::worker::{FatalError, WorkerError};
 /// * `ok: None` (void) — only JSON null is accepted → `Ok(None)`; anything else is fatal.
 /// * `ok: Some(T)` — the JSON is type-checked and deserialized via `deserialize_value`.
 pub(crate) fn map_js_ok_to_user_retval(
-    ok_val: serde_json::Value,
+    ok_val: &serde_json::Value,
     user_return_type: &ReturnTypeExtendable,
     version: Version,
 ) -> Result<SupportedFunctionReturnValue, WorkerError> {
     match &user_return_type.type_wrapper_tl.ok {
         Some(configured_ok_type) => {
             let wvt =
-                val_json::wast_val_ser::deserialize_value(&ok_val, *configured_ok_type.clone())
+                val_json::wast_val_ser::deserialize_value(ok_val, *configured_ok_type.clone())
                     .map_err(|err| {
                         WorkerError::FatalError(
                             FatalError::ResultParsingError(
@@ -39,17 +39,15 @@ pub(crate) fn map_js_ok_to_user_retval(
             Ok(SupportedFunctionReturnValue::Ok(Some(wvt)))
         }
         None => {
-            if ok_val == serde_json::Value::Null {
+            if *ok_val == serde_json::Value::Null {
                 Ok(SupportedFunctionReturnValue::Ok(None))
             } else {
                 Err(WorkerError::FatalError(
-                    FatalError::ResultParsingError(
-                        ResultParsingError::ResultParsingErrorFromVal(
-                            ResultParsingErrorFromVal::TypeCheckError(format!(
-                                "return value type check failed, expected `null`, got `{ok_val}`"
-                            )),
-                        ),
-                    ),
+                    FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                        ResultParsingErrorFromVal::TypeCheckError(format!(
+                            "return value type check failed, expected `null`, got `{ok_val}`"
+                        )),
+                    )),
                     version,
                 ))
             }
