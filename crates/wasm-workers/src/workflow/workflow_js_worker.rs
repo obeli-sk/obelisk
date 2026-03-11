@@ -16,7 +16,7 @@ use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
     ExecutionMetadata, FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry,
     PackageIfcFns, ParameterType, Params, ResultParsingError, ResultParsingErrorFromVal,
-    ReturnTypeExtendable, SupportedFunctionReturnValue, storage::Version,
+    ReturnTypeExtendable, SupportedFunctionReturnValue,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{
@@ -219,44 +219,11 @@ impl Worker for WorkflowJsWorker {
                         let Ok(ok_val) = serde_json::from_str(&ok_val) else {
                             unreachable!("workflow-js-runtime always sends JSON-encoded string")
                         };
-                        // Deserialize the JSON value as the configured ok type
-                        let retval = match &self.user_return_type.type_wrapper_tl.ok {
-                            Some(configured_ok_type) => {
-                                let wvt = val_json::wast_val_ser::deserialize_value(
-                                    &ok_val,
-                                    *configured_ok_type.clone(),
-                                )
-                                .map_err(|err| {
-                                    WorkerError::FatalError(
-                                        FatalError::ResultParsingError(
-                                            ResultParsingError::ResultParsingErrorFromVal(
-                                                ResultParsingErrorFromVal::TypeCheckError(format!(
-                                                    "failed to type check the return value `{ok_val}` as `{configured_ok_type}`: {err}"
-                                                )),
-                                            ),
-                                        ),
-                                        version.clone(),
-                                    )
-                                })?;
-                                SupportedFunctionReturnValue::Ok(Some(wvt))
-                            }
-                            None => {
-                                if ok_val == serde_json::Value::Null {
-                                    SupportedFunctionReturnValue::Ok(None)
-                                } else {
-                                    return Err(WorkerError::FatalError(
-                                        FatalError::ResultParsingError(
-                                            ResultParsingError::ResultParsingErrorFromVal(
-                                                ResultParsingErrorFromVal::TypeCheckError(format!(
-                                                    "return value type check failed, expected `null`, got `{ok_val}`"
-                                                )),
-                                            ),
-                                        ),
-                                        version.clone(),
-                                    ));
-                                }
-                            }
-                        };
+                        let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
+                            ok_val,
+                            &self.user_return_type,
+                            version.clone(),
+                        )?;
                         Ok(WorkerResultOk::RunFinished {
                             retval,
                             version,
@@ -275,8 +242,11 @@ impl Worker for WorkflowJsWorker {
                         let WastVal::String(thrown) = *err_val else {
                             unreachable!("err type is String, so value must be WastVal::String")
                         };
-                        let retval =
-                            map_js_throw_to_user_err(thrown, &self.user_return_type, version.clone())?;
+                        let retval = crate::js_worker_utils::map_js_throw_to_user_err(
+                            &thrown,
+                            &self.user_return_type,
+                            version.clone(),
+                        )?;
                         Ok(WorkerResultOk::RunFinished {
                             retval,
                             version,
@@ -486,51 +456,6 @@ fn synthesize_wit(
     crate::js_wit_builder::synthesize_wit(ffqn, params, return_type, "js-workflow")
 }
 
-/// Maps a JSON-encoded JS throw to the user-configured err type.
-///
-/// The workflow-js runtime JSON-encodes all thrown values (consistent with ok values), so
-/// `throw null` → `"null"`, `throw "foo"` → `"\"foo\""`, `throw "my-case"` → `"\"my-case\""`.
-///
-/// * `err: None` (void) — only JSON null is accepted → `Err(None)`; anything else is fatal.
-/// * `err: Some(T)` — the JSON is type-checked and deserialized via `deserialize_value`.
-fn map_js_throw_to_user_err(
-    thrown: String,
-    user_return_type: &ReturnTypeExtendable,
-    version: Version,
-) -> Result<SupportedFunctionReturnValue, executor::worker::WorkerError> {
-    let thrown_val: serde_json::Value =
-        serde_json::from_str(&thrown).unwrap_or(serde_json::Value::Null);
-    match user_return_type.type_wrapper_tl.err.as_deref() {
-        None => {
-            if thrown_val == serde_json::Value::Null {
-                Ok(SupportedFunctionReturnValue::Err(None))
-            } else {
-                Err(executor::worker::WorkerError::FatalError(
-                    FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                        ResultParsingErrorFromVal::TypeCheckError(format!(
-                            "thrown value type check failed: return type is `result<T>` (no error type), expected `throw null`, got `{thrown}`"
-                        )),
-                    )),
-                    version,
-                ))
-            }
-        }
-        Some(user_err_type) => {
-            let wvt = val_json::wast_val_ser::deserialize_value(&thrown_val, user_err_type.clone())
-                .map_err(|e| {
-                    executor::worker::WorkerError::FatalError(
-                        FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                            ResultParsingErrorFromVal::TypeCheckError(format!(
-                                "failed to type check thrown value `{thrown}` as `{user_err_type}`: {e}"
-                            )),
-                        )),
-                        version.clone(),
-                    )
-                })?;
-            Ok(SupportedFunctionReturnValue::Err(Some(wvt)))
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
