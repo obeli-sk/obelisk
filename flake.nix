@@ -252,6 +252,8 @@
                 # Claude
                 --bind $HOME/.claude /tmp/.claude
                 --bind $HOME/.claude.json /tmp/.claude.json
+                # Cargo
+                --bind $HOME/.cargo  /tmp/.cargo
                 # --- Project Mount ---
                 --dir /workspace
                 --bind "$CURRENT_DIR" /workspace
@@ -261,6 +263,7 @@
                 --dir /run/current-system/sw/bin
                 # Bind our constructed temp folder to it
                 --ro-bind "$MOCKED_SYSTEM_BIN" /run/current-system/sw/bin
+                --ro-bind "$MOCKED_SYSTEM_BIN" /usr/bin
                 # --- Environment ---
                 --setenv PS1 "[BWRAP] \w> "
                 --setenv HOME /tmp
