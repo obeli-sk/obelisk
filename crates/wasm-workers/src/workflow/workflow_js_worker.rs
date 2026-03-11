@@ -1,8 +1,8 @@
 //! JS workflow worker that wraps a `WorkflowWorker` running the Boa WASM component.
 //!
 //! The Boa component exports `obelisk-workflow:workflow-js-runtime/execute.run(fn-name, js-code, params-json) -> result<result<string, string>, js-runtime-error>`.
-//! This wrapper translates the user's typed interface `func(params: list<string>) -> result<string, string>`
-//! into calls to the Boa component.
+//! This wrapper translates the user's typed interface `func(params) -> result<T, E>`
+//! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
 use super::workflow_worker::{ReplayError, WorkflowConfig, WorkflowWorker, WorkflowWorkerCompiled};
 use crate::activity::cancel_registry::CancelRegistry;
@@ -16,7 +16,7 @@ use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
     ExecutionMetadata, FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry,
     PackageIfcFns, ParameterType, Params, ResultParsingError, ResultParsingErrorFromVal,
-    SupportedFunctionReturnValue,
+    ReturnTypeExtendable, SupportedFunctionReturnValue, storage::Version,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{
@@ -36,6 +36,7 @@ pub struct WorkflowJsWorkerCompiled {
     js_source: String,
     js_file_name: String,
     user_params: Vec<ParameterType>,
+    user_return_type: ReturnTypeExtendable,
     /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
     user_wasm_component: WasmComponent,
 }
@@ -47,8 +48,9 @@ impl WorkflowJsWorkerCompiled {
         js_file_name: String,
         user_ffqn: &FunctionFqn,
         user_params: Vec<ParameterType>,
+        user_return_type: ReturnTypeExtendable,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
-        let wit = synthesize_wit(user_ffqn, &user_params);
+        let wit = synthesize_wit(user_ffqn, &user_params, &user_return_type);
         let user_wasm_component =
             WasmComponent::new_from_wit_string(&wit, ComponentType::Workflow)?;
         Ok(Self {
@@ -56,6 +58,7 @@ impl WorkflowJsWorkerCompiled {
             js_source,
             js_file_name,
             user_params,
+            user_return_type,
             user_wasm_component,
         })
     }
@@ -92,6 +95,7 @@ impl WorkflowJsWorkerCompiled {
             js_source: self.js_source,
             js_file_name: self.js_file_name,
             user_params: self.user_params,
+            user_return_type: self.user_return_type,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
         })
     }
@@ -102,6 +106,7 @@ pub struct WorkflowJsWorkerLinked {
     js_source: String,
     js_file_name: String,
     user_params: Vec<ParameterType>,
+    user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
 }
 
@@ -126,6 +131,7 @@ impl WorkflowJsWorkerLinked {
             js_source: self.js_source,
             js_file_name: self.js_file_name,
             user_params: self.user_params,
+            user_return_type: self.user_return_type,
             user_exports_noext: self.user_exports_noext,
         }
     }
@@ -136,6 +142,7 @@ pub struct WorkflowJsWorker {
     js_source: String,
     js_file_name: String,
     user_params: Vec<ParameterType>,
+    user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
 }
 
@@ -145,7 +152,6 @@ impl Worker for WorkflowJsWorker {
         &self.user_exports_noext
     }
 
-    // Return result<string, string> or a WorkerError mapped from `JsRuntimeError`
     async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
         // Serialize each user parameter individually as a JSON string.
         let json_params = ctx
@@ -168,8 +174,8 @@ impl Worker for WorkflowJsWorker {
 
         // Rewrite context to call workflow-js-runtime
         ctx.ffqn =
-            // Copied from workflow_js_runtime_builder::exports::obelisk_workflow::workflow_js_runtime::execute::RUN
             FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
+        // run: func(js-code: string, params-json: list<string>, js-file-name: option<string>) -> result<result<string, string>, js-runtime-error>
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(self.js_source.clone()), // js-code: string
             serde_json::Value::Array(params_json_list),        // params-json: list<string>
@@ -203,17 +209,56 @@ impl Worker for WorkflowJsWorker {
                         r#type:
                             TypeWrapper::Result {
                                 ok: Some(ok_type),
-                                err: Some(_),
+                                err: Some(err_type),
                             },
                         value: WastVal::Result(Ok(Some(ok_val))),
-                    })) => {
-                        // js runtime returned {"ok": {"ok":"some string"}}
-                        assert_eq!(TypeWrapper::String, *ok_type);
+                    })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
+                        let WastVal::String(ok_val) = *ok_val else {
+                            unreachable!("ok type is String, so value must be WastVal::String")
+                        };
+                        let Ok(ok_val) = serde_json::from_str(&ok_val) else {
+                            unreachable!("workflow-js-runtime always sends JSON-encoded string")
+                        };
+                        // Deserialize the JSON value as the configured ok type
+                        let retval = match &self.user_return_type.type_wrapper_tl.ok {
+                            Some(configured_ok_type) => {
+                                let wvt = val_json::wast_val_ser::deserialize_value(
+                                    &ok_val,
+                                    *configured_ok_type.clone(),
+                                )
+                                .map_err(|err| {
+                                    WorkerError::FatalError(
+                                        FatalError::ResultParsingError(
+                                            ResultParsingError::ResultParsingErrorFromVal(
+                                                ResultParsingErrorFromVal::TypeCheckError(format!(
+                                                    "failed to type check the return value `{ok_val}` as `{configured_ok_type}`: {err}"
+                                                )),
+                                            ),
+                                        ),
+                                        version.clone(),
+                                    )
+                                })?;
+                                SupportedFunctionReturnValue::Ok(Some(wvt))
+                            }
+                            None => {
+                                if ok_val == serde_json::Value::Null {
+                                    SupportedFunctionReturnValue::Ok(None)
+                                } else {
+                                    return Err(WorkerError::FatalError(
+                                        FatalError::ResultParsingError(
+                                            ResultParsingError::ResultParsingErrorFromVal(
+                                                ResultParsingErrorFromVal::TypeCheckError(format!(
+                                                    "return value type check failed, expected `null`, got `{ok_val}`"
+                                                )),
+                                            ),
+                                        ),
+                                        version.clone(),
+                                    ));
+                                }
+                            }
+                        };
                         Ok(WorkerResultOk::RunFinished {
-                            retval: SupportedFunctionReturnValue::Ok(Some(WastValWithType {
-                                r#type: *ok_type,
-                                value: *ok_val,
-                            })),
+                            retval,
                             version,
                             http_client_traces,
                         })
@@ -222,18 +267,18 @@ impl Worker for WorkflowJsWorker {
                     SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                         r#type:
                             TypeWrapper::Result {
-                                ok: Some(_),
+                                ok: Some(ok_type),
                                 err: Some(err_type),
                             },
                         value: WastVal::Result(Err(Some(err_val))),
-                    })) => {
-                        // js runtime returned {"ok":{"err":"some string"}}
-                        assert_eq!(TypeWrapper::String, *err_type);
+                    })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
+                        let WastVal::String(thrown) = *err_val else {
+                            unreachable!("err type is String, so value must be WastVal::String")
+                        };
+                        let retval =
+                            map_js_throw_to_user_err(thrown, &self.user_return_type, version.clone())?;
                         Ok(WorkerResultOk::RunFinished {
-                            retval: SupportedFunctionReturnValue::Err(Some(WastValWithType {
-                                r#type: *err_type,
-                                value: *err_val,
-                            })),
+                            retval,
                             version,
                             http_client_traces,
                         })
@@ -433,37 +478,58 @@ impl WorkflowJsWorker {
     }
 }
 
-/// Synthesize a WIT string for the JS workflow's user-facing interface.
+fn synthesize_wit(
+    ffqn: &FunctionFqn,
+    params: &[ParameterType],
+    return_type: &ReturnTypeExtendable,
+) -> String {
+    crate::js_wit_builder::synthesize_wit(ffqn, params, return_type, "js-workflow")
+}
+
+/// Maps a JSON-encoded JS throw to the user-configured err type.
 ///
-/// The generated WIT is parsed by `WasmComponent::new_from_wit_string` which runs
-/// `ExIm::decode` and `rebuild_resolve`, producing the same extension metadata
-/// and printable WIT that standard WASM workflows get.
-fn synthesize_wit(ffqn: &FunctionFqn, params: &[ParameterType]) -> String {
-    let ifc_fqn = &ffqn.ifc_fqn;
-    let namespace = ifc_fqn.namespace();
-    let package_name = ifc_fqn.package_name();
-    let ifc_name = ifc_fqn.ifc_name();
-    let fn_name = &ffqn.function_name;
-
-    let version_suffix = ifc_fqn.version().map_or(String::new(), |v| format!("@{v}"));
-
-    let wit_params: Vec<String> = params
-        .iter()
-        .map(|p| format!("{}: {}", p.name, p.wit_type.as_ref()))
-        .collect();
-
-    format!(
-        "package {namespace}:{package_name}{version_suffix};\n\
-         \n\
-         interface {ifc_name} {{\n\
-         \x20   {fn_name}: func({params}) -> result<string, string>;\n\
-         }}\n\
-         \n\
-         world js-workflow {{\n\
-         \x20   export {ifc_name};\n\
-         }}\n",
-        params = wit_params.join(", "),
-    )
+/// The workflow-js runtime JSON-encodes all thrown values (consistent with ok values), so
+/// `throw null` → `"null"`, `throw "foo"` → `"\"foo\""`, `throw "my-case"` → `"\"my-case\""`.
+///
+/// * `err: None` (void) — only JSON null is accepted → `Err(None)`; anything else is fatal.
+/// * `err: Some(T)` — the JSON is type-checked and deserialized via `deserialize_value`.
+fn map_js_throw_to_user_err(
+    thrown: String,
+    user_return_type: &ReturnTypeExtendable,
+    version: Version,
+) -> Result<SupportedFunctionReturnValue, executor::worker::WorkerError> {
+    let thrown_val: serde_json::Value =
+        serde_json::from_str(&thrown).unwrap_or(serde_json::Value::Null);
+    match user_return_type.type_wrapper_tl.err.as_deref() {
+        None => {
+            if thrown_val == serde_json::Value::Null {
+                Ok(SupportedFunctionReturnValue::Err(None))
+            } else {
+                Err(executor::worker::WorkerError::FatalError(
+                    FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                        ResultParsingErrorFromVal::TypeCheckError(format!(
+                            "thrown value type check failed: return type is `result<T>` (no error type), expected `throw null`, got `{thrown}`"
+                        )),
+                    )),
+                    version,
+                ))
+            }
+        }
+        Some(user_err_type) => {
+            let wvt = val_json::wast_val_ser::deserialize_value(&thrown_val, user_err_type.clone())
+                .map_err(|e| {
+                    executor::worker::WorkerError::FatalError(
+                        FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                            ResultParsingErrorFromVal::TypeCheckError(format!(
+                                "failed to type check thrown value `{thrown}` as `{user_err_type}`: {e}"
+                            )),
+                        )),
+                        version.clone(),
+                    )
+                })?;
+            Ok(SupportedFunctionReturnValue::Err(Some(wvt)))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -487,6 +553,7 @@ mod tests {
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
+        TypeWrapperTopLevel,
     };
     use db_mem::inmemory_dao::InMemoryPool;
     use db_tests::Database;
@@ -507,7 +574,21 @@ mod tests {
 
     const FIBO_10_OUTPUT: u64 = 55;
 
-    fn new_js_workflow_worker(js_source: &str, user_ffqn: &FunctionFqn) -> Arc<dyn Worker> {
+    fn default_return_type() -> ReturnTypeExtendable {
+        ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::String)),
+                err: Some(Box::new(TypeWrapper::String)),
+            },
+            wit_type: StrVariant::Static("result<string, string>"),
+        }
+    }
+
+    fn new_js_workflow_worker_with_return_type(
+        js_source: &str,
+        user_ffqn: &FunctionFqn,
+        return_type: ReturnTypeExtendable,
+    ) -> Arc<dyn Worker> {
         let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let cancel_registry = CancelRegistry::new();
         let clock_fn: Box<dyn ClockFn> = Now.clone_box();
@@ -552,6 +633,7 @@ mod tests {
                 name: StrVariant::Static("params"),
                 wit_type: StrVariant::Static("list<string>"),
             }],
+            return_type,
         )
         .unwrap();
 
@@ -572,6 +654,10 @@ mod tests {
             cancel_registry,
             None,
         ))
+    }
+
+    fn new_js_workflow_worker(js_source: &str, user_ffqn: &FunctionFqn) -> Arc<dyn Worker> {
+        new_js_workflow_worker_with_return_type(js_source, user_ffqn, default_return_type())
     }
 
     fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
@@ -654,7 +740,11 @@ mod tests {
                 )),
                 _version,
             ) => {
-                assert!(reason.starts_with("expected string, got JsValue"), "reason: {reason}");
+                assert_eq!(
+                    reason,
+                    "failed to type check the return value `{}` as `string`: \
+                     invalid type: map, expected value matching \"string\" at line 1 column 2"
+                );
             }
         );
     }
@@ -804,6 +894,7 @@ mod tests {
                 name: StrVariant::Static("params"),
                 wit_type: StrVariant::Static("list<string>"),
             }],
+            default_return_type(),
         )
         .unwrap();
 
@@ -1591,5 +1682,59 @@ mod tests {
         );
 
         db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn void_result_return_null() {
+        // `result` (no ok, no err): `return null` → Ok(None)
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-work");
+        let js_source = r"
+            export default function do_work() {
+                return null;
+            }
+        ";
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: None,
+                err: None,
+            },
+            wit_type: StrVariant::Static("result"),
+        };
+
+        let worker = new_js_workflow_worker_with_return_type(js_source, &ffqn, return_type);
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
+        assert_matches!(retval, SupportedFunctionReturnValue::Ok(None));
+    }
+
+    #[tokio::test]
+    async fn void_result_throw_null() {
+        // `result` (no ok, no err): `throw null` → Err(None)
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-work");
+        let js_source = r"
+            export default function do_work() {
+                throw null;
+            }
+        ";
+
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: None,
+                err: None,
+            },
+            wit_type: StrVariant::Static("result"),
+        };
+
+        let worker = new_js_workflow_worker_with_return_type(js_source, &ffqn, return_type);
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
+        assert_matches!(retval, SupportedFunctionReturnValue::Err(None));
     }
 }

@@ -175,6 +175,29 @@ params.inline = [
   {{ name = "b", type = "u32" }},
 ]
 
+[[workflow_js]]
+name = "test_make_record_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/make_record.js"
+ffqn = "testing:integration/workflows.make-record"
+params.inline = [
+  {{ name = "name", type = "string" }},
+]
+return_type = "result<record {{ name: string, count: u32 }}, string>"
+
+[[workflow_js]]
+name = "test_throw_variant_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/throw_variant.js"
+ffqn = "testing:integration/workflows.throw-variant"
+params.inline = []
+return_type = "result<u32, variant {{ execution-failed, not-found }}>"
+
+[[workflow_js]]
+name = "test_throw_null_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/throw_null.js"
+ffqn = "testing:integration/workflows.throw-null"
+params.inline = []
+return_type = "result<string>"
+
 [[http_server]]
 name = "test_webhook_server"
 listening_addr = "{ip}:{WEBHOOK_PORT}"
@@ -826,6 +849,40 @@ async fn activity_js_variant_err_throw() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "err": "not_found" }));
+}
+
+// ---- Workflow: rich return types ----
+
+#[tokio::test]
+async fn workflow_js_rich_return_type() {
+    let server = TestServer::start(test_addr!(27)).await;
+
+    // ok: record
+    let resp = server
+        .submit_follow(
+            "testing:integration/workflows.make-record",
+            vec![json!("Alice")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": { "name": "Alice", "count": 42 } }));
+
+    // err: variant case
+    let resp = server
+        .submit_follow("testing:integration/workflows.throw-variant", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "err": "not_found" }));
+
+    // err: null (void err channel — result<string>)
+    let resp = server
+        .submit_follow("testing:integration/workflows.throw-null", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "err": null }));
 }
 
 // ---- Idempotency ----

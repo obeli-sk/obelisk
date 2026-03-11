@@ -2173,6 +2173,7 @@ fn prespawn_js_workflow(
         workflow_js.js_file_name.clone(),
         &workflow_js.ffqn,
         workflow_js.params.clone(),
+        workflow_js.return_type.clone(),
     )
     .with_context(|| format!("cannot create JS workflow worker for {component_id}"))?;
     let wit = worker.wit();

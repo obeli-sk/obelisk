@@ -83,6 +83,27 @@ expression: components
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
+      "component_type": "workflow",
+      "name": "test_make_record_workflow"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "workflow",
+      "name": "test_throw_variant_workflow"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "workflow",
+      "name": "test_throw_null_workflow"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
       "name": "test_hello_webhook"
     }
