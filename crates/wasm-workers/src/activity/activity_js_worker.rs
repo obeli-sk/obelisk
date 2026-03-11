@@ -230,7 +230,7 @@ impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
                     unreachable!("err type is String, so value must be WastVal::String")
                 };
                 let retval =
-                    map_js_throw_to_user_err(thrown, &self.user_return_type, version.clone())?;
+                    map_js_throw_to_user_err(&thrown, &self.user_return_type, version.clone())?;
                 Ok(WorkerResultOk::RunFinished {
                     retval,
                     version,
@@ -317,12 +317,12 @@ fn synthesize_wit(
 /// * `err: None` (void) — only JSON null is accepted → `Err(None)`; anything else is fatal.
 /// * `err: Some(T)` — the JSON is type-checked and deserialized via `deserialize_value`.
 fn map_js_throw_to_user_err(
-    thrown: String,
+    thrown: &str,
     user_return_type: &ReturnTypeExtendable,
     version: Version,
 ) -> Result<SupportedFunctionReturnValue, executor::worker::WorkerError> {
     let thrown_val: serde_json::Value =
-        serde_json::from_str(&thrown).unwrap_or(serde_json::Value::Null);
+        serde_json::from_str(thrown).unwrap_or(serde_json::Value::Null);
     match user_return_type.type_wrapper_tl.err.as_deref() {
         None => {
             if thrown_val == serde_json::Value::Null {
