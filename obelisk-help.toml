@@ -164,6 +164,10 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## WIT return type. Defaults to `result<string, string>`.
 ## Must be `result`, `result<T>`, `result<T, string>`, or `result<T, variant { execution-failed, ... }>`.
 ## `T` can be `_` to indicate no ok value (e.g. `result<_, string>`).
+## JS serialization convention: return/throw a JSON-compatible value matching T.
+## For variant error types, e.g. `result<_, variant { not-found, with-data(string) }>`:
+##   throw a plain string for no-payload cases (e.g. `throw "not_found"`)
+##   and an object for payload cases (e.g. `throw { "with-data": "hello" }`).
 # return_type = "result<string, string>"
 ## Common executor settings - see above.
 ## Retry customization: same as activity_wasm.
@@ -238,6 +242,10 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## WIT return type. Defaults to `result<string, string>`.
 ## Must be `result`, `result<T>`, `result<T, string>`, or `result<T, variant { execution-failed, ... }>`.
 ## `T` can be `_` to indicate no ok value (e.g. `result<_, string>`).
+## JS serialization convention: return/throw a JSON-compatible value matching T.
+## For variant error types, e.g. `result<_, variant { not-found, with-data(string) }>`:
+##   throw a plain string for no-payload cases (e.g. `throw "not_found"`)
+##   and an object for payload cases (e.g. `throw { "with-data": "hello" }`).
 # return_type = "result<string, string>"
 ## Common executor settings - see above.
 ## Retry customization: same as regular workflow.
