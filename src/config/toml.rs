@@ -1165,7 +1165,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
     /// If omitted, defaults to a single `(params: list<string>)` parameter.
     #[serde(default)]
-    pub(crate) params: ParamsSpec,
+    pub(crate) params: Option<Vec<JsParamToml>>,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
@@ -1188,16 +1188,6 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[serde(default)]
     pub(crate) return_type: Option<String>,
 }
-
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ParamsSpec {
-    #[default]
-    Default, // `(params: list<string>)`
-    Inline(Vec<JsParamToml>),
-    // TODO: Add a WIT folder location later
-}
-
 /// A parameter declaration for a JS activity function.
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -1240,7 +1230,7 @@ impl ActivityJsComponentConfigToml {
     ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
         // Parse custom params or default to `params: list<string>`
         let parsed_params = match self.params {
-            ParamsSpec::Default => {
+            None => {
                 vec![concepts::ParameterType {
                     type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
                         val_json::type_wrapper::TypeWrapper::String,
@@ -1249,7 +1239,7 @@ impl ActivityJsComponentConfigToml {
                     wit_type: StrVariant::Static("list<string>"),
                 }]
             }
-            ParamsSpec::Inline(params) => params
+            Some(params) => params
                 .iter()
                 .map(|p| {
                     let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
@@ -1370,7 +1360,7 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
     /// If omitted, defaults to a single `(params: list<string>)` parameter.
     #[serde(default)]
-    pub(crate) params: ParamsSpec,
+    pub(crate) params: Option<Vec<JsParamToml>>,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_retry_exp_backoff")]
@@ -1419,7 +1409,7 @@ impl WorkflowJsComponentConfigToml {
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
         // Parse custom params or default to `params: list<string>`
         let parsed_params = match self.params {
-            ParamsSpec::Default => {
+            None => {
                 vec![concepts::ParameterType {
                     type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
                         val_json::type_wrapper::TypeWrapper::String,
@@ -1428,7 +1418,7 @@ impl WorkflowJsComponentConfigToml {
                     wit_type: StrVariant::Static("list<string>"),
                 }]
             }
-            ParamsSpec::Inline(params) => params
+            Some(params) => params
                 .iter()
                 .map(|p| {
                     let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)

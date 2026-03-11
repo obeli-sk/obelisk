@@ -15,7 +15,7 @@ listening_addr = "127.0.0.1:9090"
 name = "test_add_activity"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/add.js"
 ffqn = "testing:integration/activities.add"
-params.inline = [
+params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
 ]
@@ -25,7 +25,7 @@ max_retries = 0
 name = "test_add_via_activity_workflow"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/add_via_activity.js"
 ffqn = "testing:integration/workflows.add-via-activity"
-params.inline = [
+params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
 ]
@@ -34,7 +34,7 @@ params.inline = [
 name = "test_read_env_activity"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/read_env.js"
 ffqn = "testing:integration/activities.read-env"
-params.inline = [
+params = [
   { name = "key", type = "string" },
 ]
 max_retries = 0
@@ -44,7 +44,7 @@ env_vars = ["TEST_ENV_VAR=hello_from_env"]
 name = "activity_js_fetch_get"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/fetch_get.js"
 ffqn = "testing:js/activity.fetch-get"
-params.inline = [
+params = [
     {name = "url", type = "string"},
     {name = "headers", type = "list<tuple<string,string>>"},
 ]
@@ -57,13 +57,13 @@ methods = ["GET"]
 name = "workflow_js_test"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/fetch_components.js"
 ffqn = "testing:js/workflow.fetch-components"
-params.inline = []
+params = []
 
 [[workflow_js]]
 name = "test_call_activity_workflow"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/call_activity.js"
 ffqn = "testing:integration/workflows.call-activity"
-params.inline = [
+params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
 ]
