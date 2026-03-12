@@ -190,10 +190,34 @@ webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui wi
 ## Common settings for all components - see above.
 # component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 
-### Stub Activity components configuration - same as external activity, but the "stub response" RPC is allowed.
+### Stub Activity components configuration
+### A stub activity is a placeholder function that never executes on its own.
+### Instead of running WASM, the return value is supplied externally — either by the
+### calling workflow itself (via the stub host function) or by an outside actor via
+### the "stub response" RPC (PUT /v1/executions/{id}/stub).
+### Typical use cases:
+###   - Human-in-the-loop: pause a workflow until a person approves or provides input.
+###   - External system integration: wait for a third-party callback or webhook result.
+###   - Inter-workflow coordination: let another workflow supply the return value.
+###   - Testing/simulation: inject controlled responses without real implementations.
+### Two modes are supported: file mode (WASM binary for the WIT schema) and inline mode (no WASM file needed).
+##
+## File mode: load WIT schema from an existing WASM binary.
 # [[activity_stub]]
 ## Common settings for all components - see above.
+# location = "path/to/stub.wasm"
 ## Note: component_digest override is not supported for stub activities, as the digest is not used for locking executions.
+##
+## Inline mode: define the function schema directly in TOML (no WASM file required).
+# [[activity_stub]]
+# name = "my-stub"
+# ffqn = "namespace:package/interface.function"
+# params = [{ name = "id", type = "u64" }]
+## WIT return type. Defaults to `result<string, string>`.
+## Must be `result`, `result<T>`, `result<T, string>`, or
+## `result<T, variant { execution-failed, ... }>`.
+# return_type = "result<string, string>"
+## Note: `location` and `ffqn` are mutually exclusive; exactly one must be present.
 
 ### Workflow components configuration
 # [[workflow]]

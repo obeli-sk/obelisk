@@ -302,10 +302,19 @@
       ]
     },
     "ActivityStubComponentConfigToml": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActivityStubFileConfigToml"
+        },
+        {
+          "$ref": "#/$defs/ActivityStubInlineConfigToml"
+        }
+      ]
+    },
+    "ActivityStubFileConfigToml": {
       "type": "object",
       "properties": {
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -323,6 +332,38 @@
       "required": [
         "name",
         "location"
+      ]
+    },
+    "ActivityStubInlineConfigToml": {
+      "type": "object",
+      "properties": {
+        "ffqn": {
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "params": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          }
+        },
+        "return_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "ffqn"
       ]
     },
     "ActivityWasmComponentConfigToml": {
