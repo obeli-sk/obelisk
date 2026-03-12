@@ -381,7 +381,7 @@ boa_runtime = { git = "https://github.com/tomasol/boa.git", rev = "237e1f06", de
 wasip2 = "1.0.2"
 wit-bindgen = "0.53.1"
 wit-bindgen-rust = "0.53.1"
-wstd = { git = "https://github.com/tomasol/wstd.git", rev = "02ce897" }
+wstd = "0.6.6"
 
 # otlp
 opentelemetry = "0.31.0"
