@@ -23,7 +23,7 @@ use wit_parser::{InterfaceId, PackageId, Param, Resolve, World, WorldKey, decodi
 #[derive(derive_more::Debug, Clone)]
 pub struct WasmComponent {
     pub exim: ExIm,
-    resolve: Resolve,
+    resolve: Resolve, // always post `rebuild_resolve`, so safe for wit printing.
     main_pkg_id: PackageId,
 }
 
@@ -233,8 +233,14 @@ impl WasmComponent {
         &self.exim.imports_flat
     }
 
-    pub fn wit(&self) -> Result<String, anyhow::Error> {
+    /// Return the WIT text for this component, including obelisk extension packages.
+    ///
+    /// Cannot fail: every constructor calls `rebuild_resolve` which already proves the stored
+    /// resolve is printable, so `WitPrinter::print` on it a second time is infallible.
+    #[must_use]
+    pub fn wit(&self) -> String {
         crate::wit::wit(&self.resolve, self.main_pkg_id)
+            .expect("WitPrinter on a post-rebuild_resolve Resolve cannot fail")
     }
 
     #[must_use]

@@ -1722,10 +1722,7 @@ async fn compile_and_verify(
                         activity_stub_ext.wasm_path,
                         activity_stub_ext.component_id.component_type,
                     )?;
-                    let wit = wasm_component
-                        .wit()
-                        .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-                        .ok();
+                    let wit = wasm_component.wit();
                     let exports_ext = wasm_component.exim.get_exports(true).to_vec();
                     let exports_hierarchy_ext =
                         wasm_component.exim.get_exports_hierarchy_ext().to_vec();
@@ -1904,9 +1901,7 @@ async fn compile_and_verify(
                             component_id: webhook_compiled.config.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
                             workflow_or_activity_config: None,
-                            wit: webhook_compiled.runnable_component.wasm_component.wit()
-                                .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-                                .ok(),
+                            wit: webhook_compiled.runnable_component.wasm_component.wit(),
                             workflow_replay_info: None,
                             source,
                         };
@@ -1997,11 +1992,7 @@ fn prespawn_activity(
     let engine = engines.activity_engine.clone();
     let runnable_component =
         RunnableComponent::new(activity.wasm_path, &engine, component_id.component_type)?;
-    let wit = runnable_component
-        .wasm_component
-        .wit()
-        .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-        .ok();
+    let wit = runnable_component.wasm_component.wit();
 
     let worker = ActivityWorkerCompiled::new_with_config(
         runnable_component,
@@ -2161,11 +2152,7 @@ fn prespawn_workflow(
     let engine = engines.workflow_engine.clone();
     let runnable_component =
         RunnableComponent::new(&workflow.wasm_path, &engine, component_id.component_type)?;
-    let wit = runnable_component
-        .wasm_component
-        .wit()
-        .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-        .ok();
+    let wit = runnable_component.wasm_component.wit();
 
     WorkerCompiled::new_workflow(
         runnable_component,
@@ -2251,7 +2238,7 @@ impl WorkerCompiled {
     fn new_activity(
         worker: ActivityWorkerCompiled<TokioSleep>,
         exec_config: ExecConfig,
-        wit: Option<String>,
+        wit: String,
         logs_store_min_level: Option<LogLevel>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2278,7 +2265,7 @@ impl WorkerCompiled {
     fn new_js_activity(
         worker: ActivityJsWorkerCompiled<TokioSleep>,
         exec_config: ExecConfig,
-        wit: Option<String>,
+        wit: String,
         logs_store_min_level: Option<LogLevel>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2306,7 +2293,7 @@ impl WorkerCompiled {
         runnable_component: RunnableComponent,
         engine: Arc<Engine>,
         workflow: WorkflowConfigVerified,
-        wit: Option<String>,
+        wit: String,
         workflows_lock_extension_leeway: Duration,
     ) -> Result<(WorkerCompiled, ComponentConfig), utils::wasm_tools::DecodeError> {
         let worker = WorkflowWorkerCompiled::new_with_config(
@@ -2352,7 +2339,7 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         logs_store_min_level: Option<LogLevel>,
         workflows_lock_extension_leeway: Duration,
-        wit: Option<String>,
+        wit: String,
         js_source: String,
         js_file_name: String,  // as it would appear in a backtrace
         js_file_path: PathBuf, // to be served by GetBacktraceSource

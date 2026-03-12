@@ -776,7 +776,7 @@ mod tests {
         let component = WasmComponent::new(wasm_path, component_type).unwrap();
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
-        let wit = component.wit().unwrap();
+        let wit = component.wit();
         // Verify that the generated WIT parses.
         let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit).unwrap();
         let mut resolve = Resolve::new();
