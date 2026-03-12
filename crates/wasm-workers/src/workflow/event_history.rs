@@ -3866,7 +3866,7 @@ mod tests {
             .unwrap();
     }
 
-    #[expect(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, clippy::result_large_err)]
     async fn apply_create_join_set_two_start_asyncs_await_next_a(
         db_connection: &mut CachingDbConnection,
         event_history: &mut EventHistory,

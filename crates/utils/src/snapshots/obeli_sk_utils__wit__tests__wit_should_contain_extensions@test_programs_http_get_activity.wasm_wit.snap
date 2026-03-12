@@ -11,10 +11,16 @@ world root {
   import wasi:io/streams@0.2.9;
   import wasi:cli/stdout@0.2.9;
   import wasi:cli/stderr@0.2.9;
+  import wasi:cli/stdin@0.2.9;
   import wasi:http/types@0.2.9;
   import wasi:http/outgoing-handler@0.2.9;
   import wasi:cli/environment@0.2.9;
   import wasi:cli/exit@0.2.9;
+  import wasi:cli/terminal-input@0.2.9;
+  import wasi:cli/terminal-output@0.2.9;
+  import wasi:cli/terminal-stdin@0.2.9;
+  import wasi:cli/terminal-stdout@0.2.9;
+  import wasi:cli/terminal-stderr@0.2.9;
   import wasi:random/insecure-seed@0.2.9;
 
   export testing:http/http-get;
@@ -209,6 +215,7 @@ package wasi:io@0.2.9 {
   interface poll {
     resource pollable {
       ready: func() -> bool;
+      block: func();
     }
 
     poll: func(in: list<borrow<pollable>>) -> list<u32>;
@@ -225,7 +232,7 @@ package wasi:io@0.2.9 {
     resource output-stream {
       check-write: func() -> result<u64, stream-error>;
       write: func(contents: list<u8>) -> result<_, stream-error>;
-      blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
+      blocking-flush: func() -> result<_, stream-error>;
       subscribe: func() -> pollable;
       splice: func(src: borrow<input-stream>, len: u64) -> result<u64, stream-error>;
     }
@@ -265,11 +272,37 @@ package wasi:cli@0.2.9 {
 
     get-stderr: func() -> output-stream;
   }
+  interface stdin {
+    use wasi:io/streams@0.2.9.{input-stream};
+
+    get-stdin: func() -> input-stream;
+  }
   interface environment {
     get-environment: func() -> list<tuple<string, string>>;
   }
   interface exit {
     exit: func(status: result);
+  }
+  interface terminal-input {
+    resource terminal-input;
+  }
+  interface terminal-output {
+    resource terminal-output;
+  }
+  interface terminal-stdin {
+    use terminal-input.{terminal-input};
+
+    get-terminal-stdin: func() -> option<terminal-input>;
+  }
+  interface terminal-stdout {
+    use terminal-output.{terminal-output};
+
+    get-terminal-stdout: func() -> option<terminal-output>;
+  }
+  interface terminal-stderr {
+    use terminal-output.{terminal-output};
+
+    get-terminal-stderr: func() -> option<terminal-output>;
   }
 }
 
