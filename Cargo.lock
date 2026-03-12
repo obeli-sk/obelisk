@@ -7452,8 +7452,9 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
 [[package]]
 name = "wstd"
-version = "0.6.5"
-source = "git+https://github.com/tomasol/wstd.git?rev=02ce897#02ce89708224b28c29add26c379a248f510e7baa"
+version = "0.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0903606f1acdecad11576768ecc61ce215d6848652ac16c0e4592bb265e4200e"
 dependencies = [
  "anyhow",
  "async-task",
@@ -7473,8 +7474,9 @@ dependencies = [
 
 [[package]]
 name = "wstd-macro"
-version = "0.6.5"
-source = "git+https://github.com/tomasol/wstd.git?rev=02ce897#02ce89708224b28c29add26c379a248f510e7baa"
+version = "0.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6a9df01a7fb39fbe7e9b5ef76f586f06425dd6f2be350de4781936f72f9899d"
 dependencies = [
  "quote",
  "syn",
