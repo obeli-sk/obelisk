@@ -14,7 +14,7 @@ use crate::{
 use directories::BaseDirs;
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
-use tokio::sync::watch;
+use tokio::{sync::watch, task::JoinHandle};
 use tracing::debug;
 
 #[cfg(test)]
@@ -23,7 +23,10 @@ mod populate_js_codegen_cache {
 
     #[tokio::test]
     async fn test_server() {
-        super::TestServer::start(test_addr!(1)).await;
+        super::TestServer::start(test_addr!(1))
+            .await
+            .shutdown()
+            .await;
     }
 }
 
@@ -73,7 +76,7 @@ directory = "{db_dir}"
 [[activity_js]]
 name = "test_add_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/add.js"
-ffqn = "testing:integration/activities.add"
+ffqn = "testing:integration/activity-add.add"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
@@ -83,7 +86,7 @@ max_retries = 0
 [[activity_js]]
 name = "test_greet_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/greet.js"
-ffqn = "testing:integration/activities.greet"
+ffqn = "testing:integration/activity-greet.greet"
 params = [
   {{ name = "name", type = "string" }},
 ]
@@ -125,7 +128,7 @@ env_vars = ["TEST_ENV_VAR=hello_from_env"]
 [[activity_js]]
 name = "test_make_record_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/make_record.js"
-ffqn = "testing:integration/activities.make-record"
+ffqn = "testing:integration/activity-make-record.make-record"
 params = [
   {{ name = "name", type = "string" }},
 ]
@@ -135,7 +138,7 @@ max_retries = 0
 [[activity_js]]
 name = "test_throw_variant_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/throw_variant.js"
-ffqn = "testing:integration/activities.throw-variant"
+ffqn = "testing:integration/activity-throw-variant.throw-variant"
 params = []
 return_type = "result<u32, variant {{ execution-failed, not-found }}>"
 max_retries = 0
@@ -143,7 +146,7 @@ max_retries = 0
 [[activity_js]]
 name = "test_throw_null_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/throw_null.js"
-ffqn = "testing:integration/activities.throw-null"
+ffqn = "testing:integration/activity-throw-null.throw-null"
 params = []
 return_type = "result<string>"
 max_retries = 0
@@ -151,7 +154,7 @@ max_retries = 0
 [[workflow_js]]
 name = "test_add_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
-ffqn = "testing:integration/workflows.add-workflow"
+ffqn = "testing:integration/workflow-add.add-workflow"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
@@ -160,7 +163,7 @@ params = [
 [[workflow_js]]
 name = "test_add_via_activity_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_via_activity.js"
-ffqn = "testing:integration/workflows.add-via-activity"
+ffqn = "testing:integration/workflow-add-via-activity.add-via-activity"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
@@ -169,7 +172,7 @@ params = [
 [[workflow_js]]
 name = "test_call_activity_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/call_activity.js"
-ffqn = "testing:integration/workflows.call-activity"
+ffqn = "testing:integration/workflow-call-activity.call-activity"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
@@ -178,7 +181,7 @@ params = [
 [[workflow_js]]
 name = "test_make_record_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/make_record.js"
-ffqn = "testing:integration/workflows.make-record"
+ffqn = "testing:integration/workflow-make-record.make-record"
 params = [
   {{ name = "name", type = "string" }},
 ]
@@ -187,21 +190,21 @@ return_type = "result<record {{ name: string, count: u32 }}, string>"
 [[workflow_js]]
 name = "test_throw_variant_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/throw_variant.js"
-ffqn = "testing:integration/workflows.throw-variant"
+ffqn = "testing:integration/workflow-throw-variant.throw-variant"
 params = []
 return_type = "result<u32, variant {{ execution-failed, not-found }}>"
 
 [[workflow_js]]
 name = "test_throw_null_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/throw_null.js"
-ffqn = "testing:integration/workflows.throw-null"
+ffqn = "testing:integration/workflow-throw-null.throw-null"
 params = []
 return_type = "result<string>"
 
 [[workflow_js]]
 name = "test_call_stub_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/call_stub.js"
-ffqn = "testing:integration/workflows.call-stub"
+ffqn = "testing:integration/workflow-call-stub.call-stub"
 params = [
   {{ name = "id", type = "u64" }},
 ]
@@ -268,7 +271,8 @@ struct TestServer {
     base_url: String,
     webhook_base_url: String,
     client: reqwest::Client,
-    _termination_sender: watch::Sender<()>,
+    termination_sender: watch::Sender<()>,
+    server_handle: JoinHandle<anyhow::Result<()>>,
     _tmp_dir: tempfile::TempDir,
 }
 
@@ -337,9 +341,21 @@ impl TestServer {
             base_url,
             webhook_base_url,
             client,
-            _termination_sender: termination_sender,
+            termination_sender,
+            server_handle,
             _tmp_dir: tmp_dir,
         }
+    }
+
+    /// Gracefully shut down the server and wait for it to finish.
+    async fn shutdown(self) {
+        let Self {
+            server_handle,
+            termination_sender,
+            ..
+        } = self;
+        drop(termination_sender); // signals shutdown
+        let _ = server_handle.await;
     }
 
     // ---- helper methods ------------------------------------------------
@@ -525,6 +541,7 @@ async fn list_components() {
     let components = server.list_components().await;
     let components = sanitize_json(&components);
     insta::assert_json_snapshot!("list_components", components);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -534,6 +551,7 @@ async fn list_functions() {
     let functions = server.list_functions().await;
     let functions = sanitize_json(&functions);
     insta::assert_json_snapshot!("list_functions", functions);
+    server.shutdown().await;
 }
 
 // ---- Activity: submit + result ----
@@ -544,13 +562,14 @@ async fn submit_activity_and_get_result() {
 
     let resp = server
         .submit_follow(
-            "testing:integration/activities.add",
+            "testing:integration/activity-add.add",
             vec![json!(3), json!(5)],
         )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": "8" }));
+    server.shutdown().await;
 }
 
 // ---- Activity: submit + events snapshot ----
@@ -563,7 +582,7 @@ async fn greet_activity_events() {
     let resp = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/activities.greet",
+            "testing:integration/activity-greet.greet",
             vec![json!("World")],
         )
         .await;
@@ -574,6 +593,7 @@ async fn greet_activity_events() {
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
     insta::assert_json_snapshot!("greet_activity_events", events);
+    server.shutdown().await;
 }
 
 // ---- Activity: submit + logs snapshot ----
@@ -586,7 +606,7 @@ async fn greet_activity_logs() {
     let resp = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/activities.greet",
+            "testing:integration/activity-greet.greet",
             vec![json!("World")],
         )
         .await;
@@ -599,6 +619,7 @@ async fn greet_activity_logs() {
     let logs = server.get_logs(&exec_id).await;
     let logs = sanitize_json(&logs);
     insta::assert_json_snapshot!("greet_activity_logs", logs);
+    server.shutdown().await;
 }
 
 // ---- Activity: submit + status snapshot ----
@@ -611,7 +632,7 @@ async fn greet_activity_status() {
     let resp = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/activities.greet",
+            "testing:integration/activity-greet.greet",
             vec![json!("World")],
         )
         .await;
@@ -622,6 +643,7 @@ async fn greet_activity_status() {
     let status = server.get_status(&exec_id).await;
     let status = sanitize_json(&status);
     insta::assert_json_snapshot!("greet_activity_status", status);
+    server.shutdown().await;
 }
 
 // ---- Workflow: submit + events + replay ----
@@ -635,7 +657,7 @@ async fn submit_workflow_and_replay() {
     let resp = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/workflows.add-workflow",
+            "testing:integration/workflow-add.add-workflow",
             vec![json!(10), json!(20)],
         )
         .await;
@@ -660,6 +682,7 @@ async fn submit_workflow_and_replay() {
         events, events_after,
         "events must be identical after replay"
     );
+    server.shutdown().await;
 }
 
 // ---- Workflow: submit activity via join set + getResult ----
@@ -672,7 +695,7 @@ async fn submit_workflow_with_get_result() {
     let resp = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/workflows.add-via-activity",
+            "testing:integration/workflow-add-via-activity.add-via-activity",
             vec![json!(7), json!(8)],
         )
         .await;
@@ -683,6 +706,7 @@ async fn submit_workflow_with_get_result() {
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
     insta::assert_json_snapshot!("workflow_add_via_activity_events", events);
+    server.shutdown().await;
 }
 
 // ---- Workflow: obelisk.call() convenience API ----
@@ -695,7 +719,7 @@ async fn submit_workflow_with_call() {
     let resp = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/workflows.call-activity",
+            "testing:integration/workflow-call-activity.call-activity",
             vec![json!(3), json!(4)],
         )
         .await;
@@ -706,6 +730,7 @@ async fn submit_workflow_with_call() {
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
     insta::assert_json_snapshot!("workflow_call_activity_events", events);
+    server.shutdown().await;
 }
 
 // ---- Execution listing ----
@@ -716,7 +741,7 @@ async fn list_executions_after_submit() {
 
     let resp = server
         .submit_follow(
-            "testing:integration/activities.add",
+            "testing:integration/activity-add.add",
             vec![json!(1), json!(2)],
         )
         .await;
@@ -728,9 +753,10 @@ async fn list_executions_after_submit() {
     assert_eq!(arr.len(), 1, "unexpected {arr:?}");
     assert_eq!(
         arr[0]["ffqn"],
-        json!("testing:integration/activities.add"),
+        json!("testing:integration/activity-add.add"),
         "unexpected {arr:?}"
     );
+    server.shutdown().await;
 }
 
 // ---- Error cases ----
@@ -744,13 +770,14 @@ async fn submit_with_wrong_params_returns_error() {
         .post(format!("{}/v1/executions", server.base_url))
         .header("Accept", "application/json")
         .json(&json!({
-            "ffqn": "testing:integration/activities.add",
+            "ffqn": "testing:integration/activity-add.add",
             "params": [1]
         }))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 400);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -769,6 +796,7 @@ async fn submit_nonexistent_function_returns_404() {
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 404);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -776,6 +804,7 @@ async fn replay_nonexistent_execution_returns_404() {
     let server = TestServer::start(test_addr!(14)).await;
     let resp = server.replay("E_01AAAAAAAAAAAAAAAAAAAAAAAA").await;
     assert_eq!(resp.status().as_u16(), 404);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -795,6 +824,7 @@ async fn activity_js_fetch_denied() {
         err.contains("HttpRequestDenied"),
         "Expected error to contain 'HttpRequestDenied', got: {err}"
     );
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -814,6 +844,7 @@ async fn activity_js_fetch_allowed() {
     // The response should be a JSON array of components
     let components: Value = serde_json::from_str(result).unwrap();
     assert!(components.is_array());
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -828,6 +859,7 @@ async fn activity_js_read_env() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": "hello_from_env" }));
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -835,36 +867,42 @@ async fn activity_js_record_return_type() {
     let server = TestServer::start(test_addr!(24)).await;
     let resp = server
         .submit_follow(
-            "testing:integration/activities.make-record",
+            "testing:integration/activity-make-record.make-record",
             vec![json!("Alice")],
         )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": { "name": "Alice", "count": 42 } }));
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn activity_js_throw_null_void_err() {
     let server = TestServer::start(test_addr!(26)).await;
     let resp = server
-        .submit_follow("testing:integration/activities.throw-null", vec![])
+        .submit_follow("testing:integration/activity-throw-null.throw-null", vec![])
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     // `throw null` with void err channel → Err(None) → {"err": null}
     assert_eq!(body, json!({ "err": null }));
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn activity_js_variant_err_throw() {
     let server = TestServer::start(test_addr!(25)).await;
     let resp = server
-        .submit_follow("testing:integration/activities.throw-variant", vec![])
+        .submit_follow(
+            "testing:integration/activity-throw-variant.throw-variant",
+            vec![],
+        )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "err": "not_found" }));
+    server.shutdown().await;
 }
 
 // ---- Workflow: rich return types ----
@@ -876,7 +914,7 @@ async fn workflow_js_rich_return_type() {
     // ok: record
     let resp = server
         .submit_follow(
-            "testing:integration/workflows.make-record",
+            "testing:integration/workflow-make-record.make-record",
             vec![json!("Alice")],
         )
         .await;
@@ -886,7 +924,10 @@ async fn workflow_js_rich_return_type() {
 
     // err: variant case
     let resp = server
-        .submit_follow("testing:integration/workflows.throw-variant", vec![])
+        .submit_follow(
+            "testing:integration/workflow-throw-variant.throw-variant",
+            vec![],
+        )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
@@ -894,11 +935,12 @@ async fn workflow_js_rich_return_type() {
 
     // err: null (void err channel — result<string>)
     let resp = server
-        .submit_follow("testing:integration/workflows.throw-null", vec![])
+        .submit_follow("testing:integration/workflow-throw-null.throw-null", vec![])
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "err": null }));
+    server.shutdown().await;
 }
 
 // ---- Idempotency ----
@@ -911,7 +953,7 @@ async fn idempotent_submit_same_execution_id() {
     let resp1 = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/activities.add",
+            "testing:integration/activity-add.add",
             vec![json!(1), json!(2)],
         )
         .await;
@@ -921,13 +963,14 @@ async fn idempotent_submit_same_execution_id() {
     let resp2 = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/activities.add",
+            "testing:integration/activity-add.add",
             vec![json!(1), json!(2)],
         )
         .await;
     assert_eq!(resp2.status().as_u16(), 200);
     let body2: Value = resp2.json().await.unwrap();
     assert_eq!(body1, body2);
+    server.shutdown().await;
 }
 
 // ---- Webhook JS ----
@@ -944,6 +987,7 @@ async fn webhook_js_hello() {
     assert_eq!(resp.status().as_u16(), 200);
     let body = resp.text().await.unwrap();
     assert_eq!(body, "Hello from JS webhook!");
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -961,6 +1005,7 @@ async fn webhook_js_request_headers() {
     let body = resp.text().await.unwrap();
     let headers: Vec<String> = serde_json::from_str(&body).unwrap();
     assert_eq!(headers, vec!["value1", "value2"]);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -978,6 +1023,7 @@ async fn webhook_js_fetch_allowed() {
     // The response should be a JSON array of components
     let components: Value = serde_json::from_str(&body).unwrap();
     assert!(components.is_array());
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -996,6 +1042,7 @@ async fn webhook_js_fetch_denied() {
         body.contains("HttpRequestDenied"),
         "Expected body to contain 'HttpRequestDenied', got: {body}"
     );
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -1011,6 +1058,7 @@ async fn webhook_js_call_activity() {
     let body: Value = resp.json().await.unwrap();
     // The add activity returns the sum as a string
     assert_eq!(body["result"], "12");
+    server.shutdown().await;
 }
 
 // ---- Inline stub activity ----
@@ -1020,11 +1068,12 @@ async fn inline_stub_self_stubbing() {
     let server = TestServer::start(test_addr!(28)).await;
     let resp = server
         .submit_follow(
-            "testing:integration/workflows.call-stub",
+            "testing:integration/workflow-call-stub.call-stub",
             vec![json!(42u64)],
         )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({"ok": "stub-ok"}));
+    server.shutdown().await;
 }
