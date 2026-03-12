@@ -1352,17 +1352,20 @@ impl ConfigVerified {
                 )
             })
             .collect::<Vec<_>>();
-        let activities_external_tasks = activities_external.into_iter().map(|activity| {
-            tokio::spawn(
-                activity
-                    .fetch_and_verify(
-                        wasm_cache_dir.clone(),
-                        metadata_dir.clone(),
-                        path_prefixes.clone(),
-                    )
-                    .in_current_span(),
-            )
-        }).collect::<Vec<_>>();
+        let activities_external_tasks = activities_external
+            .into_iter()
+            .map(|activity| {
+                tokio::spawn(
+                    activity
+                        .fetch_and_verify(
+                            wasm_cache_dir.clone(),
+                            metadata_dir.clone(),
+                            path_prefixes.clone(),
+                        )
+                        .in_current_span(),
+                )
+            })
+            .collect::<Vec<_>>();
 
         let workflows = workflows
             .into_iter()

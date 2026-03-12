@@ -394,7 +394,7 @@ impl ComponentConfigRegistryRO {
         self.inner
             .digests_to_wit
             .get(input_digest)
-            .map(|w| w.as_str())
+            .map(std::string::String::as_str)
     }
 
     #[must_use]

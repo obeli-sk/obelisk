@@ -1042,10 +1042,12 @@ impl ActivityStubComponentConfigToml {
                     StrVariant::from(common.name),
                     ComponentDigest(common.content_digest.0),
                 )?;
-                Ok(ActivityStubConfigVerified::File(ActivityStubExtConfigVerified {
-                    wasm_path,
-                    component_id,
-                }))
+                Ok(ActivityStubConfigVerified::File(
+                    ActivityStubExtConfigVerified {
+                        wasm_path,
+                        component_id,
+                    },
+                ))
             }
             Self::Inline(inline) => {
                 let ffqn = inline.ffqn;
@@ -1106,12 +1108,14 @@ impl ActivityStubComponentConfigToml {
                     component_digest,
                 )?;
 
-                Ok(ActivityStubConfigVerified::Inline(ActivityStubInlineConfigVerified {
-                    component_id,
-                    ffqn,
-                    params: parsed_params,
-                    return_type,
-                }))
+                Ok(ActivityStubConfigVerified::Inline(
+                    ActivityStubInlineConfigVerified {
+                        component_id,
+                        ffqn,
+                        params: parsed_params,
+                        return_type,
+                    },
+                ))
             }
         }
     }
