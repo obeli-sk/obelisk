@@ -1,7 +1,7 @@
 // Use createJoinSet + submit + joinNext to call an activity
 export default function add_via_activity(a, b) {
     const js = createJoinSet();
-    const execId = js.submit('testing:integration/activities.add', [a, b]);
+    const execId = js.submit('testing:integration/activity-add.add', [a, b]);
     console.log('Submitted add activity, execId:', execId);
     const response = js.joinNext();
     if (!response.ok) {

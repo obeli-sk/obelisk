@@ -4,10 +4,10 @@ expression: functions
 ---
 [
   {
-    "ffqn": "testing:integration/activities.add"
+    "ffqn": "testing:integration/activity-add.add"
   },
   {
-    "ffqn": "testing:integration/activities.greet"
+    "ffqn": "testing:integration/activity-greet.greet"
   },
   {
     "ffqn": "testing:integration/fetch-get-denied.fetch-get"
@@ -19,36 +19,36 @@ expression: functions
     "ffqn": "testing:integration/activity-env.read-env"
   },
   {
-    "ffqn": "testing:integration/activities.make-record"
+    "ffqn": "testing:integration/activity-make-record.make-record"
   },
   {
-    "ffqn": "testing:integration/activities.throw-variant"
+    "ffqn": "testing:integration/activity-throw-variant.throw-variant"
   },
   {
-    "ffqn": "testing:integration/activities.throw-null"
+    "ffqn": "testing:integration/activity-throw-null.throw-null"
   },
   {
     "ffqn": "testing:integration/stubs.my-stub"
   },
   {
-    "ffqn": "testing:integration/workflows.add-workflow"
+    "ffqn": "testing:integration/workflow-add.add-workflow"
   },
   {
-    "ffqn": "testing:integration/workflows.add-via-activity"
+    "ffqn": "testing:integration/workflow-add-via-activity.add-via-activity"
   },
   {
-    "ffqn": "testing:integration/workflows.call-activity"
+    "ffqn": "testing:integration/workflow-call-activity.call-activity"
   },
   {
-    "ffqn": "testing:integration/workflows.make-record"
+    "ffqn": "testing:integration/workflow-make-record.make-record"
   },
   {
-    "ffqn": "testing:integration/workflows.throw-variant"
+    "ffqn": "testing:integration/workflow-throw-variant.throw-variant"
   },
   {
-    "ffqn": "testing:integration/workflows.throw-null"
+    "ffqn": "testing:integration/workflow-throw-null.throw-null"
   },
   {
-    "ffqn": "testing:integration/workflows.call-stub"
+    "ffqn": "testing:integration/workflow-call-stub.call-stub"
   }
 ]

@@ -11,6 +11,6 @@ export default function handle(request) {
 
 function call(a, b) {
     return function (a, b) {
-        return obelisk.call("testing:integration/activities.add", [a, b]);
+        return obelisk.call("testing:integration/activity-add.add", [a, b]);
     }(a, b)
 }

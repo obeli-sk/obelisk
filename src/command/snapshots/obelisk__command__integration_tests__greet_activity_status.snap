@@ -8,7 +8,7 @@ expression: status
   "created_at": "<TIMESTAMP>",
   "deployment_id": "Dep_<REDACTED>",
   "execution_id": "E_<REDACTED>",
-  "ffqn": "testing:integration/activities.greet",
+  "ffqn": "testing:integration/activity-greet.greet",
   "first_scheduled_at": "<TIMESTAMP>",
   "pending_state": {
     "finished_at": "<TIMESTAMP>",
