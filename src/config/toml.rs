@@ -955,9 +955,31 @@ pub(crate) struct AllowedHostSecretsToml {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ActivityStubComponentConfigToml {
-    #[serde(flatten)]
-    pub(crate) common: ComponentCommon,
+pub(crate) struct ActivityStubFileConfigToml {
+    pub(crate) name: ConfigName,
+    pub(crate) location: ComponentLocationToml,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) content_digest: Option<ContentDigest>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivityStubInlineConfigToml {
+    pub(crate) name: ConfigName,
+    #[schemars(with = "String")]
+    pub(crate) ffqn: FunctionFqn,
+    #[serde(default)]
+    pub(crate) params: Option<Vec<JsParamToml>>,
+    #[serde(default)]
+    pub(crate) return_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub(crate) enum ActivityStubComponentConfigToml {
+    File(ActivityStubFileConfigToml),
+    Inline(ActivityStubInlineConfigToml),
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -975,28 +997,127 @@ pub(crate) struct ActivityStubExtConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) component_id: ComponentId,
 }
+
+#[derive(Debug)]
+pub(crate) struct ActivityStubInlineConfigVerified {
+    pub(crate) component_id: ComponentId,
+    pub(crate) ffqn: FunctionFqn,
+    pub(crate) params: Vec<concepts::ParameterType>,
+    pub(crate) return_type: concepts::ReturnTypeExtendable,
+}
+
+#[derive(Debug)]
+pub(crate) enum ActivityStubConfigVerified {
+    File(ActivityStubExtConfigVerified),
+    Inline(ActivityStubInlineConfigVerified),
+}
+
 impl ActivityStubComponentConfigToml {
-    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
+    fn name_str(&self) -> &str {
+        match self {
+            Self::File(f) => f.name.0.as_ref(),
+            Self::Inline(i) => i.name.0.as_ref(),
+        }
+    }
+
+    #[instrument(skip_all, fields(component_name = self.name_str(), component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         path_prefixes: Arc<PathPrefixes>,
-    ) -> Result<ActivityStubExtConfigVerified, anyhow::Error> {
-        let (common, wasm_path) = self
-            .common
-            .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
-            .await?;
-        let component_id = ComponentId::new(
-            ComponentType::ActivityStub,
-            StrVariant::from(common.name),
-            ComponentDigest(common.content_digest.0),
-        )?;
+    ) -> Result<ActivityStubConfigVerified, anyhow::Error> {
+        match self {
+            Self::File(file) => {
+                let common = ComponentCommon {
+                    name: file.name,
+                    location: file.location,
+                    content_digest: file.content_digest,
+                };
+                let (common, wasm_path) = common
+                    .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+                    .await?;
+                let component_id = ComponentId::new(
+                    ComponentType::ActivityStub,
+                    StrVariant::from(common.name),
+                    ComponentDigest(common.content_digest.0),
+                )?;
+                Ok(ActivityStubConfigVerified::File(
+                    ActivityStubExtConfigVerified {
+                        wasm_path,
+                        component_id,
+                    },
+                ))
+            }
+            Self::Inline(inline) => {
+                let ffqn = inline.ffqn;
+                let parsed_params = match inline.params {
+                    None => {
+                        vec![concepts::ParameterType {
+                            type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
+                                val_json::type_wrapper::TypeWrapper::String,
+                            )),
+                            name: StrVariant::Static("params"),
+                            wit_type: StrVariant::Static("list<string>"),
+                        }]
+                    }
+                    Some(params) => params
+                        .iter()
+                        .map(|p| {
+                            let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
+                                .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
+                            Ok(concepts::ParameterType {
+                                type_wrapper: tw,
+                                name: StrVariant::from(p.name.clone()),
+                                wit_type: StrVariant::from(p.wit_type.clone()),
+                            })
+                        })
+                        .collect::<Result<Vec<_>, anyhow::Error>>()?,
+                };
 
-        Ok(ActivityStubExtConfigVerified {
-            wasm_path,
-            component_id,
-        })
+                const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
+                let return_type_str = inline.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
+                let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
+                    .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
+                let return_type = concepts::ReturnType::detect(
+                    return_type_tw,
+                    StrVariant::from(return_type_str.to_string()),
+                );
+                let return_type = match return_type {
+                    ReturnType::Extendable(rt) => rt,
+                    ReturnType::NonExtendable(_) => bail!(
+                        "return_type must be `result`, `result<T>`, `result<T, string>`, or \
+                         `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
+                    ),
+                };
+
+                // Compute component digest: SHA256 of prefix + ffqn + params + return_type
+                let mut hasher = Sha256::new();
+                hasher.update(b"activity_stub_inline:");
+                hasher.update(ffqn.to_string().as_bytes());
+                for p in &parsed_params {
+                    hasher.update(p.wit_type.as_ref().as_bytes());
+                }
+                hasher.update(return_type.wit_type.as_bytes());
+                let hash: [u8; 32] = hasher.finalize().into();
+                let component_digest = ComponentDigest(Digest(hash));
+
+                let component_id = ComponentId::new(
+                    ComponentType::ActivityStub,
+                    StrVariant::from(inline.name),
+                    component_digest,
+                )?;
+
+                Ok(ActivityStubConfigVerified::Inline(
+                    ActivityStubInlineConfigVerified {
+                        component_id,
+                        ffqn,
+                        params: parsed_params,
+                        return_type,
+                    },
+                ))
+            }
+        }
     }
 }
 impl ActivityExternalComponentConfigToml {
@@ -2862,6 +2983,50 @@ location = "gh://owner/repo@v1.0.0/component.wasm"
 "#;
             let common: ComponentCommon = toml::from_str(toml_str).unwrap();
             assert!(common.content_digest.is_none());
+        }
+    }
+
+    mod activity_stub {
+        use super::super::*;
+
+        #[test]
+        fn deserialize_file_mode() {
+            let toml_str = r#"
+name = "my_stub"
+location = "./stub.wasm"
+"#;
+            let stub: ActivityStubComponentConfigToml = toml::from_str(toml_str).unwrap();
+            assert!(matches!(stub, ActivityStubComponentConfigToml::File(_)));
+        }
+
+        #[test]
+        fn deserialize_inline_mode() {
+            let toml_str = r#"
+name = "my_stub"
+ffqn = "ns:pkg/ifc.fn"
+params = [{ name = "id", type = "u64" }]
+return_type = "result<string, string>"
+"#;
+            let stub: ActivityStubComponentConfigToml = toml::from_str(toml_str).unwrap();
+            assert!(matches!(stub, ActivityStubComponentConfigToml::Inline(_)));
+        }
+
+        #[test]
+        fn reject_both_location_and_ffqn() {
+            let toml_str = r#"
+name = "my_stub"
+location = "./stub.wasm"
+ffqn = "ns:pkg/ifc.fn"
+"#;
+            toml::from_str::<ActivityStubComponentConfigToml>(toml_str).unwrap_err();
+        }
+
+        #[test]
+        fn reject_neither_location_nor_ffqn() {
+            let toml_str = r#"
+name = "my_stub"
+"#;
+            toml::from_str::<ActivityStubComponentConfigToml>(toml_str).unwrap_err();
         }
     }
 }

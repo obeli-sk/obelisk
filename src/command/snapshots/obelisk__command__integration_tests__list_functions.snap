@@ -16,7 +16,7 @@ expression: functions
     "ffqn": "testing:integration/fetch-get-allowed.fetch-get"
   },
   {
-    "ffqn": "testing:integration/activities.read-env"
+    "ffqn": "testing:integration/activity-env.read-env"
   },
   {
     "ffqn": "testing:integration/activities.make-record"
@@ -26,6 +26,9 @@ expression: functions
   },
   {
     "ffqn": "testing:integration/activities.throw-null"
+  },
+  {
+    "ffqn": "testing:integration/stubs.my-stub"
   },
   {
     "ffqn": "testing:integration/workflows.add-workflow"
@@ -44,5 +47,8 @@ expression: functions
   },
   {
     "ffqn": "testing:integration/workflows.throw-null"
+  },
+  {
+    "ffqn": "testing:integration/workflows.call-stub"
   }
 ]

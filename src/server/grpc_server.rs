@@ -1271,7 +1271,7 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
                 ))
             })?;
         Ok(tonic::Response::new(grpc_gen::GetWitResponse {
-            content: wit.map(ToString::to_string),
+            content: Some(wit.to_string()),
         }))
     }
 }

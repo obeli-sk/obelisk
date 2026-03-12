@@ -275,9 +275,8 @@ pub(crate) async fn generate_wit_deps(
         .component_registry_ro
         .list(include_exports)
     {
-        if let Some(wit) = &component.wit
-            && let Some(importable) = &component.workflow_or_activity_config
-        {
+        if let Some(importable) = &component.workflow_or_activity_config {
+            let wit = &component.wit;
             assert!(
                 component.component_id.component_type.is_activity()
                     || component.component_id.component_type == ComponentType::Workflow

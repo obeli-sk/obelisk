@@ -12,7 +12,9 @@ use crate::config::toml::ActivityExternalComponentConfigToml;
 use crate::config::toml::ActivityJsComponentConfigToml;
 use crate::config::toml::ActivityJsConfigVerified;
 use crate::config::toml::ActivityStubComponentConfigToml;
+use crate::config::toml::ActivityStubConfigVerified;
 use crate::config::toml::ActivityStubExtConfigVerified;
+use crate::config::toml::ActivityStubInlineConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
@@ -107,6 +109,7 @@ use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use wasm_workers::RunnableComponent;
 use wasm_workers::activity::activity_js_worker::ActivityJsWorkerCompiled;
+use wasm_workers::activity::activity_stub_inline::compile_activity_stub_inline;
 use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::component_logger::LogStrageConfig;
@@ -938,6 +941,7 @@ impl ServerCompiledLinked {
             server_verified.config.activities_wasm,
             server_verified.config.activities_js,
             server_verified.config.activities_stub_ext,
+            server_verified.config.activities_stub_inline,
             server_verified.config.workflows,
             server_verified.config.workflows_js,
             server_verified.config.webhooks_by_names,
@@ -1222,6 +1226,7 @@ struct ConfigVerified {
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
+    activities_stub_inline: Vec<ActivityStubInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,
@@ -1333,7 +1338,7 @@ impl ConfigVerified {
             })
             .collect::<Vec<_>>();
 
-        let mut activities_stub_ext = activities_stub
+        let activities_stub_tasks = activities_stub
             .into_iter()
             .map(|activity| {
                 tokio::spawn(
@@ -1347,17 +1352,20 @@ impl ConfigVerified {
                 )
             })
             .collect::<Vec<_>>();
-        activities_stub_ext.extend(activities_external.into_iter().map(|activity| {
-            tokio::spawn(
-                activity
-                    .fetch_and_verify(
-                        wasm_cache_dir.clone(),
-                        metadata_dir.clone(),
-                        path_prefixes.clone(),
-                    )
-                    .in_current_span(),
-            )
-        }));
+        let activities_external_tasks = activities_external
+            .into_iter()
+            .map(|activity| {
+                tokio::spawn(
+                    activity
+                        .fetch_and_verify(
+                            wasm_cache_dir.clone(),
+                            metadata_dir.clone(),
+                            path_prefixes.clone(),
+                        )
+                        .in_current_span(),
+                )
+            })
+            .collect::<Vec<_>>();
 
         let workflows = workflows
             .into_iter()
@@ -1440,7 +1448,10 @@ impl ConfigVerified {
         let all = futures_util::future::join3(
             futures_util::future::join5(
                 futures_util::future::join_all(activities_wasm),
-                futures_util::future::join_all(activities_stub_ext),
+                futures_util::future::join(
+                    futures_util::future::join_all(activities_stub_tasks),
+                    futures_util::future::join_all(activities_external_tasks),
+                ),
                 futures_util::future::join_all(workflows),
                 futures_util::future::join_all(webhooks_by_names),
                 activity_js_runtime_fetch,
@@ -1449,9 +1460,17 @@ impl ConfigVerified {
             webhook_js_runtime_fetch,
         );
         tokio::select! {
-            ((activity_wasm_results, activity_stub_ext_results, workflow_results, webhook_results, activity_js_runtime_result), workflow_js_runtime_result, webhook_js_runtime_result) = all => {
+            ((activity_wasm_results, (activity_stub_task_results, activity_external_task_results), workflow_results, webhook_results, activity_js_runtime_result), workflow_js_runtime_result, webhook_js_runtime_result) = all => {
                 let activities_wasm = activity_wasm_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
-                let activities_stub_ext = activity_stub_ext_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
+                let stub_results: Vec<ActivityStubConfigVerified> = activity_stub_task_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
+                let mut activities_stub_ext: Vec<ActivityStubExtConfigVerified> = activity_external_task_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
+                let mut activities_stub_inline: Vec<ActivityStubInlineConfigVerified> = Vec::new();
+                for result in stub_results {
+                    match result {
+                        ActivityStubConfigVerified::File(ext) => activities_stub_ext.push(ext),
+                        ActivityStubConfigVerified::Inline(inline) => activities_stub_inline.push(inline),
+                    }
+                }
                 let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let mut webhooks_by_names = IndexMap::new();
                 for webhook in webhook_results {
@@ -1521,6 +1540,7 @@ impl ConfigVerified {
                     activities_wasm,
                     activities_js: activities_js_verified,
                     activities_stub_ext,
+                    activities_stub_inline,
                     workflows,
                     workflows_js: workflows_js_verified,
                     webhooks_by_names,
@@ -1568,6 +1588,7 @@ async fn compile_and_verify(
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
+    activities_stub_inline: Vec<ActivityStubInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,
@@ -1704,10 +1725,7 @@ async fn compile_and_verify(
                         activity_stub_ext.wasm_path,
                         activity_stub_ext.component_id.component_type,
                     )?;
-                    let wit = wasm_component
-                        .wit()
-                        .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-                        .ok();
+                    let wit = wasm_component.wit();
                     let exports_ext = wasm_component.exim.get_exports(true).to_vec();
                     let exports_hierarchy_ext =
                         wasm_component.exim.get_exports_hierarchy_ext().to_vec();
@@ -1723,6 +1741,21 @@ async fn compile_and_verify(
                         workflow_replay_info: None,
                         source: None,
                     };
+                    Ok(CompiledComponent::ActivityStubOrExternal { component_config })
+                })
+            })
+        }))
+        .chain(activities_stub_inline.into_iter().map(|stub| {
+            // No build_semaphore needed (no WASM compilation).
+            let span = info_span!("activity_stub_inline_init", component_id = %stub.component_id);
+            tokio::task::spawn_blocking(move || {
+                span.in_scope(|| {
+                    let component_config = compile_activity_stub_inline(
+                        stub.component_id,
+                        &stub.ffqn,
+                        &stub.params,
+                        &stub.return_type,
+                    )?;
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
                 })
             })
@@ -1871,9 +1904,7 @@ async fn compile_and_verify(
                             component_id: webhook_compiled.config.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
                             workflow_or_activity_config: None,
-                            wit: webhook_compiled.runnable_component.wasm_component.wit()
-                                .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-                                .ok(),
+                            wit: webhook_compiled.runnable_component.wasm_component.wit(),
                             workflow_replay_info: None,
                             source,
                         };
@@ -1964,11 +1995,7 @@ fn prespawn_activity(
     let engine = engines.activity_engine.clone();
     let runnable_component =
         RunnableComponent::new(activity.wasm_path, &engine, component_id.component_type)?;
-    let wit = runnable_component
-        .wasm_component
-        .wit()
-        .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-        .ok();
+    let wit = runnable_component.wasm_component.wit();
 
     let worker = ActivityWorkerCompiled::new_with_config(
         runnable_component,
@@ -2128,11 +2155,7 @@ fn prespawn_workflow(
     let engine = engines.workflow_engine.clone();
     let runnable_component =
         RunnableComponent::new(&workflow.wasm_path, &engine, component_id.component_type)?;
-    let wit = runnable_component
-        .wasm_component
-        .wit()
-        .inspect_err(|err| warn!("Cannot get wit - {err:?}"))
-        .ok();
+    let wit = runnable_component.wasm_component.wit();
 
     WorkerCompiled::new_workflow(
         runnable_component,
@@ -2218,7 +2241,7 @@ impl WorkerCompiled {
     fn new_activity(
         worker: ActivityWorkerCompiled<TokioSleep>,
         exec_config: ExecConfig,
-        wit: Option<String>,
+        wit: String,
         logs_store_min_level: Option<LogLevel>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2245,7 +2268,7 @@ impl WorkerCompiled {
     fn new_js_activity(
         worker: ActivityJsWorkerCompiled<TokioSleep>,
         exec_config: ExecConfig,
-        wit: Option<String>,
+        wit: String,
         logs_store_min_level: Option<LogLevel>,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -2273,7 +2296,7 @@ impl WorkerCompiled {
         runnable_component: RunnableComponent,
         engine: Arc<Engine>,
         workflow: WorkflowConfigVerified,
-        wit: Option<String>,
+        wit: String,
         workflows_lock_extension_leeway: Duration,
     ) -> Result<(WorkerCompiled, ComponentConfig), utils::wasm_tools::DecodeError> {
         let worker = WorkflowWorkerCompiled::new_with_config(
@@ -2319,7 +2342,7 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         logs_store_min_level: Option<LogLevel>,
         workflows_lock_extension_leeway: Duration,
-        wit: Option<String>,
+        wit: String,
         js_source: String,
         js_file_name: String,  // as it would appear in a backtrace
         js_file_path: PathBuf, // to be served by GetBacktraceSource

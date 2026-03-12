@@ -115,7 +115,7 @@ methods = ["GET"]
 [[activity_js]]
 name = "test_read_env_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/read_env.js"
-ffqn = "testing:integration/activities.read-env"
+ffqn = "testing:integration/activity-env.read-env"
 params = [
   {{ name = "key", type = "string" }},
 ]
@@ -197,6 +197,22 @@ location = "{ws}/crates/testing/test-programs/js/workflow/throw_null.js"
 ffqn = "testing:integration/workflows.throw-null"
 params = []
 return_type = "result<string>"
+
+[[workflow_js]]
+name = "test_call_stub_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/call_stub.js"
+ffqn = "testing:integration/workflows.call-stub"
+params = [
+  {{ name = "id", type = "u64" }},
+]
+
+[[activity_stub]]
+name = "test_inline_stub"
+ffqn = "testing:integration/stubs.my-stub"
+params = [
+  {{ name = "id", type = "u64" }},
+]
+return_type = "result<string, string>"
 
 [[http_server]]
 name = "test_webhook_server"
@@ -805,7 +821,7 @@ async fn activity_js_read_env() {
     let server = TestServer::start(test_addr!(17)).await;
     let resp = server
         .submit_follow(
-            "testing:integration/activities.read-env",
+            "testing:integration/activity-env.read-env",
             vec![json!("TEST_ENV_VAR")],
         )
         .await;
@@ -995,4 +1011,20 @@ async fn webhook_js_call_activity() {
     let body: Value = resp.json().await.unwrap();
     // The add activity returns the sum as a string
     assert_eq!(body["result"], "12");
+}
+
+// ---- Inline stub activity ----
+
+#[tokio::test]
+async fn inline_stub_self_stubbing() {
+    let server = TestServer::start(test_addr!(28)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/workflows.call-stub",
+            vec![json!(42u64)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({"ok": "stub-ok"}));
 }

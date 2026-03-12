@@ -112,7 +112,7 @@ pub struct ComponentConfig {
     pub component_id: ComponentId,
     pub imports: Vec<FunctionMetadata>,
     pub workflow_or_activity_config: Option<ComponentConfigImportable>,
-    pub wit: Option<String>,
+    pub wit: String,
     pub workflow_replay_info: Option<WorkflowReplayInfo>,
     /// Backtrace source map for `GetBacktraceSource` RPC.
     pub source: Option<MatchableSourceMap>,
@@ -151,7 +151,7 @@ struct ComponentConfigRegistryInner {
     /// Primary index: component name → component config. Names are unique across all component types.
     names_to_components: IndexMap<StrVariant, ComponentConfig>,
     /// Digest-keyed secondary indexes.
-    digests_to_wit: IndexMap<ComponentDigest, Option<String>>,
+    digests_to_wit: IndexMap<ComponentDigest, String>,
     digests_to_replay_info: IndexMap<ComponentDigest, (ComponentId, WorkflowReplayInfo)>,
     digests_to_source: IndexMap<ComponentDigest, MatchableSourceMap>,
 }
@@ -388,14 +388,13 @@ pub struct ComponentConfigRegistryRO {
 }
 
 impl ComponentConfigRegistryRO {
-    /// Look up WIT by content digest.
-    /// Returns `None` if the digest is not found, `Some(None)` if the component has no WIT content.
+    /// Look up WIT by content digest. Returns `None` if the digest is not found.
     #[must_use]
-    pub fn get_wit(&self, input_digest: &ComponentDigest) -> Option<Option<&str>> {
+    pub fn get_wit(&self, input_digest: &ComponentDigest) -> Option<&str> {
         self.inner
             .digests_to_wit
             .get(input_digest)
-            .map(|w| w.as_deref())
+            .map(std::string::String::as_str)
     }
 
     #[must_use]

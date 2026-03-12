@@ -1865,6 +1865,7 @@ pub(crate) mod workflow_support {
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, latest};
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT, JoinSetCreateError};
+    use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
     use concepts::storage::{DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, StubRetVal};
     use concepts::{CHARSET_ALPHANUMERIC, ComponentType, JoinSetId, JoinSetKind, Params};
@@ -2380,7 +2381,14 @@ pub(crate) mod workflow_support {
             &mut self,
             target_execution_id: ExecutionIdDerived,
             retval: String,
+            called_at: DateTime<Utc>,
         ) -> Result<(StubIntent, StubParams), DbErrorWrite> {
+            // Flush the cache before getting the stub's create request, because it might be this execution's child.
+            // TODO(perf): Just search cache + db instead.
+            self.db_connection
+                .flush_non_blocking_event_cache(called_at)
+                .await?;
+
             // Look up the target function's FFQN
             let target_ffqn = match self
                 .db_connection
@@ -2518,13 +2526,14 @@ pub(crate) mod workflow_support {
                 }
             };
 
+            let called_at = self.clock_fn.now();
             let (intent, params) = self
-                .get_stub_intent_and_params(target_execution_id, retval)
+                .get_stub_intent_and_params(target_execution_id, retval, called_at)
                 .await
                 .map_err(WorkflowFunctionError::DbError)?;
 
             // Apply the stub
-            let called_at = self.clock_fn.now();
+
             let stub_result = Stub {
                 intent,
                 params,

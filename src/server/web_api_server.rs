@@ -1719,7 +1719,6 @@ pub(crate) mod components {
         ComponentId, ComponentType, FunctionExtension, FunctionMetadata, ParameterType,
         component_id::ComponentDigest,
     };
-    use http::StatusCode;
     use itertools::Itertools;
     use std::fmt::{Debug, Write as _};
 
@@ -1771,11 +1770,7 @@ pub(crate) mod components {
                 Some("component"),
             ));
         };
-        Ok(if let Some(wit) = wit {
-            wit.to_string().into_response()
-        } else {
-            (StatusCode::NO_CONTENT, "").into_response()
-        })
+        Ok(wit.to_string().into_response())
     }
 
     /// List components
@@ -2052,9 +2047,6 @@ mod functions {
             .component_registry_ro
             .get_wit(&component_id.component_digest)
             .expect("if function is found, component must be found");
-        let Some(wit) = wit else {
-            return Err(HttpResponse::not_found(AcceptHeader::Text, Some("wit")));
-        };
 
         // Print just the interface with the single function
         match crate::wit_printer::print_interface_with_single_fn(wit, &ffqn) {

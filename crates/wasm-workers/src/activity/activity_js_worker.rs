@@ -71,10 +71,9 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
     }
 
     /// Return WIT text describing the user interface including extension packages.
-    /// Returns `None` if WIT generation fails (should not happen for valid configs).
     #[must_use]
-    pub fn wit(&self) -> Option<String> {
-        self.user_wasm_component.wit().ok()
+    pub fn wit(&self) -> String {
+        self.user_wasm_component.wit()
     }
 
     pub fn into_worker(

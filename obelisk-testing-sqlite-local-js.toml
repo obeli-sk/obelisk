@@ -6,6 +6,7 @@ enabled = true
 target = true
 directory = "."
 prefix = "obelisk.log" # File name prefix
+level = "info,obeli=debug,app=debug"
 
 [[http_server]]
 name = "external_webhook"
@@ -24,7 +25,7 @@ max_retries = 0
 [[workflow_js]]
 name = "test_add_via_activity_workflow"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/add_via_activity.js"
-ffqn = "testing:integration/workflows.add-via-activity"
+ffqn = "testing:integration/workflow-add-via-activity.add-via-activity"
 params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
@@ -33,7 +34,7 @@ params = [
 [[activity_js]]
 name = "test_read_env_activity"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/read_env.js"
-ffqn = "testing:integration/activities.read-env"
+ffqn = "testing:integration/activity-env.read-env"
 params = [
   { name = "key", type = "string" },
 ]
@@ -62,7 +63,7 @@ params = []
 [[workflow_js]]
 name = "test_call_activity_workflow"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/call_activity.js"
-ffqn = "testing:integration/workflows.call-activity"
+ffqn = "testing:integration/workflow-call-activity.call-activity"
 params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
@@ -88,3 +89,21 @@ name = "webhook_js_call_activity"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/call_activity.js"
 http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/call-activity/:a/:b" }]
+
+# stub
+
+[[workflow_js]]
+name = "test_call_stub_workflow"
+location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/call_stub.js"
+ffqn = "testing:integration/workflow-call-stub.call-stub"
+params = [
+  { name = "id", type = "u64" },
+]
+
+[[activity_stub]]
+name = "test_inline_stub"
+ffqn = "testing:integration/stubs.my-stub"
+params = [
+  { name = "id", type = "u64" },
+]
+return_type = "result<string, string>"

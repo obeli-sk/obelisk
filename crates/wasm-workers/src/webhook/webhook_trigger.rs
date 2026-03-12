@@ -253,47 +253,54 @@ impl WebhookEndpointCompiled {
                 ifc_fqn = %import.ifc_fqn,
                 "Adding imported interface to the linker",
             );
-            if let Ok(mut linker_instance) = linker.instance(import.ifc_fqn.deref()) {
-                for function_name in import.fns.keys() {
-                    let ffqn = FunctionFqn {
-                        ifc_fqn: import.ifc_fqn.clone(),
-                        function_name: function_name.clone(),
-                    };
-                    trace!("Adding mock for imported function {ffqn} to the linker");
-                    let res = linker_instance.func_new_async(function_name.deref(), {
-                        let ffqn = ffqn.clone();
-                        move |mut store_ctx: wasmtime::StoreContextMut<
-                            '_,
-                            WebhookEndpointCtx<S>,
-                        >,
-                              _component_func: ComponentFunc,
-                              params: &[Val],
-                              results: &mut [Val]| {
+            match linker.instance(import.ifc_fqn.deref()) {
+                Ok(mut linker_instance) => {
+                    for function_name in import.fns.keys() {
+                        let ffqn = FunctionFqn {
+                            ifc_fqn: import.ifc_fqn.clone(),
+                            function_name: function_name.clone(),
+                        };
+                        trace!("Adding mock for imported function {ffqn} to the linker");
+                        let res = linker_instance.func_new_async(function_name.deref(), {
                             let ffqn = ffqn.clone();
-                            let wasm_backtrace = if self.config.backtrace_persist {
-                                let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
-                                concepts::storage::WasmBacktrace::maybe_from(&wasm_backtrace)
-                            } else {
-                                None
-                            };
+                            move |mut store_ctx: wasmtime::StoreContextMut<
+                                '_,
+                                WebhookEndpointCtx<S>,
+                            >,
+                                  _component_func: ComponentFunc,
+                                  params: &[Val],
+                                  results: &mut [Val]| {
+                                let ffqn = ffqn.clone();
+                                let wasm_backtrace = if self.config.backtrace_persist {
+                                    let wasm_backtrace =
+                                        wasmtime::WasmBacktrace::capture(&store_ctx);
+                                    concepts::storage::WasmBacktrace::maybe_from(&wasm_backtrace)
+                                } else {
+                                    None
+                                };
 
-                            Box::new(async move {
-                                Ok(store_ctx
-                                    .data_mut()
-                                    .call_imported_fn(ffqn, params, results, wasm_backtrace)
-                                    .await?)
-                            })
+                                Box::new(async move {
+                                    Ok(store_ctx
+                                        .data_mut()
+                                        .call_imported_fn(ffqn, params, results, wasm_backtrace)
+                                        .await?)
+                                })
+                            }
+                        });
+                        if let Err(err) = res {
+                            return Err(WasmFileError::linking_error(
+                                format!("cannot add mock for imported function {ffqn}"),
+                                err,
+                            ));
                         }
-                    });
-                    if let Err(err) = res {
-                        return Err(WasmFileError::linking_error(
-                            format!("cannot add mock for imported function {ffqn}"),
-                            err,
-                        ));
                     }
                 }
-            } else {
-                trace!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
+                Err(err) => {
+                    warn!(
+                        "Skipping interface {ifc_fqn} - {err:?}",
+                        ifc_fqn = import.ifc_fqn
+                    );
+                }
             }
         }
 

@@ -223,76 +223,82 @@ impl WorkflowWorkerCompiled {
                 ifc_fqn = %import.ifc_fqn,
                 "Adding imported interface to the linker",
             );
-            if let Ok(mut linker_instance) = linker.instance(import.ifc_fqn.deref()) {
-                for function_name in import.fns.keys() {
-                    let ffqn = FunctionFqn {
-                        ifc_fqn: import.ifc_fqn.clone(),
-                        function_name: function_name.clone(),
-                    };
-                    trace!("Adding mock for imported function {ffqn} to the linker");
-                    let res = linker_instance.func_new_async(function_name.deref(), {
-                        let ffqn = ffqn.clone();
-                        let fn_registry = fn_registry.clone();
-                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                              _component_func: ComponentFunc,
-                              params: &[Val],
-                              results: &mut [Val]| {
-                            let imported_fn_call = match ImportedFnCall::new(
-                                ffqn.clone(),
-                                &mut store_ctx,
-                                params,
-                                self.config.backtrace_persist,
-                                fn_registry.as_ref(),
-                            ) {
-                                Ok(imported_fn_call) => imported_fn_call,
-                                Err(err) => {
-                                    return Box::new(future::ready(Result::Err(
-                                        wasmtime::Error::new(err),
-                                    )));
-                                }
-                            };
+            match linker.instance(import.ifc_fqn.deref()) {
+                Ok(mut linker_instance) => {
+                    for function_name in import.fns.keys() {
+                        let ffqn = FunctionFqn {
+                            ifc_fqn: import.ifc_fqn.clone(),
+                            function_name: function_name.clone(),
+                        };
+                        trace!("Adding mock for imported function {ffqn} to the linker");
+                        let res = linker_instance.func_new_async(function_name.deref(), {
                             let ffqn = ffqn.clone();
-                            Box::new(async move {
-                                let workflow_ctx = store_ctx.data_mut();
-                                let called_at = workflow_ctx.clock_fn.now();
-                                let val = workflow_ctx
-                                    .call_imported_fn(imported_fn_call, called_at, &ffqn)
-                                    .await
-                                    .map_err(wasmtime::Error::new)?;
+                            let fn_registry = fn_registry.clone();
+                            move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                                  _component_func: ComponentFunc,
+                                  params: &[Val],
+                                  results: &mut [Val]| {
+                                let imported_fn_call = match ImportedFnCall::new(
+                                    ffqn.clone(),
+                                    &mut store_ctx,
+                                    params,
+                                    self.config.backtrace_persist,
+                                    fn_registry.as_ref(),
+                                ) {
+                                    Ok(imported_fn_call) => imported_fn_call,
+                                    Err(err) => {
+                                        return Box::new(future::ready(Result::Err(
+                                            wasmtime::Error::new(err),
+                                        )));
+                                    }
+                                };
+                                let ffqn = ffqn.clone();
+                                Box::new(async move {
+                                    let workflow_ctx = store_ctx.data_mut();
+                                    let called_at = workflow_ctx.clock_fn.now();
+                                    let val = workflow_ctx
+                                        .call_imported_fn(imported_fn_call, called_at, &ffqn)
+                                        .await
+                                        .map_err(wasmtime::Error::new)?;
 
-                                if results.len() == 1 {
-                                    results[0] = val;
-                                    Ok(())
-                                } else {
-                                    error!(
-                                        "Function expects incorrect result length {}",
-                                        results.len()
-                                    );
-                                    Err(wasmtime::Error::new(
-                                        WorkflowFunctionError::ImportedFunctionCallError {
-                                            ffqn,
-                                            reason: StrVariant::Static(
-                                                "function expects incorrect result length",
-                                            ),
-                                            detail: Some(format!(
-                                                "function expects incorrect result length {}",
-                                                results.len()
-                                            )),
-                                        },
-                                    ))
-                                }
-                            })
+                                    if results.len() == 1 {
+                                        results[0] = val;
+                                        Ok(())
+                                    } else {
+                                        error!(
+                                            "Function expects incorrect result length {}",
+                                            results.len()
+                                        );
+                                        Err(wasmtime::Error::new(
+                                            WorkflowFunctionError::ImportedFunctionCallError {
+                                                ffqn,
+                                                reason: StrVariant::Static(
+                                                    "function expects incorrect result length",
+                                                ),
+                                                detail: Some(format!(
+                                                    "function expects incorrect result length {}",
+                                                    results.len()
+                                                )),
+                                            },
+                                        ))
+                                    }
+                                })
+                            }
+                        });
+                        if let Err(err) = res {
+                            return Err(WasmFileError::linking_error(
+                                format!("cannot add mock for imported function {ffqn}"),
+                                err,
+                            ));
                         }
-                    });
-                    if let Err(err) = res {
-                        return Err(WasmFileError::linking_error(
-                            format!("cannot add mock for imported function {ffqn}"),
-                            err,
-                        ));
                     }
                 }
-            } else {
-                warn!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
+                Err(err) => {
+                    warn!(
+                        "Skipping interface {ifc_fqn} - {err:?}",
+                        ifc_fqn = import.ifc_fqn
+                    );
+                }
             }
         }
 
