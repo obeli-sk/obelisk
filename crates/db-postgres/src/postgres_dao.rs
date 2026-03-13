@@ -30,6 +30,7 @@ use db_common::{
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
 use secrecy::{ExposeSecret as _, SecretString};
+use sha2::{Digest as _, Sha256};
 use std::{collections::VecDeque, pin::Pin, str::FromStr as _, sync::Arc, time::Duration};
 use std::{fmt::Write as _, panic::Location};
 use strum::IntoEnumIterator as _;
@@ -239,6 +240,24 @@ CREATE TABLE IF NOT EXISTS t_execution_backtrace (
 
     pub const IDX_T_EXECUTION_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_execution_backtrace_execution_id_version ON t_execution_backtrace (execution_id, version_min_including, version_max_excluding);
+";
+
+    // Source files
+    pub const CREATE_TABLE_T_SOURCE_FILE: &str = r"
+CREATE TABLE IF NOT EXISTS t_source_file (
+    content_hash BYTEA PRIMARY KEY,
+    content      TEXT NOT NULL
+);
+";
+    pub const CREATE_TABLE_T_COMPONENT_SOURCE: &str = r"
+CREATE TABLE IF NOT EXISTS t_component_source (
+    component_digest BYTEA   NOT NULL,
+    frame_key        TEXT    NOT NULL,
+    is_suffix        BOOLEAN NOT NULL,
+    content_hash     BYTEA   NOT NULL,
+    PRIMARY KEY (component_digest, frame_key, is_suffix),
+    FOREIGN KEY (content_hash) REFERENCES t_source_file(content_hash)
+);
 ";
 
     // Logs & Std sterams
@@ -487,6 +506,8 @@ impl PostgresPool {
             ddl::CREATE_TABLE_T_WASM_BACKTRACE,
             ddl::CREATE_TABLE_T_EXECUTION_BACKTRACE,
             ddl::IDX_T_EXECUTION_BACKTRACE_EXECUTION_ID_VERSION,
+            ddl::CREATE_TABLE_T_SOURCE_FILE,
+            ddl::CREATE_TABLE_T_COMPONENT_SOURCE,
             ddl::CREATE_TABLE_T_LOG,
             ddl::IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT,
             ddl::IDX_T_LOG_EXECUTION_ID_CREATED_AT,
@@ -4060,6 +4081,73 @@ impl DbExternalApi for PostgresConnection {
             version_max_excluding,
             wasm_backtrace,
         })
+    }
+
+    #[instrument(skip_all)]
+    async fn upsert_source_file(
+        &self,
+        component_digest: &ComponentDigest,
+        frame_key: &str,
+        is_suffix: bool,
+        content: &str,
+    ) -> Result<(), DbErrorWrite> {
+        let content_hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        tx.execute(
+            "INSERT INTO t_source_file (content_hash, content) \
+             VALUES ($1, $2) \
+             ON CONFLICT (content_hash) DO NOTHING",
+            &[&content_hash.as_slice(), &content],
+        )
+        .await?;
+        tx.execute(
+            "INSERT INTO t_component_source \
+             (component_digest, frame_key, is_suffix, content_hash) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (component_digest, frame_key, is_suffix) DO NOTHING",
+            &[
+                &component_digest.as_slice(),
+                &frame_key,
+                &is_suffix,
+                &content_hash.as_slice(),
+            ],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn get_source_file(
+        &self,
+        component_digest: &ComponentDigest,
+        file: &str,
+    ) -> Result<Option<String>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let rows = tx
+            .query(
+                "SELECT s.content \
+                 FROM t_component_source cs \
+                 JOIN t_source_file s ON cs.content_hash = s.content_hash \
+                 WHERE cs.component_digest = $1 \
+                   AND ( \
+                       (NOT cs.is_suffix AND cs.frame_key = $2) \
+                    OR (cs.is_suffix AND right($2, length(cs.frame_key)) = cs.frame_key) \
+                   )",
+                &[&component_digest.as_slice(), &file],
+            )
+            .await?;
+        tx.commit().await?;
+        match rows.len() {
+            0 => Ok(None),
+            1 => Ok(Some(get::<String, _>(&rows[0], "content")?)),
+            _ => {
+                warn!("Multiple suffix matches for '{file}', returning None");
+                Ok(None)
+            }
+        }
     }
 
     #[instrument(skip(self))]

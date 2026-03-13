@@ -26,6 +26,7 @@ secrecy.workspace = true
 strum.workspace = true
 tokio-postgres.workspace = true
 rand.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

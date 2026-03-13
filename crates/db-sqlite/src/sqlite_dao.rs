@@ -34,6 +34,7 @@ use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Params, Row, ToSql, Transaction,
     TransactionBehavior, named_params, types::ToSqlOutput,
 };
+use sha2::{Digest as _, Sha256};
 use std::{
     cmp::max,
     collections::VecDeque,
@@ -300,6 +301,30 @@ CREATE TABLE IF NOT EXISTS t_wasm_backtrace (
     wasm_backtrace TEXT NOT NULL,
 
     PRIMARY KEY (backtrace_hash)
+) STRICT
+";
+
+// Content-addressed store for source file text. Content hash is SHA-256 of the UTF-8 content.
+const CREATE_TABLE_T_SOURCE_FILE: &str = r"
+CREATE TABLE IF NOT EXISTS t_source_file (
+    content_hash BLOB NOT NULL,
+    content      TEXT NOT NULL,
+
+    PRIMARY KEY (content_hash)
+) STRICT
+";
+// Maps (component_digest, frame_key, is_suffix) to a source file.
+// frame_key is the exact frame symbol path (is_suffix=0) or a '/'-prefixed suffix (is_suffix=1).
+const CREATE_TABLE_T_COMPONENT_SOURCE: &str = r"
+CREATE TABLE IF NOT EXISTS t_component_source (
+    component_digest BLOB    NOT NULL,
+    frame_key        TEXT    NOT NULL,
+    is_suffix        INTEGER NOT NULL,
+    content_hash     BLOB    NOT NULL,
+
+    PRIMARY KEY (component_digest, frame_key, is_suffix),
+    FOREIGN KEY (content_hash)
+        REFERENCES t_source_file(content_hash)
 ) STRICT
 ";
 
@@ -779,6 +804,9 @@ impl SqlitePool {
         conn_execute(&conn, CREATE_TABLE_T_EXECUTION_BACKTRACE, [])?;
         conn_execute(&conn, IDX_T_EXECUTION_BACKTRACE_EXECUTION_ID_VERSION, [])?;
         conn_execute(&conn, CREATE_TABLE_T_WASM_BACKTRACE, [])?;
+        // source files
+        conn_execute(&conn, CREATE_TABLE_T_SOURCE_FILE, [])?;
+        conn_execute(&conn, CREATE_TABLE_T_COMPONENT_SOURCE, [])?;
         // t_log
         conn_execute(&conn, CREATE_TABLE_T_LOG, [])?;
         conn_execute(&conn, IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT, [])?;
@@ -3860,6 +3888,92 @@ impl DbExternalApi for SqlitePool {
             TxType::Other, // read only
             "get_last_backtrace",
         ).await
+    }
+
+    #[instrument(skip_all)]
+    async fn upsert_source_file(
+        &self,
+        component_digest: &ComponentDigest,
+        frame_key: &str,
+        is_suffix: bool,
+        content: &str,
+    ) -> Result<(), DbErrorWrite> {
+        let content_hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
+        let component_digest = component_digest.clone();
+        let frame_key = frame_key.to_owned();
+        let content = content.to_owned();
+        self.transaction(
+            move |tx| {
+                tx.prepare(
+                    "INSERT OR IGNORE INTO t_source_file (content_hash, content) \
+                     VALUES (:content_hash, :content)",
+                )?
+                .execute(named_params! {
+                    ":content_hash": content_hash,
+                    ":content": content,
+                })?;
+                tx.prepare(
+                    "INSERT OR IGNORE INTO t_component_source \
+                     (component_digest, frame_key, is_suffix, content_hash) \
+                     VALUES (:component_digest, :frame_key, :is_suffix, :content_hash)",
+                )?
+                .execute(named_params! {
+                    ":component_digest": component_digest,
+                    ":frame_key": frame_key,
+                    ":is_suffix": is_suffix,
+                    ":content_hash": content_hash,
+                })?;
+                Ok(())
+            },
+            TxType::Other,
+            "upsert_source_file",
+        )
+        .await
+    }
+
+    #[instrument(skip_all)]
+    async fn get_source_file(
+        &self,
+        component_digest: &ComponentDigest,
+        file: &str,
+    ) -> Result<Option<String>, DbErrorRead> {
+        let component_digest = component_digest.clone();
+        let file = file.to_owned();
+        self.transaction(
+            move |tx| {
+                let mut stmt = tx.prepare(
+                    "SELECT s.content \
+                     FROM t_component_source cs \
+                     JOIN t_source_file s ON cs.content_hash = s.content_hash \
+                     WHERE cs.component_digest = :component_digest \
+                       AND ( \
+                           (cs.is_suffix = 0 AND cs.frame_key = :file) \
+                        OR (cs.is_suffix = 1 AND \
+                            substr(:file, length(:file) - length(cs.frame_key) + 1) = cs.frame_key) \
+                       )",
+                )?;
+                let rows: Vec<String> = stmt
+                    .query_map(
+                        named_params! {
+                            ":component_digest": component_digest,
+                            ":file": file,
+                        },
+                        |row| row.get(0),
+                    )?
+                    .collect::<Result<_, _>>()?;
+                match rows.len() {
+                    0 => Ok(None),
+                    1 => Ok(Some(rows.into_iter().next().unwrap())),
+                    _ => {
+                        warn!("Multiple suffix matches for '{file}', returning None");
+                        Ok(None)
+                    }
+                }
+            },
+            TxType::Other,
+            "get_source_file",
+        )
+        .await
     }
 
     #[instrument(skip(self))]

@@ -1176,6 +1176,26 @@ pub trait DbExternalApi: DbConnection {
         filter: BacktraceFilter,
     ) -> Result<BacktraceInfo, DbErrorRead>;
 
+    /// Store a source file associated with a component digest.
+    /// `frame_key` is either an exact frame symbol path or a suffix (with leading `/`)
+    /// when `is_suffix` is true. Idempotent — repeated calls for the same key are ignored.
+    async fn upsert_source_file(
+        &self,
+        component_digest: &ComponentDigest,
+        frame_key: &str,
+        is_suffix: bool,
+        content: &str,
+    ) -> Result<(), DbErrorWrite>;
+
+    /// Look up a source file by component digest and a frame symbol path.
+    /// Matches either exact keys or suffix keys (where the frame path ends with the stored key).
+    /// Returns `None` if not found or if multiple suffix entries match (ambiguous).
+    async fn get_source_file(
+        &self,
+        component_digest: &ComponentDigest,
+        file: &str,
+    ) -> Result<Option<String>, DbErrorRead>;
+
     /// Returns executions sorted in descending order.
     async fn list_executions(
         &self,

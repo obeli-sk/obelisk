@@ -35,7 +35,6 @@ pub fn compile_activity_stub_inline(
         workflow_or_activity_config: Some(component_config_importable),
         wit: wit_text_with_extensions,
         workflow_replay_info: None,
-        source: None,
     })
 }
 

@@ -18,7 +18,6 @@
 //!   |---|---|---|
 //!   | [`digests_to_wit`] | `GetWit` RPC, `GetFunctionWit` web API | Supports both current and historical deployments |
 //!   | [`digests_to_replay_info`] | Workflow/activity replay and mid-execution upgrade | Executor stores the digest in execution records; must resolve back to the compiled component |
-//!   | [`digests_to_source`] | `GetBacktraceSource` RPC | Client sends the `ComponentId` from an execution record, which carries the digest at submission time |
 //!
 //! # Digest uniqueness
 //!
@@ -34,7 +33,6 @@
 //!
 //! [`digests_to_wit`]: ComponentConfigRegistryInner::digests_to_wit
 //! [`digests_to_replay_info`]: ComponentConfigRegistryInner::digests_to_replay_info
-//! [`digests_to_source`]: ComponentConfigRegistryInner::digests_to_source
 //! [`WebhookEndpoint`]: concepts::ComponentType::WebhookEndpoint
 
 use crate::RunnableComponent;
@@ -48,63 +46,10 @@ use concepts::StrVariant;
 use concepts::component_id::ComponentDigest;
 use concepts::storage::LogLevel;
 use indexmap::IndexMap;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Deref;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::error;
-use tracing::warn;
-
-/// Source map for backtrace file resolution.
-#[derive(Debug, Clone)]
-pub struct MatchableSourceMap {
-    exact_matches: HashMap<String, PathBuf>,
-    suffix_matches: HashMap<String, PathBuf>,
-}
-impl MatchableSourceMap {
-    pub fn new(config_map: impl IntoIterator<Item = (String, PathBuf)>) -> Self {
-        let mut exact_matches = HashMap::new();
-        let mut suffix_matches = HashMap::new();
-
-        for (k, v) in config_map {
-            if let Some(stripped) = k.strip_prefix(".../") {
-                // Ensure that all suffixes start with a slash, so the `ends_with` below will only match full path segments.
-                suffix_matches.insert(format!("/{stripped}"), v);
-            } else {
-                exact_matches.insert(k, v);
-            }
-        }
-
-        Self {
-            exact_matches,
-            suffix_matches,
-        }
-    }
-
-    pub fn find_matching(&self, frame_symbol_path: &str) -> Option<&PathBuf> {
-        if let Some(v) = self.exact_matches.get(frame_symbol_path) {
-            return Some(v);
-        }
-
-        let mut matches = vec![];
-
-        for (suffix, v) in &self.suffix_matches {
-            if frame_symbol_path.ends_with(suffix.as_str()) {
-                matches.push(v);
-            }
-        }
-
-        match matches.len() {
-            0 => None,
-            1 => Some(matches[0]),
-            _ => {
-                warn!("Multiple suffix matches for '{frame_symbol_path}', returning None");
-                None
-            }
-        }
-    }
-}
 
 /// Holds information about components, used for gRPC services like `ListComponents`
 #[derive(Debug, Clone)]
@@ -114,8 +59,6 @@ pub struct ComponentConfig {
     pub workflow_or_activity_config: Option<ComponentConfigImportable>,
     pub wit: String,
     pub workflow_replay_info: Option<WorkflowReplayInfo>,
-    /// Backtrace source map for `GetBacktraceSource` RPC.
-    pub source: Option<MatchableSourceMap>,
 }
 
 #[derive(Debug, Clone)]
@@ -153,7 +96,6 @@ struct ComponentConfigRegistryInner {
     /// Digest-keyed secondary indexes.
     digests_to_wit: IndexMap<ComponentDigest, String>,
     digests_to_replay_info: IndexMap<ComponentDigest, (ComponentId, WorkflowReplayInfo)>,
-    digests_to_source: IndexMap<ComponentDigest, MatchableSourceMap>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -231,26 +173,12 @@ impl ComponentConfigRegistry {
                 );
                 assert!(old.is_none());
             }
-            // Insert into `digests_to_source`
-            if let Some(source) = component.source.clone() {
-                let old = self
-                    .inner
-                    .digests_to_source
-                    .insert(component.component_id.component_digest.clone(), source);
-                assert!(old.is_none());
-            }
         } else {
-            // For WebhookEndpoints: first wins for digest-keyed maps (same code = same WIT/source)
+            // For WebhookEndpoints: first wins for digest-keyed maps (same code = same WIT)
             self.inner
                 .digests_to_wit
                 .entry(component.component_id.component_digest.clone())
                 .or_insert(component.wit.clone());
-            if let Some(source) = component.source.clone() {
-                self.inner
-                    .digests_to_source
-                    .entry(component.component_id.component_digest.clone())
-                    .or_insert(source);
-            }
         }
 
         self.inner
@@ -406,11 +334,6 @@ impl ComponentConfigRegistryRO {
             .digests_to_replay_info
             .get(input_digest)
             .map(|(id, ri)| (id, ri))
-    }
-
-    #[must_use]
-    pub fn get_source(&self, input_digest: &ComponentDigest) -> Option<&MatchableSourceMap> {
-        self.inner.digests_to_source.get(input_digest)
     }
 
     #[must_use]
