@@ -43,7 +43,10 @@ Or manually install dependencies (see [dev-deps.txt](dev-deps.txt)).
 Postgres must be running. See `.envrc-example` for environment variables.
 ```sh
 # All tests
-./scripts/test.sh
+scripts/test.sh
+
+# Tests with locally built activity, workflow and webhook JavaScript runtimes
+scripts/test-js-local.sh
 
 # Specific test crate
 cargo test --package obeli-db-tests --test deployment_pagination
@@ -52,35 +55,17 @@ cargo test --package obeli-db-tests --test deployment_pagination
 cargo test --package obelisk grpc_server::tests
 ```
 
-
-## Code Patterns
-
-### WASM Component Error Variants
-
-WASM components returning `result<T, E>` where `E` is a variant type must include an
-`execution-failed` case with no payload. `E` can also be a `string` or an empty type
-(see `enum ReturnType`).
-
-### Adding Workflow Host Functions
-
-WIT definitions:
-- Types: `wit/obelisk_types@X.Y.Z/types.wit` (symlinked as `@latest`)
-- Workflow support: `wit/obelisk_workflow@X.Y.Z/workflow-support.wit` (symlinked as `@latest`)
-
-Implementation pattern:
-1. Define function signature in WIT with `@since` annotation
-2. Implement in `crates/wasm-workers/src/workflow/workflow_ctx.rs`
-3. Link via `add_to_linker_workflow_support()` using `func_wrap` or `func_wrap_async`
-4. Type conversions in `host_exports.rs` (WIT ↔ Rust types via wasmtime bindgen)
-5. Test with programs in `crates/testing/test-programs/`
-
 ## Key Files
 
 | Task | Files |
 |------|-------|
+| TOML | `src/config/toml.rs`, `obelisk-help.toml` |
 | Database schema/queries | `crates/db-sqlite/src/sqlite_dao.rs`, `crates/db-postgres/src/postgres_dao.rs` |
 | Storage traits | `crates/concepts/src/storage.rs` |
-| gRPC API | `proto/obelisk.proto`, `src/server/grpc_server.rs` |
+| gRPC API | `proto/obelisk.proto`, `src/server/grpc_server.rs`,`crates/grpc/src/grpc_mapping.rs` |
 | REST API | `src/server/web_api_server.rs` |
-| Type conversions (gRPC) | `crates/grpc/src/grpc_mapping.rs` |
+| Server | `src/command/server.rs`, `crates/wasm-workers/src/registry.rs` |
+| Activities | `crates/wasm-workers/src/activity/` |
+| Workflows | `crates/wasm-workers/src/workflow/` |
+| Webhooks | `crates/wasm-workers/src/webhook/` |
 | Test utilities | `crates/testing/test-utils/src/` |

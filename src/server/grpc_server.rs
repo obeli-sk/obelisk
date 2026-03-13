@@ -651,31 +651,29 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let request = request.into_inner();
         let component_id =
             ComponentId::try_from(request.component_id.argument_must_exist("component_id")?)?;
-        let Some(matchable_source_map) = self
-            .component_registry_ro
-            .get_source(&component_id.component_digest)
-        else {
-            debug!("Component {component_id} not found in source map");
-            return Err(tonic::Status::not_found(format!(
-                "component {component_id} not found in source map"
-            )));
-        };
-        if let Some(actual_path) = matchable_source_map.find_matching(&request.file) {
-            match tokio::fs::read_to_string(actual_path).await {
-                Ok(content) => Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
-                    content,
-                })),
-                Err(err) => {
-                    error!(%component_id, "Cannot read backtrace source {actual_path:?} - {err:?}");
-                    Err(tonic::Status::internal("cannot read source file"))
-                }
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|err| tonic::Status::internal(err.to_string()))?;
+        match conn
+            .get_source_file(&component_id.component_digest, &request.file)
+            .await
+        {
+            Ok(Some(content)) => Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
+                content,
+            })),
+            Ok(None) => {
+                debug!(
+                    "Backtrace source not found for {component_id}, file {}",
+                    request.file
+                );
+                Err(tonic::Status::not_found("backtrace source not found"))
             }
-        } else {
-            debug!(
-                "Backtrace file mapping not found for {component_id}, src {}",
-                request.file
-            );
-            Err(tonic::Status::not_found("backtrace file mapping not found"))
+            Err(err) => {
+                error!(%component_id, "Cannot fetch backtrace source from DB: {err:?}");
+                Err(tonic::Status::internal("cannot fetch source file"))
+            }
         }
     }
 

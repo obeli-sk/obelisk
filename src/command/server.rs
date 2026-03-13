@@ -58,6 +58,7 @@ use concepts::ParameterType;
 use concepts::Params;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
+use concepts::component_id::ComponentDigest;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbErrorWrite;
@@ -124,7 +125,6 @@ use wasm_workers::registry::ComponentConfigImportable;
 use wasm_workers::registry::ComponentConfigRegistry;
 use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::registry::JsWorkflowReplayInfo;
-use wasm_workers::registry::MatchableSourceMap;
 use wasm_workers::registry::WorkflowReplayInfo;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
@@ -920,6 +920,8 @@ impl ServerVerified {
     }
 }
 
+type FrameFilesToSources = HashMap<String, PathBuf>;
+
 pub(crate) struct ServerCompiledLinked {
     engines: Engines,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
@@ -928,6 +930,7 @@ pub(crate) struct ServerCompiledLinked {
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     supressed_errors: Option<String>,
+    frame_files: Vec<(ComponentDigest, FrameFilesToSources)>,
 }
 
 impl ServerCompiledLinked {
@@ -936,23 +939,24 @@ impl ServerCompiledLinked {
         termination_watcher: &mut watch::Receiver<()>,
         suppress_type_checking_errors: bool,
     ) -> Result<Self, anyhow::Error> {
-        let (compiled_components, component_registry_ro, supressed_errors) = compile_and_verify(
-            &server_verified.engines,
-            server_verified.config.activities_wasm,
-            server_verified.config.activities_js,
-            server_verified.config.activities_stub_ext,
-            server_verified.config.activities_stub_inline,
-            server_verified.config.workflows,
-            server_verified.config.workflows_js,
-            server_verified.config.webhooks_by_names,
-            server_verified.config.webhooks_js_by_names,
-            server_verified.config.global_backtrace_persist,
-            server_verified.config.fuel,
-            server_verified.build_semaphore,
-            server_verified.workflows_lock_extension_leeway,
-            termination_watcher,
-        )
-        .await?;
+        let (compiled_components, component_registry_ro, supressed_errors, backtrace_frame_files) =
+            compile_and_verify(
+                &server_verified.engines,
+                server_verified.config.activities_wasm,
+                server_verified.config.activities_js,
+                server_verified.config.activities_stub_ext,
+                server_verified.config.activities_stub_inline,
+                server_verified.config.workflows,
+                server_verified.config.workflows_js,
+                server_verified.config.webhooks_by_names,
+                server_verified.config.webhooks_js_by_names,
+                server_verified.config.global_backtrace_persist,
+                server_verified.config.fuel,
+                server_verified.build_semaphore,
+                server_verified.workflows_lock_extension_leeway,
+                termination_watcher,
+            )
+            .await?;
         if !suppress_type_checking_errors && supressed_errors.is_some() {
             bail!("type checking errors detected");
         }
@@ -964,6 +968,7 @@ impl ServerCompiledLinked {
             activities_cleanup: server_verified.activities_cleanup,
             http_servers_to_webhook_names: server_verified.config.http_servers_to_webhook_names,
             supressed_errors,
+            frame_files: backtrace_frame_files,
         })
     }
 }
@@ -981,6 +986,35 @@ async fn spawn_tasks_and_threads(
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
 ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
+    // Persist source files to the DB so GetBacktraceSource can serve them without filesystem access.
+    {
+        let conn = db_pool.external_api_conn().await?;
+        for (component_digest, frame_files) in &server_compiled_linked.frame_files {
+            for (config_key, path) in frame_files {
+                // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
+                let (frame_key, is_suffix) = if let Some(stripped) = config_key.strip_prefix(".../")
+                {
+                    (format!("/{stripped}"), true)
+                } else {
+                    (config_key.clone(), false)
+                };
+                match tokio::fs::read_to_string(path).await {
+                    Ok(content) => {
+                        if let Err(err) = conn
+                            .upsert_source_file(component_digest, &frame_key, is_suffix, &content)
+                            .await
+                        {
+                            warn!("Cannot store backtrace source {path:?} in DB: {err:?}");
+                        }
+                    }
+                    Err(err) => {
+                        warn!("Cannot read backtrace source {path:?} for DB storage: {err:?}");
+                    }
+                }
+            }
+        }
+    }
+
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
         server_compiled_linked.engines.weak_refs(),
@@ -1569,12 +1603,13 @@ enum CompiledComponent {
     ActivityOrWorkflow {
         worker: WorkerCompiled,
         component_config: ComponentConfig,
+        frame_files: FrameFilesToSources,
     },
     Webhook {
         webhook_name: ConfigName,
         webhook_compiled: WebhookEndpointCompiled,
         routes: Vec<WebhookRouteVerified>,
-        backtrace_frame_files: HashMap<String, PathBuf>,
+        frame_files: FrameFilesToSources,
     },
     ActivityStubOrExternal {
         component_config: ComponentConfig,
@@ -1582,7 +1617,7 @@ enum CompiledComponent {
 }
 
 #[instrument(skip_all)]
-#[expect(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, clippy::type_complexity)]
 async fn compile_and_verify(
     engines: &Engines,
     activities_wasm: Vec<ActivityWasmConfigVerified>,
@@ -1602,7 +1637,8 @@ async fn compile_and_verify(
     (
         LinkedComponents,
         ComponentConfigRegistryRO,
-        Option<String>, /* supressed_errors */
+        Option<String>, // supressed_errors
+        Vec<(ComponentDigest, FrameFilesToSources)>,
     ),
     anyhow::Error,
 > {
@@ -1689,10 +1725,11 @@ async fn compile_and_verify(
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "activity_wasm_compile", component_id = %activity_wasm.component_id());
                 span.in_scope(|| {
-                    prespawn_activity(activity_wasm, &engines).map(|(worker, component_config)| {
+                    prespawn_activity(activity_wasm, &engines).map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
+                            frame_files,
                         }
                     })
                 })
@@ -1711,6 +1748,7 @@ async fn compile_and_verify(
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
+                            frame_files: FrameFilesToSources::new(),
                         }
                     })
                 })
@@ -1739,7 +1777,6 @@ async fn compile_and_verify(
                         workflow_or_activity_config: Some(component_config_importable),
                         wit,
                         workflow_replay_info: None,
-                        source: None,
                     };
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
                 })
@@ -1769,10 +1806,11 @@ async fn compile_and_verify(
                 let span = info_span!(parent: parent_span, "workflow_compile", component_id = %workflow.component_id());
                 span.in_scope(|| {
                     prespawn_workflow(workflow, &engines, workflows_lock_extension_leeway)
-                    .map(|(worker, component_config)| {
+                    .map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
+                            frame_files,
                         }
                     })
                 })
@@ -1787,10 +1825,11 @@ async fn compile_and_verify(
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
                 span.in_scope(|| {
                     prespawn_js_workflow(workflow_js, &engines,workflow_js_runnable, workflows_lock_extension_leeway)
-                        .map(|(worker, component_config)| {
+                        .map(|(worker, component_config, frame_files)| {
                             CompiledComponent::ActivityOrWorkflow {
                                 worker,
                                 component_config,
+                                frame_files,
                             }
                         })
                 })
@@ -1830,7 +1869,7 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook.routes,
-                                backtrace_frame_files: webhook.backtrace_config.frame_files_to_sources,
+                                frame_files: webhook.backtrace_config.frame_files_to_sources,
                             })
                         })
                     })
@@ -1871,7 +1910,7 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook_js.routes,
-                                backtrace_frame_files: HashMap::from([(
+                                frame_files: FrameFilesToSources::from([(
                                     webhook_js.js_file_name,
                                     webhook_js.js_file_path,
                                 )]),
@@ -1890,29 +1929,32 @@ async fn compile_and_verify(
             let mut component_registry = ComponentConfigRegistry::default();
             let mut workers_compiled = Vec::with_capacity(results_of_results.len());
             let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
+            let mut all_frame_files: Vec<(ComponentDigest, FrameFilesToSources)> = Vec::new();
             for handle in results_of_results {
                 match handle?? {
-                    CompiledComponent::ActivityOrWorkflow { worker, component_config } => {
-                        // Activity or Workflow
+                    CompiledComponent::ActivityOrWorkflow { worker, component_config, frame_files } => {
+                        if !frame_files.is_empty() {
+                            all_frame_files.push((component_config.component_id.component_digest.clone(), frame_files));
+                        }
                         component_registry.insert(component_config)?;
                         workers_compiled.push(worker);
                     },
-                    CompiledComponent::Webhook{ webhook_name, webhook_compiled, routes, backtrace_frame_files } => {
-                        let source = (!backtrace_frame_files.is_empty())
-                            .then(|| MatchableSourceMap::new(backtrace_frame_files));
+                    CompiledComponent::Webhook{ webhook_name, webhook_compiled, routes, frame_files } => {
+                        if !frame_files.is_empty() {
+                            all_frame_files.push((webhook_compiled.config.component_id.component_digest.clone(), frame_files));
+                        }
                         let component = ComponentConfig {
                             component_id: webhook_compiled.config.component_id.clone(),
                             imports: webhook_compiled.imports().to_vec(),
                             workflow_or_activity_config: None,
                             wit: webhook_compiled.runnable_component.wasm_component.wit(),
                             workflow_replay_info: None,
-                            source,
                         };
                         component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
                         assert!(old.is_none());
                     },
-                    CompiledComponent::ActivityStubOrExternal {  component_config } => {
+                    CompiledComponent::ActivityStubOrExternal { component_config } => {
                         component_registry.insert(component_config)?;
                     },
                 }
@@ -1932,7 +1974,7 @@ async fn compile_and_verify(
             Ok((LinkedComponents {
                 workers_linked,
                 webhooks_by_names,
-            }, component_registry_ro, supressed_errors))
+            }, component_registry_ro, supressed_errors, all_frame_files))
         },
         _ = termination_watcher.changed() => {
             warn!("Received SIGINT, canceling while compiling the components");
@@ -1987,7 +2029,7 @@ mod semaphore {
 fn prespawn_activity(
     activity: ActivityWasmConfigVerified,
     engines: &Engines,
-) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSources), anyhow::Error> {
     let component_id = activity.component_id().clone();
     assert!(component_id.component_type == ComponentType::ActivityWasm);
     debug!("Instantiating activity");
@@ -2005,12 +2047,13 @@ fn prespawn_activity(
         TokioSleep,
     )
     .with_context(|| format!("cannot compile {component_id}"))?;
-    Ok(WorkerCompiled::new_activity(
+    let (worker, component_config) = WorkerCompiled::new_activity(
         worker,
         activity.exec_config,
         wit,
         activity.logs_store_min_level,
-    ))
+    );
+    Ok((worker, component_config, HashMap::new()))
 }
 
 #[instrument(level = "debug", skip_all, fields(
@@ -2147,7 +2190,7 @@ fn prespawn_workflow(
     workflow: WorkflowConfigVerified,
     engines: &Engines,
     workflows_lock_extension_leeway: Duration,
-) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSources), anyhow::Error> {
     let component_id = workflow.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
     debug!("Instantiating workflow");
@@ -2177,7 +2220,7 @@ fn prespawn_js_workflow(
     engines: &Engines,
     runnable_component: RunnableComponent,
     workflows_lock_extension_leeway: Duration,
-) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSources), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
     let engine = engines.workflow_engine.clone();
@@ -2253,7 +2296,6 @@ impl WorkerCompiled {
             imports: worker.imported_functions().to_vec(),
             wit,
             workflow_replay_info: None,
-            source: None,
         };
         (
             WorkerCompiled {
@@ -2280,7 +2322,6 @@ impl WorkerCompiled {
             imports: worker.imported_functions().to_vec(),
             wit,
             workflow_replay_info: None,
-            source: None,
         };
         (
             WorkerCompiled {
@@ -2298,15 +2339,17 @@ impl WorkerCompiled {
         workflow: WorkflowConfigVerified,
         wit: String,
         workflows_lock_extension_leeway: Duration,
-    ) -> Result<(WorkerCompiled, ComponentConfig), utils::wasm_tools::DecodeError> {
+    ) -> Result<
+        (WorkerCompiled, ComponentConfig, FrameFilesToSources),
+        utils::wasm_tools::DecodeError,
+    > {
         let worker = WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
             workflow.workflow_config,
             engine,
             Now.clone_box(),
         )?;
-        let source = (!workflow.backtrace_config.frame_files_to_sources.is_empty())
-            .then(|| MatchableSourceMap::new(workflow.backtrace_config.frame_files_to_sources));
+        let frame_files = workflow.backtrace_config.frame_files_to_sources;
         let component = ComponentConfig {
             component_id: workflow.exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -2320,7 +2363,6 @@ impl WorkerCompiled {
                 logs_store_min_level: workflow.logs_store_min_level,
                 js_workflow_info: None,
             }),
-            source,
         };
         Ok((
             WorkerCompiled {
@@ -2332,6 +2374,7 @@ impl WorkerCompiled {
                 logs_store_min_level: workflow.logs_store_min_level,
             },
             component,
+            frame_files,
         ))
     }
 
@@ -2347,7 +2390,8 @@ impl WorkerCompiled {
         js_file_name: String,  // as it would appear in a backtrace
         js_file_path: PathBuf, // to be served by GetBacktraceSource
         user_params: Vec<concepts::ParameterType>,
-    ) -> (WorkerCompiled, ComponentConfig) {
+    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSources) {
+        let frame_files = HashMap::from([(js_file_name, js_file_path)]);
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -2364,10 +2408,6 @@ impl WorkerCompiled {
                     user_params,
                 }),
             }),
-            source: Some(MatchableSourceMap::new(std::iter::once((
-                js_file_name,
-                js_file_path,
-            )))),
         };
         (
             WorkerCompiled {
@@ -2381,6 +2421,7 @@ impl WorkerCompiled {
                 logs_store_min_level,
             },
             component,
+            frame_files,
         )
     }
 
