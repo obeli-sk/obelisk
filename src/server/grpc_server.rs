@@ -1354,7 +1354,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let pagination = convert_deployment_pagination(&request)?;
 
         let mut states = conn
-            .list_deployment_states(Utc::now(), pagination)
+            .list_deployment_states(Utc::now(), pagination, include_config_json)
             .await
             .to_status()?;
 
@@ -1373,11 +1373,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 blocked: dep.blocked,
                 finished: dep.finished,
                 config_hash: dep.config_hash,
-                config_json: if include_config_json {
-                    dep.config_json
-                } else {
-                    None
-                },
+                config_json: dep.config_json,
             })
             .collect();
         Ok(tonic::Response::new(

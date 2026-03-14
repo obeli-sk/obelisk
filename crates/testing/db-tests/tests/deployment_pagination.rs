@@ -139,7 +139,11 @@ async fn list_deployment_states_basic(database: Database) {
         including_cursor: false,
     };
     let deployments = api_conn
-        .list_deployment_states(sim_clock.now(), pagination)
+        .list_deployment_states(
+            sim_clock.now(),
+            pagination,
+            false, // include_config_json
+        )
         .await
         .unwrap();
 
@@ -196,6 +200,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 cursor: None,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -215,6 +220,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -234,6 +240,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -253,6 +260,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -319,6 +327,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor: None,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -334,6 +343,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor: Some(oldest),
                 including_cursor: true,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -355,6 +365,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -374,6 +385,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -393,6 +405,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -516,6 +529,7 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
                 cursor: None,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -591,6 +605,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: None,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -605,6 +620,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: Some(middle),
                 including_cursor: true,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -622,6 +638,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: Some(middle),
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -639,6 +656,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: Some(middle),
                 including_cursor: true,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -656,6 +674,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: Some(middle),
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -702,6 +721,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
                 cursor: None,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -734,6 +754,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
                 cursor: Some(oldest),
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -753,6 +774,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
                 cursor: Some(oldest),
                 including_cursor: true,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -816,6 +838,7 @@ async fn list_deployment_states_empty(database: Database) {
                 cursor: None,
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();
@@ -858,6 +881,7 @@ async fn list_deployment_states_cursor_not_found(database: Database) {
                 cursor: Some(fake_cursor),
                 including_cursor: false,
             },
+            false, // include_config_json
         )
         .await
         .unwrap();

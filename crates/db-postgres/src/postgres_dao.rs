@@ -1781,6 +1781,7 @@ async fn list_deployment_states(
     tx: &Transaction<'_>,
     current_time: DateTime<Utc>,
     pagination: Pagination<Option<DeploymentId>>,
+    include_config_json: bool,
 ) -> Result<Vec<DeploymentState>, DbErrorRead> {
     // Helper for numbered params ($1, $2, ...)
     let mut params: Vec<Box<dyn ToSql + Send + Sync>> = Vec::new();
@@ -1791,6 +1792,12 @@ async fn list_deployment_states(
 
     // Base params
     let p_now = add_param(Box::new(current_time));
+
+    let config_json_col = if include_config_json {
+        "d.config_json"
+    } else {
+        "NULL::TEXT AS config_json"
+    };
 
     let mut sql = format!(
         "
@@ -1814,7 +1821,7 @@ async fn list_deployment_states(
             COUNT(*) FILTER (WHERE s.state = '{STATE_FINISHED}') AS finished,
 
             d.config_hash,
-            d.config_json
+            {config_json_col}
         FROM t_state s
         LEFT JOIN t_deployment d ON d.deployment_id = s.deployment_id"
     );
@@ -1841,7 +1848,7 @@ async fn list_deployment_states(
 
     write!(
         sql,
-        " GROUP BY s.deployment_id, d.config_hash, d.config_json ORDER BY s.deployment_id {inner_order} LIMIT {}",
+        " GROUP BY s.deployment_id, d.config_hash ORDER BY s.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -4339,10 +4346,12 @@ impl DbExternalApi for PostgresConnection {
         &self,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
+        include_config_json: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        let deployments = list_deployment_states(&tx, current_time, pagination).await?;
+        let deployments =
+            list_deployment_states(&tx, current_time, pagination, include_config_json).await?;
         tx.commit().await?;
         Ok(deployments)
     }

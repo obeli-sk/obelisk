@@ -2156,7 +2156,7 @@ mod deployment {
             including_cursor: params.including_cursor,
         };
         let mut states = conn
-            .list_deployment_states(Utc::now(), pagination)
+            .list_deployment_states(Utc::now(), pagination, false)
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 

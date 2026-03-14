@@ -1255,6 +1255,7 @@ pub trait DbExternalApi: DbConnection {
         &self,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
+        include_config_json: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead>;
 
     async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite>;

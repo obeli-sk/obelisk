@@ -3386,8 +3386,14 @@ impl SqlitePool {
         tx: &Transaction,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
+        include_config_json: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
+        let config_json_col = if include_config_json {
+            "d.config_json"
+        } else {
+            "NULL AS config_json"
+        };
         let mut sql = format!(
             r"
         SELECT
@@ -3398,7 +3404,7 @@ impl SqlitePool {
             SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
             SUM(s.state = '{STATE_FINISHED}') AS finished,
             d.config_hash,
-            d.config_json
+            {config_json_col}
         FROM t_state s
         LEFT JOIN t_deployment d ON d.deployment_id = s.deployment_id"
         );
@@ -3425,7 +3431,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " GROUP BY s.deployment_id, d.config_hash, d.config_json ORDER BY s.deployment_id {inner_order} LIMIT {limit}",
+            " GROUP BY s.deployment_id, d.config_hash ORDER BY s.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -4309,9 +4315,12 @@ impl DbExternalApi for SqlitePool {
         &self,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
+        include_config_json: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         self.transaction(
-            move |tx| Self::list_deployment_states(tx, current_time, pagination),
+            move |tx| {
+                Self::list_deployment_states(tx, current_time, pagination, include_config_json)
+            },
             TxType::Other, // read only
             "list_deployment_states",
         )
