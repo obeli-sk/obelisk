@@ -1308,6 +1308,9 @@ pub struct DeploymentState {
     pub scheduled: u32,
     pub blocked: u32,
     pub finished: u32,
+    /// `None` when there is no matching `t_deployment` record.
+    pub config_hash: Option<String>,
+    pub config_json: Option<String>,
 }
 impl DeploymentState {
     #[must_use]
@@ -1319,6 +1322,8 @@ impl DeploymentState {
             scheduled: 0,
             blocked: 0,
             finished: 0,
+            config_hash: None,
+            config_json: None,
         }
     }
 }

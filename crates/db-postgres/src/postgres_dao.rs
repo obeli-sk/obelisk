@@ -1795,24 +1795,28 @@ async fn list_deployment_states(
     let mut sql = format!(
         "
         SELECT
-            deployment_id,
+            s.deployment_id,
 
-            COUNT(*) FILTER (WHERE state = '{STATE_LOCKED}') AS locked,
+            COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}') AS locked,
 
             COUNT(*) FILTER (
-                WHERE state = '{STATE_PENDING_AT}'
-                  AND pending_expires_finished <= {p_now}
+                WHERE s.state = '{STATE_PENDING_AT}'
+                  AND s.pending_expires_finished <= {p_now}
             ) AS pending,
 
             COUNT(*) FILTER (
-                WHERE state = '{STATE_PENDING_AT}'
-                  AND pending_expires_finished > {p_now}
+                WHERE s.state = '{STATE_PENDING_AT}'
+                  AND s.pending_expires_finished > {p_now}
             ) AS scheduled,
 
-            COUNT(*) FILTER (WHERE state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
+            COUNT(*) FILTER (WHERE s.state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
 
-            COUNT(*) FILTER (WHERE state = '{STATE_FINISHED}') AS finished
-        FROM t_state"
+            COUNT(*) FILTER (WHERE s.state = '{STATE_FINISHED}') AS finished,
+
+            d.config_hash,
+            d.config_json
+        FROM t_state s
+        LEFT JOIN t_deployment d ON d.deployment_id = s.deployment_id"
     );
 
     // Pagination
@@ -1820,7 +1824,7 @@ async fn list_deployment_states(
         let p_cursor = add_param(Box::new(cursor.to_string()));
         write!(
             sql,
-            " WHERE deployment_id {rel} {p_cursor}",
+            " WHERE s.deployment_id {rel} {p_cursor}",
             rel = pagination.rel()
         )
         .expect("writing to string");
@@ -1837,7 +1841,7 @@ async fn list_deployment_states(
 
     write!(
         sql,
-        " GROUP BY deployment_id ORDER BY deployment_id {inner_order} LIMIT {}",
+        " GROUP BY s.deployment_id, d.config_hash, d.config_json ORDER BY s.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -1872,6 +1876,8 @@ async fn list_deployment_states(
                 .expect("count is never negative"),
             finished: u32::try_from(get::<i64, _>(&row, "finished")?)
                 .expect("count is never negative"),
+            config_hash: get::<Option<String>, _>(&row, "config_hash")?,
+            config_json: get::<Option<String>, _>(&row, "config_json")?,
         });
     }
 

@@ -3391,13 +3391,16 @@ impl SqlitePool {
         let mut sql = format!(
             r"
         SELECT
-            deployment_id,
-            SUM(state = '{STATE_LOCKED}') AS locked,
-            SUM(state = '{STATE_PENDING_AT}' AND pending_expires_finished <= :now) AS pending,
-            SUM(state = '{STATE_PENDING_AT}' AND pending_expires_finished > :now) AS scheduled,
-            SUM(state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
-            SUM(state = '{STATE_FINISHED}') AS finished
-        FROM t_state"
+            s.deployment_id,
+            SUM(s.state = '{STATE_LOCKED}') AS locked,
+            SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished <= :now) AS pending,
+            SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished > :now) AS scheduled,
+            SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
+            SUM(s.state = '{STATE_FINISHED}') AS finished,
+            d.config_hash,
+            d.config_json
+        FROM t_state s
+        LEFT JOIN t_deployment d ON d.deployment_id = s.deployment_id"
         );
 
         params.push((":now", Box::new(current_time)));
@@ -3406,7 +3409,7 @@ impl SqlitePool {
             params.push((":cursor", Box::new(*cursor)));
             write!(
                 sql,
-                " WHERE deployment_id {rel} :cursor",
+                " WHERE s.deployment_id {rel} :cursor",
                 rel = pagination.rel()
             )
             .expect("writing to string");
@@ -3422,7 +3425,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " GROUP BY deployment_id ORDER BY deployment_id {inner_order} LIMIT {limit}",
+            " GROUP BY s.deployment_id, d.config_hash, d.config_json ORDER BY s.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -3449,6 +3452,8 @@ impl SqlitePool {
                         scheduled: row.get("scheduled")?,
                         blocked: row.get("blocked")?,
                         finished: row.get("finished")?,
+                        config_hash: row.get("config_hash")?,
+                        config_json: row.get("config_json")?,
                     })
                 },
             )?
