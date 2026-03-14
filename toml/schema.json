@@ -8,24 +8,28 @@
     },
     "activity_external": {
       "type": "array",
+      "default": [],
       "items": {
         "$ref": "#/$defs/ActivityExternalComponentConfigToml"
       }
     },
     "activity_js": {
       "type": "array",
+      "default": [],
       "items": {
         "$ref": "#/$defs/ActivityJsComponentConfigToml"
       }
     },
     "activity_stub": {
       "type": "array",
+      "default": [],
       "items": {
         "$ref": "#/$defs/ActivityStubComponentConfigToml"
       }
     },
     "activity_wasm": {
       "type": "array",
+      "default": [],
       "items": {
         "$ref": "#/$defs/ActivityWasmComponentConfigToml"
       }
@@ -38,13 +42,6 @@
     },
     "database": {
       "$ref": "#/$defs/DatabaseConfigToml"
-    },
-    "deployment_id": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "default": null
     },
     "http_server": {
       "type": "array",
@@ -80,12 +77,14 @@
     },
     "webhook_endpoint": {
       "type": "array",
+      "default": [],
       "items": {
         "$ref": "#/$defs/WebhookComponentConfigToml"
       }
     },
     "webhook_endpoint_js": {
       "type": "array",
+      "default": [],
       "items": {
         "$ref": "#/$defs/WebhookJsComponentConfigToml"
       }
@@ -95,12 +94,14 @@
     },
     "workflow": {
       "type": "array",
+      "default": [],
       "items": {
         "$ref": "#/$defs/WorkflowComponentConfigToml"
       }
     },
     "workflow_js": {
       "type": "array",
+      "default": [],
       "items": {
         "$ref": "#/$defs/WorkflowJsComponentConfigToml"
       }
@@ -119,10 +120,16 @@
           "default": true
         },
         "older_than": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "minutes": 5
+          }
         },
         "run_every": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "minutes": 1
+          }
         }
       },
       "additionalProperties": false
@@ -164,7 +171,8 @@
           "default": false
         },
         "process_provider": {
-          "$ref": "#/$defs/ActivityDirectoriesProcessProvider"
+          "$ref": "#/$defs/ActivityDirectoriesProcessProvider",
+          "default": "none"
         },
         "reuse_on_retry": {
           "type": "boolean",
@@ -218,6 +226,7 @@
         "allowed_host": {
           "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
           "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/AllowedHostToml"
           }
@@ -240,28 +249,42 @@
         },
         "env_vars": {
           "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/EnvVarConfig"
           }
         },
         "exec": {
-          "$ref": "#/$defs/ExecConfigToml"
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "locking_strategy": null,
+            "tick_sleep": {
+              "milliseconds": 200
+            }
+          }
         },
         "ffqn": {
           "type": "string"
         },
         "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml"
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
         "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml"
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
         "location": {
           "description": "Location of the JavaScript source file.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported for JS activities.",
           "$ref": "#/$defs/JsLocationToml"
         },
         "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml"
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
         },
         "max_retries": {
           "type": "integer",
@@ -278,12 +301,16 @@
             "array",
             "null"
           ],
+          "default": null,
           "items": {
             "$ref": "#/$defs/JsParamToml"
           }
         },
         "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
         },
         "return_type": {
           "description": "WIT return type. Defaults to `result<string, string>`.\nMust be `result<T, string>` — the error type must be `string` since JS throws strings.",
@@ -348,6 +375,7 @@
             "array",
             "null"
           ],
+          "default": null,
           "items": {
             "$ref": "#/$defs/JsParamToml"
           }
@@ -372,6 +400,7 @@
         "allowed_host": {
           "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
           "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/AllowedHostToml"
           }
@@ -393,28 +422,47 @@
           "default": null
         },
         "directories": {
-          "$ref": "#/$defs/ActivityDirectoriesConfigToml"
+          "$ref": "#/$defs/ActivityDirectoriesConfigToml",
+          "default": {
+            "enabled": false,
+            "process_provider": "none",
+            "reuse_on_retry": false
+          }
         },
         "env_vars": {
           "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/EnvVarConfig"
           }
         },
         "exec": {
-          "$ref": "#/$defs/ExecConfigToml"
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "locking_strategy": null,
+            "tick_sleep": {
+              "milliseconds": 200
+            }
+          }
         },
         "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml"
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
         "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml"
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
         "location": {
           "type": "string"
         },
         "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml"
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
         },
         "max_retries": {
           "type": "integer",
@@ -426,7 +474,10 @@
           "$ref": "#/$defs/ConfigName"
         },
         "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
         }
       },
       "additionalProperties": false,
@@ -449,6 +500,7 @@
         "replace_in": {
           "description": "Where in the request to perform replacement.\nDefault: empty (no replacement — deny by default).",
           "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/ReplaceIn"
           }
@@ -487,7 +539,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         }
       },
       "additionalProperties": false,
@@ -624,7 +677,10 @@
           "default": true
         },
         "tick_sleep": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 1
+          }
         }
       },
       "additionalProperties": false
@@ -832,20 +888,27 @@
       "type": "string"
     },
     "EnvVarConfig": {
-      "type": "object",
-      "properties": {
-        "key": {
+      "anyOf": [
+        {
+          "description": "Forward from host: `\"KEY\"`",
           "type": "string"
         },
-        "val": {
-          "type": [
-            "string",
-            "null"
+        {
+          "description": "Set to value: `{key = \"KEY\", value = \"foo\"}` (supports `${VAR}` interpolation)",
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "key",
+            "value"
           ]
         }
-      },
-      "required": [
-        "key"
       ]
     },
     "ExecConfigToml": {
@@ -858,7 +921,10 @@
           "minimum": 0
         },
         "lock_expiry": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 1
+          }
         },
         "locking_strategy": {
           "anyOf": [
@@ -872,7 +938,10 @@
           "default": null
         },
         "tick_sleep": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 200
+          }
         }
       },
       "additionalProperties": false
@@ -1032,7 +1101,10 @@
         },
         "subscription_interruption": {
           "description": "Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism.",
-          "$ref": "#/$defs/DurationConfigOptional"
+          "$ref": "#/$defs/DurationConfigOptional",
+          "default": {
+            "seconds": 1
+          }
         },
         "user": {
           "type": "string"
@@ -1136,7 +1208,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "pragma": {
           "type": "object",
@@ -1162,10 +1235,16 @@
           "default": true
         },
         "leeway": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 500
+          }
         },
         "tick_sleep": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
         }
       },
       "additionalProperties": false
@@ -1363,12 +1442,16 @@
         "allowed_host": {
           "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
           "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/AllowedHostToml"
           }
         },
         "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfig"
+          "$ref": "#/$defs/ComponentBacktraceConfig",
+          "default": {
+            "sources": {}
+          }
         },
         "content_digest": {
           "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
@@ -1380,15 +1463,18 @@
         },
         "env_vars": {
           "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/EnvVarConfig"
           }
         },
         "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml"
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
         "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml"
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
         "http_server": {
           "$ref": "#/$defs/ConfigName"
@@ -1397,7 +1483,8 @@
           "type": "string"
         },
         "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml"
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
         },
         "name": {
           "$ref": "#/$defs/ConfigName"
@@ -1423,6 +1510,7 @@
         "allowed_host": {
           "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
           "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/AllowedHostToml"
           }
@@ -1436,10 +1524,12 @@
           "default": null
         },
         "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml"
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
         "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml"
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
         "http_server": {
           "description": "The HTTP server to bind this webhook to.",
@@ -1450,7 +1540,8 @@
           "$ref": "#/$defs/JsLocationToml"
         },
         "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml"
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
         },
         "name": {
           "$ref": "#/$defs/ConfigName"
@@ -1504,10 +1595,14 @@
       "type": "object",
       "properties": {
         "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfig"
+          "$ref": "#/$defs/ComponentBacktraceConfig",
+          "default": {
+            "sources": {}
+          }
         },
         "blocking_strategy": {
-          "$ref": "#/$defs/BlockingStrategyConfigToml"
+          "$ref": "#/$defs/BlockingStrategyConfigToml",
+          "default": "await"
         },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
@@ -1526,22 +1621,39 @@
           "default": null
         },
         "exec": {
-          "$ref": "#/$defs/ExecConfigToml"
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "locking_strategy": null,
+            "tick_sleep": {
+              "milliseconds": 200
+            }
+          }
         },
         "location": {
           "type": "string"
         },
         "lock_extension": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 1
+          }
         },
         "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml"
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
         },
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
         "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
         },
         "stub_wasi": {
           "type": "boolean",
@@ -1558,7 +1670,8 @@
       "type": "object",
       "properties": {
         "blocking_strategy": {
-          "$ref": "#/$defs/BlockingStrategyConfigToml"
+          "$ref": "#/$defs/BlockingStrategyConfigToml",
+          "default": "await"
         },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the digest derived from the JS source, ffqn, and params.",
@@ -1577,7 +1690,17 @@
           "default": null
         },
         "exec": {
-          "$ref": "#/$defs/ExecConfigToml"
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "locking_strategy": null,
+            "tick_sleep": {
+              "milliseconds": 200
+            }
+          }
         },
         "ffqn": {
           "type": "string"
@@ -1587,10 +1710,14 @@
           "$ref": "#/$defs/JsLocationToml"
         },
         "lock_extension": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 1
+          }
         },
         "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml"
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
         },
         "name": {
           "$ref": "#/$defs/ConfigName"
@@ -1601,12 +1728,16 @@
             "array",
             "null"
           ],
+          "default": null,
           "items": {
             "$ref": "#/$defs/JsParamToml"
           }
         },
         "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
         },
         "return_type": {
           "description": "WIT return type. Defaults to `result<string, string>`.\nMust be `result`, `result<T>`, `result<T, string>`, or\n`result<T, variant { execution-failed, ... }>`.",
@@ -1628,7 +1759,10 @@
       "type": "object",
       "properties": {
         "lock_extension_leeway": {
-          "$ref": "#/$defs/DurationConfig"
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
         }
       },
       "additionalProperties": false
