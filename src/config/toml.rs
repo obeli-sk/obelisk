@@ -10,13 +10,13 @@ use crate::{
 };
 use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
+use concepts::ContentDigest;
 use concepts::ReturnType;
 use concepts::component_id::Digest;
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, FunctionFqn, InvalidNameError, StrVariant,
     check_name, component_id::ComponentDigest, prefixed_ulid::ExecutorId, storage::LogLevel,
 };
-use concepts::{ContentDigest, prefixed_ulid::DeploymentId};
 use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use hashbrown::HashMap;
@@ -57,14 +57,32 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}codegen", CACHE_DIR_PREFIX);
 const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DeploymentToml {
+    #[serde(default, rename = "activity_wasm")]
+    pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
+    #[serde(default, rename = "activity_stub")]
+    pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
+    #[serde(default, rename = "activity_external")]
+    pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
+    #[serde(default, rename = "activity_js")]
+    pub(crate) activities_js: Vec<ActivityJsComponentConfigToml>,
+    #[serde(default, rename = "workflow")]
+    pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
+    #[serde(default, rename = "workflow_js")]
+    pub(crate) workflows_js: Vec<WorkflowJsComponentConfigToml>,
+    #[serde(default, rename = "webhook_endpoint")]
+    pub(crate) webhooks: Vec<WebhookComponentConfigToml>,
+    #[serde(default, rename = "webhook_endpoint_js")]
+    pub(crate) webhooks_js: Vec<WebhookJsComponentConfigToml>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigToml {
     #[serde(default, rename = "obelisk-version")]
     pub(crate) obelisk_version: Option<String>,
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    deployment_id: Option<DeploymentId>,
     #[serde(default)]
     pub(crate) api: ApiConfig,
     #[serde(default)]
@@ -81,18 +99,6 @@ pub(crate) struct ConfigToml {
     pub(crate) timers_watcher: TimersWatcherTomlConfig,
     #[serde(default)]
     pub(crate) cancel_watcher: CancelWatcherTomlConfig,
-    #[serde(default, rename = "activity_wasm")]
-    pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
-    #[serde(default, rename = "activity_stub")]
-    pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
-    #[serde(default, rename = "activity_external")]
-    pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
-    #[serde(default, rename = "activity_js")]
-    pub(crate) activities_js: Vec<ActivityJsComponentConfigToml>,
-    #[serde(default, rename = "workflow")]
-    pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
-    #[serde(default, rename = "workflow_js")]
-    pub(crate) workflows_js: Vec<WorkflowJsComponentConfigToml>,
     #[cfg(feature = "otlp")]
     #[serde(default)]
     pub(crate) otlp: Option<otlp::OtlpConfig>,
@@ -100,15 +106,42 @@ pub(crate) struct ConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
-    #[serde(default, rename = "webhook_endpoint")]
-    pub(crate) webhooks: Vec<WebhookComponentConfigToml>,
-    #[serde(default, rename = "webhook_endpoint_js")]
-    pub(crate) webhooks_js: Vec<WebhookJsComponentConfigToml>,
+    #[serde(default, flatten)]
+    pub(crate) deployment: DeploymentToml,
 }
-impl ConfigToml {
-    pub(crate) fn get_deployment_id(&self) -> DeploymentId {
-        self.deployment_id.unwrap_or_else(DeploymentId::generate)
+
+/// Sort all JSON object keys recursively for deterministic serialization.
+fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<_> = map.into_iter().collect();
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            serde_json::Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(k, v)| (k, sort_json_keys(v)))
+                    .collect(),
+            )
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(sort_json_keys).collect())
+        }
+        other => other,
     }
+}
+
+/// Return a canonical JSON string of the deployment config for storage.
+pub(crate) fn compute_config_json(deployment: &DeploymentToml) -> String {
+    let json_value = serde_json::to_value(deployment).expect("DeploymentToml is serializable");
+    let sorted = sort_json_keys(json_value);
+    serde_json::to_string(&sorted).expect("infallible")
+}
+
+/// Return the SHA-256 hex digest of the canonical deployment config JSON.
+pub(crate) fn compute_config_hash(deployment: &DeploymentToml) -> String {
+    let canonical = compute_config_json(deployment);
+    let hash = Sha256::digest(canonical.as_bytes());
+    format!("{hash:x}")
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
@@ -488,7 +521,9 @@ pub(crate) struct ComponentCommonVerified {
     pub(crate) content_digest: ContentDigest,
 }
 
-#[derive(Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr)]
+#[derive(
+    Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr, serde_with::SerializeDisplay,
+)]
 #[serde(rename_all = "snake_case")]
 #[schemars(with = "String")]
 pub(crate) enum ComponentLocationToml {
@@ -587,10 +622,22 @@ impl FromStr for ComponentLocationToml {
     }
 }
 
+impl std::fmt::Display for ComponentLocationToml {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ComponentLocationToml::Path(p) => write!(f, "{p}"),
+            ComponentLocationToml::Oci(r) => write!(f, "{OCI_SCHEMA_PREFIX}{r}"),
+            ComponentLocationToml::GitHub(gh) => write!(f, "{GH_SCHEMA_PREFIX}{gh}"),
+        }
+    }
+}
+
 /// Location of a JavaScript source file for JS activities.
 /// Supports local file paths and `gh://` GitHub release references.
 /// OCI references are not supported.
-#[derive(Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr)]
+#[derive(
+    Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr, serde_with::SerializeDisplay,
+)]
 #[schemars(with = "String")]
 pub(crate) enum JsLocationToml {
     Path(String),
@@ -709,7 +756,13 @@ impl<'de> Deserialize<'de> for ConfigName {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+impl serde::Serialize for ConfigName {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(s)
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
     pub(crate) name: ConfigName,
@@ -775,7 +828,7 @@ impl From<executor::executor::LockingStrategy> for LockingStrategy {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfigToml {
     #[serde(default = "default_batch_size")]
@@ -832,7 +885,7 @@ fn locking_strategy(
     })
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityWasmComponentConfigToml {
     #[serde(flatten)]
@@ -863,7 +916,7 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LogLevelToml {
     Off,
@@ -888,7 +941,7 @@ impl From<LogLevelToml> for Option<LogLevel> {
 }
 
 /// Where in the outgoing request placeholders are replaced.
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ReplaceIn {
     Headers,
@@ -898,7 +951,7 @@ pub(crate) enum ReplaceIn {
 
 /// Input for method restrictions in TOML configuration.
 /// Supports both `methods = "*"` and `methods = ["GET", "POST"]` syntax.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub(crate) enum MethodsInput {
     /// All methods allowed (from `methods = "*"`).
@@ -907,8 +960,14 @@ pub(crate) enum MethodsInput {
     List(Vec<String>),
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub(crate) struct MethodsInputStar(#[serde(deserialize_with = "deserialize_star")] ());
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct MethodsInputStar(
+    #[serde(
+        deserialize_with = "deserialize_star",
+        serialize_with = "serialize_star"
+    )]
+    (),
+);
 
 fn deserialize_star<'de, D>(deserializer: D) -> Result<(), D::Error>
 where
@@ -924,8 +983,12 @@ where
     }
 }
 
+fn serialize_star<S: serde::Serializer>(_: &(), s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str("*")
+}
+
 /// An allowed outgoing HTTP host with optional method restrictions and secrets.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AllowedHostToml {
     /// Host pattern (e.g. `"api.example.com"`, `"*.example.com"`, `"http://localhost:8080"`).
@@ -942,7 +1005,7 @@ pub(crate) struct AllowedHostToml {
 }
 
 /// Secrets configuration for an allowed host.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AllowedHostSecretsToml {
     /// Env vars using the same syntax as top-level `env_vars`.
@@ -953,7 +1016,7 @@ pub(crate) struct AllowedHostSecretsToml {
     pub replace_in: Vec<ReplaceIn>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityStubFileConfigToml {
     pub(crate) name: ConfigName,
@@ -963,7 +1026,7 @@ pub(crate) struct ActivityStubFileConfigToml {
     pub(crate) content_digest: Option<ContentDigest>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityStubInlineConfigToml {
     pub(crate) name: ConfigName,
@@ -975,13 +1038,13 @@ pub(crate) struct ActivityStubInlineConfigToml {
     pub(crate) return_type: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub(crate) enum ActivityStubComponentConfigToml {
     File(ActivityStubFileConfigToml),
     Inline(ActivityStubInlineConfigToml),
 }
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityExternalComponentConfigToml {
     #[serde(flatten)]
@@ -1148,7 +1211,7 @@ impl ActivityExternalComponentConfigToml {
     }
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityDirectoriesConfigToml {
     #[serde(default)]
@@ -1159,7 +1222,7 @@ pub(crate) struct ActivityDirectoriesConfigToml {
     process_provider: ActivityDirectoriesProcessProvider,
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ActivityDirectoriesProcessProvider {
     #[default]
@@ -1262,7 +1325,7 @@ impl ActivityWasmComponentConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) name: ConfigName,
@@ -1310,7 +1373,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) return_type: Option<String>,
 }
 /// A parameter declaration for a JS activity function.
-#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct JsParamToml {
     /// Parameter name (used in WIT metadata).
@@ -1457,7 +1520,7 @@ impl ActivityJsComponentConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) name: ConfigName,
@@ -1633,7 +1696,7 @@ impl WorkflowJsComponentConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentConfigToml {
     #[serde(flatten)]
@@ -1659,7 +1722,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     pub(crate) logs_store_min_level: LogLevelToml,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, JsonSchema, PartialEq)]
 #[serde(untagged)] // Try variants without needing a specific outer tag
 pub(crate) enum BlockingStrategyConfigToml {
     // Try the more specific map format first
@@ -1673,19 +1736,19 @@ impl Default for BlockingStrategyConfigToml {
     }
 }
 // Enum to handle the tagged map case ({ kind = "await", ... })
-#[derive(Debug, Deserialize, Clone, Copy, JsonSchema, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, JsonSchema, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")] // Expects a map with "kind" field
 pub(crate) enum BlockingStrategyConfigCustomized {
     Await(BlockingStrategyAwaitConfig),
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BlockingStrategyAwaitConfig {
     #[serde(default = "default_non_blocking_event_batching")]
     non_blocking_event_batching: u32,
 }
-#[derive(Debug, Deserialize, Clone, Copy, JsonSchema, Default, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BlockingStrategyConfigSimple {
     Interrupt,
@@ -1713,7 +1776,7 @@ impl From<BlockingStrategyConfigToml> for JoinNextBlockingStrategy {
         }
     }
 }
-#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentBacktraceConfig {
     #[serde(rename = "sources")]
@@ -1937,7 +2000,7 @@ pub(crate) mod otlp {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurationConfig {
     Milliseconds(u64),
@@ -1956,7 +2019,7 @@ impl From<DurationConfig> for Duration {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurationConfigOptional {
     None,
@@ -2131,7 +2194,7 @@ pub(crate) mod log {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentStdOutputToml {
     None,
@@ -2169,7 +2232,7 @@ pub(crate) mod webhook {
         storage::LogLevel,
     };
     use schemars::JsonSchema;
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
     use sha2::{Digest as _, Sha256};
     use std::{
         net::SocketAddr,
@@ -2189,7 +2252,7 @@ pub(crate) mod webhook {
         pub(crate) listening_addr: SocketAddr,
     }
 
-    #[derive(Debug, Deserialize, JsonSchema)]
+    #[derive(Debug, Deserialize, Serialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookComponentConfigToml {
         #[serde(flatten)]
@@ -2260,7 +2323,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize, JsonSchema)]
+    #[derive(Debug, Deserialize, Serialize, JsonSchema)]
     #[serde(untagged)]
     pub(crate) enum WebhookRoute {
         String(String),
@@ -2273,7 +2336,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize, JsonSchema)]
+    #[derive(Debug, Deserialize, Serialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookRouteDetail {
         // Empty means all methods.
@@ -2325,7 +2388,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize, JsonSchema)]
+    #[derive(Debug, Deserialize, Serialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookJsComponentConfigToml {
         pub(crate) name: ConfigName,
@@ -2480,12 +2543,12 @@ fn resolve_env_vars_plaintext(
 ) -> Result<Arc<[EnvVar]>, EnvVarMissing> {
     env_vars
         .into_iter()
-        .map(|EnvVarConfig { key, val }| match val {
-            Some(val) => Ok(EnvVar {
+        .map(|env_var| match env_var {
+            EnvVarConfig::KeyValue { key, value } => Ok(EnvVar {
                 key,
-                val: interpolate_env_vars_plaintext(&val)?,
+                val: interpolate_env_vars_plaintext(&value)?,
             }),
-            None => match std::env::var(&key) {
+            EnvVarConfig::Key(key) => match std::env::var(&key) {
                 Ok(val) => Ok(EnvVar { key, val }),
                 Err(_err) => {
                     if ignore_missing {
@@ -2621,17 +2684,13 @@ fn resolve_secret_env_vars(
 ) -> Result<Vec<(String, SecretString)>, ResolveAllowedHostsError> {
     let mut missing = vec![];
     let mut env_mappings = Vec::new();
-    for EnvVarConfig {
-        key,
-        val: toml_supplied_val,
-    } in env_vars
-    {
-        match toml_supplied_val {
-            Some(val) => match interpolate_env_vars_secret(&val) {
+    for env_var in env_vars {
+        match env_var {
+            EnvVarConfig::KeyValue { key, value } => match interpolate_env_vars_secret(&value) {
                 Ok(real_value) => env_mappings.push((key, real_value)),
                 Err(err) => missing.push(err.0),
             },
-            None => match std::env::var(&key) {
+            EnvVarConfig::Key(key) => match std::env::var(&key) {
                 Ok(val) => env_mappings.push((key, SecretString::from(val))),
                 Err(_err) => missing.push(key),
             },

@@ -11,16 +11,17 @@ use concepts::{
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, DeploymentState, ExecutionEvent, ExecutionListPagination,
-        ExecutionRequest, ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay,
-        ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
-        LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter,
-        LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
-        PendingStateBlockedByJoinSet, PendingStateFinishedResultKind, PendingStateMergedPause,
-        ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
+        DbPool, DbPoolCloseable, DeploymentRecord, DeploymentState, DeploymentStatus,
+        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
+        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
+        LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
+        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        PendingStateFinishedResultKind, PendingStateMergedPause, ResponseCursor,
+        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
+        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
     },
 };
 use const_format::formatcp;
@@ -350,6 +351,29 @@ const IDX_T_LOG_EXECUTION_ID_CREATED_AT: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_created_at ON t_log (execution_id, created_at);
 ";
 
+const CREATE_TABLE_T_DEPLOYMENT: &str = r"
+CREATE TABLE IF NOT EXISTS t_deployment (
+    deployment_id TEXT NOT NULL PRIMARY KEY,
+    created_at    TEXT NOT NULL,
+    activated_at  TEXT,
+    status        TEXT NOT NULL,
+    config_json      TEXT NOT NULL,
+    config_hash      TEXT NOT NULL,
+    obelisk_version  TEXT NOT NULL,
+    created_by       TEXT
+) STRICT
+";
+const IDX_T_DEPLOYMENT_STATUS: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_deployment_status ON t_deployment (status)
+";
+const IDX_T_DEPLOYMENT_ACTIVATED_AT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_deployment_activated_at ON t_deployment (activated_at)
+";
+// Enforces at most one active deployment at a time.
+const IDX_T_DEPLOYMENT_SINGLE_ACTIVE: &str = r"
+CREATE UNIQUE INDEX IF NOT EXISTS idx_t_deployment_single_active ON t_deployment ((1)) WHERE status = 'active'
+";
+
 #[derive(Debug, thiserror::Error, Clone)]
 enum RusqliteError {
     #[error("not found")]
@@ -661,6 +685,31 @@ impl Default for SqliteConfig {
 
 struct ShutdownRequested;
 
+fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecord> {
+    let deployment_id_str: String = row.get("deployment_id")?;
+    let deployment_id = deployment_id_str.parse::<DeploymentId>().map_err(|_| {
+        rusqlite::Error::InvalidColumnType(
+            0,
+            "deployment_id".to_string(),
+            rusqlite::types::Type::Text,
+        )
+    })?;
+    let status_str: String = row.get("status")?;
+    let status = status_str.parse::<DeploymentStatus>().map_err(|_| {
+        rusqlite::Error::InvalidColumnType(3, "status".to_string(), rusqlite::types::Type::Text)
+    })?;
+    Ok(DeploymentRecord {
+        deployment_id,
+        created_at: row.get("created_at")?,
+        activated_at: row.get("activated_at")?,
+        status,
+        config_json: row.get("config_json")?,
+        config_hash: row.get("config_hash")?,
+        obelisk_version: row.get("obelisk_version")?,
+        created_by: row.get("created_by")?,
+    })
+}
+
 impl SqlitePool {
     fn init_thread(
         path: &Path,
@@ -811,6 +860,11 @@ impl SqlitePool {
         conn_execute(&conn, CREATE_TABLE_T_LOG, [])?;
         conn_execute(&conn, IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT, [])?;
         conn_execute(&conn, IDX_T_LOG_EXECUTION_ID_CREATED_AT, [])?;
+        // t_deployment
+        conn_execute(&conn, CREATE_TABLE_T_DEPLOYMENT, [])?;
+        conn_execute(&conn, IDX_T_DEPLOYMENT_STATUS, [])?;
+        conn_execute(&conn, IDX_T_DEPLOYMENT_ACTIVATED_AT, [])?;
+        conn_execute(&conn, IDX_T_DEPLOYMENT_SINGLE_ACTIVE, [])?;
         Ok(conn)
     }
 
@@ -899,7 +953,7 @@ impl SqlitePool {
             {
                 if let Ok(()) = SqlitePool::ltx_apply_to_phytx(ltx, &mut ptx, histograms) {
                 } else {
-                    *former_res = ApplyOrSkip::Skip;
+                    *former_res = ApplyOrSkip::Skip; // the problematic ltx will be skipped in the next iteration.
                     // ptx rollbacks on drop
                     return Err(NeedsRestart);
                 }
@@ -3332,18 +3386,27 @@ impl SqlitePool {
         tx: &Transaction,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
+        include_config_json: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
+        let config_json_col = if include_config_json {
+            "d.config_json"
+        } else {
+            "NULL AS config_json"
+        };
         let mut sql = format!(
             r"
         SELECT
-            deployment_id,
-            SUM(state = '{STATE_LOCKED}') AS locked,
-            SUM(state = '{STATE_PENDING_AT}' AND pending_expires_finished <= :now) AS pending,
-            SUM(state = '{STATE_PENDING_AT}' AND pending_expires_finished > :now) AS scheduled,
-            SUM(state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
-            SUM(state = '{STATE_FINISHED}') AS finished
-        FROM t_state"
+            s.deployment_id,
+            SUM(s.state = '{STATE_LOCKED}') AS locked,
+            SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished <= :now) AS pending,
+            SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished > :now) AS scheduled,
+            SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
+            SUM(s.state = '{STATE_FINISHED}') AS finished,
+            d.config_hash,
+            {config_json_col}
+        FROM t_state s
+        LEFT JOIN t_deployment d ON d.deployment_id = s.deployment_id"
         );
 
         params.push((":now", Box::new(current_time)));
@@ -3352,7 +3415,7 @@ impl SqlitePool {
             params.push((":cursor", Box::new(*cursor)));
             write!(
                 sql,
-                " WHERE deployment_id {rel} :cursor",
+                " WHERE s.deployment_id {rel} :cursor",
                 rel = pagination.rel()
             )
             .expect("writing to string");
@@ -3368,7 +3431,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " GROUP BY deployment_id ORDER BY deployment_id {inner_order} LIMIT {limit}",
+            " GROUP BY s.deployment_id, d.config_hash ORDER BY s.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -3395,8 +3458,137 @@ impl SqlitePool {
                         scheduled: row.get("scheduled")?,
                         blocked: row.get("blocked")?,
                         finished: row.get("finished")?,
+                        config_hash: row.get("config_hash")?,
+                        config_json: row.get("config_json")?,
                     })
                 },
+            )?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()
+            .map_err(DbErrorRead::from)?;
+
+        Ok(result)
+    }
+
+    fn insert_deployment_tx(
+        tx: &Transaction,
+        record: &DeploymentRecord,
+    ) -> Result<(), DbErrorWrite> {
+        tx.execute(
+            "INSERT INTO t_deployment \
+             (deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                record.deployment_id.to_string(),
+                record.created_at,
+                record.activated_at,
+                record.status.as_str(),
+                record.config_json,
+                record.config_hash,
+                record.obelisk_version,
+                record.created_by,
+            ],
+        )
+        .map_err(RusqliteError::from)?;
+        Ok(())
+    }
+
+    fn activate_deployment_tx(
+        tx: &Transaction,
+        deployment_id: DeploymentId,
+        now: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        // Demote the currently active deployment to inactive.
+        tx.execute(
+            "UPDATE t_deployment SET status = 'inactive' WHERE status = 'active'",
+            [],
+        )
+        .map_err(RusqliteError::from)?;
+        // Set target deployment to active.
+        let rows = tx
+            .execute(
+                "UPDATE t_deployment SET status = 'active', activated_at = ?1 WHERE deployment_id = ?2",
+                rusqlite::params![now, deployment_id.to_string()],
+            )
+            .map_err(RusqliteError::from)?;
+        if rows == 0 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(())
+    }
+
+    fn get_deployment_tx(
+        tx: &Transaction,
+        deployment_id: DeploymentId,
+    ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
+        tx.query_row(
+            "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+             FROM t_deployment WHERE deployment_id = ?1",
+            [deployment_id.to_string()],
+            deployment_record_from_row,
+        )
+        .optional()
+        .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))
+    }
+
+    fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
+        tx.query_row(
+            "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+             FROM t_deployment WHERE status = 'active' LIMIT 1",
+            [],
+            deployment_record_from_row,
+        )
+        .optional()
+        .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))
+    }
+
+    fn list_deployments_tx(
+        tx: &Transaction,
+        pagination: Pagination<Option<DeploymentId>>,
+    ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
+        let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
+        let mut sql = String::from(
+            "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+             FROM t_deployment",
+        );
+
+        if let Some(cursor) = pagination.cursor() {
+            params.push((":cursor", Box::new(*cursor)));
+            write!(
+                sql,
+                " WHERE deployment_id {rel} :cursor",
+                rel = pagination.rel()
+            )
+            .expect("writing to string");
+        }
+
+        let (inner_order, outer_order) = if pagination.is_desc() {
+            ("DESC", "")
+        } else {
+            ("ASC", "DESC")
+        };
+
+        write!(
+            sql,
+            " ORDER BY deployment_id {inner_order} LIMIT {limit}",
+            limit = pagination.length()
+        )
+        .expect("writing to string");
+
+        let final_sql = if outer_order.is_empty() {
+            sql
+        } else {
+            format!("SELECT * FROM ({sql}) AS sub ORDER BY deployment_id {outer_order}")
+        };
+
+        let result: Vec<DeploymentRecord> = tx
+            .prepare(&final_sql)?
+            .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
+                params
+                    .iter()
+                    .map(|(k, v)| (*k, v.as_ref()))
+                    .collect::<Vec<_>>()
+                    .as_ref(),
+                deployment_record_from_row,
             )?
             .collect::<Result<Vec<_>, rusqlite::Error>>()
             .map_err(DbErrorRead::from)?;
@@ -4123,11 +4315,74 @@ impl DbExternalApi for SqlitePool {
         &self,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
+        include_config_json: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         self.transaction(
-            move |tx| Self::list_deployment_states(tx, current_time, pagination),
+            move |tx| {
+                Self::list_deployment_states(tx, current_time, pagination, include_config_json)
+            },
             TxType::Other, // read only
             "list_deployment_states",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| Self::insert_deployment_tx(tx, &record),
+            TxType::MultipleWrites,
+            "insert_deployment",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn activate_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        now: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| Self::activate_deployment_tx(tx, deployment_id, now),
+            TxType::MultipleWrites,
+            "activate_deployment",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn get_deployment(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
+        self.transaction(
+            move |tx| Self::get_deployment_tx(tx, deployment_id),
+            TxType::Other,
+            "get_deployment",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
+        self.transaction(
+            move |tx| Self::get_active_deployment_tx(tx),
+            TxType::Other,
+            "get_active_deployment",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn list_deployments(
+        &self,
+        pagination: Pagination<Option<DeploymentId>>,
+    ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
+        self.transaction(
+            move |tx| Self::list_deployments_tx(tx, pagination),
+            TxType::Other,
+            "list_deployments",
         )
         .await
     }

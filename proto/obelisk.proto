@@ -740,6 +740,7 @@ message ListDeploymentStatesRequest {
         NewerThan newer_than = 1;
         OlderThan older_than = 2;
     };
+    bool include_config_json = 3;
 }
 
 message DeploymentState {
@@ -750,6 +751,8 @@ message DeploymentState {
     uint32 scheduled = 5;
     uint32 blocked = 6;
     uint32 finished = 7;
+    optional string config_hash = 8;
+    optional string config_json = 9;
 }
 
 message ListDeploymentStatesResponse {

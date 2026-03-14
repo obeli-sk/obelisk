@@ -1350,10 +1350,11 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .await
             .map_err(map_to_status)?;
 
+        let include_config_json = request.include_config_json;
         let pagination = convert_deployment_pagination(&request)?;
 
         let mut states = conn
-            .list_deployment_states(Utc::now(), pagination)
+            .list_deployment_states(Utc::now(), pagination, include_config_json)
             .await
             .to_status()?;
 
@@ -1371,6 +1372,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 scheduled: dep.scheduled,
                 blocked: dep.blocked,
                 finished: dep.finished,
+                config_hash: dep.config_hash,
+                config_json: dep.config_json,
             })
             .collect();
         Ok(tonic::Response::new(
@@ -1409,6 +1412,7 @@ mod tests {
                     including_cursor: true,
                 }),
             ),
+            include_config_json: true, // TODO test
         };
 
         let pagination = convert_deployment_pagination(&request).unwrap();
@@ -1440,6 +1444,7 @@ mod tests {
                     including_cursor: false,
                 }),
             ),
+            include_config_json: true, // TODO test
         };
 
         let pagination = convert_deployment_pagination(&request).unwrap();
@@ -1462,7 +1467,10 @@ mod tests {
 
     #[test]
     fn test_convert_deployment_pagination_none_defaults_to_older_than() {
-        let request = grpc_gen::ListDeploymentStatesRequest { pagination: None };
+        let request = grpc_gen::ListDeploymentStatesRequest {
+            pagination: None,
+            include_config_json: true, // TODO test
+        };
 
         let pagination = convert_deployment_pagination(&request).unwrap();
 
@@ -1490,6 +1498,7 @@ mod tests {
                     including_cursor: false,
                 }),
             ),
+            include_config_json: true, // TODO test
         };
 
         let pagination = convert_deployment_pagination(&request).unwrap();
