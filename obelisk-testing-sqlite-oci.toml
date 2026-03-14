@@ -1,15 +1,8 @@
-api.listening_addr = "127.0.0.1:5005"
-webui.listening_addr = "127.0.0.1:8080"
-
 [log.file]
 enabled = true
 target = true
 directory = "."
 prefix = "obelisk.log"
-
-[[http_server]]
-name = "external_webhook"
-listening_addr = "127.0.0.1:9090"
 
 [[activity_wasm]]
 name = "test_programs_fibo_activity"
@@ -25,7 +18,6 @@ backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/tes
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
 location = "oci://docker.io/getobelisk/test_programs_fibo_webhook:2026-03-10@sha256:7c7cdd471bf652ffd39b8e30babed3ece1b28b94ce9b909e23ac9c00286544c1"
-http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
 

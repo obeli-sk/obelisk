@@ -1,5 +1,3 @@
-api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
-webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
 activities.directories.enabled = true
 
 database.postgres.host =     "${POSTGRES_HOST}"
@@ -13,10 +11,6 @@ enabled = true
 target = true
 directory = "."
 prefix = "obelisk.log" # File name prefix
-
-[[http_server]]
-name = "external_webhook"
-listening_addr = "127.0.0.1:9090"
 
 [[activity_wasm]]
 name = "test_programs_fibo_activity"
@@ -38,7 +32,6 @@ backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/tes
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
 location = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_testprograms/test_programs_fibo_webhook.wasm"
-http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
 
@@ -64,7 +57,6 @@ backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/tes
 [[webhook_endpoint]]
 name = "test_programs_sleep_webhook"
 location = "${OBELISK_TOML_DIR}/target/release_testprograms/wasm32-wasip2/release_testprograms/test_programs_sleep_webhook.wasm"
-http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/sleep/:SECONDS" }]
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/webhook/src/lib.rs" }
 

@@ -66,6 +66,8 @@ fn write_test_toml(ip: &str) -> (tempfile::TempDir, PathBuf) {
     let toml_contents = format!(
         r#"
 api.listening_addr = "{ip}:{API_PORT}"
+webui.enabled = false
+external.listening_addr = "{ip}:{WEBHOOK_PORT}"
 
 [wasm.codegen_cache]
 directory = "${{CACHE_DIR}}/codegen-it"
@@ -217,26 +219,20 @@ params = [
 ]
 return_type = "result<string, string>"
 
-[[http_server]]
-name = "test_webhook_server"
-listening_addr = "{ip}:{WEBHOOK_PORT}"
 
 [[webhook_endpoint_js]]
 name = "test_hello_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/hello.js"
-http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/hello" }}]
 
 [[webhook_endpoint_js]]
 name = "test_headers_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/headers.js"
-http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/headers" }}]
 
 [[webhook_endpoint_js]]
 name = "test_fetch_allowed_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
-http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/fetch-allowed" }}]
 [[webhook_endpoint_js.allowed_host]]
 pattern = "http://{ip}:{API_PORT}"
@@ -245,13 +241,11 @@ methods = ["GET"]
 [[webhook_endpoint_js]]
 name = "test_fetch_denied_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
-http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/fetch-denied" }}]
 
 [[webhook_endpoint_js]]
 name = "test_call_activity_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/call_activity.js"
-http_server = "test_webhook_server"
 routes = [{{ methods = ["GET"], route = "/call-activity/:a/:b" }}]
 "#,
         ip = ip,

@@ -43,6 +43,9 @@
     "database": {
       "$ref": "#/$defs/DatabaseConfigToml"
     },
+    "external": {
+      "$ref": "#/$defs/ExternalServerConfig"
+    },
     "http_server": {
       "type": "array",
       "items": {
@@ -551,11 +554,13 @@
     "ApiConfig": {
       "type": "object",
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
         "listening_addr": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string",
+          "default": "127.0.0.1:5005"
         }
       },
       "additionalProperties": false
@@ -942,6 +947,20 @@
           "default": {
             "milliseconds": 200
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExternalServerConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "listening_addr": {
+          "type": "string",
+          "default": "127.0.0.1:9090"
         }
       },
       "additionalProperties": false
@@ -1427,11 +1446,13 @@
     "WebUIConfig": {
       "type": "object",
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
         "listening_addr": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string",
+          "default": "127.0.0.1:8080"
         }
       },
       "additionalProperties": false
@@ -1477,7 +1498,8 @@
           "default": "db"
         },
         "http_server": {
-          "$ref": "#/$defs/ConfigName"
+          "$ref": "#/$defs/ConfigName",
+          "default": "external"
         },
         "location": {
           "type": "string"
@@ -1500,7 +1522,6 @@
       "required": [
         "name",
         "location",
-        "http_server",
         "routes"
       ]
     },
@@ -1533,7 +1554,8 @@
         },
         "http_server": {
           "description": "The HTTP server to bind this webhook to.",
-          "$ref": "#/$defs/ConfigName"
+          "$ref": "#/$defs/ConfigName",
+          "default": "external"
         },
         "location": {
           "description": "Location of the JavaScript source file.\nSupports local file paths and `gh://` GitHub release references.",
@@ -1558,7 +1580,6 @@
       "required": [
         "name",
         "location",
-        "http_server",
         "routes"
       ]
     },

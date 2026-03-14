@@ -1,16 +1,9 @@
-api.listening_addr = "127.0.0.1:5005"
-webui.listening_addr = "127.0.0.1:8080"
-
 [log.file]
 enabled = true
 target = true
 directory = "."
 prefix = "obelisk.log" # File name prefix
 level = "info,obeli=debug,app=debug"
-
-[[http_server]]
-name = "external_webhook"
-listening_addr = "127.0.0.1:9090"
 
 [[activity_js]]
 name = "test_add_activity"
@@ -72,13 +65,11 @@ params = [
 [[webhook_endpoint_js]]
 name = "webhook_js_hello"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/hello.js"
-http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/hello" }]
 
 [[webhook_endpoint_js]]
 name = "webhook_js_fetch_components"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/fetch_components.js"
-http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fetch" }]
 [[webhook_endpoint_js.allowed_host]]
 pattern = "http://localhost:5005"
@@ -87,7 +78,6 @@ methods = ["GET"]
 [[webhook_endpoint_js]]
 name = "webhook_js_call_activity"
 location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/call_activity.js"
-http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/call-activity/:a/:b" }]
 
 # stub
