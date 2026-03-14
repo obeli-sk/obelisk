@@ -891,7 +891,9 @@ impl ServerVerified {
                     .context("error converting `webui.listening_addr` to a socket address")?,
             });
             if !config.api.enabled {
-                anyhow::bail!("cannot expose webui without enabling the API (`api.enabled = false` is set)");
+                anyhow::bail!(
+                    "cannot expose webui without enabling the API (`api.enabled = false` is set)"
+                );
             }
             let target_url = format!("http://{}", config.api.listening_addr);
             config
