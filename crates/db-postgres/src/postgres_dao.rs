@@ -11,16 +11,17 @@ use concepts::{
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, DeploymentState, ExecutionEvent, ExecutionListPagination,
-        ExecutionRequest, ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay,
-        ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
-        LockPendingResponse, Locked, LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter,
-        LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
-        PendingStateBlockedByJoinSet, PendingStateFinishedResultKind, PendingStateMergedPause,
-        ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
+        DbPool, DbPoolCloseable, DeploymentRecord, DeploymentState, DeploymentStatus,
+        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
+        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
+        LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
+        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        PendingStateFinishedResultKind, PendingStateMergedPause, ResponseCursor,
+        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
+        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -279,6 +280,30 @@ CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_run_id_created_at ON t_log (ex
     pub const IDX_T_LOG_EXECUTION_ID_CREATED_AT: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_created_at ON t_log (execution_id, created_at);
 ";
+
+    // T_DEPLOYMENT
+    pub const CREATE_TABLE_T_DEPLOYMENT: &str = r"
+CREATE TABLE IF NOT EXISTS t_deployment (
+    deployment_id TEXT     NOT NULL PRIMARY KEY,
+    created_at    TIMESTAMPTZ NOT NULL,
+    activated_at  TIMESTAMPTZ,
+    status        TEXT     NOT NULL DEFAULT 'candidate',
+    config_json      TEXT     NOT NULL,
+    config_hash      TEXT     NOT NULL,
+    obelisk_version  TEXT     NOT NULL,
+    created_by       TEXT
+);
+";
+    pub const IDX_T_DEPLOYMENT_STATUS: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_deployment_status ON t_deployment (status);
+";
+    pub const IDX_T_DEPLOYMENT_ACTIVATED_AT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_deployment_activated_at ON t_deployment (activated_at);
+";
+    // Enforces at most one active deployment at a time.
+    pub const IDX_T_DEPLOYMENT_SINGLE_ACTIVE: &str = r"
+CREATE UNIQUE INDEX IF NOT EXISTS idx_t_deployment_single_active ON t_deployment ((1)) WHERE status = 'active';
+";
 }
 
 #[derive(Debug, Clone)]
@@ -511,6 +536,10 @@ impl PostgresPool {
             ddl::CREATE_TABLE_T_LOG,
             ddl::IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT,
             ddl::IDX_T_LOG_EXECUTION_ID_CREATED_AT,
+            ddl::CREATE_TABLE_T_DEPLOYMENT,
+            ddl::IDX_T_DEPLOYMENT_STATUS,
+            ddl::IDX_T_DEPLOYMENT_ACTIVATED_AT,
+            ddl::IDX_T_DEPLOYMENT_SINGLE_ACTIVE,
         ];
 
         // Combine into one batch execution for atomicity per round-trip (or efficiency)
@@ -577,6 +606,27 @@ impl PostgresPool {
             outcome,
         ))
     }
+}
+
+fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorRead> {
+    let deployment_id_str: String = get(row, "deployment_id")?;
+    let deployment_id = deployment_id_str.parse::<DeploymentId>().map_err(|e| {
+        DbErrorRead::Generic(consistency_db_err(format!("invalid deployment_id: {e}")))
+    })?;
+    let status_str: String = get(row, "status")?;
+    let status = status_str
+        .parse::<DeploymentStatus>()
+        .map_err(|e| DbErrorRead::Generic(consistency_db_err(format!("invalid status: {e}"))))?;
+    Ok(DeploymentRecord {
+        deployment_id,
+        created_at: get(row, "created_at")?,
+        activated_at: get(row, "activated_at")?,
+        status,
+        config_json: get(row, "config_json")?,
+        config_hash: get(row, "config_hash")?,
+        obelisk_version: get(row, "obelisk_version")?,
+        created_by: get(row, "created_by")?,
+    })
 }
 
 #[track_caller]
@@ -4289,6 +4339,155 @@ impl DbExternalApi for PostgresConnection {
         let deployments = list_deployment_states(&tx, current_time, pagination).await?;
         tx.commit().await?;
         Ok(deployments)
+    }
+
+    #[instrument(skip(self))]
+    async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        tx.execute(
+            "INSERT INTO t_deployment \
+             (deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            &[
+                &record.deployment_id.to_string(),
+                &record.created_at,
+                &record.activated_at,
+                &record.status.as_str(),
+                &record.config_json,
+                &record.config_hash,
+                &record.obelisk_version,
+                &record.created_by,
+            ],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn activate_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        now: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        // Demote currently active deployment to inactive.
+        tx.execute(
+            "UPDATE t_deployment SET status = 'inactive' WHERE status = 'active'",
+            &[],
+        )
+        .await?;
+        // Set target deployment to active.
+        let rows = tx
+            .execute(
+                "UPDATE t_deployment SET status = 'active', activated_at = $1 WHERE deployment_id = $2",
+                &[&now, &deployment_id.to_string()],
+            )
+            .await?;
+        tx.commit().await?;
+        if rows == 0 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn get_deployment(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let row = tx
+            .query_opt(
+                "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+                 FROM t_deployment WHERE deployment_id = $1",
+                &[&deployment_id.to_string()],
+            )
+            .await?;
+        tx.commit().await?;
+        match row {
+            None => Ok(None),
+            Some(r) => Ok(Some(deployment_record_from_pg_row(&r)?)),
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let row = tx
+            .query_opt(
+                "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+                 FROM t_deployment WHERE status = 'active' LIMIT 1",
+                &[],
+            )
+            .await?;
+        tx.commit().await?;
+        match row {
+            None => Ok(None),
+            Some(r) => Ok(Some(deployment_record_from_pg_row(&r)?)),
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn list_deployments(
+        &self,
+        pagination: Pagination<Option<DeploymentId>>,
+    ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
+        let mut add_param = |p: Box<dyn tokio_postgres::types::ToSql + Sync + Send>| {
+            params.push(p);
+            format!("${}", params.len())
+        };
+
+        let mut sql = String::from(
+            "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+             FROM t_deployment",
+        );
+
+        if let Some(cursor) = pagination.cursor() {
+            let p_cursor = add_param(Box::new(cursor.to_string()));
+            write!(
+                sql,
+                " WHERE deployment_id {rel} {p_cursor}",
+                rel = pagination.rel()
+            )
+            .expect("writing to string");
+        }
+
+        let (inner_order, outer_order) = if pagination.is_desc() {
+            ("DESC", "")
+        } else {
+            ("ASC", "DESC")
+        };
+
+        write!(
+            sql,
+            " ORDER BY deployment_id {inner_order} LIMIT {limit}",
+            limit = pagination.length()
+        )
+        .expect("writing to string");
+
+        let final_sql = if outer_order.is_empty() {
+            sql
+        } else {
+            format!("SELECT * FROM ({sql}) AS sub ORDER BY deployment_id {outer_order}")
+        };
+
+        let params_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| p.as_ref() as _).collect();
+
+        let rows = tx.query(&final_sql, &params_refs).await?;
+        tx.commit().await?;
+
+        rows.iter()
+            .map(deployment_record_from_pg_row)
+            .collect::<Result<Vec<_>, _>>()
     }
 
     #[instrument(skip(self))]

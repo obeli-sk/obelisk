@@ -123,7 +123,7 @@ params = [
   {{ name = "key", type = "string" }},
 ]
 max_retries = 0
-env_vars = ["TEST_ENV_VAR=hello_from_env"]
+env_vars = [{{key = "TEST_ENV_VAR", value = "hello_from_env"}}]
 
 [[activity_js]]
 name = "test_make_record_activity"

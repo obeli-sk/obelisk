@@ -8,14 +8,10 @@ use crate::config::config_holder::PathPrefixes;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
 use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
-use crate::config::toml::ActivityExternalComponentConfigToml;
-use crate::config::toml::ActivityJsComponentConfigToml;
 use crate::config::toml::ActivityJsConfigVerified;
-use crate::config::toml::ActivityStubComponentConfigToml;
 use crate::config::toml::ActivityStubConfigVerified;
 use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityStubInlineConfigVerified;
-use crate::config::toml::ActivityWasmComponentConfigToml;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentBacktraceConfig;
@@ -24,17 +20,15 @@ use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::DatabaseConfigToml;
+use crate::config::toml::DeploymentToml;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
-use crate::config::toml::WorkflowComponentConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
-use crate::config::toml::WorkflowJsComponentConfigToml;
 use crate::config::toml::WorkflowJsConfigVerified;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentConfigVerified;
-use crate::config::toml::webhook::WebhookJsComponentConfigToml;
 use crate::config::toml::webhook::WebhookJsConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
@@ -406,7 +400,7 @@ pub(crate) async fn verify(
         ConfigHolder::new(project_dirs, base_dirs, ConfigFileOption::MustExist(config))?;
     let mut config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&mut config)?;
-    let deployment_id = config.get_deployment_id();
+    let deployment_id = DeploymentId::generate();
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     if skip_db {
@@ -574,13 +568,61 @@ pub(crate) async fn verify_config_compile_link(
     Ok(compiled_and_linked)
 }
 
+async fn upsert_and_activate_deployment(
+    db_pool: &dyn concepts::storage::DbPool,
+    candidate_id: DeploymentId,
+    config_json: String,
+    config_hash: String,
+) -> anyhow::Result<DeploymentId> {
+    use chrono::Utc;
+    use concepts::storage::{DeploymentRecord, DeploymentStatus};
+
+    let api_conn = db_pool
+        .external_api_conn()
+        .await
+        .context("cannot get external api connection for deployment upsert")?;
+
+    // Noop if the active deployment already has the same config hash.
+    if let Some(active) = api_conn
+        .get_active_deployment()
+        .await
+        .context("cannot query active deployment")?
+        && active.config_hash == config_hash
+    {
+        info!(deployment_id = %active.deployment_id, "Deployment unchanged, reusing existing active deployment");
+        return Ok(active.deployment_id);
+    }
+
+    let record = DeploymentRecord {
+        deployment_id: candidate_id,
+        created_at: Utc::now(),
+        activated_at: None,
+        status: DeploymentStatus::Candidate,
+        config_json,
+        config_hash,
+        obelisk_version: PKG_VERSION.to_string(),
+        created_by: Some("cli".to_string()),
+    };
+    api_conn
+        .insert_deployment(record)
+        .await
+        .context("cannot upsert deployment")?;
+    api_conn
+        .activate_deployment(candidate_id, Utc::now())
+        .await
+        .context("cannot activate deployment")?;
+    Ok(candidate_id)
+}
+
 pub(crate) async fn run_internal(
     config: ConfigToml,
     config_holder: ConfigHolder,
     params: RunParams,
     mut termination_watcher: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
-    let deployment_id = config.get_deployment_id();
+    let deployment_id = DeploymentId::generate();
+    let deployment_config_json = crate::config::toml::compute_config_json(&config.deployment);
+    let deployment_config_hash = crate::config::toml::compute_config_hash(&config.deployment);
     let span = info_span!("init", %deployment_id);
     let api_listening_addr = config.api.listening_addr;
 
@@ -630,6 +672,13 @@ pub(crate) async fn run_internal(
                     .await
                     .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
             );
+            let deployment_id = upsert_and_activate_deployment(
+                &*db_pool,
+                deployment_id,
+                deployment_config_json.clone(),
+                deployment_config_hash.clone(),
+            )
+            .await?;
             let db_close = Box::pin({
                 let db_pool = db_pool.clone();
                 async move {
@@ -659,6 +708,13 @@ pub(crate) async fn run_internal(
                 .await
                 .context("canont initialize postgres connection pool")?,
             );
+            let deployment_id = upsert_and_activate_deployment(
+                &*db_pool,
+                deployment_id,
+                deployment_config_json.clone(),
+                deployment_config_hash.clone(),
+            )
+            .await?;
             let db_close = Box::pin({
                 let db_pool = db_pool.clone();
                 async move {
@@ -794,7 +850,7 @@ struct ServerVerified {
 impl ServerVerified {
     #[instrument(name = "ServerVerified::new", skip_all)]
     async fn new(
-        config: ConfigToml,
+        mut config: ConfigToml,
         codegen_cache_dir: Option<PathBuf>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -825,7 +881,6 @@ impl ServerVerified {
             Engines::new(engine_config)?
         };
         let mut http_servers = config.http_servers;
-        let mut webhooks = config.webhooks;
         if let Some(webui_listening_addr) = config.webui.listening_addr {
             let http_server_name = ConfigName::new(StrVariant::Static("webui")).unwrap();
             http_servers.push(webhook::HttpServer {
@@ -841,30 +896,33 @@ impl ServerVerified {
                     .listening_addr
                     .context("cannot expose webui without configuring `api.listening_addr`")?
             );
-            webhooks.push(webhook::WebhookComponentConfigToml {
-                common: ComponentCommon {
-                    name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
-                    location: WEBUI_LOCATION
-                        .parse()
-                        .expect("hard-coded webui reference must be parsed"),
-                    content_digest: None,
-                },
-                http_server: http_server_name,
-                routes: vec![WebhookRoute::default()],
-                forward_stdout: ComponentStdOutputToml::default(),
-                forward_stderr: ComponentStdOutputToml::default(),
-                env_vars: vec![EnvVarConfig {
-                    key: "TARGET_URL".to_string(),
-                    val: Some(target_url.clone()),
-                }],
-                backtrace: ComponentBacktraceConfig::default(),
-                logs_store_min_level: LogLevelToml::Off,
-                allowed_hosts: vec![AllowedHostToml {
-                    pattern: target_url,
-                    methods: Some(MethodsInput::Star(MethodsInputStar::default())),
-                    secrets: None,
-                }],
-            });
+            config
+                .deployment
+                .webhooks
+                .push(webhook::WebhookComponentConfigToml {
+                    common: ComponentCommon {
+                        name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
+                        location: WEBUI_LOCATION
+                            .parse()
+                            .expect("hard-coded webui reference must be parsed"),
+                        content_digest: None,
+                    },
+                    http_server: http_server_name,
+                    routes: vec![WebhookRoute::default()],
+                    forward_stdout: ComponentStdOutputToml::default(),
+                    forward_stderr: ComponentStdOutputToml::default(),
+                    env_vars: vec![EnvVarConfig::KeyValue {
+                        key: "TARGET_URL".to_string(),
+                        value: target_url.clone(),
+                    }],
+                    backtrace: ComponentBacktraceConfig::default(),
+                    logs_store_min_level: LogLevelToml::Off,
+                    allowed_hosts: vec![AllowedHostToml {
+                        pattern: target_url,
+                        methods: Some(MethodsInput::Star(MethodsInputStar::default())),
+                        secrets: None,
+                    }],
+                });
         }
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
         let parent_preopen_dir = OptionFuture::from(
@@ -881,30 +939,25 @@ impl ServerVerified {
             .get_directories()
             .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
+        let global_executor_instance_limiter = config
+            .wasm_global_config
+            .global_executor_instance_limiter
+            .as_semaphore();
+        let database_subscription_interruption = config.database.get_subscription_interruption();
 
         let config = Box::pin(ConfigVerified::fetch_and_verify_all(
-            config.activities_wasm,
-            config.activities_js,
-            config.activities_stub,
-            config.activities_external,
-            config.workflows,
-            config.workflows_js,
+            config.deployment,
             http_servers,
-            webhooks,
-            config.webhooks_js,
             wasm_cache_dir,
             metadata_dir,
             ignore_missing_env_vars,
             path_prefixes,
             global_backtrace_persist,
             parent_preopen_dir.clone(),
-            config
-                .wasm_global_config
-                .global_executor_instance_limiter
-                .as_semaphore(),
+            global_executor_instance_limiter,
             fuel,
             termination_watcher,
-            config.database.get_subscription_interruption(),
+            database_subscription_interruption,
         ))
         .await?;
         debug!("Verified config: {config:#?}");
@@ -1274,15 +1327,8 @@ impl ConfigVerified {
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
-        activities_wasm: Vec<ActivityWasmComponentConfigToml>,
-        activities_js: Vec<ActivityJsComponentConfigToml>,
-        activities_stub: Vec<ActivityStubComponentConfigToml>,
-        activities_external: Vec<ActivityExternalComponentConfigToml>,
-        workflows: Vec<WorkflowComponentConfigToml>,
-        workflows_js: Vec<WorkflowJsComponentConfigToml>,
+        deployment: DeploymentToml,
         http_servers: Vec<webhook::HttpServer>,
-        webhooks: Vec<webhook::WebhookComponentConfigToml>,
-        webhooks_js: Vec<WebhookJsComponentConfigToml>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
@@ -1305,12 +1351,13 @@ impl ConfigVerified {
             {
                 bail!("Each `http_server` must have a unique name");
             }
-            let all_webhook_names: hashbrown::HashSet<_> = webhooks
+            let all_webhook_names: hashbrown::HashSet<_> = deployment
+                .webhooks
                 .iter()
                 .map(|it| &it.common.name)
-                .chain(webhooks_js.iter().map(|it| &it.name))
+                .chain(deployment.webhooks_js.iter().map(|it| &it.name))
                 .collect();
-            if webhooks.len() + webhooks_js.len() > all_webhook_names.len() {
+            if deployment.webhooks.len() + deployment.webhooks_js.len() > all_webhook_names.len() {
                 bail!("Each `webhook_endpoint` and `webhook_endpoint_js` must have a unique name");
             }
         }
@@ -1318,12 +1365,12 @@ impl ConfigVerified {
             let mut remaining_server_names_to_webhook_names = {
                 let mut map: hashbrown::HashMap<ConfigName, Vec<ConfigName>> =
                     hashbrown::HashMap::default();
-                for webhook in &webhooks {
+                for webhook in &deployment.webhooks {
                     map.entry(webhook.http_server.clone())
                         .or_default()
                         .push(webhook.common.name.clone());
                 }
-                for webhook_js in &webhooks_js {
+                for webhook_js in &deployment.webhooks_js {
                     map.entry(webhook_js.http_server.clone())
                         .or_default()
                         .push(webhook_js.name.clone());
@@ -1353,7 +1400,8 @@ impl ConfigVerified {
         };
 
         // Fetch and verify components, each in its own tokio task.
-        let activities_wasm = activities_wasm
+        let activities_wasm = deployment
+            .activities_wasm
             .into_iter()
             .map(|activity_wasm| {
                 tokio::spawn(
@@ -1372,7 +1420,8 @@ impl ConfigVerified {
             })
             .collect::<Vec<_>>();
 
-        let activities_stub_tasks = activities_stub
+        let activities_stub_tasks = deployment
+            .activities_stub
             .into_iter()
             .map(|activity| {
                 tokio::spawn(
@@ -1386,7 +1435,8 @@ impl ConfigVerified {
                 )
             })
             .collect::<Vec<_>>();
-        let activities_external_tasks = activities_external
+        let activities_external_tasks = deployment
+            .activities_external
             .into_iter()
             .map(|activity| {
                 tokio::spawn(
@@ -1401,7 +1451,8 @@ impl ConfigVerified {
             })
             .collect::<Vec<_>>();
 
-        let workflows = workflows
+        let workflows = deployment
+            .workflows
             .into_iter()
             .map(|workflow| {
                 tokio::spawn(
@@ -1419,7 +1470,8 @@ impl ConfigVerified {
                 )
             })
             .collect::<Vec<_>>();
-        let webhooks_by_names = webhooks
+        let webhooks_by_names = deployment
+            .webhooks
             .into_iter()
             .map(|webhook| {
                 tokio::spawn({
@@ -1440,7 +1492,7 @@ impl ConfigVerified {
             .collect::<Vec<_>>();
 
         // Skip fetching when no JS activities are configured
-        let activity_js_runtime_fetch: OptionFuture<_> = if activities_js.is_empty() {
+        let activity_js_runtime_fetch: OptionFuture<_> = if deployment.activities_js.is_empty() {
             None
         } else {
             Some(fetch_activity_js_runtime(
@@ -1452,7 +1504,7 @@ impl ConfigVerified {
         .into();
 
         // Skip fetching when no JS workflows are configured
-        let workflow_js_runtime_fetch: OptionFuture<_> = if workflows_js.is_empty() {
+        let workflow_js_runtime_fetch: OptionFuture<_> = if deployment.workflows_js.is_empty() {
             None
         } else {
             Some(fetch_workflow_js_runtime(
@@ -1464,7 +1516,7 @@ impl ConfigVerified {
         .into();
 
         // Skip fetching when no JS webhooks are configured
-        let webhook_js_runtime_fetch: OptionFuture<_> = if webhooks_js.is_empty() {
+        let webhook_js_runtime_fetch: OptionFuture<_> = if deployment.webhooks_js.is_empty() {
             None
         } else {
             Some(fetch_webhook_js_runtime(
@@ -1512,12 +1564,12 @@ impl ConfigVerified {
                     webhooks_by_names.insert(k, v);
                 }
 
-                let activities_js_verified = if !activities_js.is_empty() {
+                let activities_js_verified = if !deployment.activities_js.is_empty() {
                     let activity_js_wasm_path = activity_js_runtime_result.transpose()?;
                     let activity_js_wasm_path: Arc<Path> = Arc::from(activity_js_wasm_path
                         .expect("None only if there are no JS activities, see `activity_js_runtime_fetch`"));
-                    let mut activities_js_verified = Vec::with_capacity(activities_js.len());
-                    for js in activities_js {
+                    let mut activities_js_verified = Vec::with_capacity(deployment.activities_js.len());
+                    for js in deployment.activities_js {
                         activities_js_verified.push(
                             js.fetch_and_verify(
                                 activity_js_wasm_path.clone(),
@@ -1534,14 +1586,14 @@ impl ConfigVerified {
                     Vec::new()
                 };
 
-                let workflows_js_verified = if !workflows_js.is_empty() {
+                let workflows_js_verified = if !deployment.workflows_js.is_empty() {
                     let workflow_js_wasm_path = workflow_js_runtime_result.transpose()?;
                     let workflow_js_wasm_path: Arc<Path> = Arc::from(workflow_js_wasm_path
                         .expect("None only if there are no JS workflows, see `workflow_js_runtime_fetch`"));
-                    let mut workflows_js_verified = Vec::with_capacity(workflows_js.len());
-                    for js in workflows_js {
+                    let mut workflows_js_verified = Vec::with_capacity(deployment.workflows_js.len());
+                    for workflow_js in deployment.workflows_js {
                         workflows_js_verified.push(
-                            js.fetch_and_verify(
+                            workflow_js.fetch_and_verify(
                                 workflow_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
                                 path_prefixes.clone(),
@@ -1555,11 +1607,11 @@ impl ConfigVerified {
                 };
 
                 let mut webhooks_js_by_names = IndexMap::new();
-                if !webhooks_js.is_empty() {
+                if !deployment.webhooks_js.is_empty() {
                     let webhook_js_wasm_path = webhook_js_runtime_result.transpose()?
                         .expect("None only if there are no JS webhooks, see `webhook_js_runtime_fetch`");
                     let webhook_js_wasm_path: Arc<Path> = Arc::from(webhook_js_wasm_path);
-                    for webhook_js in webhooks_js {
+                    for webhook_js in deployment.webhooks_js {
                         let (k, v) = webhook_js.fetch_and_verify(
                             webhook_js_wasm_path.clone(),
                             wasm_cache_dir.clone(),

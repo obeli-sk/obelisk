@@ -1257,6 +1257,26 @@ pub trait DbExternalApi: DbConnection {
         pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentState>, DbErrorRead>;
 
+    async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite>;
+
+    async fn activate_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        now: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn get_deployment(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Option<DeploymentRecord>, DbErrorRead>;
+
+    async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead>;
+
+    async fn list_deployments(
+        &self,
+        pagination: Pagination<Option<DeploymentId>>,
+    ) -> Result<Vec<DeploymentRecord>, DbErrorRead>;
+
     /// Pause an execution. Only pending executions can be paused.
     async fn pause_execution(
         &self,
@@ -1301,6 +1321,51 @@ impl DeploymentState {
             finished: 0,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeploymentStatus {
+    Candidate,
+    Active,
+    Inactive,
+    Rejected,
+}
+
+impl DeploymentStatus {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DeploymentStatus::Candidate => "candidate",
+            DeploymentStatus::Active => "active",
+            DeploymentStatus::Inactive => "inactive",
+            DeploymentStatus::Rejected => "rejected",
+        }
+    }
+}
+
+impl std::str::FromStr for DeploymentStatus {
+    type Err = StrVariant;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "candidate" => Ok(DeploymentStatus::Candidate),
+            "active" => Ok(DeploymentStatus::Active),
+            "inactive" => Ok(DeploymentStatus::Inactive),
+            "rejected" => Ok(DeploymentStatus::Rejected),
+            _ => Err(StrVariant::from(format!("unknown deployment status: {s}"))),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DeploymentRecord {
+    pub deployment_id: DeploymentId,
+    pub created_at: DateTime<Utc>,
+    pub activated_at: Option<DateTime<Utc>>,
+    pub status: DeploymentStatus,
+    pub config_json: String,
+    pub config_hash: String,
+    pub obelisk_version: String,
+    pub created_by: Option<String>,
 }
 
 #[derive(Debug)]

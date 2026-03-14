@@ -9,7 +9,7 @@ use concepts::storage::{
     PendingState, PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt,
     ResponseCursor, TimeoutOutcome, Version, VersionType, WasmBacktrace,
 };
-use concepts::storage::{DbErrorWrite, DbPoolCloseable};
+use concepts::storage::{DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
 use concepts::time::ClockFn;
@@ -3346,5 +3346,195 @@ async fn test_list_execution_events_pagination_direction(database: Database) {
 
     drop(api_conn);
     drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_insert_and_get(database: Database) {
+    if database == Database::Memory {
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let deployment_id = concepts::prefixed_ulid::DeploymentId::generate();
+    let now = sim_clock.now();
+    let record = DeploymentRecord {
+        deployment_id,
+        created_at: now,
+        activated_at: None,
+        status: DeploymentStatus::Candidate,
+        config_json: r#"{"activities":[]}"#.to_string(),
+        config_hash: "abc123".to_string(),
+        obelisk_version: "0.0.0-test".to_string(),
+        created_by: Some("test".to_string()),
+    };
+    api_conn.insert_deployment(record).await.unwrap();
+
+    let fetched = api_conn
+        .get_deployment(deployment_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(deployment_id, fetched.deployment_id);
+    assert_eq!(DeploymentStatus::Candidate, fetched.status);
+    assert_eq!("abc123", fetched.config_hash);
+    assert_eq!("0.0.0-test", fetched.obelisk_version);
+    assert_eq!(Some("test".to_string()), fetched.created_by);
+    assert!(fetched.activated_at.is_none());
+
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_activate(database: Database) {
+    if database == Database::Memory {
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    // No active deployment initially.
+    assert!(api_conn.get_active_deployment().await.unwrap().is_none());
+
+    let deployment_id = concepts::prefixed_ulid::DeploymentId::generate();
+    let now = sim_clock.now();
+    api_conn
+        .insert_deployment(DeploymentRecord {
+            deployment_id,
+            created_at: now,
+            activated_at: None,
+            status: DeploymentStatus::Candidate,
+            config_json: "{}".to_string(),
+            config_hash: "hash1".to_string(),
+            obelisk_version: "0.0.0-test".to_string(),
+            created_by: None,
+        })
+        .await
+        .unwrap();
+
+    api_conn
+        .activate_deployment(deployment_id, now)
+        .await
+        .unwrap();
+
+    let active = api_conn.get_active_deployment().await.unwrap().unwrap();
+    assert_eq!(deployment_id, active.deployment_id);
+    assert_eq!(DeploymentStatus::Active, active.status);
+    assert!(active.activated_at.is_some());
+
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_only_one_active_allowed(database: Database) {
+    if database == Database::Memory {
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let now = sim_clock.now();
+    let id1 = concepts::prefixed_ulid::DeploymentId::generate();
+    api_conn
+        .insert_deployment(DeploymentRecord {
+            deployment_id: id1,
+            created_at: now,
+            activated_at: None,
+            status: DeploymentStatus::Candidate,
+            config_json: "{}".to_string(),
+            config_hash: "hash1".to_string(),
+            obelisk_version: "0.0.0-test".to_string(),
+            created_by: None,
+        })
+        .await
+        .unwrap();
+    api_conn.activate_deployment(id1, now).await.unwrap();
+
+    // Activating a second deployment must deactivate the first.
+    let id2 = concepts::prefixed_ulid::DeploymentId::generate();
+    api_conn
+        .insert_deployment(DeploymentRecord {
+            deployment_id: id2,
+            created_at: now,
+            activated_at: None,
+            status: DeploymentStatus::Candidate,
+            config_json: "{}".to_string(),
+            config_hash: "hash2".to_string(),
+            obelisk_version: "0.0.0-test".to_string(),
+            created_by: None,
+        })
+        .await
+        .unwrap();
+    api_conn.activate_deployment(id2, now).await.unwrap();
+
+    // Only id2 is active now.
+    let active = api_conn.get_active_deployment().await.unwrap().unwrap();
+    assert_eq!(id2, active.deployment_id);
+
+    // id1 must be inactive.
+    let d1 = api_conn.get_deployment(id1).await.unwrap().unwrap();
+    assert_eq!(DeploymentStatus::Inactive, d1.status);
+
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_list(database: Database) {
+    if database == Database::Memory {
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let now = sim_clock.now();
+    let id1 = concepts::prefixed_ulid::DeploymentId::generate();
+    let id2 = concepts::prefixed_ulid::DeploymentId::generate();
+    for (id, hash) in [(id1, "hash1"), (id2, "hash2")] {
+        api_conn
+            .insert_deployment(DeploymentRecord {
+                deployment_id: id,
+                created_at: now,
+                activated_at: None,
+                status: DeploymentStatus::Candidate,
+                config_json: "{}".to_string(),
+                config_hash: hash.to_string(),
+                obelisk_version: "0.0.0-test".to_string(),
+                created_by: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    let all = api_conn
+        .list_deployments(Pagination::NewerThan {
+            length: 10,
+            cursor: None,
+            including_cursor: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(2, all.len());
+
+    drop(api_conn);
     db_close.close().await;
 }
