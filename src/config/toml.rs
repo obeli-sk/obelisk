@@ -144,10 +144,24 @@ pub(crate) fn compute_config_hash(deployment: &DeploymentToml) -> String {
     format!("{hash:x}")
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ApiConfig {
-    pub(crate) listening_addr: Option<SocketAddr>,
+    #[serde(default = "default_true")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_api_listening_addr")]
+    pub(crate) listening_addr: SocketAddr,
+}
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            listening_addr: default_api_listening_addr(),
+        }
+    }
+}
+fn default_api_listening_addr() -> SocketAddr {
+    "127.0.0.1:5005".parse().expect("valid default address")
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -258,10 +272,24 @@ impl SqliteConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WebUIConfig {
-    pub(crate) listening_addr: Option<String>,
+    #[serde(default = "default_true")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_webui_listening_addr")]
+    pub(crate) listening_addr: String,
+}
+impl Default for WebUIConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            listening_addr: default_webui_listening_addr(),
+        }
+    }
+}
+fn default_webui_listening_addr() -> String {
+    "127.0.0.1:8080".to_string()
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -2718,6 +2746,9 @@ fn validate_no_env_collision(
     Ok(())
 }
 
+const fn default_true() -> bool {
+    true
+}
 const fn default_parallel_compilation() -> bool {
     true
 }

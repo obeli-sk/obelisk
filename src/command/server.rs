@@ -624,7 +624,7 @@ pub(crate) async fn run_internal(
     let deployment_config_json = crate::config::toml::compute_config_json(&config.deployment);
     let deployment_config_hash = crate::config::toml::compute_config_hash(&config.deployment);
     let span = info_span!("init", %deployment_id);
-    let api_listening_addr = config.api.listening_addr;
+    let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
 
     let global_webhook_instance_limiter = config
         .wasm_global_config
@@ -881,7 +881,8 @@ impl ServerVerified {
             Engines::new(engine_config)?
         };
         let mut http_servers = config.http_servers;
-        if let Some(webui_listening_addr) = config.webui.listening_addr {
+        if config.webui.enabled {
+            let webui_listening_addr = config.webui.listening_addr;
             let http_server_name = ConfigName::new(StrVariant::Static("webui")).unwrap();
             http_servers.push(webhook::HttpServer {
                 name: http_server_name.clone(),
@@ -889,13 +890,10 @@ impl ServerVerified {
                     .parse()
                     .context("error converting `webui.listening_addr` to a socket address")?,
             });
-            let target_url = format!(
-                "http://{}",
-                config
-                    .api
-                    .listening_addr
-                    .context("cannot expose webui without configuring `api.listening_addr`")?
-            );
+            if !config.api.enabled {
+                anyhow::bail!("cannot expose webui without enabling the API (`api.enabled = false` is set)");
+            }
+            let target_url = format!("http://{}", config.api.listening_addr);
             config
                 .deployment
                 .webhooks

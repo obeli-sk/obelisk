@@ -1,3 +1,1 @@
-api.listening_addr = "127.0.0.1:5005"   # Address and port on which the API server will listen.
-webui.listening_addr = "127.0.0.1:8080" # Address and port on which the webui will listen.
 database.sqlite.directory = "/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
