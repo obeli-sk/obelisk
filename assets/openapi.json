@@ -1135,6 +1135,13 @@
             "description": "Number of blocked executions",
             "minimum": 0
           },
+          "config_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SHA-256 hash of the canonical deployment config JSON. `null` when no deployment record exists."
+          },
           "current": {
             "type": "boolean",
             "description": "Whether this is the current deployment"
