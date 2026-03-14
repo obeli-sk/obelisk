@@ -922,6 +922,12 @@ impl ServerVerified {
                     }],
                 });
         }
+        if config.external.enabled {
+            http_servers.push(webhook::HttpServer {
+                name: ConfigName::new(StrVariant::Static("external")).unwrap(),
+                listening_addr: config.external.listening_addr,
+            });
+        }
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
         let parent_preopen_dir = OptionFuture::from(
             config

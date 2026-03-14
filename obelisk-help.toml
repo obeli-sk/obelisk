@@ -1,10 +1,12 @@
 ## Server configuration
-## Both the API and the webui are enabled by default on localhost.
-## To disable them, set `enabled = false`. To change the address, override `listening_addr`.
-# api.enabled = false                       # Disable the API server (enabled by default).
-# api.listening_addr = "127.0.0.1:5005"    # Address and port on which the API server will listen.
-# webui.enabled = false                     # Disable the webui (enabled by default).
-# webui.listening_addr = "127.0.0.1:8080"  # Address and port on which the webui will listen.
+## The API, webui, and external HTTP server are all enabled by default on localhost.
+## To disable any of them, set `enabled = false`. To change the address, override `listening_addr`.
+# api.enabled = false                           # Disable the API server (enabled by default).
+# api.listening_addr = "127.0.0.1:5005"        # Address and port on which the API server will listen.
+# webui.enabled = false                         # Disable the webui (enabled by default).
+# webui.listening_addr = "127.0.0.1:8080"      # Address and port on which the webui will listen.
+# external.enabled = false                      # Disable the external HTTP server (enabled by default).
+# external.listening_addr = "127.0.0.1:9090"   # Address and port on which the external HTTP server will listen.
 # Note: listening on all interfaces using [::]:port is not advised, as there is no auth yet.
 
 ## Semver version requirement for the Obelisk binary.
@@ -283,14 +285,16 @@
 # logs_store_min_level = "debug"             # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 
 ### Webhook Endpoint section
+## The built-in "external" HTTP server (127.0.0.1:9090) is available by default.
+## Additional HTTP servers can be defined with `[[http_server]]`.
 # [[http_server]]
-# name = "external"
+# name = "my_server"
 # listening_addr = "0.0.0.0:9000"
 # max_inflight_requests = "unlimited" # If set to an integer, limits the number of inflight requests
 #
 # [[webhook_endpoint]]
 ## Common settings for all components - see above.
-# http_server = "external" # link to a `http_server`'s name
+# http_server = "external" # link to a `http_server`'s name (built-in default)
 
 ### Routes section
 ## An array of routes that will be matched against incoming requests.

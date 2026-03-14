@@ -10,10 +10,6 @@ target = true
 directory = "."
 prefix = "obelisk.log"
 
-[[http_server]]
-name = "external_webhook"
-listening_addr = "127.0.0.1:9090"
-
 [[activity_wasm]]
 name = "test_programs_fibo_activity"
 location = "oci://docker.io/getobelisk/test_programs_fibo_activity:2026-03-10@sha256:802d602f0f2858d2bfc491760e8a7d9d712e98e3d4c97ce3d33d45036bdf6528"
@@ -28,7 +24,6 @@ backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/tes
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
 location = "oci://docker.io/getobelisk/test_programs_fibo_webhook:2026-03-10@sha256:7c7cdd471bf652ffd39b8e30babed3ece1b28b94ce9b909e23ac9c00286544c1"
-http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
 
