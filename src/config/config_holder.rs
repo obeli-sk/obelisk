@@ -36,6 +36,7 @@ const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
 const OBELISK_TOML_DIR_PREFIX: &str = "${OBELISK_TOML_DIR}/";
 const TEMP_DIR_PREFIX: &str = "${TEMP_DIR}/";
 
+#[derive(Clone)]
 pub(crate) struct PathPrefixes {
     pub(crate) obelisk_toml_dir: PathBuf,
     pub(crate) project_dirs: Option<ProjectDirs>,
@@ -152,6 +153,7 @@ impl PathPrefixes {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct ConfigHolder {
     config_source: ConfigSource,
     pub(crate) path_prefixes: PathPrefixes,
