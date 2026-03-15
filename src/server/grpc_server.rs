@@ -1,5 +1,9 @@
 use crate::command::server;
 use crate::command::server::SubmitError;
+use crate::command::server::VerifyParams;
+use crate::config::config_holder::ConfigHolder;
+use crate::config::config_holder::PathPrefixes;
+use crate::config::toml::DeploymentToml;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
@@ -85,9 +89,14 @@ pub(crate) struct GrpcServer {
     engines: Engines,
     #[debug(skip)]
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+    #[debug(skip)]
+    config_holder: Arc<crate::config::config_holder::ConfigHolder>,
+    #[debug(skip)]
+    path_prefixes: Arc<crate::config::config_holder::PathPrefixes>,
 }
 
 impl GrpcServer {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         deployment_id: DeploymentId,
         db_pool: Arc<dyn DbPool>,
@@ -96,6 +105,8 @@ impl GrpcServer {
         cancel_registry: CancelRegistry,
         engines: Engines,
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+        config_holder: Arc<ConfigHolder>,
+        path_prefixes: Arc<PathPrefixes>,
     ) -> Self {
         Self {
             deployment_id,
@@ -105,6 +116,8 @@ impl GrpcServer {
             cancel_registry,
             engines,
             log_forwarder_sender,
+            config_holder,
+            path_prefixes,
         }
     }
 }
@@ -1391,6 +1404,81 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 deployment_id: Some(self.deployment_id.into()),
             },
         ))
+    }
+
+    #[instrument(skip_all, fields(deployment_id))]
+    async fn switch_deployment(
+        &self,
+        request: tonic::Request<grpc_gen::SwitchDeploymentRequest>,
+    ) -> TonicRespResult<grpc_gen::SwitchDeploymentResponse> {
+        let request = request.into_inner();
+        let deployment_id: DeploymentId = request
+            .deployment_id
+            .argument_must_exist("deployment_id")?
+            .try_into()?;
+        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
+
+        if request.hot_redeploy {
+            return Err(tonic::Status::unimplemented(
+                "hot_redeploy is not yet implemented",
+            ));
+        }
+
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+
+        // Check that the deployment exists.
+        conn.get_deployment(deployment_id)
+            .await
+            .to_status()?
+            .must_exist("deployment")?;
+
+        if request.verify {
+            let mut config =
+                self.config_holder.load_config().await.map_err(|err| {
+                    tonic::Status::internal(format!("cannot load config: {err:#}"))
+                })?;
+            let stored_deployment: DeploymentToml = serde_json::from_str(
+                &conn
+                    .get_deployment(deployment_id)
+                    .await
+                    .to_status()?
+                    .must_exist("deployment")?
+                    .config_json,
+            )
+            .map_err(|err| {
+                tonic::Status::internal(format!("cannot parse stored deployment config: {err}"))
+            })?;
+            config.deployment = stored_deployment;
+            let verify_deployment_id = DeploymentId::generate();
+            let mut termination_watcher = self.termination_watcher.clone();
+            crate::command::server::verify_config_compile_link(
+                config,
+                self.path_prefixes.clone(),
+                verify_deployment_id,
+                VerifyParams {
+                    clean_cache: false,
+                    clean_codegen_cache: false,
+                    ignore_missing_env_vars: false,
+                    suppress_type_checking_errors: false,
+                },
+                &mut termination_watcher,
+            )
+            .await
+            .map_err(|err| {
+                tonic::Status::failed_precondition(format!("verification failed: {err:#}"))
+            })?;
+        }
+
+        conn.activate_deployment(deployment_id, chrono::Utc::now())
+            .await
+            .to_status()?;
+
+        info!(%deployment_id, "Deployment switched");
+        Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {}))
     }
 }
 

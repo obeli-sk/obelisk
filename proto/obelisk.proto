@@ -38,6 +38,7 @@ service FunctionRepository {
 service DeploymentRepository {
     rpc ListDeploymentStates(ListDeploymentStatesRequest) returns (ListDeploymentStatesResponse);
     rpc GetCurrentDeploymentId(GetCurrentDeploymentIdRequest) returns (GetCurrentDeploymentIdResponse);
+    rpc SwitchDeployment(SwitchDeploymentRequest) returns (SwitchDeploymentResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -763,6 +764,16 @@ message GetCurrentDeploymentIdRequest {
 }
 message GetCurrentDeploymentIdResponse {
     DeploymentId deployment_id = 1;
+}
+
+message SwitchDeploymentRequest {
+    DeploymentId deployment_id = 1;
+    // Run `obelisk server verify` on the deployment config before switching.
+    bool verify = 2;
+    // Perform a hot redeployment (reload running components without restart). Not yet implemented.
+    bool hot_redeploy = 3;
+}
+message SwitchDeploymentResponse {
 }
 
 

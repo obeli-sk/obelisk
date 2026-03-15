@@ -267,6 +267,7 @@ struct TestServer {
     client: reqwest::Client,
     termination_sender: watch::Sender<()>,
     server_handle: JoinHandle<anyhow::Result<()>>,
+    sqlite_file: std::path::PathBuf,
     _tmp_dir: tempfile::TempDir,
 }
 
@@ -330,6 +331,7 @@ impl TestServer {
         }
 
         let webhook_base_url = format!("http://{ip}:{WEBHOOK_PORT}");
+        let sqlite_file = tmp_dir.path().join(crate::config::toml::SQLITE_FILE_NAME);
         TestServer {
             ip,
             base_url,
@@ -337,6 +339,7 @@ impl TestServer {
             client,
             termination_sender,
             server_handle,
+            sqlite_file,
             _tmp_dir: tmp_dir,
         }
     }
@@ -1069,5 +1072,144 @@ async fn inline_stub_self_stubbing() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({"ok": "stub-ok"}));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn switch_deployment_grpc() {
+    use chrono::Utc;
+    use concepts::prefixed_ulid::DeploymentId;
+    use concepts::storage::{
+        DbPool as _, DbPoolCloseable as _, DeploymentRecord, DeploymentStatus,
+    };
+    use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
+    use grpc::grpc_gen::{
+        DeploymentId as GrpcDeploymentId, SwitchDeploymentRequest,
+        deployment_repository_client::DeploymentRepositoryClient,
+    };
+    use tonic::Code;
+
+    let server = TestServer::start(test_addr!(29)).await;
+    let endpoint = format!("http://{}", server.api_addr());
+    let mut client = DeploymentRepositoryClient::connect(endpoint).await.unwrap();
+
+    // Get the current deployment ID via REST.
+    let current_id: String = server
+        .client
+        .get(format!("{}/v1/deployment-id", server.base_url))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // hot_redeploy=true should return UNIMPLEMENTED before any DB access.
+    let err = client
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(GrpcDeploymentId {
+                id: current_id.clone(),
+            }),
+            verify: false,
+            hot_redeploy: true,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::Unimplemented);
+
+    // Non-existent deployment ID should return NOT_FOUND.
+    let fake_id = DeploymentId::generate().to_string();
+    let err = client
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(GrpcDeploymentId { id: fake_id }),
+            verify: false,
+            hot_redeploy: false,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::NotFound);
+
+    // Insert a second candidate deployment directly into the SQLite DB.
+    let second_id = DeploymentId::generate();
+    {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.external_api_conn().await.unwrap();
+        conn.insert_deployment(DeploymentRecord {
+            deployment_id: second_id,
+            created_at: Utc::now(),
+            activated_at: None,
+            status: DeploymentStatus::Candidate,
+            config_json: "{}".to_string(),
+            config_hash: "second_deployment_hash".to_string(),
+            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+            created_by: Some("test".to_string()),
+        })
+        .await
+        .unwrap();
+        pool.close().await;
+    }
+
+    // Switch to the second deployment.
+    client
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(GrpcDeploymentId {
+                id: second_id.to_string(),
+            }),
+            verify: false,
+            hot_redeploy: false,
+        })
+        .await
+        .expect("switch_deployment to second deployment should succeed");
+
+    // Verify the DB-active deployment is now second_id.
+    {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.external_api_conn().await.unwrap();
+        let active = conn.get_active_deployment().await.unwrap().unwrap();
+        assert_eq!(active.deployment_id, second_id);
+        pool.close().await;
+    }
+
+    // The running server's in-memory deployment_id is unchanged (hot-reload not implemented).
+    let reported_id: String = server
+        .client
+        .get(format!("{}/v1/deployment-id", server.base_url))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(reported_id, current_id);
+
+    // Switch back to the original deployment.
+    client
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(GrpcDeploymentId {
+                id: current_id.clone(),
+            }),
+            verify: false,
+            hot_redeploy: false,
+        })
+        .await
+        .expect("switch_deployment back to original should succeed");
+
+    // Verify the DB-active deployment is back to the original.
+    {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.external_api_conn().await.unwrap();
+        let active = conn.get_active_deployment().await.unwrap().unwrap();
+        assert_eq!(active.deployment_id.to_string(), current_id);
+        pool.close().await;
+    }
+
     server.shutdown().await;
 }

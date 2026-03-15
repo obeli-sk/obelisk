@@ -632,7 +632,8 @@ pub(crate) async fn run_internal(
         .as_semaphore();
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
-    let path_prefixes = Arc::new(config_holder.path_prefixes);
+    let config_holder = Arc::new(config_holder);
+    let path_prefixes = Arc::new(config_holder.path_prefixes.clone());
     let database = config.database.clone();
     let compiled_and_linked = Box::pin(verify_config_compile_link(
         config,
@@ -745,6 +746,8 @@ pub(crate) async fn run_internal(
         cancel_registry.clone(),
         server_init.engines.clone(),
         server_init.log_forwarder_sender.clone(),
+        config_holder.clone(),
+        path_prefixes.clone(),
     ));
 
     let mut grpc = RoutesBuilder::default();
