@@ -1802,7 +1802,7 @@ async fn list_deployment_states(
     let mut sql = format!(
         "
         SELECT
-            s.deployment_id,
+            d.deployment_id,
 
             COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}') AS locked,
 
@@ -1825,8 +1825,8 @@ async fn list_deployment_states(
             d.created_at,
             d.updated_at,
             d.status
-        FROM t_state s
-        INNER JOIN t_deployment d ON d.deployment_id = s.deployment_id"
+        FROM t_deployment d
+        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id"
     );
 
     // Pagination
@@ -1834,7 +1834,7 @@ async fn list_deployment_states(
         let p_cursor = add_param(Box::new(cursor.to_string()));
         write!(
             sql,
-            " WHERE s.deployment_id {rel} {p_cursor}",
+            " WHERE d.deployment_id {rel} {p_cursor}",
             rel = pagination.rel()
         )
         .expect("writing to string");
@@ -1851,7 +1851,7 @@ async fn list_deployment_states(
 
     write!(
         sql,
-        " GROUP BY s.deployment_id, d.config_hash, d.config_json, d.created_at, d.updated_at, d.status ORDER BY s.deployment_id {inner_order} LIMIT {}",
+        " GROUP BY d.deployment_id, d.config_hash, d.config_json, d.created_at, d.updated_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");

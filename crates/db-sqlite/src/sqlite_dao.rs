@@ -3397,19 +3397,19 @@ impl SqlitePool {
         let mut sql = format!(
             r"
         SELECT
-            s.deployment_id,
-            SUM(s.state = '{STATE_LOCKED}') AS locked,
-            SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished <= :now) AS pending,
-            SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished > :now) AS scheduled,
-            SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
-            SUM(s.state = '{STATE_FINISHED}') AS finished,
+            d.deployment_id,
+            COALESCE(SUM(s.state = '{STATE_LOCKED}'), 0) AS locked,
+            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished <= :now), 0) AS pending,
+            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished > :now), 0) AS scheduled,
+            COALESCE(SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}'), 0) AS blocked,
+            COALESCE(SUM(s.state = '{STATE_FINISHED}'), 0) AS finished,
             d.config_hash,
             {config_json_col},
             d.created_at,
             d.updated_at,
             d.status
-        FROM t_state s
-        INNER JOIN t_deployment d ON d.deployment_id = s.deployment_id"
+        FROM t_deployment d
+        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id"
         );
 
         params.push((":now", Box::new(current_time)));
@@ -3418,7 +3418,7 @@ impl SqlitePool {
             params.push((":cursor", Box::new(*cursor)));
             write!(
                 sql,
-                " WHERE s.deployment_id {rel} :cursor",
+                " WHERE d.deployment_id {rel} :cursor",
                 rel = pagination.rel()
             )
             .expect("writing to string");
@@ -3434,7 +3434,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " GROUP BY s.deployment_id, d.config_hash, d.config_json, d.created_at, d.updated_at, d.status ORDER BY s.deployment_id {inner_order} LIMIT {limit}",
+            " GROUP BY d.deployment_id, d.config_hash, d.config_json, d.created_at, d.updated_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
