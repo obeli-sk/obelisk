@@ -3476,17 +3476,17 @@ impl SqlitePool {
         tx.execute(
             "INSERT INTO t_deployment \
              (deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![
-                record.deployment_id.to_string(),
-                record.created_at,
-                record.activated_at,
-                record.status.as_str(),
-                record.config_json,
-                record.config_hash,
-                record.obelisk_version,
-                record.created_by,
-            ],
+             VALUES (:deployment_id, :created_at, :activated_at, :status, :config_json, :config_hash, :obelisk_version, :created_by)",
+            rusqlite::named_params! {
+                ":deployment_id": record.deployment_id.to_string(),
+                ":created_at": record.created_at,
+                ":activated_at": record.activated_at,
+                ":status": record.status.as_str(),
+                ":config_json": record.config_json,
+                ":config_hash": record.config_hash,
+                ":obelisk_version": record.obelisk_version,
+                ":created_by": record.created_by,
+            },
         )
         .map_err(RusqliteError::from)?;
         Ok(())
@@ -3506,8 +3506,11 @@ impl SqlitePool {
         // Set target deployment to active.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', activated_at = ?1 WHERE deployment_id = ?2",
-                rusqlite::params![now, deployment_id.to_string()],
+                "UPDATE t_deployment SET status = 'active', activated_at = :activated_at WHERE deployment_id = :deployment_id",
+                rusqlite::named_params! {
+                    ":activated_at": now,
+                    ":deployment_id": deployment_id.to_string(),
+                },
             )
             .map_err(RusqliteError::from)?;
         if rows == 0 {
@@ -3522,8 +3525,8 @@ impl SqlitePool {
     ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         tx.query_row(
             "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
-             FROM t_deployment WHERE deployment_id = ?1",
-            [deployment_id.to_string()],
+             FROM t_deployment WHERE deployment_id = :deployment_id",
+            rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
             deployment_record_from_row,
         )
         .optional()
