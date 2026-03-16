@@ -1318,7 +1318,7 @@ pub struct DeploymentState {
     pub status: DeploymentStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeploymentStatus {
     Candidate,
     Active,

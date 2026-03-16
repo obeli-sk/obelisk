@@ -3455,13 +3455,13 @@ impl SqlitePool {
                     .as_ref(),
                 |row| {
                     let status_str: String = row.get("status")?;
-                    let status = status_str
-                        .parse::<DeploymentStatus>()
-                        .map_err(|_| rusqlite::Error::InvalidColumnType(
+                    let status = status_str.parse::<DeploymentStatus>().map_err(|_| {
+                        rusqlite::Error::InvalidColumnType(
                             0,
                             "status".to_string(),
                             rusqlite::types::Type::Text,
-                        ))?;
+                        )
+                    })?;
                     Ok(DeploymentState {
                         deployment_id: row.get("deployment_id")?,
                         locked: row.get("locked")?,

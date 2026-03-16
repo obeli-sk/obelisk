@@ -25,6 +25,7 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbPool;
 use concepts::storage::DeploymentState;
+use concepts::storage::DeploymentStatus;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
 use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH;
@@ -128,32 +129,28 @@ fn convert_deployment_pagination(
     use grpc_gen::list_deployments_request;
 
     match request.pagination.as_ref() {
-        Some(list_deployments_request::Pagination::NewerThan(p)) => {
-            Ok(Pagination::NewerThan {
-                length: u16::try_from(p.length)
-                    .ok()
-                    .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
-                cursor: p
-                    .cursor
-                    .as_ref()
-                    .map(|c| DeploymentId::try_from(c.clone()))
-                    .transpose()?,
-                including_cursor: p.including_cursor,
-            })
-        }
-        Some(list_deployments_request::Pagination::OlderThan(p)) => {
-            Ok(Pagination::OlderThan {
-                length: u16::try_from(p.length)
-                    .ok()
-                    .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
-                cursor: p
-                    .cursor
-                    .as_ref()
-                    .map(|c| DeploymentId::try_from(c.clone()))
-                    .transpose()?,
-                including_cursor: p.including_cursor,
-            })
-        }
+        Some(list_deployments_request::Pagination::NewerThan(p)) => Ok(Pagination::NewerThan {
+            length: u16::try_from(p.length)
+                .ok()
+                .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+            cursor: p
+                .cursor
+                .as_ref()
+                .map(|c| DeploymentId::try_from(c.clone()))
+                .transpose()?,
+            including_cursor: p.including_cursor,
+        }),
+        Some(list_deployments_request::Pagination::OlderThan(p)) => Ok(Pagination::OlderThan {
+            length: u16::try_from(p.length)
+                .ok()
+                .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+            cursor: p
+                .cursor
+                .as_ref()
+                .map(|c| DeploymentId::try_from(c.clone()))
+                .transpose()?,
+            including_cursor: p.including_cursor,
+        }),
         None => Ok(LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION),
     }
 }
@@ -1668,8 +1665,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     }
 }
 
-fn status_to_grpc(status: concepts::storage::DeploymentStatus) -> grpc_gen::DeploymentStatus {
-    use concepts::storage::DeploymentStatus;
+fn status_to_grpc(status: DeploymentStatus) -> grpc_gen::DeploymentStatus {
     match status {
         DeploymentStatus::Candidate => grpc_gen::DeploymentStatus::Candidate,
         DeploymentStatus::Active => grpc_gen::DeploymentStatus::Active,
@@ -1730,13 +1726,13 @@ mod tests {
         // Previously there was a copy-paste bug that mapped NewerThan to OlderThan
         let deployment_id = DeploymentId::generate();
         let request = grpc_gen::ListDeploymentsRequest {
-            pagination: Some(
-                grpc_gen::list_deployments_request::Pagination::NewerThan(NewerThan {
+            pagination: Some(grpc_gen::list_deployments_request::Pagination::NewerThan(
+                NewerThan {
                     length: 20,
                     cursor: Some(deployment_id.into()),
                     including_cursor: true,
-                }),
-            ),
+                },
+            )),
             include_config_json: true,
         };
 
@@ -1762,13 +1758,13 @@ mod tests {
     fn test_convert_deployment_pagination_older_than() {
         let deployment_id = DeploymentId::generate();
         let request = grpc_gen::ListDeploymentsRequest {
-            pagination: Some(
-                grpc_gen::list_deployments_request::Pagination::OlderThan(OlderThan {
+            pagination: Some(grpc_gen::list_deployments_request::Pagination::OlderThan(
+                OlderThan {
                     length: 15,
                     cursor: Some(deployment_id.into()),
                     including_cursor: false,
-                }),
-            ),
+                },
+            )),
             include_config_json: true, // TODO test
         };
 
@@ -1816,13 +1812,13 @@ mod tests {
     #[test]
     fn test_convert_deployment_pagination_newer_than_no_cursor() {
         let request = grpc_gen::ListDeploymentsRequest {
-            pagination: Some(
-                grpc_gen::list_deployments_request::Pagination::NewerThan(NewerThan {
+            pagination: Some(grpc_gen::list_deployments_request::Pagination::NewerThan(
+                NewerThan {
                     length: 10,
                     cursor: None,
                     including_cursor: false,
-                }),
-            ),
+                },
+            )),
             include_config_json: true, // TODO test
         };
 

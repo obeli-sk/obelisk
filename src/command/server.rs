@@ -374,8 +374,8 @@ pub(crate) async fn run(
 ) -> anyhow::Result<()> {
     let config_holder =
         ConfigHolder::new(project_dirs, base_dirs, ConfigFileOption::MustExist(config))?;
-    let mut config = config_holder.load_config().await?;
-    let _guard: Guard = init::init(&mut config)?;
+    let config = config_holder.load_config().await?;
+    let _guard: Guard = init::init(&config)?;
     let (termination_sender, termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
 
@@ -407,8 +407,8 @@ pub(crate) async fn verify(
 ) -> Result<(), anyhow::Error> {
     let config_holder =
         ConfigHolder::new(project_dirs, base_dirs, ConfigFileOption::MustExist(config))?;
-    let mut config = config_holder.load_config().await?;
-    let _guard: Guard = init::init(&mut config)?;
+    let config = config_holder.load_config().await?;
+    let _guard: Guard = init::init(&config)?;
     let deployment_id = DeploymentId::generate();
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });

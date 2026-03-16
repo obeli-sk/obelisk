@@ -259,8 +259,8 @@ pub(crate) async fn inspect(
         BaseDirs::new(),
         ConfigFileOption::AllowMissing(config),
     )?;
-    let mut config = config_holder.load_config().await?;
-    let _guard: Guard = init::init(&mut config)?;
+    let config = config_holder.load_config().await?;
+    let _guard: Guard = init::init(&config)?;
     let path_prefixes = &config_holder.path_prefixes;
 
     let wasm_cache_dir = config

@@ -29,7 +29,12 @@ async fn create_deployment_with_execution(
     sim_clock: &SimClock,
 ) -> ExecutionId {
     let now = sim_clock.now();
-    if db_connection.get_deployment(deployment_id).await.unwrap().is_none() {
+    if db_connection
+        .get_deployment(deployment_id)
+        .await
+        .unwrap()
+        .is_none()
+    {
         db_connection
             .insert_deployment(DeploymentRecord {
                 deployment_id,
@@ -480,8 +485,7 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
 
     // Deployment with locked execution
     let exec_locked =
-        create_deployment_with_execution(api_conn.as_ref(), deployment_locked, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_locked, &sim_clock).await;
     lock_execution(
         db_connection.as_ref(),
         &exec_locked,
@@ -492,8 +496,7 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
 
     // Deployment with finished execution
     let exec_finished =
-        create_deployment_with_execution(api_conn.as_ref(), deployment_finished, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_finished, &sim_clock).await;
     let version = lock_execution(
         db_connection.as_ref(),
         &exec_finished,
@@ -505,14 +508,11 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
 
     // Deployment with mixed states: 1 pending, 1 locked, 1 finished
     let _exec_mixed_pending =
-        create_deployment_with_execution(api_conn.as_ref(), deployment_mixed, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_mixed, &sim_clock).await;
     let exec_mixed_locked =
-        create_deployment_with_execution(api_conn.as_ref(), deployment_mixed, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_mixed, &sim_clock).await;
     let exec_mixed_finished =
-        create_deployment_with_execution(api_conn.as_ref(), deployment_mixed, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_mixed, &sim_clock).await;
 
     lock_execution(
         db_connection.as_ref(),
