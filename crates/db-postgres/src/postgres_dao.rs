@@ -286,7 +286,7 @@ CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_created_at ON t_log (execution
 CREATE TABLE IF NOT EXISTS t_deployment (
     deployment_id TEXT     NOT NULL PRIMARY KEY,
     created_at    TIMESTAMPTZ NOT NULL,
-    activated_at  TIMESTAMPTZ,
+    updated_at    TIMESTAMPTZ NOT NULL,
     status        TEXT     NOT NULL DEFAULT 'candidate',
     config_json      TEXT     NOT NULL,
     config_hash      TEXT     NOT NULL,
@@ -297,8 +297,8 @@ CREATE TABLE IF NOT EXISTS t_deployment (
     pub const IDX_T_DEPLOYMENT_STATUS: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_deployment_status ON t_deployment (status);
 ";
-    pub const IDX_T_DEPLOYMENT_ACTIVATED_AT: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_deployment_activated_at ON t_deployment (activated_at);
+    pub const IDX_T_DEPLOYMENT_UPDATED_AT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_deployment_updated_at ON t_deployment (updated_at);
 ";
     // Enforces at most one active deployment at a time.
     pub const IDX_T_DEPLOYMENT_SINGLE_ACTIVE: &str = r"
@@ -538,7 +538,7 @@ impl PostgresPool {
             ddl::IDX_T_LOG_EXECUTION_ID_CREATED_AT,
             ddl::CREATE_TABLE_T_DEPLOYMENT,
             ddl::IDX_T_DEPLOYMENT_STATUS,
-            ddl::IDX_T_DEPLOYMENT_ACTIVATED_AT,
+            ddl::IDX_T_DEPLOYMENT_UPDATED_AT,
             ddl::IDX_T_DEPLOYMENT_SINGLE_ACTIVE,
         ];
 
@@ -620,7 +620,7 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
     Ok(DeploymentRecord {
         deployment_id,
         created_at: get(row, "created_at")?,
-        activated_at: get(row, "activated_at")?,
+        updated_at: get(row, "updated_at")?,
         status,
         config_json: get(row, "config_json")?,
         config_hash: get(row, "config_hash")?,
@@ -1821,9 +1821,12 @@ async fn list_deployment_states(
             COUNT(*) FILTER (WHERE s.state = '{STATE_FINISHED}') AS finished,
 
             d.config_hash,
-            {config_json_col}
+            {config_json_col},
+            d.created_at,
+            d.updated_at,
+            d.status
         FROM t_state s
-        LEFT JOIN t_deployment d ON d.deployment_id = s.deployment_id"
+        INNER JOIN t_deployment d ON d.deployment_id = s.deployment_id"
     );
 
     // Pagination
@@ -1848,7 +1851,7 @@ async fn list_deployment_states(
 
     write!(
         sql,
-        " GROUP BY s.deployment_id, d.config_hash ORDER BY s.deployment_id {inner_order} LIMIT {}",
+        " GROUP BY s.deployment_id, d.config_hash, d.config_json, d.created_at, d.updated_at, d.status ORDER BY s.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -1872,6 +1875,10 @@ async fn list_deployment_states(
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
         let deployment_id: String = get(&row, "deployment_id")?;
+        let status_str: String = get::<String, _>(&row, "status")?;
+        let status = status_str
+            .parse::<DeploymentStatus>()
+            .map_err(|e| consistency_db_err(format!("unknown deployment status: {e}")))?;
         result.push(DeploymentState {
             deployment_id: DeploymentId::from_str(&deployment_id).map_err(DbErrorGeneric::from)?,
             locked: u32::try_from(get::<i64, _>(&row, "locked")?).expect("count is never negative"),
@@ -1885,6 +1892,9 @@ async fn list_deployment_states(
                 .expect("count is never negative"),
             config_hash: get::<Option<String>, _>(&row, "config_hash")?,
             config_json: get::<Option<String>, _>(&row, "config_json")?,
+            created_at: get::<DateTime<Utc>, _>(&row, "created_at")?,
+            updated_at: get::<DateTime<Utc>, _>(&row, "updated_at")?,
+            status,
         });
     }
 
@@ -4362,12 +4372,12 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by) \
+             (deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             &[
                 &record.deployment_id.to_string(),
                 &record.created_at,
-                &record.activated_at,
+                &record.updated_at,
                 &record.status.as_str(),
                 &record.config_json,
                 &record.config_hash,
@@ -4388,16 +4398,16 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        // Demote currently active deployment to inactive.
+        // Demote currently active deployment to superseded, recording deactivation time.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive' WHERE status = 'active'",
-            &[],
+            "UPDATE t_deployment SET status = 'superseded', updated_at = $1 WHERE status = 'active'",
+            &[&now],
         )
         .await?;
         // Set target deployment to active.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', activated_at = $1 WHERE deployment_id = $2",
+                "UPDATE t_deployment SET status = 'active', updated_at = $1 WHERE deployment_id = $2",
                 &[&now, &deployment_id.to_string()],
             )
             .await?;
@@ -4417,7 +4427,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+                "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
                  FROM t_deployment WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
@@ -4435,7 +4445,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+                "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
                  FROM t_deployment WHERE status = 'active' LIMIT 1",
                 &[],
             )
@@ -4461,7 +4471,7 @@ impl DbExternalApi for PostgresConnection {
         };
 
         let mut sql = String::from(
-            "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+            "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
              FROM t_deployment",
         );
 

@@ -271,8 +271,8 @@ pub(crate) async fn generate_wit_deps(
         base_dirs,
         ConfigFileOption::AllowMissing(config),
     )?;
-    let mut config = config_holder.load_config().await?;
-    let _guard = init::init(&mut config)?;
+    let config = config_holder.load_config().await?;
+    let _guard = init::init(&config)?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let compiled_and_linked = Box::pin(verify_config_compile_link(

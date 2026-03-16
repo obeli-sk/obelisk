@@ -2099,11 +2099,29 @@ mod deployment {
         extract::{Query, State},
         response::{IntoResponse, Response},
     };
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
     use concepts::{
         prefixed_ulid::DeploymentId,
         storage::{DeploymentState, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH, Pagination},
     };
+
+    #[derive(Debug, Serialize, ToSchema)]
+    #[serde(rename_all = "snake_case")]
+    pub enum DeploymentStatusSer {
+        Candidate,
+        Active,
+        Superseded,
+    }
+
+    impl From<&concepts::storage::DeploymentStatus> for DeploymentStatusSer {
+        fn from(s: &concepts::storage::DeploymentStatus) -> Self {
+            match s {
+                concepts::storage::DeploymentStatus::Candidate => Self::Candidate,
+                concepts::storage::DeploymentStatus::Active => Self::Active,
+                concepts::storage::DeploymentStatus::Superseded => Self::Superseded,
+            }
+        }
+    }
     use serde::{Deserialize, Serialize};
     use std::{fmt::Write as _, sync::Arc};
     use tracing::instrument;
@@ -2115,8 +2133,12 @@ mod deployment {
         /// Deployment identifier
         #[schema(value_type = String, example = "Dep_01JKXYZ123456789ABCDEFGHIJ")]
         pub deployment_id: DeploymentId,
-        /// Whether this is the current deployment
-        pub current: bool,
+        /// Deployment lifecycle status
+        pub status: DeploymentStatusSer,
+        /// When this deployment was submitted
+        pub created_at: DateTime<Utc>,
+        /// Last status-change time (activation for Active, deactivation for Superseded)
+        pub updated_at: DateTime<Utc>,
         /// Number of locked executions
         pub locked: u32,
         /// Number of pending executions
@@ -2132,10 +2154,12 @@ mod deployment {
     }
 
     impl DeploymentStateSer {
-        fn from(deployment_state: &DeploymentState, current_deployment_id: DeploymentId) -> Self {
+        fn from(deployment_state: &DeploymentState) -> Self {
             Self {
                 deployment_id: deployment_state.deployment_id,
-                current: deployment_state.deployment_id == current_deployment_id,
+                status: DeploymentStatusSer::from(&deployment_state.status),
+                created_at: deployment_state.created_at,
+                updated_at: deployment_state.updated_at,
                 locked: deployment_state.locked,
                 pending: deployment_state.pending,
                 scheduled: deployment_state.scheduled,
@@ -2187,19 +2211,14 @@ mod deployment {
             cursor: params.cursor_from,
             including_cursor: params.including_cursor,
         };
-        let mut states = conn
+        let states = conn
             .list_deployment_states(Utc::now(), pagination, false)
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 
-        let deployment_id = state.deployment_ctx.read().await.deployment_id;
-        if crate::server::should_add_current_deployment(&pagination, deployment_id, &states) {
-            states.insert(0, DeploymentState::new(deployment_id));
-        }
-
         let states: Vec<DeploymentStateSer> = states
             .into_iter()
-            .map(|dep| DeploymentStateSer::from(&dep, deployment_id))
+            .map(|dep| DeploymentStateSer::from(&dep))
             .collect();
 
         Ok(match accept {

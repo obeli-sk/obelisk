@@ -36,9 +36,11 @@ service FunctionRepository {
 }
 
 service DeploymentRepository {
-    rpc ListDeploymentStates(ListDeploymentStatesRequest) returns (ListDeploymentStatesResponse);
+    rpc ListDeployments(ListDeploymentsRequest) returns (ListDeploymentsResponse);
     rpc GetCurrentDeploymentId(GetCurrentDeploymentIdRequest) returns (GetCurrentDeploymentIdResponse);
     rpc SwitchDeployment(SwitchDeploymentRequest) returns (SwitchDeploymentResponse);
+    rpc SubmitDeployment(SubmitDeploymentRequest) returns (SubmitDeploymentResponse);
+    rpc GetDeployment(GetDeploymentRequest) returns (GetDeploymentResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -725,7 +727,7 @@ message ListLogsResponse {
     optional string prev_page_token = 3;
 }
 
-message ListDeploymentStatesRequest {
+message ListDeploymentsRequest {
     message NewerThan {
         uint32 length = 1;
         optional DeploymentId cursor = 2;
@@ -744,20 +746,33 @@ message ListDeploymentStatesRequest {
     bool include_config_json = 3;
 }
 
-message DeploymentState {
-    DeploymentId deployment_id = 1;
-    bool current = 2;
-    uint32 locked = 3;
-    uint32 pending = 4;
-    uint32 scheduled = 5;
-    uint32 blocked = 6;
-    uint32 finished = 7;
-    optional string config_hash = 8;
-    optional string config_json = 9;
+enum DeploymentStatus {
+    DEPLOYMENT_STATUS_UNSPECIFIED = 0;
+    DEPLOYMENT_STATUS_CANDIDATE = 1;
+    DEPLOYMENT_STATUS_ACTIVE = 2;
+    DEPLOYMENT_STATUS_SUPERSEDED = 3;
 }
 
-message ListDeploymentStatesResponse {
-    repeated DeploymentState deployments = 1;
+message Deployment {
+    DeploymentId deployment_id = 1;
+    DeploymentStatus status = 2;
+    google.protobuf.Timestamp created_at = 3;
+    google.protobuf.Timestamp updated_at = 4;
+    string config_hash = 5;
+    optional string config_json = 6;
+}
+
+message DeploymentSummary {
+    Deployment deployment = 1;
+    uint32 locked = 2;
+    uint32 pending = 3;
+    uint32 scheduled = 4;
+    uint32 blocked = 5;
+    uint32 finished = 6;
+}
+
+message ListDeploymentsResponse {
+    repeated DeploymentSummary deployments = 1;
 }
 
 message GetCurrentDeploymentIdRequest {
@@ -782,6 +797,21 @@ message SwitchDeploymentResponse {
         SWITCH_OUTCOME_RESTART_REQUIRED = 2;
     }
     Outcome outcome = 1;
+}
+
+message SubmitDeploymentRequest {
+    string config_json = 1;
+    optional string created_by = 2;
+}
+message SubmitDeploymentResponse {
+    DeploymentId deployment_id = 1;
+}
+
+message GetDeploymentRequest {
+    DeploymentId deployment_id = 1;
+}
+message GetDeploymentResponse {
+    Deployment deployment = 1;
 }
 
 

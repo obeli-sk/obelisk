@@ -57,7 +57,7 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}codegen", CACHE_DIR_PREFIX);
 const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DeploymentToml {
     #[serde(default, rename = "activity_wasm")]
@@ -78,7 +78,7 @@ pub(crate) struct DeploymentToml {
     pub(crate) webhooks_js: Vec<WebhookJsComponentConfigToml>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigToml {
     #[serde(default, rename = "obelisk-version")]
@@ -146,7 +146,7 @@ pub(crate) fn compute_config_hash(deployment: &DeploymentToml) -> String {
     format!("{hash:x}")
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ApiConfig {
     #[serde(default = "default_true")]
@@ -274,7 +274,7 @@ impl SqliteConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WebUIConfig {
     #[serde(default = "default_true")]
@@ -294,7 +294,7 @@ fn default_webui_listening_addr() -> String {
     "127.0.0.1:8080".to_string()
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExternalServerConfig {
     #[serde(default = "default_true")]
@@ -314,7 +314,7 @@ fn default_external_listening_addr() -> SocketAddr {
     "127.0.0.1:9090".parse().expect("valid default address")
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WasmGlobalConfigToml {
     #[serde(default)]
@@ -376,7 +376,7 @@ impl WasmGlobalConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WasmGlobalBacktrace {
     #[serde(default = "default_global_backtrace_persist")]
@@ -391,7 +391,7 @@ impl Default for WasmGlobalBacktrace {
     }
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivitiesGlobalConfigToml {
     directories: ActivitiesDirectoriesGlobalConfigToml,
@@ -406,7 +406,7 @@ impl ActivitiesGlobalConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
     #[serde(default = "default_workflows_lock_extension_leeway")]
@@ -420,7 +420,7 @@ impl Default for WorkflowsGlobalConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivitiesDirectoriesGlobalConfigToml {
     #[serde(default = "default_activities_directories_enabled")]
@@ -481,7 +481,7 @@ impl Default for ActivitiesDirectoriesCleanupConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CodegenCache {
     #[serde(default = "default_codegen_enabled")]
@@ -820,7 +820,7 @@ impl serde::Serialize for ConfigName {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
     pub(crate) name: ConfigName,
@@ -886,7 +886,7 @@ impl From<executor::executor::LockingStrategy> for LockingStrategy {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfigToml {
     #[serde(default = "default_batch_size")]
@@ -943,7 +943,7 @@ fn locking_strategy(
     })
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityWasmComponentConfigToml {
     #[serde(flatten)]
@@ -974,7 +974,7 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LogLevelToml {
     Off,
@@ -1009,7 +1009,7 @@ pub(crate) enum ReplaceIn {
 
 /// Input for method restrictions in TOML configuration.
 /// Supports both `methods = "*"` and `methods = ["GET", "POST"]` syntax.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
 pub(crate) enum MethodsInput {
     /// All methods allowed (from `methods = "*"`).
@@ -1018,7 +1018,7 @@ pub(crate) enum MethodsInput {
     List(Vec<String>),
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 pub(crate) struct MethodsInputStar(
     #[serde(
         deserialize_with = "deserialize_star",
@@ -1046,7 +1046,7 @@ fn serialize_star<S: serde::Serializer>(_: &(), s: S) -> Result<S::Ok, S::Error>
 }
 
 /// An allowed outgoing HTTP host with optional method restrictions and secrets.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AllowedHostToml {
     /// Host pattern (e.g. `"api.example.com"`, `"*.example.com"`, `"http://localhost:8080"`).
@@ -1063,7 +1063,7 @@ pub(crate) struct AllowedHostToml {
 }
 
 /// Secrets configuration for an allowed host.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AllowedHostSecretsToml {
     /// Env vars using the same syntax as top-level `env_vars`.
@@ -1074,7 +1074,7 @@ pub(crate) struct AllowedHostSecretsToml {
     pub replace_in: Vec<ReplaceIn>,
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityStubFileConfigToml {
     pub(crate) name: ConfigName,
@@ -1084,7 +1084,7 @@ pub(crate) struct ActivityStubFileConfigToml {
     pub(crate) content_digest: Option<ContentDigest>,
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityStubInlineConfigToml {
     pub(crate) name: ConfigName,
@@ -1096,13 +1096,13 @@ pub(crate) struct ActivityStubInlineConfigToml {
     pub(crate) return_type: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
 pub(crate) enum ActivityStubComponentConfigToml {
     File(ActivityStubFileConfigToml),
     Inline(ActivityStubInlineConfigToml),
 }
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityExternalComponentConfigToml {
     #[serde(flatten)]
@@ -1269,7 +1269,7 @@ impl ActivityExternalComponentConfigToml {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityDirectoriesConfigToml {
     #[serde(default)]
@@ -1280,7 +1280,7 @@ pub(crate) struct ActivityDirectoriesConfigToml {
     process_provider: ActivityDirectoriesProcessProvider,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ActivityDirectoriesProcessProvider {
     #[default]
@@ -1383,7 +1383,7 @@ impl ActivityWasmComponentConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) name: ConfigName,
@@ -1578,7 +1578,7 @@ impl ActivityJsComponentConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) name: ConfigName,
@@ -1754,7 +1754,7 @@ impl WorkflowJsComponentConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentConfigToml {
     #[serde(flatten)]
@@ -1834,7 +1834,7 @@ impl From<BlockingStrategyConfigToml> for JoinNextBlockingStrategy {
         }
     }
 }
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentBacktraceConfig {
     #[serde(rename = "sources")]
@@ -2036,7 +2036,7 @@ pub(crate) mod otlp {
     use log::EnvFilter;
     use schemars::JsonSchema;
 
-    #[derive(Debug, Deserialize, JsonSchema)]
+    #[derive(Debug, Deserialize, JsonSchema, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct OtlpConfig {
         pub(crate) enabled: bool,
@@ -2104,7 +2104,7 @@ pub(crate) mod log {
     use serde_with::serde_as;
     use std::str::FromStr;
 
-    #[derive(Debug, Deserialize, JsonSchema, Default)]
+    #[derive(Debug, Deserialize, JsonSchema, Default, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct LoggingConfig {
         #[serde(default)]
@@ -2147,7 +2147,7 @@ pub(crate) mod log {
         }
     }
 
-    #[derive(Debug, Deserialize, JsonSchema, Default)]
+    #[derive(Debug, Deserialize, JsonSchema, Default, Clone)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LoggingStyle {
         #[default]
@@ -2157,7 +2157,7 @@ pub(crate) mod log {
     }
 
     #[serde_as]
-    #[derive(Debug, Deserialize, JsonSchema, Default)]
+    #[derive(Debug, Deserialize, JsonSchema, Default, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderCommon {
         #[serde(default)]
@@ -2168,7 +2168,7 @@ pub(crate) mod log {
         pub(crate) target: bool,
     }
 
-    #[derive(Debug, serde_with::DeserializeFromStr, JsonSchema)]
+    #[derive(Debug, serde_with::DeserializeFromStr, JsonSchema, Clone)]
     pub(crate) struct EnvFilter(
         #[schemars(with = "String")] pub(crate) tracing_subscriber::EnvFilter,
     );
@@ -2194,7 +2194,7 @@ pub(crate) mod log {
         Stdout,
     }
 
-    #[derive(Debug, Deserialize, JsonSchema)]
+    #[derive(Debug, Deserialize, JsonSchema, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderConsole {
         #[serde(default = "default_console_enabled")]
@@ -2217,7 +2217,7 @@ pub(crate) mod log {
         }
     }
 
-    #[derive(Debug, Deserialize, JsonSchema)]
+    #[derive(Debug, Deserialize, JsonSchema, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct AppenderRollingFile {
         pub(crate) enabled: bool,
@@ -2303,7 +2303,7 @@ pub(crate) mod webhook {
         envvar::EnvVar, http_request_policy::AllowedHostConfig, std_output_stream::StdOutputConfig,
     };
 
-    #[derive(Debug, Deserialize, JsonSchema)]
+    #[derive(Debug, Deserialize, JsonSchema, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct HttpServer {
         pub(crate) name: ConfigName,
@@ -2314,7 +2314,7 @@ pub(crate) mod webhook {
         ConfigName::new(StrVariant::Static("external")).expect("valid name")
     }
 
-    #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookComponentConfigToml {
         #[serde(flatten)]
@@ -2386,7 +2386,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
     #[serde(untagged)]
     pub(crate) enum WebhookRoute {
         String(String),
@@ -2399,7 +2399,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookRouteDetail {
         // Empty means all methods.
@@ -2451,7 +2451,7 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookJsComponentConfigToml {
         pub(crate) name: ConfigName,
@@ -2570,7 +2570,7 @@ impl<T> From<ValueOrUnlimited<T>> for Option<T> {
 }
 
 // TODO: Unify with ValueOrUnlimited
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(untagged)]
 pub(crate) enum InflightSemaphore {
     Unlimited(Unlimited),

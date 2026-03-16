@@ -2,8 +2,8 @@ use crate::command::server;
 use crate::command::server::DeploymentContextHandle;
 use crate::command::server::SubmitError;
 use crate::command::server::VerifyParams;
-use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
+use crate::config::toml::ConfigToml;
 use crate::config::toml::DeploymentToml;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
@@ -25,6 +25,7 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbPool;
 use concepts::storage::DeploymentState;
+use concepts::storage::DeploymentStatus;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
 use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH;
@@ -89,7 +90,7 @@ pub(crate) struct GrpcServer {
     #[debug(skip)]
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     #[debug(skip)]
-    config_holder: Arc<crate::config::config_holder::ConfigHolder>,
+    config: ConfigToml,
     #[debug(skip)]
     path_prefixes: Arc<crate::config::config_holder::PathPrefixes>,
     #[debug(skip)]
@@ -104,7 +105,7 @@ impl GrpcServer {
         cancel_registry: CancelRegistry,
         engines: Engines,
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-        config_holder: Arc<ConfigHolder>,
+        config: ConfigToml,
         path_prefixes: Arc<PathPrefixes>,
         deployment_ctx: DeploymentContextHandle,
     ) -> Self {
@@ -114,46 +115,42 @@ impl GrpcServer {
             cancel_registry,
             engines,
             log_forwarder_sender,
-            config_holder,
+            config,
             path_prefixes,
             deployment_ctx,
         }
     }
 }
 
-/// Convert gRPC `ListDeploymentStatesRequest` pagination to internal Pagination type.
+/// Convert gRPC `ListDeploymentsRequest` pagination to internal Pagination type.
 fn convert_deployment_pagination(
-    request: &grpc_gen::ListDeploymentStatesRequest,
+    request: &grpc_gen::ListDeploymentsRequest,
 ) -> Result<Pagination<Option<DeploymentId>>, tonic::Status> {
-    use grpc_gen::list_deployment_states_request;
+    use grpc_gen::list_deployments_request;
 
     match request.pagination.as_ref() {
-        Some(list_deployment_states_request::Pagination::NewerThan(p)) => {
-            Ok(Pagination::NewerThan {
-                length: u16::try_from(p.length)
-                    .ok()
-                    .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
-                cursor: p
-                    .cursor
-                    .as_ref()
-                    .map(|c| DeploymentId::try_from(c.clone()))
-                    .transpose()?,
-                including_cursor: p.including_cursor,
-            })
-        }
-        Some(list_deployment_states_request::Pagination::OlderThan(p)) => {
-            Ok(Pagination::OlderThan {
-                length: u16::try_from(p.length)
-                    .ok()
-                    .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
-                cursor: p
-                    .cursor
-                    .as_ref()
-                    .map(|c| DeploymentId::try_from(c.clone()))
-                    .transpose()?,
-                including_cursor: p.including_cursor,
-            })
-        }
+        Some(list_deployments_request::Pagination::NewerThan(p)) => Ok(Pagination::NewerThan {
+            length: u16::try_from(p.length)
+                .ok()
+                .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+            cursor: p
+                .cursor
+                .as_ref()
+                .map(|c| DeploymentId::try_from(c.clone()))
+                .transpose()?,
+            including_cursor: p.including_cursor,
+        }),
+        Some(list_deployments_request::Pagination::OlderThan(p)) => Ok(Pagination::OlderThan {
+            length: u16::try_from(p.length)
+                .ok()
+                .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+            cursor: p
+                .cursor
+                .as_ref()
+                .map(|c| DeploymentId::try_from(c.clone()))
+                .transpose()?,
+            including_cursor: p.including_cursor,
+        }),
         None => Ok(LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION),
     }
 }
@@ -1375,10 +1372,10 @@ impl From<SubmitError> for tonic::Status {
 #[tonic::async_trait]
 impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer {
     #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
-    async fn list_deployment_states(
+    async fn list_deployments(
         &self,
-        request: tonic::Request<grpc_gen::ListDeploymentStatesRequest>,
-    ) -> TonicRespResult<grpc_gen::ListDeploymentStatesResponse> {
+        request: tonic::Request<grpc_gen::ListDeploymentsRequest>,
+    ) -> TonicRespResult<grpc_gen::ListDeploymentsResponse> {
         let request = request.into_inner();
         let conn = self
             .db_pool
@@ -1389,33 +1386,18 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let include_config_json = request.include_config_json;
         let pagination = convert_deployment_pagination(&request)?;
 
-        let mut states = conn
+        let summaries = conn
             .list_deployment_states(Utc::now(), pagination, include_config_json)
             .await
             .to_status()?;
 
-        let deployment_id = self.deployment_ctx.read().await.deployment_id;
-        if crate::server::should_add_current_deployment(&pagination, deployment_id, &states) {
-            states.insert(0, DeploymentState::new(deployment_id));
-        }
-
-        let deployments: Vec<_> = states
+        let deployments: Vec<_> = summaries
             .into_iter()
-            .map(|dep| grpc_gen::DeploymentState {
-                deployment_id: Some(dep.deployment_id.into()),
-                current: dep.deployment_id == deployment_id,
-                locked: dep.locked,
-                pending: dep.pending,
-                scheduled: dep.scheduled,
-                blocked: dep.blocked,
-                finished: dep.finished,
-                config_hash: dep.config_hash,
-                config_json: dep.config_json,
-            })
+            .map(deployment_summary_to_grpc)
             .collect();
-        Ok(tonic::Response::new(
-            grpc_gen::ListDeploymentStatesResponse { deployments },
-        ))
+        Ok(tonic::Response::new(grpc_gen::ListDeploymentsResponse {
+            deployments,
+        }))
     }
 
     #[instrument(skip_all, fields(execution_id, ffqn, params, component_id))]
@@ -1482,10 +1464,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 == non_activity_json_value(&target_deployment)
             {
                 // Hot redeploy path: only activities changed (or nothing changed).
-                let mut config =
-                    self.config_holder.load_config().await.map_err(|err| {
-                        tonic::Status::internal(format!("cannot load config: {err}"))
-                    })?;
+                let mut config = self.config.clone();
                 config.deployment = target_deployment;
                 let verify_deployment_id = DeploymentId::generate();
                 let mut termination_watcher = self.termination_watcher.clone();
@@ -1558,10 +1537,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         }
 
         if request.verify {
-            let mut config =
-                self.config_holder.load_config().await.map_err(|err| {
-                    tonic::Status::internal(format!("cannot load config: {err:#}"))
-                })?;
+            let mut config = self.config.clone();
             config.deployment = target_deployment;
             let verify_deployment_id = DeploymentId::generate();
             let mut termination_watcher = self.termination_watcher.clone();
@@ -1593,6 +1569,138 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             outcome: outcome.into(),
         }))
     }
+
+    #[instrument(skip_all, fields(deployment_id))]
+    async fn submit_deployment(
+        &self,
+        request: tonic::Request<grpc_gen::SubmitDeploymentRequest>,
+    ) -> TonicRespResult<grpc_gen::SubmitDeploymentResponse> {
+        use concepts::storage::{DeploymentRecord, DeploymentStatus};
+        let request = request.into_inner();
+
+        let deployment: DeploymentToml =
+            serde_json::from_str(&request.config_json).map_err(|err| {
+                tonic::Status::invalid_argument(format!("cannot parse config_json: {err}"))
+            })?;
+
+        let config_hash = crate::config::toml::compute_config_hash(&deployment);
+        let config_json = crate::config::toml::compute_config_json(&deployment);
+
+        // Structural verification: ignore env vars (they live on the server, not the client).
+        let mut config = self.config.clone();
+        config.deployment = deployment;
+        let verify_deployment_id = DeploymentId::generate();
+        let mut termination_watcher = self.termination_watcher.clone();
+        crate::command::server::verify_config_compile_link(
+            config,
+            self.path_prefixes.clone(),
+            verify_deployment_id,
+            crate::command::server::VerifyParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+                ignore_missing_env_vars: true,
+                suppress_type_checking_errors: false,
+            },
+            &mut termination_watcher,
+        )
+        .await
+        .map_err(|err| {
+            tonic::Status::failed_precondition(format!("verification failed: {err:#}"))
+        })?;
+
+        let deployment_id = DeploymentId::generate();
+        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
+
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        let now = Utc::now();
+        conn.insert_deployment(DeploymentRecord {
+            deployment_id,
+            created_at: now,
+            updated_at: now,
+            status: DeploymentStatus::Candidate,
+            config_json,
+            config_hash,
+            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+            created_by: request.created_by,
+        })
+        .await
+        .to_status()?;
+
+        info!(%deployment_id, "Deployment submitted as Candidate");
+        Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {
+            deployment_id: Some(deployment_id.into()),
+        }))
+    }
+
+    #[instrument(skip_all, fields(deployment_id))]
+    async fn get_deployment(
+        &self,
+        request: tonic::Request<grpc_gen::GetDeploymentRequest>,
+    ) -> TonicRespResult<grpc_gen::GetDeploymentResponse> {
+        let request = request.into_inner();
+        let deployment_id: DeploymentId = request
+            .deployment_id
+            .argument_must_exist("deployment_id")?
+            .try_into()?;
+        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
+
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        let record = conn
+            .get_deployment(deployment_id)
+            .await
+            .to_status()?
+            .must_exist("deployment")?;
+
+        Ok(tonic::Response::new(grpc_gen::GetDeploymentResponse {
+            deployment: Some(deployment_record_to_grpc(record)),
+        }))
+    }
+}
+
+fn status_to_grpc(status: DeploymentStatus) -> grpc_gen::DeploymentStatus {
+    match status {
+        DeploymentStatus::Candidate => grpc_gen::DeploymentStatus::Candidate,
+        DeploymentStatus::Active => grpc_gen::DeploymentStatus::Active,
+        DeploymentStatus::Superseded => grpc_gen::DeploymentStatus::Superseded,
+    }
+}
+
+fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grpc_gen::Deployment {
+    grpc_gen::Deployment {
+        deployment_id: Some(record.deployment_id.into()),
+        status: status_to_grpc(record.status).into(),
+        created_at: Some(prost_wkt_types::Timestamp::from(record.created_at)),
+        updated_at: Some(prost_wkt_types::Timestamp::from(record.updated_at)),
+        config_hash: record.config_hash,
+        config_json: Some(record.config_json),
+    }
+}
+
+fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSummary {
+    let deployment = grpc_gen::Deployment {
+        deployment_id: Some(dep.deployment_id.into()),
+        status: status_to_grpc(dep.status).into(),
+        created_at: Some(prost_wkt_types::Timestamp::from(dep.created_at)),
+        updated_at: Some(prost_wkt_types::Timestamp::from(dep.updated_at)),
+        config_hash: dep.config_hash.unwrap_or_default(),
+        config_json: dep.config_json,
+    };
+    grpc_gen::DeploymentSummary {
+        deployment: Some(deployment),
+        locked: dep.locked,
+        pending: dep.pending,
+        scheduled: dep.scheduled,
+        blocked: dep.blocked,
+        finished: dep.finished,
+    }
 }
 
 fn non_activity_json_value(deployment: &DeploymentToml) -> serde_json::Value {
@@ -1610,22 +1718,22 @@ fn non_activity_json_value(deployment: &DeploymentToml) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grpc_gen::list_deployment_states_request::{NewerThan, OlderThan};
+    use grpc_gen::list_deployments_request::{NewerThan, OlderThan};
 
     #[test]
     fn test_convert_deployment_pagination_newer_than() {
         // Regression test: NewerThan gRPC request must map to Pagination::NewerThan
         // Previously there was a copy-paste bug that mapped NewerThan to OlderThan
         let deployment_id = DeploymentId::generate();
-        let request = grpc_gen::ListDeploymentStatesRequest {
-            pagination: Some(
-                grpc_gen::list_deployment_states_request::Pagination::NewerThan(NewerThan {
+        let request = grpc_gen::ListDeploymentsRequest {
+            pagination: Some(grpc_gen::list_deployments_request::Pagination::NewerThan(
+                NewerThan {
                     length: 20,
                     cursor: Some(deployment_id.into()),
                     including_cursor: true,
-                }),
-            ),
-            include_config_json: true, // TODO test
+                },
+            )),
+            include_config_json: true,
         };
 
         let pagination = convert_deployment_pagination(&request).unwrap();
@@ -1649,14 +1757,14 @@ mod tests {
     #[test]
     fn test_convert_deployment_pagination_older_than() {
         let deployment_id = DeploymentId::generate();
-        let request = grpc_gen::ListDeploymentStatesRequest {
-            pagination: Some(
-                grpc_gen::list_deployment_states_request::Pagination::OlderThan(OlderThan {
+        let request = grpc_gen::ListDeploymentsRequest {
+            pagination: Some(grpc_gen::list_deployments_request::Pagination::OlderThan(
+                OlderThan {
                     length: 15,
                     cursor: Some(deployment_id.into()),
                     including_cursor: false,
-                }),
-            ),
+                },
+            )),
             include_config_json: true, // TODO test
         };
 
@@ -1680,7 +1788,7 @@ mod tests {
 
     #[test]
     fn test_convert_deployment_pagination_none_defaults_to_older_than() {
-        let request = grpc_gen::ListDeploymentStatesRequest {
+        let request = grpc_gen::ListDeploymentsRequest {
             pagination: None,
             include_config_json: true, // TODO test
         };
@@ -1703,14 +1811,14 @@ mod tests {
 
     #[test]
     fn test_convert_deployment_pagination_newer_than_no_cursor() {
-        let request = grpc_gen::ListDeploymentStatesRequest {
-            pagination: Some(
-                grpc_gen::list_deployment_states_request::Pagination::NewerThan(NewerThan {
+        let request = grpc_gen::ListDeploymentsRequest {
+            pagination: Some(grpc_gen::list_deployments_request::Pagination::NewerThan(
+                NewerThan {
                     length: 10,
                     cursor: None,
                     including_cursor: false,
-                }),
-            ),
+                },
+            )),
             include_config_json: true, // TODO test
         };
 

@@ -5,8 +5,8 @@
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::prefixed_ulid::{DeploymentId, RunId};
 use concepts::storage::{
-    AppendRequest, CreateRequest, DbConnection, DbConnectionTest, DbPoolCloseable, DeploymentState,
-    ExecutionRequest, Pagination, Version,
+    AppendRequest, CreateRequest, DbConnection, DbConnectionTest, DbExternalApi, DbPoolCloseable,
+    DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionRequest, Pagination, Version,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -24,10 +24,32 @@ const DEPLOYMENT_COUNT: usize = 10;
 
 /// Helper to create a deployment with an execution.
 async fn create_deployment_with_execution(
-    db_connection: &dyn DbConnection,
+    db_connection: &dyn DbExternalApi,
     deployment_id: DeploymentId,
     sim_clock: &SimClock,
 ) -> ExecutionId {
+    let now = sim_clock.now();
+    if db_connection
+        .get_deployment(deployment_id)
+        .await
+        .unwrap()
+        .is_none()
+    {
+        db_connection
+            .insert_deployment(DeploymentRecord {
+                deployment_id,
+                created_at: now,
+                updated_at: now,
+                status: DeploymentStatus::Candidate,
+                config_json: "{}".to_string(),
+                config_hash: "test".to_string(),
+                obelisk_version: "0.0.0-test".to_string(),
+                created_by: None,
+            })
+            .await
+            .unwrap();
+    }
+
     let execution_id = ExecutionId::generate();
     let component_id = ComponentId::dummy_activity();
 
@@ -126,7 +148,7 @@ async fn list_deployment_states_basic(database: Database) {
     for _ in 0..DEPLOYMENT_COUNT {
         let deployment_id = DeploymentId::generate();
         deployment_ids.push(deployment_id);
-        create_deployment_with_execution(db_connection.as_ref(), deployment_id, &sim_clock).await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_id, &sim_clock).await;
     }
 
     // Sort deployment_ids for comparison (deployments are returned sorted by ID)
@@ -185,7 +207,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
     for _ in 0..DEPLOYMENT_COUNT {
         let deployment_id = DeploymentId::generate();
         deployment_ids.push(deployment_id);
-        create_deployment_with_execution(db_connection.as_ref(), deployment_id, &sim_clock).await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_id, &sim_clock).await;
     }
 
     // Sort deployment_ids descending (OlderThan returns in descending order)
@@ -312,7 +334,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
     for _ in 0..DEPLOYMENT_COUNT {
         let deployment_id = DeploymentId::generate();
         deployment_ids.push(deployment_id);
-        create_deployment_with_execution(db_connection.as_ref(), deployment_id, &sim_clock).await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_id, &sim_clock).await;
     }
 
     // Sort deployment_ids descending (NewerThan also returns in descending order for UI consistency)
@@ -459,12 +481,11 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
     let deployment_mixed = DeploymentId::generate();
 
     // Deployment with pending execution
-    create_deployment_with_execution(db_connection.as_ref(), deployment_pending, &sim_clock).await;
+    create_deployment_with_execution(api_conn.as_ref(), deployment_pending, &sim_clock).await;
 
     // Deployment with locked execution
     let exec_locked =
-        create_deployment_with_execution(db_connection.as_ref(), deployment_locked, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_locked, &sim_clock).await;
     lock_execution(
         db_connection.as_ref(),
         &exec_locked,
@@ -475,8 +496,7 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
 
     // Deployment with finished execution
     let exec_finished =
-        create_deployment_with_execution(db_connection.as_ref(), deployment_finished, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_finished, &sim_clock).await;
     let version = lock_execution(
         db_connection.as_ref(),
         &exec_finished,
@@ -488,14 +508,11 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
 
     // Deployment with mixed states: 1 pending, 1 locked, 1 finished
     let _exec_mixed_pending =
-        create_deployment_with_execution(db_connection.as_ref(), deployment_mixed, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_mixed, &sim_clock).await;
     let exec_mixed_locked =
-        create_deployment_with_execution(db_connection.as_ref(), deployment_mixed, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_mixed, &sim_clock).await;
     let exec_mixed_finished =
-        create_deployment_with_execution(db_connection.as_ref(), deployment_mixed, &sim_clock)
-            .await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_mixed, &sim_clock).await;
 
     lock_execution(
         db_connection.as_ref(),
@@ -593,7 +610,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
     for _ in 0..5 {
         let deployment_id = DeploymentId::generate();
         deployment_ids.push(deployment_id);
-        create_deployment_with_execution(db_connection.as_ref(), deployment_id, &sim_clock).await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_id, &sim_clock).await;
     }
 
     // Get all to find a middle deployment
@@ -709,7 +726,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
     let deployment_count = 5;
     for _ in 0..deployment_count {
         let deployment_id = DeploymentId::generate();
-        create_deployment_with_execution(db_connection.as_ref(), deployment_id, &sim_clock).await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_id, &sim_clock).await;
     }
 
     // Initial fetch: OlderThan with no cursor - should get all 5
@@ -865,7 +882,7 @@ async fn list_deployment_states_cursor_not_found(database: Database) {
     // Create some deployments
     for _ in 0..3 {
         let deployment_id = DeploymentId::generate();
-        create_deployment_with_execution(db_connection.as_ref(), deployment_id, &sim_clock).await;
+        create_deployment_with_execution(api_conn.as_ref(), deployment_id, &sim_clock).await;
     }
 
     // Use a non-existent deployment ID as cursor
