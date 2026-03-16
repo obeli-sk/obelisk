@@ -27,6 +27,7 @@ async fn main() -> Result<(), anyhow::Error> {
             .inspect_err(|err| error!("Server error: {err:#?}")),
         Subcommand::Component(component) => component.run().await,
         Subcommand::Execution(execution) => execution.run().await,
+        Subcommand::Deployment(deployment) => deployment.run().await,
         Subcommand::Generate(generate) => generate.run().await,
     }
 }
@@ -52,6 +53,24 @@ async fn get_execution_repository_client(
         .accept_compressed(CompressionEncoding::Gzip),
     )
 }
+type DeploymentRepositoryClient =
+    grpc_gen::deployment_repository_client::DeploymentRepositoryClient<
+        tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
+    >;
+async fn get_deployment_repository_client(
+    channel: Channel,
+) -> Result<DeploymentRepositoryClient, anyhow::Error> {
+    Ok(
+        grpc_gen::deployment_repository_client::DeploymentRepositoryClient::with_interceptor(
+            channel,
+            TracingInjector,
+        )
+        .send_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Gzip),
+    )
+}
+
 type FunctionRepositoryClient = grpc_gen::function_repository_client::FunctionRepositoryClient<
     tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
 >;
