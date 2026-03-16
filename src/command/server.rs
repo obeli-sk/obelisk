@@ -381,7 +381,7 @@ pub(crate) async fn run(
 
     Box::pin(run_internal(
         config,
-        config_holder,
+        Arc::new(config_holder.path_prefixes),
         params,
         termination_watcher,
     ))
@@ -602,10 +602,11 @@ async fn upsert_and_activate_deployment(
         return Ok(active.deployment_id);
     }
 
+    let now = Utc::now();
     let record = DeploymentRecord {
         deployment_id: candidate_id,
-        created_at: Utc::now(),
-        activated_at: None,
+        created_at: now,
+        updated_at: now,
         status: DeploymentStatus::Candidate,
         config_json,
         config_hash,
@@ -625,7 +626,7 @@ async fn upsert_and_activate_deployment(
 
 pub(crate) async fn run_internal(
     config: ConfigToml,
-    config_holder: ConfigHolder,
+    path_prefixes: Arc<PathPrefixes>,
     params: RunParams,
     mut termination_watcher: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
@@ -641,11 +642,9 @@ pub(crate) async fn run_internal(
         .as_semaphore();
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
-    let config_holder = Arc::new(config_holder);
-    let path_prefixes = Arc::new(config_holder.path_prefixes.clone());
     let database = config.database.clone();
     let compiled_and_linked = Box::pin(verify_config_compile_link(
-        config,
+        config.clone(),
         path_prefixes.clone(),
         deployment_id,
         VerifyParams {
@@ -753,7 +752,7 @@ pub(crate) async fn run_internal(
         cancel_registry.clone(),
         server_init.engines.clone(),
         server_init.log_forwarder_sender.clone(),
-        config_holder.clone(),
+        config,
         path_prefixes.clone(),
         server_init.deployment_ctx.clone(),
     ));

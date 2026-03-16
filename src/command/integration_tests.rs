@@ -29,6 +29,7 @@ use grpc::grpc_gen::{
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
 };
 use serde_json::{Value, json};
+use std::sync::Arc;
 use std::{path::PathBuf, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
 use tracing::debug;
@@ -315,7 +316,7 @@ impl TestServer {
         let server_handle = tokio::spawn(async move {
             Box::pin(run_internal(
                 config,
-                config_holder,
+                Arc::new(config_holder.path_prefixes),
                 params,
                 termination_watcher,
             ))
@@ -1148,10 +1149,11 @@ async fn hot_redeploy_activity() {
         let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
         let new_config_hash = crate::config::toml::compute_config_hash(&new_deployment);
 
+        let now = Utc::now();
         conn.insert_deployment(DeploymentRecord {
             deployment_id: second_id,
-            created_at: Utc::now(),
-            activated_at: None,
+            created_at: now,
+            updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: new_config_json,
             config_hash: new_config_hash,
@@ -1283,10 +1285,11 @@ async fn hot_redeploy_registry() {
         let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
         let new_config_hash = crate::config::toml::compute_config_hash(&new_deployment);
 
+        let now = Utc::now();
         conn.insert_deployment(DeploymentRecord {
             deployment_id: second_id,
-            created_at: Utc::now(),
-            activated_at: None,
+            created_at: now,
+            updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: new_config_json,
             config_hash: new_config_hash,

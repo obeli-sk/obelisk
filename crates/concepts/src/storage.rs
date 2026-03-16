@@ -1312,29 +1312,17 @@ pub struct DeploymentState {
     /// `None` when there is no matching `t_deployment` record.
     pub config_hash: Option<String>,
     pub config_json: Option<String>,
-}
-impl DeploymentState {
-    #[must_use]
-    pub fn new(deployment_id: DeploymentId) -> Self {
-        DeploymentState {
-            deployment_id,
-            locked: 0,
-            pending: 0,
-            scheduled: 0,
-            blocked: 0,
-            finished: 0,
-            config_hash: None,
-            config_json: None,
-        }
-    }
+    pub created_at: DateTime<Utc>,
+    /// Last status-change time: creation for Candidate, activation for Active, deactivation for Superseded.
+    pub updated_at: DateTime<Utc>,
+    pub status: DeploymentStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeploymentStatus {
     Candidate,
     Active,
-    Inactive,
-    Rejected,
+    Superseded,
 }
 
 impl DeploymentStatus {
@@ -1343,8 +1331,7 @@ impl DeploymentStatus {
         match self {
             DeploymentStatus::Candidate => "candidate",
             DeploymentStatus::Active => "active",
-            DeploymentStatus::Inactive => "inactive",
-            DeploymentStatus::Rejected => "rejected",
+            DeploymentStatus::Superseded => "superseded",
         }
     }
 }
@@ -1355,8 +1342,7 @@ impl std::str::FromStr for DeploymentStatus {
         match s {
             "candidate" => Ok(DeploymentStatus::Candidate),
             "active" => Ok(DeploymentStatus::Active),
-            "inactive" => Ok(DeploymentStatus::Inactive),
-            "rejected" => Ok(DeploymentStatus::Rejected),
+            "superseded" => Ok(DeploymentStatus::Superseded),
             _ => Err(StrVariant::from(format!("unknown deployment status: {s}"))),
         }
     }
@@ -1366,7 +1352,8 @@ impl std::str::FromStr for DeploymentStatus {
 pub struct DeploymentRecord {
     pub deployment_id: DeploymentId,
     pub created_at: DateTime<Utc>,
-    pub activated_at: Option<DateTime<Utc>>,
+    /// Last status-change time: creation for Candidate, activation for Active, deactivation for Superseded.
+    pub updated_at: DateTime<Utc>,
     pub status: DeploymentStatus,
     pub config_json: String,
     pub config_hash: String,

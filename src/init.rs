@@ -36,7 +36,7 @@ fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
 
 #[cfg(feature = "otlp")]
 fn tokio_tracing_otlp<S>(
-    config: &mut ConfigToml,
+    config: &ConfigToml,
 ) -> Result<Option<impl tracing_subscriber::Layer<S>>, anyhow::Error>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
@@ -47,7 +47,7 @@ where
     use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
 
-    Ok(match &mut config.otlp {
+    Ok(match &config.otlp {
         Some(otlp) if otlp.enabled => {
             opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
             let exporter = opentelemetry_otlp::SpanExporter::builder()
@@ -63,8 +63,7 @@ where
                         .build(),
                 )
                 .build();
-            // EnvFilter missing Clone
-            let env_filter = std::mem::take(&mut otlp.level).0;
+            let env_filter = otlp.level.0.clone();
             let telemetry_layer = tracing_opentelemetry::layer()
                 .with_tracer(tracer_provider.tracer(""))
                 .with_filter(env_filter);
@@ -81,7 +80,7 @@ fn tokio_tracing_otlp(
     None
 }
 
-pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
+pub(crate) fn init(config: &ConfigToml) -> Result<Guard, anyhow::Error> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
@@ -142,10 +141,9 @@ pub(crate) fn init(config: &mut ConfigToml) -> Result<Guard, anyhow::Error> {
     } else {
         None
     };
-    let rolling_file_layer = match &mut config.log.file {
+    let rolling_file_layer = match &config.log.file {
         Some(rolling) if rolling.enabled => {
-            // EnvFilter missing Clone
-            let env_filter = std::mem::take(&mut rolling.common.level).0;
+            let env_filter = rolling.common.level.0.clone();
             let file_appender = tracing_appender::rolling::RollingFileAppender::new(
                 rolling.rotation.into(),
                 &rolling.directory,

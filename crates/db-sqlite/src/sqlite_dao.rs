@@ -355,7 +355,7 @@ const CREATE_TABLE_T_DEPLOYMENT: &str = r"
 CREATE TABLE IF NOT EXISTS t_deployment (
     deployment_id TEXT NOT NULL PRIMARY KEY,
     created_at    TEXT NOT NULL,
-    activated_at  TEXT,
+    updated_at    TEXT NOT NULL,
     status        TEXT NOT NULL,
     config_json      TEXT NOT NULL,
     config_hash      TEXT NOT NULL,
@@ -366,8 +366,8 @@ CREATE TABLE IF NOT EXISTS t_deployment (
 const IDX_T_DEPLOYMENT_STATUS: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_deployment_status ON t_deployment (status)
 ";
-const IDX_T_DEPLOYMENT_ACTIVATED_AT: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_deployment_activated_at ON t_deployment (activated_at)
+const IDX_T_DEPLOYMENT_UPDATED_AT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_deployment_updated_at ON t_deployment (updated_at)
 ";
 // Enforces at most one active deployment at a time.
 const IDX_T_DEPLOYMENT_SINGLE_ACTIVE: &str = r"
@@ -701,7 +701,7 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
     Ok(DeploymentRecord {
         deployment_id,
         created_at: row.get("created_at")?,
-        activated_at: row.get("activated_at")?,
+        updated_at: row.get("updated_at")?,
         status,
         config_json: row.get("config_json")?,
         config_hash: row.get("config_hash")?,
@@ -863,7 +863,7 @@ impl SqlitePool {
         // t_deployment
         conn_execute(&conn, CREATE_TABLE_T_DEPLOYMENT, [])?;
         conn_execute(&conn, IDX_T_DEPLOYMENT_STATUS, [])?;
-        conn_execute(&conn, IDX_T_DEPLOYMENT_ACTIVATED_AT, [])?;
+        conn_execute(&conn, IDX_T_DEPLOYMENT_UPDATED_AT, [])?;
         conn_execute(&conn, IDX_T_DEPLOYMENT_SINGLE_ACTIVE, [])?;
         Ok(conn)
     }
@@ -3404,9 +3404,12 @@ impl SqlitePool {
             SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
             SUM(s.state = '{STATE_FINISHED}') AS finished,
             d.config_hash,
-            {config_json_col}
+            {config_json_col},
+            d.created_at,
+            d.updated_at,
+            d.status
         FROM t_state s
-        LEFT JOIN t_deployment d ON d.deployment_id = s.deployment_id"
+        INNER JOIN t_deployment d ON d.deployment_id = s.deployment_id"
         );
 
         params.push((":now", Box::new(current_time)));
@@ -3431,7 +3434,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " GROUP BY s.deployment_id, d.config_hash ORDER BY s.deployment_id {inner_order} LIMIT {limit}",
+            " GROUP BY s.deployment_id, d.config_hash, d.config_json, d.created_at, d.updated_at, d.status ORDER BY s.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -3451,6 +3454,14 @@ impl SqlitePool {
                     .collect::<Vec<_>>()
                     .as_ref(),
                 |row| {
+                    let status_str: String = row.get("status")?;
+                    let status = status_str
+                        .parse::<DeploymentStatus>()
+                        .map_err(|_| rusqlite::Error::InvalidColumnType(
+                            0,
+                            "status".to_string(),
+                            rusqlite::types::Type::Text,
+                        ))?;
                     Ok(DeploymentState {
                         deployment_id: row.get("deployment_id")?,
                         locked: row.get("locked")?,
@@ -3460,6 +3471,9 @@ impl SqlitePool {
                         finished: row.get("finished")?,
                         config_hash: row.get("config_hash")?,
                         config_json: row.get("config_json")?,
+                        created_at: row.get("created_at")?,
+                        updated_at: row.get("updated_at")?,
+                        status,
                     })
                 },
             )?
@@ -3475,12 +3489,12 @@ impl SqlitePool {
     ) -> Result<(), DbErrorWrite> {
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by) \
-             VALUES (:deployment_id, :created_at, :activated_at, :status, :config_json, :config_hash, :obelisk_version, :created_by)",
+             (deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by) \
+             VALUES (:deployment_id, :created_at, :updated_at, :status, :config_json, :config_hash, :obelisk_version, :created_by)",
             rusqlite::named_params! {
                 ":deployment_id": record.deployment_id.to_string(),
                 ":created_at": record.created_at,
-                ":activated_at": record.activated_at,
+                ":updated_at": record.updated_at,
                 ":status": record.status.as_str(),
                 ":config_json": record.config_json,
                 ":config_hash": record.config_hash,
@@ -3497,18 +3511,18 @@ impl SqlitePool {
         deployment_id: DeploymentId,
         now: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
-        // Demote the currently active deployment to inactive.
+        // Demote the currently active deployment to superseded, recording deactivation time.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive' WHERE status = 'active'",
-            [],
+            "UPDATE t_deployment SET status = 'superseded', updated_at = :now WHERE status = 'active'",
+            rusqlite::named_params! { ":now": now },
         )
         .map_err(RusqliteError::from)?;
         // Set target deployment to active.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', activated_at = :activated_at WHERE deployment_id = :deployment_id",
+                "UPDATE t_deployment SET status = 'active', updated_at = :now WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
-                    ":activated_at": now,
+                    ":now": now,
                     ":deployment_id": deployment_id.to_string(),
                 },
             )
@@ -3524,7 +3538,7 @@ impl SqlitePool {
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         tx.query_row(
-            "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+            "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
              FROM t_deployment WHERE deployment_id = :deployment_id",
             rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
             deployment_record_from_row,
@@ -3535,7 +3549,7 @@ impl SqlitePool {
 
     fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         tx.query_row(
-            "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+            "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
              FROM t_deployment WHERE status = 'active' LIMIT 1",
             [],
             deployment_record_from_row,
@@ -3550,7 +3564,7 @@ impl SqlitePool {
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
         let mut sql = String::from(
-            "SELECT deployment_id, created_at, activated_at, status, config_json, config_hash, obelisk_version, created_by \
+            "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
              FROM t_deployment",
         );
 

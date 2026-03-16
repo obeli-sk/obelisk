@@ -3366,7 +3366,7 @@ async fn deployment_insert_and_get(database: Database) {
     let record = DeploymentRecord {
         deployment_id,
         created_at: now,
-        activated_at: None,
+        updated_at: now,
         status: DeploymentStatus::Candidate,
         config_json: r#"{"activities":[]}"#.to_string(),
         config_hash: "abc123".to_string(),
@@ -3385,7 +3385,7 @@ async fn deployment_insert_and_get(database: Database) {
     assert_eq!("abc123", fetched.config_hash);
     assert_eq!("0.0.0-test", fetched.obelisk_version);
     assert_eq!(Some("test".to_string()), fetched.created_by);
-    assert!(fetched.activated_at.is_none());
+    assert_eq!(fetched.updated_at, now);
 
     drop(api_conn);
     db_close.close().await;
@@ -3412,7 +3412,7 @@ async fn deployment_activate(database: Database) {
         .insert_deployment(DeploymentRecord {
             deployment_id,
             created_at: now,
-            activated_at: None,
+            updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: "{}".to_string(),
             config_hash: "hash1".to_string(),
@@ -3430,7 +3430,7 @@ async fn deployment_activate(database: Database) {
     let active = api_conn.get_active_deployment().await.unwrap().unwrap();
     assert_eq!(deployment_id, active.deployment_id);
     assert_eq!(DeploymentStatus::Active, active.status);
-    assert!(active.activated_at.is_some());
+    assert!(active.updated_at >= now);
 
     drop(api_conn);
     db_close.close().await;
@@ -3454,7 +3454,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
         .insert_deployment(DeploymentRecord {
             deployment_id: id1,
             created_at: now,
-            activated_at: None,
+            updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: "{}".to_string(),
             config_hash: "hash1".to_string(),
@@ -3471,7 +3471,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
         .insert_deployment(DeploymentRecord {
             deployment_id: id2,
             created_at: now,
-            activated_at: None,
+            updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: "{}".to_string(),
             config_hash: "hash2".to_string(),
@@ -3488,7 +3488,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
 
     // id1 must be inactive.
     let d1 = api_conn.get_deployment(id1).await.unwrap().unwrap();
-    assert_eq!(DeploymentStatus::Inactive, d1.status);
+    assert_eq!(DeploymentStatus::Superseded, d1.status);
 
     drop(api_conn);
     db_close.close().await;
@@ -3514,7 +3514,7 @@ async fn deployment_list(database: Database) {
             .insert_deployment(DeploymentRecord {
                 deployment_id: id,
                 created_at: now,
-                activated_at: None,
+                updated_at: now,
                 status: DeploymentStatus::Candidate,
                 config_json: "{}".to_string(),
                 config_hash: hash.to_string(),

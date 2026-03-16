@@ -2,8 +2,8 @@ use crate::command::server;
 use crate::command::server::DeploymentContextHandle;
 use crate::command::server::SubmitError;
 use crate::command::server::VerifyParams;
-use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
+use crate::config::toml::ConfigToml;
 use crate::config::toml::DeploymentToml;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
@@ -89,7 +89,7 @@ pub(crate) struct GrpcServer {
     #[debug(skip)]
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     #[debug(skip)]
-    config_holder: Arc<crate::config::config_holder::ConfigHolder>,
+    config: ConfigToml,
     #[debug(skip)]
     path_prefixes: Arc<crate::config::config_holder::PathPrefixes>,
     #[debug(skip)]
@@ -104,7 +104,7 @@ impl GrpcServer {
         cancel_registry: CancelRegistry,
         engines: Engines,
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-        config_holder: Arc<ConfigHolder>,
+        config: ConfigToml,
         path_prefixes: Arc<PathPrefixes>,
         deployment_ctx: DeploymentContextHandle,
     ) -> Self {
@@ -114,7 +114,7 @@ impl GrpcServer {
             cancel_registry,
             engines,
             log_forwarder_sender,
-            config_holder,
+            config,
             path_prefixes,
             deployment_ctx,
         }
@@ -1389,29 +1389,14 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let include_config_json = request.include_config_json;
         let pagination = convert_deployment_pagination(&request)?;
 
-        let mut states = conn
+        let states = conn
             .list_deployment_states(Utc::now(), pagination, include_config_json)
             .await
             .to_status()?;
 
-        let deployment_id = self.deployment_ctx.read().await.deployment_id;
-        if crate::server::should_add_current_deployment(&pagination, deployment_id, &states) {
-            states.insert(0, DeploymentState::new(deployment_id));
-        }
-
         let deployments: Vec<_> = states
             .into_iter()
-            .map(|dep| grpc_gen::DeploymentState {
-                deployment_id: Some(dep.deployment_id.into()),
-                current: dep.deployment_id == deployment_id,
-                locked: dep.locked,
-                pending: dep.pending,
-                scheduled: dep.scheduled,
-                blocked: dep.blocked,
-                finished: dep.finished,
-                config_hash: dep.config_hash,
-                config_json: dep.config_json,
-            })
+            .map(|dep| deployment_state_to_grpc(dep))
             .collect();
         Ok(tonic::Response::new(
             grpc_gen::ListDeploymentStatesResponse { deployments },
@@ -1482,10 +1467,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 == non_activity_json_value(&target_deployment)
             {
                 // Hot redeploy path: only activities changed (or nothing changed).
-                let mut config =
-                    self.config_holder.load_config().await.map_err(|err| {
-                        tonic::Status::internal(format!("cannot load config: {err}"))
-                    })?;
+                let mut config = self.config.clone();
                 config.deployment = target_deployment;
                 let verify_deployment_id = DeploymentId::generate();
                 let mut termination_watcher = self.termination_watcher.clone();
@@ -1558,10 +1540,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         }
 
         if request.verify {
-            let mut config =
-                self.config_holder.load_config().await.map_err(|err| {
-                    tonic::Status::internal(format!("cannot load config: {err:#}"))
-                })?;
+            let mut config = self.config.clone();
             config.deployment = target_deployment;
             let verify_deployment_id = DeploymentId::generate();
             let mut termination_watcher = self.termination_watcher.clone();
@@ -1592,6 +1571,136 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
             outcome: outcome.into(),
         }))
+    }
+
+    #[instrument(skip_all, fields(deployment_id))]
+    async fn submit_deployment(
+        &self,
+        request: tonic::Request<grpc_gen::SubmitDeploymentRequest>,
+    ) -> TonicRespResult<grpc_gen::SubmitDeploymentResponse> {
+        use concepts::storage::{DeploymentRecord, DeploymentStatus};
+        let request = request.into_inner();
+
+        let deployment: DeploymentToml =
+            serde_json::from_str(&request.config_json).map_err(|err| {
+                tonic::Status::invalid_argument(format!("cannot parse config_json: {err}"))
+            })?;
+
+        let config_hash = crate::config::toml::compute_config_hash(&deployment);
+        let config_json = crate::config::toml::compute_config_json(&deployment);
+
+        // Structural verification: ignore env vars (they live on the server, not the client).
+        let mut config = self.config.clone();
+        config.deployment = deployment;
+        let verify_deployment_id = DeploymentId::generate();
+        let mut termination_watcher = self.termination_watcher.clone();
+        crate::command::server::verify_config_compile_link(
+            config,
+            self.path_prefixes.clone(),
+            verify_deployment_id,
+            crate::command::server::VerifyParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+                ignore_missing_env_vars: true,
+                suppress_type_checking_errors: false,
+            },
+            &mut termination_watcher,
+        )
+        .await
+        .map_err(|err| {
+            tonic::Status::failed_precondition(format!("verification failed: {err:#}"))
+        })?;
+
+        let deployment_id = DeploymentId::generate();
+        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
+
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        let now = Utc::now();
+        conn.insert_deployment(DeploymentRecord {
+            deployment_id,
+            created_at: now,
+            updated_at: now,
+            status: DeploymentStatus::Candidate,
+            config_json,
+            config_hash,
+            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+            created_by: request.created_by,
+        })
+        .await
+        .to_status()?;
+
+        info!(%deployment_id, "Deployment submitted as Candidate");
+        Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {
+            deployment_id: Some(deployment_id.into()),
+        }))
+    }
+
+    #[instrument(skip_all, fields(deployment_id))]
+    async fn get_deployment(
+        &self,
+        request: tonic::Request<grpc_gen::GetDeploymentRequest>,
+    ) -> TonicRespResult<grpc_gen::GetDeploymentResponse> {
+        let request = request.into_inner();
+        let deployment_id: DeploymentId = request
+            .deployment_id
+            .argument_must_exist("deployment_id")?
+            .try_into()?;
+        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
+
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        let record = conn
+            .get_deployment(deployment_id)
+            .await
+            .to_status()?
+            .must_exist("deployment")?;
+
+        // Synthesise a DeploymentState from the record (no execution stats needed here).
+        let state = concepts::storage::DeploymentState {
+            deployment_id: record.deployment_id,
+            locked: 0,
+            pending: 0,
+            scheduled: 0,
+            blocked: 0,
+            finished: 0,
+            config_hash: Some(record.config_hash),
+            config_json: Some(record.config_json),
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+            status: record.status,
+        };
+        Ok(tonic::Response::new(grpc_gen::GetDeploymentResponse {
+            deployment: Some(deployment_state_to_grpc(state)),
+        }))
+    }
+}
+
+fn deployment_state_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentState {
+    use concepts::storage::DeploymentStatus;
+    let status = match dep.status {
+        DeploymentStatus::Candidate => grpc_gen::DeploymentStatus::Candidate,
+        DeploymentStatus::Active => grpc_gen::DeploymentStatus::Active,
+        DeploymentStatus::Superseded => grpc_gen::DeploymentStatus::Superseded,
+    };
+    grpc_gen::DeploymentState {
+        deployment_id: Some(dep.deployment_id.into()),
+        locked: dep.locked,
+        pending: dep.pending,
+        scheduled: dep.scheduled,
+        blocked: dep.blocked,
+        finished: dep.finished,
+        config_hash: dep.config_hash,
+        config_json: dep.config_json,
+        created_at: Some(prost_wkt_types::Timestamp::from(dep.created_at)),
+        updated_at: Some(prost_wkt_types::Timestamp::from(dep.updated_at)),
+        status: status.into(),
     }
 }
 
