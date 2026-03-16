@@ -1105,19 +1105,6 @@ async fn switch_deployment_grpc() {
         .await
         .unwrap();
 
-    // hot_redeploy=true should return UNIMPLEMENTED before any DB access.
-    let err = client
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(GrpcDeploymentId {
-                id: current_id.clone(),
-            }),
-            verify: false,
-            hot_redeploy: true,
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(err.code(), Code::Unimplemented);
-
     // Non-existent deployment ID should return NOT_FOUND.
     let fake_id = DeploymentId::generate().to_string();
     let err = client
@@ -1152,17 +1139,22 @@ async fn switch_deployment_grpc() {
         pool.close().await;
     }
 
-    // Switch to the second deployment.
-    client
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(GrpcDeploymentId {
-                id: second_id.to_string(),
-            }),
-            verify: false,
-            hot_redeploy: false,
-        })
-        .await
-        .expect("switch_deployment to second deployment should succeed");
+    // Switch to the second deployment — should report RestartRequired (no hot redeploy).
+    {
+        use grpc::grpc_gen::switch_deployment_response::Outcome;
+        let resp = client
+            .switch_deployment(SwitchDeploymentRequest {
+                deployment_id: Some(GrpcDeploymentId {
+                    id: second_id.to_string(),
+                }),
+                verify: false,
+                hot_redeploy: false,
+            })
+            .await
+            .expect("switch_deployment to second deployment should succeed")
+            .into_inner();
+        assert_eq!(resp.outcome(), Outcome::SwitchOutcomeRestartRequired);
+    }
 
     // Verify the DB-active deployment is now second_id.
     {

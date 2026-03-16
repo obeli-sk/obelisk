@@ -122,6 +122,7 @@ impl GrpcServer {
     }
 }
 
+
 /// Convert gRPC `ListDeploymentStatesRequest` pagination to internal Pagination type.
 fn convert_deployment_pagination(
     request: &grpc_gen::ListDeploymentStatesRequest,
@@ -1418,20 +1419,15 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .try_into()?;
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
 
-        if request.hot_redeploy {
-            return Err(tonic::Status::unimplemented(
-                "hot_redeploy is not yet implemented",
-            ));
-        }
-
         let conn = self
             .db_pool
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
 
-        // Check that the deployment exists.
-        conn.get_deployment(deployment_id)
+        // Load and check the deployment record.
+        let deployment_record = conn
+            .get_deployment(deployment_id)
             .await
             .to_status()?
             .must_exist("deployment")?;
@@ -1441,17 +1437,12 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 self.config_holder.load_config().await.map_err(|err| {
                     tonic::Status::internal(format!("cannot load config: {err:#}"))
                 })?;
-            let stored_deployment: DeploymentToml = serde_json::from_str(
-                &conn
-                    .get_deployment(deployment_id)
-                    .await
-                    .to_status()?
-                    .must_exist("deployment")?
-                    .config_json,
-            )
-            .map_err(|err| {
-                tonic::Status::internal(format!("cannot parse stored deployment config: {err}"))
-            })?;
+            let stored_deployment: DeploymentToml =
+                serde_json::from_str(&deployment_record.config_json).map_err(|err| {
+                    tonic::Status::internal(format!(
+                        "cannot parse stored deployment config: {err}"
+                    ))
+                })?;
             config.deployment = stored_deployment;
             let verify_deployment_id = DeploymentId::generate();
             let mut termination_watcher = self.termination_watcher.clone();
@@ -1477,8 +1468,13 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .await
             .to_status()?;
 
-        info!(%deployment_id, "Deployment switched");
-        Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {}))
+        // Hot redeploy is not yet implemented; tell the caller a restart is required.
+        let outcome =
+            grpc_gen::switch_deployment_response::Outcome::SwitchOutcomeRestartRequired;
+        info!(%deployment_id, ?outcome, "Deployment switched");
+        Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
+            outcome: outcome.into(),
+        }))
     }
 }
 
