@@ -1121,7 +1121,9 @@
         "description": "Deployment state with execution counts",
         "required": [
           "deployment_id",
-          "current",
+          "status",
+          "created_at",
+          "updated_at",
           "locked",
           "pending",
           "scheduled",
@@ -1142,9 +1144,10 @@
             ],
             "description": "SHA-256 hash of the canonical deployment config JSON. `null` when no deployment record exists."
           },
-          "current": {
-            "type": "boolean",
-            "description": "Whether this is the current deployment"
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this deployment was submitted"
           },
           "deployment_id": {
             "type": "string",
@@ -1174,8 +1177,25 @@
             "format": "int32",
             "description": "Number of scheduled executions",
             "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeploymentStatusSer",
+            "description": "Deployment lifecycle status"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last status-change time (activation for Active, deactivation for Superseded)"
           }
         }
+      },
+      "DeploymentStatusSer": {
+        "type": "string",
+        "enum": [
+          "candidate",
+          "active",
+          "superseded"
+        ]
       },
       "ExecutionEventsResponse": {
         "type": "object",
