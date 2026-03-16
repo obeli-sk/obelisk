@@ -134,6 +134,15 @@ use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 use wasmtime::Engine;
 
+pub(crate) struct DeploymentContext {
+    pub(crate) deployment_id: DeploymentId,
+    pub(crate) component_registry_ro: wasm_workers::registry::ComponentConfigRegistryRO,
+    pub(crate) exec_task_handles: Vec<ExecutorTaskHandle>,
+    pub(crate) closed: bool,
+}
+
+pub(crate) type DeploymentContextHandle = Arc<tokio::sync::RwLock<DeploymentContext>>;
+
 const EPOCH_MILLIS: u64 = 10;
 const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
 #[cfg(not(feature = "activity-js-local"))]
@@ -653,7 +662,7 @@ pub(crate) async fn run_internal(
     let cancel_registry = CancelRegistry::new();
     let subscription_interruption = database.get_subscription_interruption();
 
-    let (server_init, component_registry_ro) = match database {
+    let server_init = match database {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
             let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes).await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
@@ -739,15 +748,14 @@ pub(crate) async fn run_internal(
     };
 
     let grpc_server = Arc::new(GrpcServer::new(
-        server_init.deployment_id,
         server_init.db_pool.clone(),
         termination_watcher.clone(),
-        component_registry_ro.clone(),
         cancel_registry.clone(),
         server_init.engines.clone(),
         server_init.log_forwarder_sender.clone(),
         config_holder.clone(),
         path_prefixes.clone(),
+        server_init.deployment_ctx.clone(),
     ));
 
     let mut grpc = RoutesBuilder::default();
@@ -796,9 +804,8 @@ pub(crate) async fn run_internal(
         .service(grpc.routes());
 
     let app_router = app_router(WebApiState {
-        deployment_id: server_init.deployment_id,
+        deployment_ctx: server_init.deployment_ctx.clone(),
         db_pool: server_init.db_pool.clone(),
-        component_registry_ro,
         cancel_registry,
         termination_watcher: termination_watcher.clone(),
         subscription_interruption,
@@ -987,7 +994,7 @@ type FrameFilesToSources = HashMap<String, PathBuf>;
 pub(crate) struct ServerCompiledLinked {
     engines: Engines,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
-    compiled_components: LinkedComponents,
+    pub(crate) compiled_components: LinkedComponents,
     parent_preopen_dir: Option<Arc<Path>>,
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
@@ -1047,7 +1054,7 @@ async fn spawn_tasks_and_threads(
     cancel_watcher: CancelWatcherTomlConfig,
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
-) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
+) -> Result<ServerInit, anyhow::Error> {
     // Persist source files to the DB so GetBacktraceSource can serve them without filesystem access.
     {
         let conn = db_pool.external_api_conn().await?;
@@ -1149,7 +1156,7 @@ async fn spawn_tasks_and_threads(
     };
 
     // Spawn executors
-    let exec_join_handles = server_compiled_linked
+    let exec_join_handles: Vec<ExecutorTaskHandle> = server_compiled_linked
         .compiled_components
         .workers_linked
         .into_iter()
@@ -1175,12 +1182,19 @@ async fn spawn_tasks_and_threads(
         &log_forwarder_sender,
     )
     .await?;
-
+    let deployment_ctx: DeploymentContextHandle =
+        Arc::new(tokio::sync::RwLock::new(DeploymentContext {
+            deployment_id,
+            component_registry_ro: server_compiled_linked.component_registry_ro,
+            exec_task_handles: exec_join_handles,
+            closed: false,
+        }));
     let server_init = ServerInit {
-        deployment_id,
+        deployment_ctx,
+        // deployment_id,
         db_pool,
         db_close,
-        exec_join_handles,
+        // exec_join_handles,
         timers_watcher,
         cancel_watcher,
         http_servers_handles,
@@ -1190,15 +1204,16 @@ async fn spawn_tasks_and_threads(
         engines: server_compiled_linked.engines,
         log_forwarder_sender,
     };
-    Ok((server_init, server_compiled_linked.component_registry_ro))
+    Ok(server_init)
 }
 
 struct ServerInit {
-    deployment_id: DeploymentId,
+    deployment_ctx: DeploymentContextHandle,
+    // deployment_id: DeploymentId,
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
     engines: Engines,
-    exec_join_handles: Vec<ExecutorTaskHandle>,
+    // exec_join_handles: Vec<ExecutorTaskHandle>,
     timers_watcher: Option<AbortOnDropHandle>,
     cancel_watcher: Option<AbortOnDropHandle>,
     http_servers_handles: Vec<AbortOnDropHandle>,
@@ -1212,11 +1227,10 @@ impl ServerInit {
         info!("Server is shutting down");
 
         let ServerInit {
-            deployment_id: _,
+            deployment_ctx,
             db_pool,
             db_close,
             engines,
-            exec_join_handles,
             timers_watcher,
             cancel_watcher,
             http_servers_handles,
@@ -1235,8 +1249,12 @@ impl ServerInit {
         drop(engines);
         drop(log_forwarder_sender);
         debug!("Closing executors");
-        // Close most of the services. Worker tasks might still be running.
-        for exec_join_handle in exec_join_handles {
+        let executors = {
+            let mut deployment_lock = deployment_ctx.write().await;
+            deployment_lock.closed = true;
+            std::mem::take(&mut deployment_lock.exec_task_handles)
+        };
+        for exec_join_handle in executors {
             exec_join_handle.close().await;
         }
         drop(log_db_forarder); // Some incoming messages might not be stored.
@@ -1654,8 +1672,8 @@ impl ConfigVerified {
 }
 
 /// Holds all the work that does not require a database connection.
-struct LinkedComponents {
-    workers_linked: Vec<WorkerLinked>,
+pub(crate) struct LinkedComponents {
+    pub(crate) workers_linked: Vec<WorkerLinked>,
     webhooks_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
 }
 
@@ -2534,13 +2552,13 @@ enum LinkedWorkerKind {
     WorkflowJs(WorkflowJsWorkerLinkedWithConfig),
 }
 
-struct WorkerLinked {
+pub(crate) struct WorkerLinked {
     worker: LinkedWorkerKind,
     exec_config: ExecConfig,
     logs_store_min_level: Option<LogLevel>,
 }
 impl WorkerLinked {
-    fn spawn(
+    pub(crate) fn spawn(
         self,
         deployment_id: DeploymentId,
         db_pool: &Arc<dyn DbPool>,

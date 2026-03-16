@@ -7,11 +7,27 @@
 //! fixed ports, allowing parallel test execution without conflicts.
 //! The `test_addr!` macro ensures unique addresses at link time.
 
+use crate::config::toml::{
+    ActivityStubComponentConfigToml, ActivityStubInlineConfigToml, ConfigName,
+};
 use crate::{
     command::server::{RunParams, run_internal},
-    config::config_holder::{ConfigFileOption, ConfigHolder, ConfigSource},
+    config::{
+        config_holder::{ConfigFileOption, ConfigHolder, ConfigSource},
+        env_var::EnvVarConfig,
+        toml::DeploymentToml,
+    },
 };
+use chrono::Utc;
+use concepts::prefixed_ulid::DeploymentId;
+use concepts::storage::{DbPool as _, DbPoolCloseable as _, DeploymentRecord, DeploymentStatus};
+use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
+use grpc::grpc_gen::{
+    DeploymentId as GrpcDeploymentId, ListComponentsRequest, SwitchDeploymentRequest,
+    deployment_repository_client::DeploymentRepositoryClient,
+    function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
+};
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
@@ -292,7 +308,7 @@ impl TestServer {
         let params = RunParams {
             clean_cache: false,
             clean_codegen_cache: false,
-            clean_sqlite_directory: true,
+            clean_sqlite_directory: false,
             suppress_type_checking_errors: false,
         };
 
@@ -1075,8 +1091,14 @@ async fn inline_stub_self_stubbing() {
     server.shutdown().await;
 }
 
+/// Hot-redeploy an activity and verify the updated env var is visible immediately.
+///
+/// The `test_read_env_activity` JS activity reads an env var by name and returns
+/// its value.  The initial deployment sets `TEST_ENV_VAR=hello_from_env`.  A
+/// second deployment changes that value to `updated_value`.  After a hot redeploy
+/// the activity must return the new value without a server restart.
 #[tokio::test]
-async fn switch_deployment_grpc() {
+async fn hot_redeploy_activity() {
     use chrono::Utc;
     use concepts::prefixed_ulid::DeploymentId;
     use concepts::storage::{
@@ -1086,51 +1108,53 @@ async fn switch_deployment_grpc() {
     use grpc::grpc_gen::{
         DeploymentId as GrpcDeploymentId, SwitchDeploymentRequest,
         deployment_repository_client::DeploymentRepositoryClient,
+        switch_deployment_response::Outcome,
     };
-    use tonic::Code;
 
-    let server = TestServer::start(test_addr!(29)).await;
-    let endpoint = format!("http://{}", server.api_addr());
-    let mut client = DeploymentRepositoryClient::connect(endpoint).await.unwrap();
+    let server = TestServer::start(test_addr!(30)).await;
 
-    // Get the current deployment ID via REST.
-    let current_id: String = server
-        .client
-        .get(format!("{}/v1/deployment-id", server.base_url))
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    // 1. Run the activity with the initial deployment — must return the configured value.
+    let resp = server
+        .submit_follow(
+            "testing:integration/activity-env.read-env",
+            vec![json!("TEST_ENV_VAR")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({"ok": "hello_from_env"}));
 
-    // Non-existent deployment ID should return NOT_FOUND.
-    let fake_id = DeploymentId::generate().to_string();
-    let err = client
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(GrpcDeploymentId { id: fake_id }),
-            verify: false,
-            hot_redeploy: false,
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(err.code(), Code::NotFound);
-
-    // Insert a second candidate deployment directly into the SQLite DB.
+    // 2. Build a second deployment with the env var changed to "updated_value".
     let second_id = DeploymentId::generate();
     {
         let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
             .await
             .unwrap();
         let conn = pool.external_api_conn().await.unwrap();
+        let active = conn.get_active_deployment().await.unwrap().unwrap();
+
+        let config: serde_json::Value = serde_json::from_str(&active.config_json).unwrap();
+        let mut new_deployment: DeploymentToml = serde_json::from_value(config).unwrap();
+        let found = new_deployment
+            .activities_js
+            .iter_mut()
+            .find(|activity| &**activity.name == "test_read_env_activity")
+            .unwrap();
+        found.env_vars = vec![EnvVarConfig::KeyValue {
+            key: "TEST_ENV_VAR".to_string(),
+            value: "updated_value".to_string(),
+        }];
+
+        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
+        let new_config_hash = crate::config::toml::compute_config_hash(&new_deployment);
+
         conn.insert_deployment(DeploymentRecord {
             deployment_id: second_id,
             created_at: Utc::now(),
             activated_at: None,
             status: DeploymentStatus::Candidate,
-            config_json: "{}".to_string(),
-            config_hash: "second_deployment_hash".to_string(),
+            config_json: new_config_json,
+            config_hash: new_config_hash,
             obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
             created_by: Some("test".to_string()),
         })
@@ -1139,69 +1163,167 @@ async fn switch_deployment_grpc() {
         pool.close().await;
     }
 
-    // Switch to the second deployment — should report RestartRequired (no hot redeploy).
-    {
-        use grpc::grpc_gen::switch_deployment_response::Outcome;
-        let resp = client
-            .switch_deployment(SwitchDeploymentRequest {
-                deployment_id: Some(GrpcDeploymentId {
-                    id: second_id.to_string(),
-                }),
-                verify: false,
-                hot_redeploy: false,
-            })
-            .await
-            .expect("switch_deployment to second deployment should succeed")
-            .into_inner();
-        assert_eq!(resp.outcome(), Outcome::SwitchOutcomeRestartRequired);
-    }
-
-    // Verify the DB-active deployment is now second_id.
-    {
-        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
-            .await
-            .unwrap();
-        let conn = pool.external_api_conn().await.unwrap();
-        let active = conn.get_active_deployment().await.unwrap().unwrap();
-        assert_eq!(active.deployment_id, second_id);
-        pool.close().await;
-    }
-
-    // The running server's in-memory deployment_id is unchanged (hot-reload not implemented).
-    let reported_id: String = server
-        .client
-        .get(format!("{}/v1/deployment-id", server.base_url))
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .unwrap()
-        .json()
+    // 3. Hot-redeploy to the second deployment.
+    let mut client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap();
-    assert_eq!(reported_id, current_id);
-
-    // Switch back to the original deployment.
-    client
+    let resp = client
         .switch_deployment(SwitchDeploymentRequest {
             deployment_id: Some(GrpcDeploymentId {
-                id: current_id.clone(),
+                id: second_id.to_string(),
             }),
             verify: false,
-            hot_redeploy: false,
+            hot_redeploy: true,
         })
         .await
-        .expect("switch_deployment back to original should succeed");
+        .unwrap()
+        .into_inner();
+    assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
 
-    // Verify the DB-active deployment is back to the original.
+    // 4. Run the activity again — must return the updated value.
+    let resp = server
+        .submit_follow(
+            "testing:integration/activity-env.read-env",
+            vec![json!("TEST_ENV_VAR")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({"ok": "updated_value"}));
+
+    server.shutdown().await;
+}
+
+/// After a hot redeploy, both the gRPC server and the web API server must expose
+/// the updated component registry.
+///
+/// A new inline stub `testing:integration/stubs.new-hot-stub` is added only in
+/// the second deployment.  The test asserts that before the hot redeploy the stub
+/// is absent from both REST `/v1/functions` and gRPC `ListComponents`, and present
+/// in both after it.
+#[tokio::test]
+async fn hot_redeploy_registry() {
+    const NEW_STUB_FFQN: &str = "testing:integration/stubs.new-hot-stub";
+
+    let server = TestServer::start(test_addr!(31)).await;
+    let grpc_endpoint = format!("http://{}", server.api_addr());
+
+    // Helper: check whether the new stub ffqn appears in REST /v1/functions.
+    let rest_has_new_stub = || async {
+        let functions = server
+            .client
+            .get(format!("{}/v1/functions", server.base_url))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap();
+        functions
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["ffqn"] == NEW_STUB_FFQN)
+    };
+
+    // Helper: check whether the new stub appears in gRPC ListComponents exports.
+    let grpc_has_new_stub = |endpoint: String| async move {
+        let mut fn_client = FunctionRepositoryClient::connect(endpoint).await.unwrap();
+        let resp = fn_client
+            .list_components(ListComponentsRequest {
+                function_name: None,
+                component_digest: None,
+                extensions: false,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        resp.components.iter().any(|c| {
+            c.exports.iter().any(|f| {
+                f.function_name
+                    .as_ref()
+                    .is_some_and(|n| n.function_name == "new-hot-stub")
+            })
+        })
+    };
+
+    // Confirm the new stub is absent before the hot redeploy.
+    assert!(
+        !rest_has_new_stub().await,
+        "stub must be absent before hot redeploy (REST)"
+    );
+    assert!(
+        !grpc_has_new_stub(grpc_endpoint.clone()).await,
+        "stub must be absent before hot redeploy (gRPC)"
+    );
+
+    // Build a second deployment that adds the new inline stub.
+    let second_id = DeploymentId::generate();
     {
         let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
             .await
             .unwrap();
         let conn = pool.external_api_conn().await.unwrap();
         let active = conn.get_active_deployment().await.unwrap().unwrap();
-        assert_eq!(active.deployment_id.to_string(), current_id);
+
+        let config: serde_json::Value = serde_json::from_str(&active.config_json).unwrap();
+        let mut new_deployment: DeploymentToml = serde_json::from_value(config).unwrap();
+        new_deployment
+            .activities_stub
+            .push(ActivityStubComponentConfigToml::Inline(
+                ActivityStubInlineConfigToml {
+                    name: ConfigName::new(concepts::StrVariant::Static("new_hot_stub")).unwrap(),
+                    ffqn: NEW_STUB_FFQN.parse().unwrap(),
+                    params: Some(vec![]),
+                    return_type: Some("result<string, string>".to_string()),
+                },
+            ));
+
+        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
+        let new_config_hash = crate::config::toml::compute_config_hash(&new_deployment);
+
+        conn.insert_deployment(DeploymentRecord {
+            deployment_id: second_id,
+            created_at: Utc::now(),
+            activated_at: None,
+            status: DeploymentStatus::Candidate,
+            config_json: new_config_json,
+            config_hash: new_config_hash,
+            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+            created_by: Some("test".to_string()),
+        })
+        .await
+        .unwrap();
         pool.close().await;
     }
+
+    // Hot-redeploy to the second deployment.
+    let mut deploy_client = DeploymentRepositoryClient::connect(grpc_endpoint.clone())
+        .await
+        .unwrap();
+    let resp = deploy_client
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(GrpcDeploymentId {
+                id: second_id.to_string(),
+            }),
+            verify: false,
+            hot_redeploy: true,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
+
+    // Both servers must now expose the updated registry.
+    assert!(
+        rest_has_new_stub().await,
+        "stub must be present after hot redeploy (REST)"
+    );
+    assert!(
+        grpc_has_new_stub(grpc_endpoint).await,
+        "stub must be present after hot redeploy (gRPC)"
+    );
 
     server.shutdown().await;
 }

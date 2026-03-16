@@ -44,15 +44,13 @@ use utoipa::{IntoParams, OpenApi, ToSchema};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
     activity::cancel_registry::CancelRegistry, component_logger::LogStrageConfig, engines::Engines,
-    registry::ComponentConfigRegistryRO, workflow::workflow_js_worker::WorkflowJsWorker,
-    workflow::workflow_worker::WorkflowWorker,
+    workflow::workflow_js_worker::WorkflowJsWorker, workflow::workflow_worker::WorkflowWorker,
 };
 
 #[derive(Clone)]
 pub(crate) struct WebApiState {
-    pub(crate) deployment_id: DeploymentId,
+    pub(crate) deployment_ctx: crate::command::server::DeploymentContextHandle,
     pub(crate) db_pool: Arc<dyn DbPool>,
-    pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     pub(crate) cancel_registry: CancelRegistry,
     pub(crate) termination_watcher: watch::Receiver<()>,
     pub(crate) subscription_interruption: Option<Duration>,
@@ -1153,6 +1151,10 @@ async fn execution_stub(
 ) -> Result<Response, HttpResponse> {
     let accept = AcceptHeader::Json;
     let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
+    let component_registry_ro = {
+        let ctx = state.deployment_ctx.read().await;
+        ctx.component_registry_ro.clone()
+    };
     // Get FFQN
     let db_connection = state
         .db_pool
@@ -1166,9 +1168,8 @@ async fn execution_stub(
         .ffqn;
 
     // Check that ffqn exists
-    let Some((_component_id, fn_metadata)) = state
-        .component_registry_ro
-        .find_by_exported_ffqn_stub(&ffqn)
+    let Some((_component_id, fn_metadata)) =
+        component_registry_ro.find_by_exported_ffqn_stub(&ffqn)
     else {
         return Err(HttpResponse {
             status: StatusCode::NOT_FOUND,
@@ -1364,18 +1365,22 @@ async fn execution_submit(
     follow: bool,
     accept: AcceptHeader,
 ) -> Result<http::Response<Body>, HttpResponse> {
+    let (deployment_id, component_registry_ro) = {
+        let ctx = state.deployment_ctx.read().await;
+        (ctx.deployment_id, ctx.component_registry_ro.clone())
+    };
     let conn = state
         .db_pool
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     let res = server::submit(
-        state.deployment_id,
+        deployment_id,
         conn.as_ref(),
         execution_id.clone(),
         payload.ffqn,
         payload.params,
-        &state.component_registry_ro,
+        &component_registry_ro,
     )
     .await
     .map_err(|err| ErrorWrapper(err, accept))?;
@@ -1516,6 +1521,10 @@ async fn execution_replay(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
+    let (deployment_id, component_registry_ro) = {
+        let ctx = state.deployment_ctx.read().await;
+        (ctx.deployment_id, ctx.component_registry_ro.clone())
+    };
     let conn = state
         .db_pool
         .connection()
@@ -1530,16 +1539,14 @@ async fn execution_replay(
         }
     })?;
     // Check that ffqn exists
-    let Some((component_id, _fn_metadata)) = state
-        .component_registry_ro
-        .find_by_exported_ffqn_submittable(&create_req.ffqn)
+    let Some((component_id, _fn_metadata)) =
+        component_registry_ro.find_by_exported_ffqn_submittable(&create_req.ffqn)
     else {
         return Err(HttpResponse::not_found(accept, "component"));
     };
     Span::current().record("component_id", tracing::field::display(component_id));
 
-    let (component_id, replay_info) = state
-        .component_registry_ro
+    let (component_id, replay_info) = component_registry_ro
         .get_workflow_replay_info(&component_id.component_digest)
         .expect("digest taken from found component id");
 
@@ -1552,12 +1559,12 @@ async fn execution_replay(
 
     let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
         WorkflowJsWorker::replay(
-            state.deployment_id,
+            deployment_id,
             component_id.clone(),
             replay_info.runnable_component.wasmtime_component.clone(),
             &replay_info.runnable_component.wasm_component.exim,
             state.engines.workflow_engine.clone(),
-            Arc::new(state.component_registry_ro.clone()),
+            Arc::new(component_registry_ro.clone()),
             conn.as_ref(),
             execution_id.clone(),
             logs_storage_config,
@@ -1566,12 +1573,12 @@ async fn execution_replay(
         .await
     } else {
         WorkflowWorker::replay(
-            state.deployment_id,
+            deployment_id,
             component_id.clone(),
             replay_info.runnable_component.wasmtime_component.clone(),
             &replay_info.runnable_component.wasm_component.exim,
             state.engines.workflow_engine.clone(),
-            Arc::new(state.component_registry_ro.clone()),
+            Arc::new(component_registry_ro.clone()),
             conn.as_ref(),
             execution_id.clone(),
             logs_storage_config,
@@ -1631,8 +1638,11 @@ async fn execution_upgrade(
     Json(payload): Json<ExecutionUpgradePayload>,
 ) -> Result<Response, HttpResponse> {
     if !payload.skip_determinism_check {
-        let (component_id, replay_info) = state
-            .component_registry_ro
+        let (deployment_id, component_registry_ro) = {
+            let ctx = state.deployment_ctx.read().await;
+            (ctx.deployment_id, ctx.component_registry_ro.clone())
+        };
+        let (component_id, replay_info) = component_registry_ro
             .get_workflow_replay_info(&payload.new)
             .ok_or_else(|| HttpResponse::not_found(accept, Some("new component")))?;
 
@@ -1651,12 +1661,12 @@ async fn execution_upgrade(
 
         let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
             WorkflowJsWorker::replay(
-                state.deployment_id,
+                deployment_id,
                 component_id.clone(),
                 replay_info.runnable_component.wasmtime_component.clone(),
                 &replay_info.runnable_component.wasm_component.exim,
                 state.engines.workflow_engine.clone(),
-                Arc::new(state.component_registry_ro.clone()),
+                Arc::new(component_registry_ro.clone()),
                 conn.as_ref(),
                 execution_id.clone(),
                 logs_storage_config,
@@ -1665,12 +1675,12 @@ async fn execution_upgrade(
             .await
         } else {
             WorkflowWorker::replay(
-                state.deployment_id,
+                deployment_id,
                 component_id.clone(),
                 replay_info.runnable_component.wasmtime_component.clone(),
                 &replay_info.runnable_component.wasm_component.exim,
                 state.engines.workflow_engine.clone(),
-                Arc::new(state.component_registry_ro.clone()),
+                Arc::new(component_registry_ro.clone()),
                 conn.as_ref(),
                 execution_id.clone(),
                 logs_storage_config,
@@ -1764,7 +1774,13 @@ pub(crate) mod components {
         Path(digest): Path<ComponentDigest>,
         state: State<Arc<WebApiState>>,
     ) -> Result<Response, HttpResponse> {
-        let Some(wit) = state.component_registry_ro.get_wit(&digest) else {
+        let component_registry_ro = state
+            .deployment_ctx
+            .read()
+            .await
+            .component_registry_ro
+            .clone();
+        let Some(wit) = component_registry_ro.get_wit(&digest) else {
             return Err(HttpResponse::not_found(
                 AcceptHeader::Text,
                 Some("component"),
@@ -1788,7 +1804,13 @@ pub(crate) mod components {
         Query(params): Query<ComponentsListParams>,
         accept: AcceptHeader,
     ) -> Response {
-        let mut components = state.component_registry_ro.list(params.extensions);
+        let component_registry_ro = state
+            .deployment_ctx
+            .read()
+            .await
+            .component_registry_ro
+            .clone();
+        let mut components = component_registry_ro.list(params.extensions);
 
         if let Some(name) = params.name {
             components.retain(|c| c.component_id.name.as_ref() == name);
@@ -1970,7 +1992,13 @@ mod functions {
         Query(params): Query<FunctionsListParams>,
         accept: AcceptHeader,
     ) -> Response {
-        let all_exports = state.component_registry_ro.all_exports();
+        let component_registry_ro = state
+            .deployment_ctx
+            .read()
+            .await
+            .component_registry_ro
+            .clone();
+        let all_exports = component_registry_ro.all_exports();
 
         let functions: Vec<FunctionOutput> = all_exports
             .iter()
@@ -2032,9 +2060,14 @@ mod functions {
         state: State<Arc<WebApiState>>,
     ) -> Result<Response, HttpResponse> {
         let ffqn = params.ffqn;
+        let component_registry_ro = state
+            .deployment_ctx
+            .read()
+            .await
+            .component_registry_ro
+            .clone();
         // Find the component that exports this function
-        let Some((component_id, _fn_metadata)) =
-            state.component_registry_ro.find_by_exported_ffqn(&ffqn)
+        let Some((component_id, _fn_metadata)) = component_registry_ro.find_by_exported_ffqn(&ffqn)
         else {
             return Err(HttpResponse::not_found(
                 AcceptHeader::Text,
@@ -2043,8 +2076,7 @@ mod functions {
         };
 
         // Get the WIT for this component
-        let wit = state
-            .component_registry_ro
+        let wit = component_registry_ro
             .get_wit(&component_id.component_digest)
             .expect("if function is found, component must be found");
 
@@ -2160,13 +2192,14 @@ mod deployment {
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 
-        if crate::server::should_add_current_deployment(&pagination, state.deployment_id, &states) {
-            states.insert(0, DeploymentState::new(state.deployment_id));
+        let deployment_id = state.deployment_ctx.read().await.deployment_id;
+        if crate::server::should_add_current_deployment(&pagination, deployment_id, &states) {
+            states.insert(0, DeploymentState::new(deployment_id));
         }
 
         let states: Vec<DeploymentStateSer> = states
             .into_iter()
-            .map(|dep| DeploymentStateSer::from(&dep, state.deployment_id))
+            .map(|dep| DeploymentStateSer::from(&dep, deployment_id))
             .collect();
 
         Ok(match accept {
@@ -2199,9 +2232,10 @@ mod deployment {
         state: State<Arc<WebApiState>>,
         accept: AcceptHeader,
     ) -> Result<Response, HttpResponse> {
+        let deployment_id = state.deployment_ctx.read().await.deployment_id;
         Ok(match accept {
-            AcceptHeader::Json => Json(state.deployment_id).into_response(),
-            AcceptHeader::Text => state.deployment_id.to_string().into_response(),
+            AcceptHeader::Json => Json(deployment_id).into_response(),
+            AcceptHeader::Text => deployment_id.to_string().into_response(),
         })
     }
 }

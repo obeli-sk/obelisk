@@ -787,7 +787,15 @@ impl JsLocationToml {
 
 /// Activity, Webhook, Workflow or a Http server
 #[derive(
-    Debug, Clone, Hash, PartialEq, Eq, derive_more::Display, derive_more::Into, JsonSchema,
+    Debug,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    derive_more::Into,
+    JsonSchema,
+    derive_more::Deref,
 )]
 #[display("{_0}")]
 pub struct ConfigName(#[schemars(with = "String")] StrVariant);
