@@ -770,10 +770,18 @@ message SwitchDeploymentRequest {
     DeploymentId deployment_id = 1;
     // Run `obelisk server verify` on the deployment config before switching.
     bool verify = 2;
-    // Perform a hot redeployment (reload running components without restart). Not yet implemented.
+    // Perform a hot redeployment (reload running components without restart).
     bool hot_redeploy = 3;
 }
 message SwitchDeploymentResponse {
+    enum Outcome {
+        SWITCH_OUTCOME_UNSPECIFIED = 0;
+        // The server performed a hot redeploy; the new deployment is now live.
+        SWITCH_OUTCOME_SWITCHED = 1;
+        // The database was updated; the server must be restarted to apply the new deployment.
+        SWITCH_OUTCOME_RESTART_REQUIRED = 2;
+    }
+    Outcome outcome = 1;
 }
 
 

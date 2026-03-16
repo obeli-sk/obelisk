@@ -1,4 +1,5 @@
 use crate::command::server;
+use crate::command::server::DeploymentContextHandle;
 use crate::command::server::SubmitError;
 use crate::command::server::VerifyParams;
 use crate::config::config_holder::ConfigHolder;
@@ -39,6 +40,7 @@ use concepts::storage::Version;
 use concepts::storage::VersionType;
 use concepts::time::ClockFn;
 use concepts::time::Now;
+use executor::executor::ExecutorTaskHandle;
 use grpc::TonicRespResult;
 use grpc::TonicResult;
 use grpc::grpc_gen;
@@ -72,17 +74,14 @@ use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::Engines;
-use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
 use wasm_workers::workflow::workflow_worker::WorkflowWorker;
 
 #[derive(derive_more::Debug)]
 pub(crate) struct GrpcServer {
-    deployment_id: DeploymentId,
     #[debug(skip)]
     db_pool: Arc<dyn DbPool>,
     termination_watcher: watch::Receiver<()>,
-    component_registry_ro: ComponentConfigRegistryRO,
     #[debug(skip)]
     cancel_registry: CancelRegistry,
     #[debug(skip)]
@@ -93,31 +92,31 @@ pub(crate) struct GrpcServer {
     config_holder: Arc<crate::config::config_holder::ConfigHolder>,
     #[debug(skip)]
     path_prefixes: Arc<crate::config::config_holder::PathPrefixes>,
+    #[debug(skip)]
+    deployment_ctx: DeploymentContextHandle,
 }
 
 impl GrpcServer {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
-        deployment_id: DeploymentId,
         db_pool: Arc<dyn DbPool>,
         termination_watcher: watch::Receiver<()>,
-        component_registry_ro: ComponentConfigRegistryRO,
         cancel_registry: CancelRegistry,
         engines: Engines,
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
         config_holder: Arc<ConfigHolder>,
         path_prefixes: Arc<PathPrefixes>,
+        deployment_ctx: DeploymentContextHandle,
     ) -> Self {
         Self {
-            deployment_id,
             db_pool,
             termination_watcher,
-            component_registry_ro,
             cancel_registry,
             engines,
             log_forwarder_sender,
             config_holder,
             path_prefixes,
+            deployment_ctx,
         }
     }
 }
@@ -213,8 +212,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .vec
         };
 
+        let (deployment_id, component_registry_ro) = {
+            let ctx = self.deployment_ctx.read().await;
+            (ctx.deployment_id, ctx.component_registry_ro.clone())
+        };
         let outcome = server::submit(
-            self.deployment_id,
+            deployment_id,
             self.db_pool
                 .external_api_conn()
                 .await
@@ -223,7 +226,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             execution_id,
             ffqn,
             params,
-            &self.component_registry_ro,
+            &component_registry_ro,
         )
         .await?;
 
@@ -260,6 +263,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         };
         let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
         span.record("execution_id", tracing::field::display(&execution_id));
+        let component_registry_ro = {
+            let ctx = self.deployment_ctx.read().await;
+            ctx.component_registry_ro.clone()
+        };
         // Get FFQN
         let db_connection = self
             .db_pool
@@ -274,7 +281,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         // Check that ffqn exists
         let Some((component_id, fn_metadata)) =
-            self.component_registry_ro.find_by_exported_ffqn_stub(&ffqn)
+            component_registry_ro.find_by_exported_ffqn_stub(&ffqn)
         else {
             return Err(tonic::Status::not_found("function not found"));
         };
@@ -755,13 +762,16 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let (deployment_id, component_registry_ro) = {
+            let ctx = self.deployment_ctx.read().await;
+            (ctx.deployment_id, ctx.component_registry_ro.clone())
+        };
         let conn = self.db_pool.connection().await.map_err(map_to_status)?;
         // Find the execution's ffqn.
         let create_req = conn.get_create_request(&execution_id).await.to_status()?;
 
         // Check that ffqn exists
-        let (component_id, _fn_metadata) = self
-            .component_registry_ro
+        let (component_id, _fn_metadata) = component_registry_ro
             .find_by_exported_ffqn_submittable(&create_req.ffqn)
             .ok_or_else(|| {
                 tonic::Status::not_found(format!(
@@ -772,8 +782,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         Span::current().record("component_id", tracing::field::display(component_id));
 
-        let (component_id, replay_info) = self
-            .component_registry_ro
+        let (component_id, replay_info) = component_registry_ro
             .get_workflow_replay_info(&component_id.component_digest)
             .expect("digest taken from found component id");
 
@@ -787,12 +796,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
             WorkflowJsWorker::replay(
-                self.deployment_id,
+                deployment_id,
                 component_id.clone(),
                 replay_info.runnable_component.wasmtime_component.clone(),
                 &replay_info.runnable_component.wasm_component.exim,
                 self.engines.workflow_engine.clone(),
-                Arc::new(self.component_registry_ro.clone()),
+                Arc::new(component_registry_ro.clone()),
                 conn.as_ref(),
                 execution_id.clone(),
                 logs_storage_config,
@@ -801,12 +810,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .await
         } else {
             WorkflowWorker::replay(
-                self.deployment_id,
+                deployment_id,
                 component_id.clone(),
                 replay_info.runnable_component.wasmtime_component.clone(),
                 &replay_info.runnable_component.wasm_component.exim,
                 self.engines.workflow_engine.clone(),
-                Arc::new(self.component_registry_ro.clone()),
+                Arc::new(component_registry_ro.clone()),
                 conn.as_ref(),
                 execution_id.clone(),
                 logs_storage_config,
@@ -840,8 +849,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("new_component_digest")?
             .try_into()?;
         if !request.skip_determinism_check {
-            let (component_id, replay_info) = self
-                .component_registry_ro
+            let (deployment_id, component_registry_ro) = {
+                let ctx = self.deployment_ctx.read().await;
+                (ctx.deployment_id, ctx.component_registry_ro.clone())
+            };
+            let (component_id, replay_info) = component_registry_ro
                 .get_workflow_replay_info(&new)
                 .ok_or_else(|| {
                     tonic::Status::not_found(format!("new component '{new}' not found in registry"))
@@ -858,12 +870,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
             let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
                 WorkflowJsWorker::replay(
-                    self.deployment_id,
+                    deployment_id,
                     component_id.clone(),
                     replay_info.runnable_component.wasmtime_component.clone(),
                     &replay_info.runnable_component.wasm_component.exim,
                     self.engines.workflow_engine.clone(),
-                    Arc::new(self.component_registry_ro.clone()),
+                    Arc::new(component_registry_ro.clone()),
                     conn.as_ref(),
                     execution_id.clone(),
                     logs_storage_config,
@@ -872,12 +884,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .await
             } else {
                 WorkflowWorker::replay(
-                    self.deployment_id,
+                    deployment_id,
                     component_id.clone(),
                     replay_info.runnable_component.wasmtime_component.clone(),
                     &replay_info.runnable_component.wasm_component.exim,
                     self.engines.workflow_engine.clone(),
-                    Arc::new(self.component_registry_ro.clone()),
+                    Arc::new(component_registry_ro.clone()),
                     conn.as_ref(),
                     execution_id.clone(),
                     logs_storage_config,
@@ -1232,7 +1244,13 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
         request: tonic::Request<grpc_gen::ListComponentsRequest>,
     ) -> TonicRespResult<grpc_gen::ListComponentsResponse> {
         let request = request.into_inner();
-        let all_components = self.component_registry_ro.list(request.extensions);
+        let component_registry_ro = self
+            .deployment_ctx
+            .read()
+            .await
+            .component_registry_ro
+            .clone();
+        let all_components = component_registry_ro.list(request.extensions);
         let component_digest = request
             .component_digest
             .map(ComponentDigest::try_from)
@@ -1273,8 +1291,13 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
                 .component_digest
                 .argument_must_exist("component_digest")?,
         )?;
-        let wit = self
+        let component_registry_ro = self
+            .deployment_ctx
+            .read()
+            .await
             .component_registry_ro
+            .clone();
+        let wit = component_registry_ro
             .get_wit(&component_digest)
             .ok_or_else(|| {
                 tonic::Status::not_found(format!(
@@ -1371,15 +1394,16 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .await
             .to_status()?;
 
-        if crate::server::should_add_current_deployment(&pagination, self.deployment_id, &states) {
-            states.insert(0, DeploymentState::new(self.deployment_id));
+        let deployment_id = self.deployment_ctx.read().await.deployment_id;
+        if crate::server::should_add_current_deployment(&pagination, deployment_id, &states) {
+            states.insert(0, DeploymentState::new(deployment_id));
         }
 
         let deployments: Vec<_> = states
             .into_iter()
             .map(|dep| grpc_gen::DeploymentState {
                 deployment_id: Some(dep.deployment_id.into()),
-                current: dep.deployment_id == self.deployment_id,
+                current: dep.deployment_id == deployment_id,
                 locked: dep.locked,
                 pending: dep.pending,
                 scheduled: dep.scheduled,
@@ -1399,9 +1423,10 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         &self,
         _request: tonic::Request<grpc_gen::GetCurrentDeploymentIdRequest>,
     ) -> TonicRespResult<grpc_gen::GetCurrentDeploymentIdResponse> {
+        let deployment_id = self.deployment_ctx.read().await.deployment_id;
         Ok(tonic::Response::new(
             grpc_gen::GetCurrentDeploymentIdResponse {
-                deployment_id: Some(self.deployment_id.into()),
+                deployment_id: Some(deployment_id.into()),
             },
         ))
     }
@@ -1412,17 +1437,12 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         request: tonic::Request<grpc_gen::SwitchDeploymentRequest>,
     ) -> TonicRespResult<grpc_gen::SwitchDeploymentResponse> {
         let request = request.into_inner();
-        let deployment_id: DeploymentId = request
+        let new_deployment_id: DeploymentId = request
             .deployment_id
             .argument_must_exist("deployment_id")?
             .try_into()?;
-        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
-
-        if request.hot_redeploy {
-            return Err(tonic::Status::unimplemented(
-                "hot_redeploy is not yet implemented",
-            ));
-        }
+        tracing::Span::current()
+            .record("deployment_id", tracing::field::display(&new_deployment_id));
 
         let conn = self
             .db_pool
@@ -1430,29 +1450,119 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .await
             .map_err(map_to_status)?;
 
-        // Check that the deployment exists.
-        conn.get_deployment(deployment_id)
+        // Load and check the deployment record.
+        let deployment_record = conn
+            .get_deployment(new_deployment_id)
             .await
             .to_status()?
             .must_exist("deployment")?;
+
+        let target_deployment: DeploymentToml =
+            serde_json::from_str(&deployment_record.config_json).map_err(|err| {
+                tonic::Status::internal(format!("cannot parse stored deployment config: {err}"))
+            })?;
+
+        if request.hot_redeploy {
+            // Get the running deployment's config_json from DB.
+            let running_deployment_id = self.deployment_ctx.read().await.deployment_id;
+            let running_record = conn
+                .get_deployment(running_deployment_id)
+                .await
+                .to_status()?
+                .must_exist("running deployment")?;
+            let running_deployment: DeploymentToml =
+                serde_json::from_str(&running_record.config_json).map_err(|err| {
+                    tonic::Status::internal(format!(
+                        "cannot parse running deployment config: {err}"
+                    ))
+                })?;
+
+            // Compare non-activity parts.
+            if non_activity_json_value(&running_deployment)
+                == non_activity_json_value(&target_deployment)
+            {
+                // Hot redeploy path: only activities changed (or nothing changed).
+                let mut config =
+                    self.config_holder.load_config().await.map_err(|err| {
+                        tonic::Status::internal(format!("cannot load config: {err}"))
+                    })?;
+                config.deployment = target_deployment;
+                let verify_deployment_id = DeploymentId::generate();
+                let mut termination_watcher = self.termination_watcher.clone();
+                let compiled = crate::command::server::verify_config_compile_link(
+                    config,
+                    self.path_prefixes.clone(),
+                    verify_deployment_id,
+                    VerifyParams {
+                        clean_cache: false,
+                        clean_codegen_cache: false,
+                        ignore_missing_env_vars: false,
+                        suppress_type_checking_errors: false,
+                    },
+                    &mut termination_watcher,
+                )
+                .await
+                .map_err(|err| {
+                    tonic::Status::failed_precondition(format!("verification failed: {err:#}"))
+                })?;
+
+                // Hold the write lock for the entire swap: drain old executors,
+                // activate in DB, write new context (registry + new handles).
+                // This prevents ServerInit::close from racing between drain and spawn.
+                let mut ctx = self.deployment_ctx.write().await;
+                if ctx.closed {
+                    return Err(tonic::Status::failed_precondition(
+                        "server is being shut down",
+                    ));
+                }
+
+                let old = std::mem::take(&mut ctx.exec_task_handles);
+                for h in old {
+                    h.close().await;
+                }
+
+                // Activate deployment in DB.
+                conn.activate_deployment(new_deployment_id, chrono::Utc::now())
+                    .await
+                    .to_status()?;
+
+                // Spawn new activity executors.
+                let new_handles: Vec<ExecutorTaskHandle> = compiled
+                    .compiled_components
+                    .workers_linked
+                    .into_iter()
+                    .map(|pre_spawn| {
+                        pre_spawn.spawn(
+                            new_deployment_id,
+                            &self.db_pool,
+                            self.cancel_registry.clone(),
+                            &self.log_forwarder_sender,
+                        )
+                    })
+                    .collect();
+
+                *ctx = crate::command::server::DeploymentContext {
+                    deployment_id: new_deployment_id,
+                    component_registry_ro: compiled.component_registry_ro.clone(),
+                    exec_task_handles: new_handles,
+                    closed: false,
+                };
+
+                let outcome = grpc_gen::switch_deployment_response::Outcome::SwitchOutcomeSwitched;
+                info!(%new_deployment_id, ?outcome, "Deployment hot-redeployed");
+                return Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
+                    outcome: outcome.into(),
+                }));
+            }
+            // Non-activity parts changed: fall through to normal activate + RestartRequired.
+        }
 
         if request.verify {
             let mut config =
                 self.config_holder.load_config().await.map_err(|err| {
                     tonic::Status::internal(format!("cannot load config: {err:#}"))
                 })?;
-            let stored_deployment: DeploymentToml = serde_json::from_str(
-                &conn
-                    .get_deployment(deployment_id)
-                    .await
-                    .to_status()?
-                    .must_exist("deployment")?
-                    .config_json,
-            )
-            .map_err(|err| {
-                tonic::Status::internal(format!("cannot parse stored deployment config: {err}"))
-            })?;
-            config.deployment = stored_deployment;
+            config.deployment = target_deployment;
             let verify_deployment_id = DeploymentId::generate();
             let mut termination_watcher = self.termination_watcher.clone();
             crate::command::server::verify_config_compile_link(
@@ -1473,13 +1583,28 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             })?;
         }
 
-        conn.activate_deployment(deployment_id, chrono::Utc::now())
+        conn.activate_deployment(new_deployment_id, chrono::Utc::now())
             .await
             .to_status()?;
 
-        info!(%deployment_id, "Deployment switched");
-        Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {}))
+        let outcome = grpc_gen::switch_deployment_response::Outcome::SwitchOutcomeRestartRequired;
+        info!(%new_deployment_id, ?outcome, "Deployment switched");
+        Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
+            outcome: outcome.into(),
+        }))
     }
+}
+
+fn non_activity_json_value(deployment: &DeploymentToml) -> serde_json::Value {
+    let mut v = serde_json::to_value(deployment)
+        .expect("DeploymentToml has no custom serialization that could fail");
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("activity_wasm");
+        obj.remove("activity_stub");
+        obj.remove("activity_external");
+        obj.remove("activity_js");
+    }
+    v
 }
 
 #[cfg(test)]
