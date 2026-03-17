@@ -319,6 +319,31 @@
 
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
 
+### JavaScript Webhook Endpoint components configuration
+# [[webhook_endpoint_js]]
+# name = "name"                              # Required. Component name.
+## Location of the JavaScript source file.
+## Supports local file paths and `gh://` GitHub release references.
+## OCI references are NOT supported for JS webhook endpoints.
+# location = "path/to/webhook.js"
+# location = "gh://user/repo@release/my-webhook.js"
+# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
+# http_server = "external"                   # link to a `http_server`'s name (built-in default)
+# routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]  # Required. See Routes section above.
+## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".
+# forward_stdout="stderr"
+# forward_stderr="stderr"
+# logs_store_min_level = "debug"             # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
+## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
+# env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}]
+## Outgoing HTTP host allowlist - same syntax as activity_wasm.allowed_host.
+# [[webhook_endpoint_js.allowed_host]]
+# pattern = "api.example.com"
+# methods = ["GET", "POST"]
+# [webhook_endpoint_js.allowed_host.secrets]
+# env_vars = ["API_KEY"]
+# replace_in = ["headers"]
+
 ### Send spans via gRPC to an OTLP collector.
 # [otlp]
 ## Run `docker run --rm -it  -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:1.60` to start collecting traces.

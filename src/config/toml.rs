@@ -2118,6 +2118,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             logs_store_min_level: w.logs_store_min_level,
+            env_vars: w.env_vars.clone(),
             allowed_hosts: w.allowed_hosts.clone(),
         });
     }
@@ -2649,6 +2650,8 @@ pub(crate) mod webhook {
         pub(crate) forward_stderr: ComponentStdOutputToml,
         #[serde(default)]
         pub(crate) logs_store_min_level: LogLevelToml,
+        #[serde(default)]
+        pub(crate) env_vars: Vec<EnvVarConfig>,
         /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
         #[serde(default, rename = "allowed_host")]
         pub(crate) allowed_hosts: Vec<AllowedHostToml>,
@@ -2663,6 +2666,7 @@ pub(crate) mod webhook {
         pub(crate) routes: Vec<WebhookRouteVerified>,
         pub(crate) forward_stdout: Option<StdOutputConfig>,
         pub(crate) forward_stderr: Option<StdOutputConfig>,
+        pub(crate) env_vars: Arc<[EnvVar]>,
         pub(crate) logs_store_min_level: Option<LogLevel>,
         pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
     }
@@ -2758,6 +2762,8 @@ pub(crate) mod webhook {
         pub(crate) forward_stderr: ComponentStdOutputToml,
         #[serde(default)]
         pub(crate) logs_store_min_level: LogLevelToml,
+        #[serde(default)]
+        pub(crate) env_vars: Vec<EnvVarConfig>,
         #[serde(default, rename = "allowed_host")]
         pub(crate) allowed_hosts: Vec<AllowedHostToml>,
     }
@@ -2783,7 +2789,9 @@ pub(crate) mod webhook {
                 StrVariant::from(self.name.clone()),
                 ComponentDigest(Digest(hash)),
             )?;
+            let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
             let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
+            validate_no_env_collision(&env_vars, &allowed_hosts)?;
             Ok((
                 self.name,
                 WebhookJsConfigVerified {
@@ -2798,6 +2806,7 @@ pub(crate) mod webhook {
                         .collect::<Result<Vec<_>, _>>()?,
                     forward_stdout: self.forward_stdout.into(),
                     forward_stderr: self.forward_stderr.into(),
+                    env_vars,
                     logs_store_min_level: self.logs_store_min_level.into(),
                     allowed_hosts,
                 },

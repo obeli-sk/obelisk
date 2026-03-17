@@ -2007,7 +2007,7 @@ async fn compile_and_verify(
                                 component_id: webhook_js.component_id,
                                 forward_stdout: webhook_js.forward_stdout,
                                 forward_stderr: webhook_js.forward_stderr,
-                                env_vars: Arc::from([]), // FIXME: Add to toml
+                                env_vars: webhook_js.env_vars,
                                 fuel,
                                 backtrace_persist: false,
                                 subscription_interruption: None,
