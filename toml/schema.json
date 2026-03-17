@@ -1544,6 +1544,13 @@
           ],
           "default": null
         },
+        "env_vars": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
         "forward_stderr": {
           "$ref": "#/$defs/ComponentStdOutputToml",
           "default": "db"
