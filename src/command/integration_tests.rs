@@ -264,6 +264,12 @@ routes = [{{ methods = ["GET"], route = "/fetch-denied" }}]
 name = "test_call_activity_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/call_activity.js"
 routes = [{{ methods = ["GET"], route = "/call-activity/:a/:b" }}]
+
+[[webhook_endpoint_js]]
+name = "test_read_env_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/read_env.js"
+routes = [{{ methods = ["GET"], route = "/read-env" }}]
+env_vars = [{{key = "WEBHOOK_TEST_ENV_VAR", value = "hello_from_webhook_env"}}]
 "#,
         ip = ip,
         API_PORT = API_PORT,
@@ -1072,6 +1078,21 @@ async fn webhook_js_call_activity() {
     let body: Value = resp.json().await.unwrap();
     // The add activity returns the sum as a string
     assert_eq!(body["result"], "12");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn webhook_js_env_var() {
+    let server = TestServer::start(test_addr!(29)).await;
+    let resp = server
+        .client
+        .get(format!("{}/read-env", server.webhook_base_url))
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "hello_from_webhook_env");
     server.shutdown().await;
 }
 
