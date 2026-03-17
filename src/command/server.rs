@@ -1977,7 +1977,7 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook.routes,
-                                frame_files: webhook.backtrace_config.frame_files_to_sources,
+                                frame_files: webhook.frame_files_to_sources,
                             })
                         })
                     })
@@ -2455,8 +2455,6 @@ impl WorkerCompiled {
             engine,
             Now.clone_box(),
         )?;
-        let frame_files: FrameFilesToSourceContent =
-            workflow.backtrace_config.frame_files_to_sources;
         let component = ComponentConfig {
             component_id: workflow.exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -2481,7 +2479,7 @@ impl WorkerCompiled {
                 logs_store_min_level: workflow.logs_store_min_level,
             },
             component,
-            frame_files,
+            workflow.frame_files_to_sources,
         ))
     }
 

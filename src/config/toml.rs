@@ -2039,7 +2039,7 @@ pub(crate) struct ComponentBacktraceConfig {
     pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceLocation>,
 }
 impl ComponentBacktraceConfig {
-    async fn verify(self, path_prefixes: &PathPrefixes) -> ComponentBacktraceConfigVerified {
+    async fn verify(self, path_prefixes: &PathPrefixes) -> FrameFilesToSourceContent {
         let mut frame_files_to_sources = HashMap::new();
         for (key, location) in self.frame_files_to_sources {
             let content = match location {
@@ -2064,16 +2064,8 @@ impl ComponentBacktraceConfig {
                 frame_files_to_sources.insert(key, content);
             }
         }
-
-        ComponentBacktraceConfigVerified {
-            frame_files_to_sources,
-        }
+        frame_files_to_sources
     }
-}
-
-#[derive(Debug)]
-pub(crate) struct ComponentBacktraceConfigVerified {
-    pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
 }
 
 #[derive(Debug)]
@@ -2081,7 +2073,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
-    pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
+    pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
     pub(crate) logs_store_min_level: Option<LogLevel>,
 }
 
@@ -2141,7 +2133,7 @@ impl WorkflowComponentConfigToml {
             lock_extension: self.lock_extension.into(),
             subscription_interruption,
         };
-        let backtrace_config = self.backtrace.verify(&path_prefixes).await;
+        let frame_files_to_sources = self.backtrace.verify(&path_prefixes).await;
         let retry_config = ComponentRetryConfig {
             max_retries: None,
             retry_exp_backoff,
@@ -2154,7 +2146,7 @@ impl WorkflowComponentConfigToml {
                 global_executor_instance_limiter,
                 retry_config,
             ),
-            backtrace_config,
+            frame_files_to_sources,
             logs_store_min_level: self.logs_store_min_level.into(),
         })
     }
@@ -2484,11 +2476,7 @@ pub(crate) mod webhook {
     };
     use crate::{
         command::server::FrameFilesToSourceContent,
-        config::{
-            config_holder::PathPrefixes,
-            env_var::EnvVarConfig,
-            toml::{ComponentBacktraceConfigVerified, LogLevelToml},
-        },
+        config::{config_holder::PathPrefixes, env_var::EnvVarConfig, toml::LogLevelToml},
     };
     use anyhow::Context;
     use concepts::{
@@ -2559,7 +2547,7 @@ pub(crate) mod webhook {
                 .common
                 .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
                 .await?;
-            let backtrace_config = self.backtrace.verify(&path_prefixes).await;
+            let frame_files_to_sources = self.backtrace.verify(&path_prefixes).await;
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(common.name.clone()),
@@ -2584,7 +2572,7 @@ pub(crate) mod webhook {
                     forward_stdout: self.forward_stdout.into(),
                     forward_stderr: self.forward_stderr.into(),
                     env_vars,
-                    backtrace_config,
+                    frame_files_to_sources,
                     subscription_interruption,
                     logs_store_min_level: self.logs_store_min_level.into(),
                     allowed_hosts,
@@ -2623,7 +2611,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stdout: Option<StdOutputConfig>,
         pub(crate) forward_stderr: Option<StdOutputConfig>,
         pub(crate) env_vars: Arc<[EnvVar]>,
-        pub(crate) backtrace_config: ComponentBacktraceConfigVerified,
+        pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
         pub(crate) subscription_interruption: Option<Duration>,
         pub(crate) logs_store_min_level: Option<LogLevel>,
         pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
