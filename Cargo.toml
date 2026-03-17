@@ -369,9 +369,9 @@ wasmparser = "0.245.1"
 wit-component = "0.245.1"
 
 # boa
-boa_engine = { git = "https://github.com/tomasol/boa.git", rev = "237e1f06", default-features = false }
-boa_gc = { git = "https://github.com/tomasol/boa.git", rev = "237e1f06" }
-boa_runtime = { git = "https://github.com/tomasol/boa.git", rev = "237e1f06", default-features = false, features = ["fetch"] }
+boa_engine = { git = "https://github.com/boa-dev/boa.git", rev = "e7e2f24c02d92cd7d720c96ee088d1e673a98bc7", default-features = false }
+boa_gc = { git = "https://github.com/boa-dev/boa.git", rev = "e7e2f24c02d92cd7d720c96ee088d1e673a98bc7" }
+boa_runtime = { git = "https://github.com/boa-dev/boa.git", rev = "e7e2f24c02d92cd7d720c96ee088d1e673a98bc7", default-features = false, features = ["fetch"] }
 
 # boa_engine = { path = "boa/core/engine", default-features = false }
 # boa_gc = { path = "boa/core/gc" }

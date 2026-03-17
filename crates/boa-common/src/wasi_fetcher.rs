@@ -1,6 +1,6 @@
 //! A [`Fetcher`] implementation that uses `wstd::http` (WASIp2 HTTP) as the backend.
 
-use boa_engine::{Context, JsNativeError, JsResult, JsString};
+use boa_engine::{Context, JsNativeError, JsObject, JsResult, JsString};
 use boa_gc::{Finalize, Trace};
 use boa_runtime::fetch::{Fetcher, request::JsRequest, response::JsResponse};
 use std::cell::RefCell;
@@ -20,6 +20,7 @@ impl Fetcher for WasiFetcher {
     async fn fetch(
         self: Rc<Self>,
         request: JsRequest,
+        _signal: Option<JsObject>,
         _context: &RefCell<&mut Context>,
     ) -> JsResult<JsResponse> {
         let http_req = request.into_inner(); // http::Request<Vec<u8>>
