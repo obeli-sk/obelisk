@@ -1,4 +1,5 @@
 use super::{config_holder::PathPrefixes, env_var::EnvVarConfig};
+use crate::command::server::FrameFilesToSourceContent;
 use crate::config::env_var::{
     EnvVarMissing, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
 };
@@ -133,17 +134,18 @@ fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
 }
 
 /// Return a canonical JSON string of the deployment config for storage.
-pub(crate) fn compute_config_json(deployment: &DeploymentToml) -> String {
+pub(crate) fn compute_config_json_and_hash(
+    deployment: &DeploymentToml,
+) -> (
+    String, // JSON
+    String, // hash
+) {
     let json_value = serde_json::to_value(deployment).expect("DeploymentToml is serializable");
     let sorted = sort_json_keys(json_value);
-    serde_json::to_string(&sorted).expect("infallible")
-}
 
-/// Return the SHA-256 hex digest of the canonical deployment config JSON.
-pub(crate) fn compute_config_hash(deployment: &DeploymentToml) -> String {
-    let canonical = compute_config_json(deployment);
-    let hash = Sha256::digest(canonical.as_bytes());
-    format!("{hash:x}")
+    let canonical_json = serde_json::to_string(&sorted).expect("infallible");
+    let hash = Sha256::digest(canonical_json.as_bytes());
+    (canonical_json, format!("{hash:x}"))
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -685,13 +687,86 @@ impl std::fmt::Display for ComponentLocationToml {
 /// Location of a JavaScript source file for JS activities.
 /// Supports local file paths and `gh://` GitHub release references.
 /// OCI references are not supported.
-#[derive(
-    Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr, serde_with::SerializeDisplay,
-)]
+#[derive(Debug, Clone, Hash, JsonSchema)]
 #[schemars(with = "String")]
 pub(crate) enum JsLocationToml {
     Path(String),
     GitHub(GitHubReleaseReference),
+    /// Resolved: JS source text embedded verbatim. Used in transit and storage, never on-disk.
+    Inline {
+        content: String,
+        file_name: String,
+    },
+}
+
+impl serde::Serialize for JsLocationToml {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            JsLocationToml::Path(p) => serializer.serialize_str(p),
+            JsLocationToml::GitHub(gh) => {
+                serializer.serialize_str(&format!("{GH_SCHEMA_PREFIX}{gh}"))
+            }
+            JsLocationToml::Inline { content, file_name } => {
+                use serde::ser::SerializeMap as _;
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("file_name", file_name)?;
+                map.serialize_entry("inline", content)?;
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for JsLocationToml {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct JsLocationVisitor;
+        impl<'de> serde::de::Visitor<'de> for JsLocationVisitor {
+            type Value = JsLocationToml;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(
+                    f,
+                    "a string path/gh:// reference or {{\"inline\": \"...\", \"file_name\": \"...\"}}"
+                )
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                JsLocationToml::from_str(v).map_err(serde::de::Error::custom)
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut content: Option<String> = None;
+                let mut file_name: Option<String> = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "inline" => {
+                            if content.is_some() {
+                                return Err(serde::de::Error::duplicate_field("inline"));
+                            }
+                            content = Some(map.next_value()?);
+                        }
+                        "file_name" => {
+                            if file_name.is_some() {
+                                return Err(serde::de::Error::duplicate_field("file_name"));
+                            }
+                            file_name = Some(map.next_value()?);
+                        }
+                        other => {
+                            return Err(serde::de::Error::unknown_field(
+                                other,
+                                &["inline", "file_name"],
+                            ));
+                        }
+                    }
+                }
+                let content = content.ok_or_else(|| serde::de::Error::missing_field("inline"))?;
+                let file_name =
+                    file_name.ok_or_else(|| serde::de::Error::missing_field("file_name"))?;
+                Ok(JsLocationToml::Inline { content, file_name })
+            }
+        }
+        deserializer.deserialize_any(JsLocationVisitor)
+    }
 }
 
 impl std::fmt::Display for JsLocationToml {
@@ -699,6 +774,7 @@ impl std::fmt::Display for JsLocationToml {
         match self {
             JsLocationToml::Path(p) => write!(f, "{p}"),
             JsLocationToml::GitHub(gh) => write!(f, "{GH_SCHEMA_PREFIX}{gh}"),
+            JsLocationToml::Inline { file_name, .. } => write!(f, "<inline:{file_name}>"),
         }
     }
 }
@@ -731,6 +807,7 @@ impl JsLocationToml {
                 .unwrap_or(path)
                 .to_string(),
             JsLocationToml::GitHub(github_ref) => github_ref.asset_name.clone(),
+            JsLocationToml::Inline { file_name, .. } => file_name.clone(),
         }
     }
 
@@ -744,7 +821,7 @@ impl JsLocationToml {
         wasm_cache_dir: &Path,
         path_prefixes: &PathPrefixes,
         expected_digest: Option<&ContentDigest>,
-    ) -> Result<(String, PathBuf), anyhow::Error> {
+    ) -> Result<String, anyhow::Error> {
         let file_path = match self {
             JsLocationToml::Path(path) => path_prefixes.replace_file_prefix_verify_exists(path)?,
             JsLocationToml::GitHub(github_ref) => {
@@ -757,7 +834,7 @@ impl JsLocationToml {
                             tokio::fs::read_to_string(&cached).await.with_context(|| {
                                 format!("cannot read cached JS source file `{cached:?}`")
                             })?;
-                        return Ok((content, cached));
+                        return Ok(content);
                     }
                 }
                 let (actual_digest, cached_path) =
@@ -777,12 +854,61 @@ impl JsLocationToml {
                 }
                 cached_path
             }
+            JsLocationToml::Inline { content, file_name } => {
+                if let Some(expected) = expected_digest {
+                    let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
+                    let actual = ContentDigest(Digest(hash));
+                    ensure!(
+                        *expected == actual,
+                        "content digest mismatch for inline JS `{file_name}`: expected {expected}, got {actual}"
+                    );
+                }
+                return Ok(content.clone());
+            }
         };
         let content = tokio::fs::read_to_string(&file_path)
             .await
             .with_context(|| format!("cannot read JS source file `{file_path:?}`"))?;
-        Ok((content, file_path))
+        Ok(content)
     }
+}
+
+/// Resolve all `JsLocationToml::Path` entries in `deployment` to `JsLocationToml::Inline`
+/// by reading the file contents. GitHub and already-inline locations are left unchanged.
+/// Must be called before `compute_config_json`/`compute_config_hash` to get content-stable hashes.
+pub(crate) async fn resolve_js_files(
+    deployment: &mut DeploymentToml,
+    path_prefixes: &PathPrefixes,
+) -> anyhow::Result<()> {
+    for activity in &mut deployment.activities_js {
+        resolve_js_location(&mut activity.location, path_prefixes).await?;
+    }
+    for workflow in &mut deployment.workflows_js {
+        resolve_js_location(&mut workflow.location, path_prefixes).await?;
+    }
+    for webhook in &mut deployment.webhooks_js {
+        resolve_js_location(&mut webhook.location, path_prefixes).await?;
+    }
+    Ok(())
+}
+
+async fn resolve_js_location(
+    location: &mut JsLocationToml,
+    path_prefixes: &PathPrefixes,
+) -> anyhow::Result<()> {
+    if let JsLocationToml::Path(path) = location {
+        let file_name = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path)
+            .to_string();
+        let full_path = path_prefixes.replace_file_prefix_verify_exists(path)?;
+        let content = tokio::fs::read_to_string(&full_path)
+            .await
+            .with_context(|| format!("cannot read JS file {full_path:?}"))?;
+        *location = JsLocationToml::Inline { content, file_name };
+    }
+    Ok(())
 }
 
 /// Activity, Webhook, Workflow or a Http server
@@ -1495,7 +1621,7 @@ impl ActivityJsComponentConfigToml {
                 .collect::<Result<Vec<_>, anyhow::Error>>()?,
         };
 
-        let (js_source, _) = self
+        let js_source = self
             .location
             .read_to_string(
                 &wasm_cache_dir,
@@ -1625,7 +1751,6 @@ pub(crate) struct WorkflowJsConfigVerified {
     pub(crate) wasm_path: Arc<Path>, // same for all JS workflows
     pub(crate) js_source: String,
     pub(crate) js_file_name: String,
-    pub(crate) js_file_path: PathBuf,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
@@ -1637,6 +1762,10 @@ pub(crate) struct WorkflowJsConfigVerified {
 impl WorkflowJsConfigVerified {
     pub fn component_id(&self) -> &ComponentId {
         &self.workflow_config.component_id
+    }
+
+    pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
+        FrameFilesToSourceContent::from([(self.js_file_name.clone(), self.js_source.clone())])
     }
 }
 
@@ -1674,7 +1803,7 @@ impl WorkflowJsComponentConfigToml {
                 .collect::<Result<Vec<_>, anyhow::Error>>()?,
         };
 
-        let (js_source, js_file_path) = self
+        let js_source = self
             .location
             .read_to_string(
                 &wasm_cache_dir,
@@ -1739,7 +1868,6 @@ impl WorkflowJsComponentConfigToml {
             wasm_path,
             js_source,
             js_file_name: self.location.file_name(),
-            js_file_path,
             ffqn: self.ffqn,
             params: parsed_params,
             return_type,
@@ -1834,32 +1962,108 @@ impl From<BlockingStrategyConfigToml> for JoinNextBlockingStrategy {
         }
     }
 }
+/// Location of a WASM backtrace source file: either a local path or embedded content.
+///
+/// Serialised as:
+/// - `"path/to/file.ts"` → `Path`
+/// - `{ "inline": "...source..." }` → `Inline`
+#[derive(Debug, Clone, JsonSchema)]
+#[schemars(with = "String")]
+pub(crate) enum BacktraceSourceLocation {
+    /// Local file path — resolved at runtime (on-disk only; replaced with `Inline` before submit).
+    Path(String),
+    /// Source text embedded inline (in transit and storage; never written by users).
+    Inline(String),
+}
+
+impl Serialize for BacktraceSourceLocation {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        match self {
+            Self::Path(p) => p.serialize(s),
+            Self::Inline(content) => {
+                let mut map = s.serialize_map(Some(1))?;
+                map.serialize_entry("inline", content)?;
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BacktraceSourceLocation {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = BacktraceSourceLocation;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, r#"a path string or an object with "inline" key"#)
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(BacktraceSourceLocation::Path(v.to_string()))
+            }
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+                Ok(BacktraceSourceLocation::Path(v))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut inline: Option<String> = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "inline" => {
+                            if inline.is_some() {
+                                return Err(serde::de::Error::duplicate_field("inline"));
+                            }
+                            inline = Some(map.next_value()?);
+                        }
+                        other => {
+                            return Err(serde::de::Error::unknown_field(other, &["inline"]));
+                        }
+                    }
+                }
+                inline
+                    .map(BacktraceSourceLocation::Inline)
+                    .ok_or_else(|| serde::de::Error::missing_field("inline"))
+            }
+        }
+        d.deserialize_any(Visitor)
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentBacktraceConfig {
     #[serde(rename = "sources")]
     #[schemars(with = "std::collections::HashMap<String, String>")]
-    pub(crate) frame_files_to_sources: HashMap<String, String>,
+    pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceLocation>,
 }
 impl ComponentBacktraceConfig {
-    fn verify(self, path_prefixes: &PathPrefixes) -> ComponentBacktraceConfigVerified {
-        let frame_files_to_sources = self
-            .frame_files_to_sources
-            .into_iter()
-            .filter_map(|(key, value)| {
-                // Remove all entries where destination file is not found.
-                match path_prefixes
-                .replace_file_prefix_verify_exists(&value)
-                .map(|value| (path_prefixes.replace_file_prefix_no_verify(&key), value)) // the key points to source path found in WASM
-            {
-                Ok((k, v)) => Some((k, v)),
-                Err(err) => {
-                    warn!("Ignoring missing backtrace source - {err:?}");
-                    None
+    async fn verify(self, path_prefixes: &PathPrefixes) -> ComponentBacktraceConfigVerified {
+        let mut frame_files_to_sources = HashMap::new();
+        for (key, location) in self.frame_files_to_sources {
+            let content = match location {
+                BacktraceSourceLocation::Inline(content) => Some(content),
+                BacktraceSourceLocation::Path(path) => {
+                    async {
+                        let path = path_prefixes
+                            .replace_file_prefix_verify_exists(&path)
+                            .inspect_err(|err| warn!("Ignoring missing backtrace source - {err:?}"))
+                            .ok()?;
+                        tokio::fs::read_to_string(&path)
+                            .await
+                            .inspect_err(|err| {
+                                warn!("Cannot read backtrace source {path:?} - {err:?}");
+                            })
+                            .ok()
+                    }
+                    .await
                 }
+            };
+            if let Some(content) = content {
+                frame_files_to_sources.insert(key, content);
             }
-            })
-            .collect();
+        }
 
         ComponentBacktraceConfigVerified {
             frame_files_to_sources,
@@ -1869,7 +2073,7 @@ impl ComponentBacktraceConfig {
 
 #[derive(Debug)]
 pub(crate) struct ComponentBacktraceConfigVerified {
-    pub(crate) frame_files_to_sources: HashMap<String, PathBuf>,
+    pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
 }
 
 #[derive(Debug)]
@@ -1937,7 +2141,7 @@ impl WorkflowComponentConfigToml {
             lock_extension: self.lock_extension.into(),
             subscription_interruption,
         };
-        let backtrace_config = self.backtrace.verify(&path_prefixes);
+        let backtrace_config = self.backtrace.verify(&path_prefixes).await;
         let retry_config = ComponentRetryConfig {
             max_retries: None,
             retry_exp_backoff,
@@ -2278,10 +2482,13 @@ pub(crate) mod webhook {
         ConfigName, JsLocationToml, resolve_allowed_hosts, resolve_env_vars_plaintext,
         validate_no_env_collision,
     };
-    use crate::config::{
-        config_holder::PathPrefixes,
-        env_var::EnvVarConfig,
-        toml::{ComponentBacktraceConfigVerified, LogLevelToml},
+    use crate::{
+        command::server::FrameFilesToSourceContent,
+        config::{
+            config_holder::PathPrefixes,
+            env_var::EnvVarConfig,
+            toml::{ComponentBacktraceConfigVerified, LogLevelToml},
+        },
     };
     use anyhow::Context;
     use concepts::{
@@ -2352,7 +2559,7 @@ pub(crate) mod webhook {
                 .common
                 .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
                 .await?;
-            let backtrace_config = self.backtrace.verify(&path_prefixes);
+            let backtrace_config = self.backtrace.verify(&path_prefixes).await;
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(common.name.clone()),
@@ -2484,7 +2691,6 @@ pub(crate) mod webhook {
         pub(crate) component_id: ComponentId,
         pub(crate) js_source: String,
         pub(crate) js_file_name: String,
-        pub(crate) js_file_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,
         pub(crate) forward_stdout: Option<StdOutputConfig>,
         pub(crate) forward_stderr: Option<StdOutputConfig>,
@@ -2502,7 +2708,7 @@ pub(crate) mod webhook {
             ignore_missing_env_vars: bool,
         ) -> Result<(ConfigName /* name */, WebhookJsConfigVerified), anyhow::Error> {
             // Read JS source
-            let (js_source, js_file_path) = self
+            let js_source = self
                 .location
                 .read_to_string(
                     &wasm_cache_dir,
@@ -2532,7 +2738,6 @@ pub(crate) mod webhook {
                     wasm_path,
                     component_id,
                     js_file_name: self.location.file_name(),
-                    js_file_path,
                     js_source,
                     routes: self
                         .routes
@@ -2545,6 +2750,12 @@ pub(crate) mod webhook {
                     allowed_hosts,
                 },
             ))
+        }
+    }
+
+    impl WebhookJsConfigVerified {
+        pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
+            FrameFilesToSourceContent::from([(self.js_file_name.clone(), self.js_source.clone())])
         }
     }
 }

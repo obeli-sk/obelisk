@@ -2,6 +2,7 @@ use crate::command::server;
 use crate::command::server::DeploymentContextHandle;
 use crate::command::server::SubmitError;
 use crate::command::server::VerifyParams;
+use crate::command::server::upsert_backtrace_sources;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::DeploymentToml;
@@ -1583,15 +1584,15 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 tonic::Status::invalid_argument(format!("cannot parse config_json: {err}"))
             })?;
 
-        let config_hash = crate::config::toml::compute_config_hash(&deployment);
-        let config_json = crate::config::toml::compute_config_json(&deployment);
+        let (config_hash, config_json) =
+            crate::config::toml::compute_config_json_and_hash(&deployment);
 
-        // Structural verification: ignore env vars (they live on the server, not the client).
+        // Structural verification: ignore env vars - submitting should work, hot redeploy not.
         let mut config = self.config.clone();
         config.deployment = deployment;
         let verify_deployment_id = DeploymentId::generate();
         let mut termination_watcher = self.termination_watcher.clone();
-        crate::command::server::verify_config_compile_link(
+        let server_compiled = crate::command::server::verify_config_compile_link(
             config,
             self.path_prefixes.clone(),
             verify_deployment_id,
@@ -1629,6 +1630,9 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         })
         .await
         .to_status()?;
+
+        // Save sources for backtrace display.
+        upsert_backtrace_sources(conn.as_ref(), &server_compiled).await;
 
         info!(%deployment_id, "Deployment submitted as Candidate");
         Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {

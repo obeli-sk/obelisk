@@ -3,12 +3,11 @@ use crate::config::config_holder::{ConfigFileOption, ConfigHolder, ConfigSource}
 use crate::get_deployment_repository_client;
 use crate::project_dirs;
 use anyhow::{Context as _, bail};
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
 use directories::BaseDirs;
 use grpc::grpc_gen;
 use grpc::grpc_gen::switch_deployment_response::Outcome;
 use grpc::to_channel;
-use prost_wkt_types::Timestamp;
 
 impl args::Deployment {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
@@ -69,7 +68,9 @@ impl args::Deployment {
                     }
                     Outcome::SwitchOutcomeRestartRequired => {
                         if hot {
-                            bail!("Could not hot-redeploy; deployment queued. Restart the server to apply.");
+                            bail!(
+                                "Could not hot-redeploy; deployment queued. Restart the server to apply."
+                            );
                         }
                         println!("Deployment activated. Restart the server to apply.");
                     }
@@ -97,15 +98,20 @@ impl args::Deployment {
                 }
 
                 println!(
-                    "{:<26}  {:<12}  {:<20}  {:<20}  {}",
-                    "ID", "STATUS", "CREATED_AT", "UPDATED_AT", "CONFIG_HASH"
+                    "{:<26}  {:<12}  {:<20}  {:<20}  CONFIG_HASH",
+                    "ID", "STATUS", "CREATED_AT", "UPDATED_AT"
                 );
                 for summary in resp.deployments {
                     let dep = summary.deployment.context("missing deployment")?;
-                    let id = dep.deployment_id.as_ref().map(|d| d.id.as_str()).unwrap_or_default().to_string();
+                    let id = dep
+                        .deployment_id
+                        .as_ref()
+                        .map(|d| d.id.as_str())
+                        .unwrap_or_default()
+                        .to_string();
                     let status = format_status(dep.status());
-                    let created = format_timestamp(dep.created_at);
-                    let updated = format_timestamp(dep.updated_at);
+                    let created = DateTime::from(dep.created_at.expect("created_at is sent"));
+                    let updated = DateTime::from(dep.updated_at.expect("updated_at is sent"));
                     println!(
                         "{:<26}  {:<12}  {:<20}  {:<20}  {}",
                         id, status, created, updated, dep.config_hash
@@ -140,7 +146,10 @@ async fn load_config_json(config: Option<ConfigSource>) -> anyhow::Result<String
         ConfigFileOption::MustExist(config.unwrap_or_default()),
     )?;
     let config_toml = holder.load_config().await?;
-    Ok(crate::config::toml::compute_config_json(&config_toml.deployment))
+    let mut deployment = config_toml.deployment;
+    let path_prefixes = holder.path_prefixes;
+    crate::config::toml::resolve_js_files(&mut deployment, &path_prefixes).await?;
+    Ok(crate::config::toml::compute_config_json_and_hash(&deployment).0)
 }
 
 fn format_status(status: grpc_gen::DeploymentStatus) -> &'static str {
@@ -150,13 +159,4 @@ fn format_status(status: grpc_gen::DeploymentStatus) -> &'static str {
         grpc_gen::DeploymentStatus::Superseded => "Superseded",
         _ => "Unknown",
     }
-}
-
-fn format_timestamp(ts: Option<Timestamp>) -> String {
-    let Some(ts) = ts else {
-        return "N/A".to_string();
-    };
-    DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
-        .map(|dt: DateTime<Utc>| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-        .unwrap_or_else(|| "Invalid".to_string())
 }
