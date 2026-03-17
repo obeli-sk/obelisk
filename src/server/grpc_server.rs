@@ -2,9 +2,10 @@ use crate::command::server;
 use crate::command::server::DeploymentContextHandle;
 use crate::command::server::SubmitError;
 use crate::command::server::VerifyParams;
+use crate::command::server::upsert_backtrace_sources;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::toml::ConfigToml;
-use crate::config::toml::DeploymentToml;
+use crate::config::toml::DeploymentCanonical;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
@@ -1439,7 +1440,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .to_status()?
             .must_exist("deployment")?;
 
-        let target_deployment: DeploymentToml =
+        let target_deployment: DeploymentCanonical =
             serde_json::from_str(&deployment_record.config_json).map_err(|err| {
                 tonic::Status::internal(format!("cannot parse stored deployment config: {err}"))
             })?;
@@ -1452,7 +1453,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 .await
                 .to_status()?
                 .must_exist("running deployment")?;
-            let running_deployment: DeploymentToml =
+            let running_deployment: DeploymentCanonical =
                 serde_json::from_str(&running_record.config_json).map_err(|err| {
                     tonic::Status::internal(format!(
                         "cannot parse running deployment config: {err}"
@@ -1464,12 +1465,12 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 == non_activity_json_value(&target_deployment)
             {
                 // Hot redeploy path: only activities changed (or nothing changed).
-                let mut config = self.config.clone();
-                config.deployment = target_deployment;
+                let config = self.config.clone();
                 let verify_deployment_id = DeploymentId::generate();
                 let mut termination_watcher = self.termination_watcher.clone();
                 let compiled = crate::command::server::verify_config_compile_link(
                     config,
+                    target_deployment,
                     self.path_prefixes.clone(),
                     verify_deployment_id,
                     VerifyParams {
@@ -1537,12 +1538,12 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         }
 
         if request.verify {
-            let mut config = self.config.clone();
-            config.deployment = target_deployment;
+            let config = self.config.clone();
             let verify_deployment_id = DeploymentId::generate();
             let mut termination_watcher = self.termination_watcher.clone();
             crate::command::server::verify_config_compile_link(
                 config,
+                target_deployment,
                 self.path_prefixes.clone(),
                 verify_deployment_id,
                 VerifyParams {
@@ -1578,21 +1579,21 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         use concepts::storage::{DeploymentRecord, DeploymentStatus};
         let request = request.into_inner();
 
-        let deployment: DeploymentToml =
+        let deployment: DeploymentCanonical =
             serde_json::from_str(&request.config_json).map_err(|err| {
                 tonic::Status::invalid_argument(format!("cannot parse config_json: {err}"))
             })?;
 
-        let config_hash = crate::config::toml::compute_config_hash(&deployment);
-        let config_json = crate::config::toml::compute_config_json(&deployment);
+        let (config_hash, config_json) =
+            crate::config::toml::compute_config_json_and_hash(&deployment);
 
-        // Structural verification: ignore env vars (they live on the server, not the client).
-        let mut config = self.config.clone();
-        config.deployment = deployment;
+        // Structural verification: ignore env vars - submitting should work, hot redeploy not.
+        let config = self.config.clone();
         let verify_deployment_id = DeploymentId::generate();
         let mut termination_watcher = self.termination_watcher.clone();
-        crate::command::server::verify_config_compile_link(
+        let server_compiled = crate::command::server::verify_config_compile_link(
             config,
+            deployment,
             self.path_prefixes.clone(),
             verify_deployment_id,
             crate::command::server::VerifyParams {
@@ -1629,6 +1630,9 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         })
         .await
         .to_status()?;
+
+        // Save sources for backtrace display.
+        upsert_backtrace_sources(conn.as_ref(), &server_compiled).await;
 
         info!(%deployment_id, "Deployment submitted as Candidate");
         Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {
@@ -1703,9 +1707,10 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
     }
 }
 
-fn non_activity_json_value(deployment: &DeploymentToml) -> serde_json::Value {
+// Will be removed once webhooks and workflws are supported for hot redeploy.
+fn non_activity_json_value(deployment: &DeploymentCanonical) -> serde_json::Value {
     let mut v = serde_json::to_value(deployment)
-        .expect("DeploymentToml has no custom serialization that could fail");
+        .expect("DeploymentCanonical has no custom serialization that could fail");
     if let Some(obj) = v.as_object_mut() {
         obj.remove("activity_wasm");
         obj.remove("activity_stub");

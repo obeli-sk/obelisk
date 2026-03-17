@@ -273,11 +273,16 @@ pub(crate) async fn generate_wit_deps(
     )?;
     let config = config_holder.load_config().await?;
     let _guard = init::init(&config)?;
+    let path_prefixes = Arc::new(config_holder.path_prefixes);
+    let deployment =
+        crate::config::toml::resolve_local_refs_to_canonical(&config.deployment, &path_prefixes)
+            .await?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let compiled_and_linked = Box::pin(verify_config_compile_link(
         config,
-        Arc::new(config_holder.path_prefixes),
+        deployment,
+        path_prefixes,
         DeploymentId::generate(),
         VerifyParams {
             ignore_missing_env_vars: true,

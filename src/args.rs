@@ -35,7 +35,56 @@ pub(crate) enum Subcommand {
     #[command(subcommand)]
     Component(Component),
     #[command(subcommand)]
+    Deployment(Deployment),
+    #[command(subcommand)]
     Generate(Generate),
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum Deployment {
+    /// Upload a configuration file as a Candidate deployment; print the new deployment ID.
+    Submit {
+        /// Path to the TOML configuration, defaults to `obelisk.toml`.
+        #[arg(long, short)]
+        config: Option<ConfigSource>,
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+    },
+    /// Activate a deployment. Accepts an existing Candidate ID or a config file to submit first.
+    /// Defaults to submitting `obelisk.toml` when neither is provided.
+    Switch {
+        /// Existing Candidate deployment ID to activate.
+        #[arg(value_name = "ID", conflicts_with = "config")]
+        id: Option<String>,
+        /// Path to a TOML configuration to submit then activate, defaults to `obelisk.toml`.
+        #[arg(long, short, conflicts_with = "id")]
+        config: Option<ConfigSource>,
+        /// Live swap without server restart (falls back to restart-required if not possible).
+        #[arg(long)]
+        hot: bool,
+        /// Verify all environment variables before activating.
+        #[arg(long)]
+        verify: bool,
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+    },
+    /// List recent deployments.
+    List {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+    },
+    /// Show the full configuration of a deployment.
+    Show {
+        /// Deployment ID
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]

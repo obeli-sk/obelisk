@@ -14,13 +14,12 @@ use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityStubInlineConfigVerified;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
-use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::DatabaseConfigToml;
-use crate::config::toml::DeploymentToml;
+use crate::config::toml::DeploymentCanonical;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::TimersWatcherTomlConfig;
@@ -409,13 +408,18 @@ pub(crate) async fn verify(
         ConfigHolder::new(project_dirs, base_dirs, ConfigFileOption::MustExist(config))?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
+    let path_prefixes = Arc::new(config_holder.path_prefixes);
+    let deployment =
+        crate::config::toml::resolve_local_refs_to_canonical(&config.deployment, &path_prefixes)
+            .await?;
     let deployment_id = DeploymentId::generate();
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     if skip_db {
         Box::pin(verify_config_compile_link(
             config,
-            Arc::new(config_holder.path_prefixes),
+            deployment,
+            path_prefixes,
             deployment_id,
             verify_params,
             &mut termination_watcher,
@@ -424,7 +428,8 @@ pub(crate) async fn verify(
     } else {
         Box::pin(verify_with_db_schema(
             config,
-            Arc::new(config_holder.path_prefixes),
+            deployment,
+            path_prefixes,
             deployment_id,
             verify_params,
             &mut termination_watcher,
@@ -446,6 +451,7 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
 /// Called by `verify` command.
 async fn verify_with_db_schema(
     config: ConfigToml,
+    deployment: DeploymentCanonical,
     path_prefixes: Arc<PathPrefixes>,
     deployment_id: DeploymentId,
     params: VerifyParams,
@@ -454,6 +460,7 @@ async fn verify_with_db_schema(
     let database = config.database.clone();
     let ok = Box::pin(verify_config_compile_link(
         config,
+        deployment,
         path_prefixes.clone(),
         deployment_id,
         params,
@@ -494,6 +501,7 @@ async fn verify_with_db_schema(
 #[instrument(skip_all, name = "verify")]
 pub(crate) async fn verify_config_compile_link(
     config: ConfigToml,
+    deployment: DeploymentCanonical,
     path_prefixes: Arc<PathPrefixes>,
     deployment_id: DeploymentId, // only to distinguish when writing to the same log file as running server
     params: VerifyParams,
@@ -555,6 +563,7 @@ pub(crate) async fn verify_config_compile_link(
 
     let server_verified = Box::pin(ServerVerified::new(
         config,
+        deployment,
         codegen_cache,
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
@@ -577,7 +586,7 @@ pub(crate) async fn verify_config_compile_link(
     Ok(compiled_and_linked)
 }
 
-async fn upsert_and_activate_deployment(
+async fn insert_and_activate_deployment_if_needed(
     db_pool: &dyn concepts::storage::DbPool,
     candidate_id: DeploymentId,
     config_json: String,
@@ -631,8 +640,12 @@ pub(crate) async fn run_internal(
     mut termination_watcher: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
     let deployment_id = DeploymentId::generate();
-    let deployment_config_json = crate::config::toml::compute_config_json(&config.deployment);
-    let deployment_config_hash = crate::config::toml::compute_config_hash(&config.deployment);
+    let deployment_canonical =
+        crate::config::toml::resolve_local_refs_to_canonical(&config.deployment, &path_prefixes)
+            .await
+            .context("cannot resolve deployment to canonical form")?;
+    let (deployment_config_json, deployment_config_hash) =
+        crate::config::toml::compute_config_json_and_hash(&deployment_canonical);
     let span = info_span!("init", %deployment_id);
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
 
@@ -645,6 +658,7 @@ pub(crate) async fn run_internal(
     let database = config.database.clone();
     let compiled_and_linked = Box::pin(verify_config_compile_link(
         config.clone(),
+        deployment_canonical,
         path_prefixes.clone(),
         deployment_id,
         VerifyParams {
@@ -681,7 +695,7 @@ pub(crate) async fn run_internal(
                     .await
                     .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
             );
-            let deployment_id = upsert_and_activate_deployment(
+            let deployment_id = insert_and_activate_deployment_if_needed(
                 &*db_pool,
                 deployment_id,
                 deployment_config_json.clone(),
@@ -717,7 +731,7 @@ pub(crate) async fn run_internal(
                 .await
                 .context("canont initialize postgres connection pool")?,
             );
-            let deployment_id = upsert_and_activate_deployment(
+            let deployment_id = insert_and_activate_deployment_if_needed(
                 &*db_pool,
                 deployment_id,
                 deployment_config_json.clone(),
@@ -858,8 +872,10 @@ struct ServerVerified {
 
 impl ServerVerified {
     #[instrument(name = "ServerVerified::new", skip_all)]
+    #[expect(clippy::too_many_arguments)]
     async fn new(
-        mut config: ConfigToml,
+        config: ConfigToml,
+        mut deployment: DeploymentCanonical,
         codegen_cache_dir: Option<PathBuf>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -905,10 +921,9 @@ impl ServerVerified {
                 );
             }
             let target_url = format!("http://{}", config.api.listening_addr);
-            config
-                .deployment
+            deployment
                 .webhooks
-                .push(webhook::WebhookComponentConfigToml {
+                .push(webhook::WebhookComponentConfigCanonical {
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
                         location: WEBUI_LOCATION
@@ -924,7 +939,7 @@ impl ServerVerified {
                         key: "TARGET_URL".to_string(),
                         value: target_url.clone(),
                     }],
-                    backtrace: ComponentBacktraceConfig::default(),
+                    backtrace: crate::config::toml::ComponentBacktraceConfigCanonical::default(),
                     logs_store_min_level: LogLevelToml::Off,
                     allowed_hosts: vec![AllowedHostToml {
                         pattern: target_url,
@@ -961,7 +976,7 @@ impl ServerVerified {
         let database_subscription_interruption = config.database.get_subscription_interruption();
 
         let config = Box::pin(ConfigVerified::fetch_and_verify_all(
-            config.deployment,
+            deployment,
             http_servers,
             wasm_cache_dir,
             metadata_dir,
@@ -988,7 +1003,10 @@ impl ServerVerified {
     }
 }
 
-type FrameFilesToSources = HashMap<String, PathBuf>;
+pub(crate) type FrameFilesToSourceContent = HashMap<
+    String, // file name, can contain `.../` prefix
+    String, //content
+>;
 
 pub(crate) struct ServerCompiledLinked {
     engines: Engines,
@@ -998,7 +1016,7 @@ pub(crate) struct ServerCompiledLinked {
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     supressed_errors: Option<String>,
-    frame_files: Vec<(ComponentDigest, FrameFilesToSources)>,
+    frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)>,
 }
 
 impl ServerCompiledLinked {
@@ -1041,6 +1059,32 @@ impl ServerCompiledLinked {
     }
 }
 
+pub(crate) async fn upsert_backtrace_sources(
+    conn: &dyn DbExternalApi,
+    server_compiled_linked: &ServerCompiledLinked,
+) {
+    // Persist source files to the DB so GetBacktraceSource can serve them without filesystem access.
+    {
+        for (component_digest, frame_files) in &server_compiled_linked.frame_files {
+            for (config_key, source) in frame_files {
+                // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
+                let (frame_key, is_suffix) = if let Some(stripped) = config_key.strip_prefix(".../")
+                {
+                    (format!("/{stripped}"), true)
+                } else {
+                    (config_key.clone(), false)
+                };
+                let res = conn
+                    .upsert_source_file(component_digest, &frame_key, is_suffix, source)
+                    .await;
+                if let Err(err) = res {
+                    warn!("Cannot store backtrace source {config_key:?} in DB: {err:?}");
+                }
+            }
+        }
+    }
+}
+
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
@@ -1054,11 +1098,15 @@ async fn spawn_tasks_and_threads(
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
 ) -> Result<ServerInit, anyhow::Error> {
-    // Persist source files to the DB so GetBacktraceSource can serve them without filesystem access.
+    upsert_backtrace_sources(
+        db_pool.external_api_conn().await?.as_ref(),
+        &server_compiled_linked,
+    )
+    .await;
     {
         let conn = db_pool.external_api_conn().await?;
         for (component_digest, frame_files) in &server_compiled_linked.frame_files {
-            for (config_key, path) in frame_files {
+            for (config_key, source) in frame_files {
                 // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
                 let (frame_key, is_suffix) = if let Some(stripped) = config_key.strip_prefix(".../")
                 {
@@ -1066,18 +1114,11 @@ async fn spawn_tasks_and_threads(
                 } else {
                     (config_key.clone(), false)
                 };
-                match tokio::fs::read_to_string(path).await {
-                    Ok(content) => {
-                        if let Err(err) = conn
-                            .upsert_source_file(component_digest, &frame_key, is_suffix, &content)
-                            .await
-                        {
-                            warn!("Cannot store backtrace source {path:?} in DB: {err:?}");
-                        }
-                    }
-                    Err(err) => {
-                        warn!("Cannot read backtrace source {path:?} for DB storage: {err:?}");
-                    }
+                let res = conn
+                    .upsert_source_file(component_digest, &frame_key, is_suffix, source)
+                    .await;
+                if let Err(err) = res {
+                    warn!("Cannot store backtrace source {config_key:?} in DB: {err:?}");
                 }
             }
         }
@@ -1353,7 +1394,7 @@ impl ConfigVerified {
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
-        deployment: DeploymentToml,
+        deployment: DeploymentCanonical,
         http_servers: Vec<webhook::HttpServer>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -1600,7 +1641,6 @@ impl ConfigVerified {
                             js.fetch_and_verify(
                                 activity_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
-                                path_prefixes.clone(),
                                 ignore_missing_env_vars,
                                 global_executor_instance_limiter.clone(),
                                 fuel,
@@ -1622,7 +1662,6 @@ impl ConfigVerified {
                             workflow_js.fetch_and_verify(
                                 workflow_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
-                                path_prefixes.clone(),
                                 global_executor_instance_limiter.clone(),
                             ).await?
                         );
@@ -1641,7 +1680,6 @@ impl ConfigVerified {
                         let (k, v) = webhook_js.fetch_and_verify(
                             webhook_js_wasm_path.clone(),
                             wasm_cache_dir.clone(),
-                            path_prefixes.clone(),
                             ignore_missing_env_vars,
                         ).await?;
                         webhooks_js_by_names.insert(k, v);
@@ -1681,13 +1719,13 @@ enum CompiledComponent {
     ActivityOrWorkflow {
         worker: WorkerCompiled,
         component_config: ComponentConfig,
-        frame_files: FrameFilesToSources,
+        frame_files: FrameFilesToSourceContent,
     },
     Webhook {
         webhook_name: ConfigName,
         webhook_compiled: WebhookEndpointCompiled,
         routes: Vec<WebhookRouteVerified>,
-        frame_files: FrameFilesToSources,
+        frame_files: FrameFilesToSourceContent,
     },
     ActivityStubOrExternal {
         component_config: ComponentConfig,
@@ -1715,8 +1753,8 @@ async fn compile_and_verify(
     (
         LinkedComponents,
         ComponentConfigRegistryRO,
-        Option<String>, // supressed_errors
-        Vec<(ComponentDigest, FrameFilesToSources)>,
+        Option<String>,                                    // supressed_errors
+        Vec<(ComponentDigest, FrameFilesToSourceContent)>, // Frame files to sources
     ),
     anyhow::Error,
 > {
@@ -1803,11 +1841,11 @@ async fn compile_and_verify(
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "activity_wasm_compile", component_id = %activity_wasm.component_id());
                 span.in_scope(|| {
-                    prespawn_activity(activity_wasm, &engines).map(|(worker, component_config, frame_files)| {
+                    prespawn_activity(activity_wasm, &engines).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
-                            frame_files,
+                            frame_files: FrameFilesToSourceContent::new(),
                         }
                     })
                 })
@@ -1826,7 +1864,7 @@ async fn compile_and_verify(
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
-                            frame_files: FrameFilesToSources::new(),
+                            frame_files: FrameFilesToSourceContent::new(),
                         }
                     })
                 })
@@ -1947,7 +1985,7 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook.routes,
-                                frame_files: webhook.backtrace_config.frame_files_to_sources,
+                                frame_files: webhook.frame_files_to_sources,
                             })
                         })
                     })
@@ -1964,6 +2002,7 @@ async fn compile_and_verify(
                         let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                         let span = info_span!(parent: parent_span, "webhook_js_compile", component_id = %webhook_js.component_id);
                         span.in_scope(|| {
+                            let frame_files = webhook_js.as_frame_sources();
                             let config = WebhookEndpointConfig {
                                 component_id: webhook_js.component_id,
                                 forward_stdout: webhook_js.forward_stdout,
@@ -1988,10 +2027,7 @@ async fn compile_and_verify(
                                 webhook_name,
                                 webhook_compiled,
                                 routes: webhook_js.routes,
-                                frame_files: FrameFilesToSources::from([(
-                                    webhook_js.js_file_name,
-                                    webhook_js.js_file_path,
-                                )]),
+                                frame_files,
                             })
                         })
                     })
@@ -2007,7 +2043,7 @@ async fn compile_and_verify(
             let mut component_registry = ComponentConfigRegistry::default();
             let mut workers_compiled = Vec::with_capacity(results_of_results.len());
             let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
-            let mut all_frame_files: Vec<(ComponentDigest, FrameFilesToSources)> = Vec::new();
+            let mut all_frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)> = Vec::new();
             for handle in results_of_results {
                 match handle?? {
                     CompiledComponent::ActivityOrWorkflow { worker, component_config, frame_files } => {
@@ -2107,7 +2143,7 @@ mod semaphore {
 fn prespawn_activity(
     activity: ActivityWasmConfigVerified,
     engines: &Engines,
-) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSources), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = activity.component_id().clone();
     assert!(component_id.component_type == ComponentType::ActivityWasm);
     debug!("Instantiating activity");
@@ -2131,7 +2167,7 @@ fn prespawn_activity(
         wit,
         activity.logs_store_min_level,
     );
-    Ok((worker, component_config, HashMap::new()))
+    Ok((worker, component_config))
 }
 
 #[instrument(level = "debug", skip_all, fields(
@@ -2268,7 +2304,7 @@ fn prespawn_workflow(
     workflow: WorkflowConfigVerified,
     engines: &Engines,
     workflows_lock_extension_leeway: Duration,
-) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSources), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
     let component_id = workflow.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
     debug!("Instantiating workflow");
@@ -2298,9 +2334,10 @@ fn prespawn_js_workflow(
     engines: &Engines,
     runnable_component: RunnableComponent,
     workflows_lock_extension_leeway: Duration,
-) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSources), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
+    let frame_sources = workflow_js.as_frame_sources();
     let engine = engines.workflow_engine.clone();
 
     let inner = WorkflowWorkerCompiled::new_with_config(
@@ -2329,8 +2366,7 @@ fn prespawn_js_workflow(
         workflows_lock_extension_leeway,
         wit,
         workflow_js.js_source,
-        workflow_js.js_file_name,
-        workflow_js.js_file_path,
+        frame_sources,
         workflow_js.params,
     ))
 }
@@ -2418,7 +2454,7 @@ impl WorkerCompiled {
         wit: String,
         workflows_lock_extension_leeway: Duration,
     ) -> Result<
-        (WorkerCompiled, ComponentConfig, FrameFilesToSources),
+        (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent),
         utils::wasm_tools::DecodeError,
     > {
         let worker = WorkflowWorkerCompiled::new_with_config(
@@ -2427,7 +2463,6 @@ impl WorkerCompiled {
             engine,
             Now.clone_box(),
         )?;
-        let frame_files = workflow.backtrace_config.frame_files_to_sources;
         let component = ComponentConfig {
             component_id: workflow.exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -2452,7 +2487,7 @@ impl WorkerCompiled {
                 logs_store_min_level: workflow.logs_store_min_level,
             },
             component,
-            frame_files,
+            workflow.frame_files_to_sources,
         ))
     }
 
@@ -2465,11 +2500,9 @@ impl WorkerCompiled {
         workflows_lock_extension_leeway: Duration,
         wit: String,
         js_source: String,
-        js_file_name: String,  // as it would appear in a backtrace
-        js_file_path: PathBuf, // to be served by GetBacktraceSource
+        frame_files: FrameFilesToSourceContent, // to be served by GetBacktraceSource
         user_params: Vec<concepts::ParameterType>,
-    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSources) {
-        let frame_files = HashMap::from([(js_file_name, js_file_path)]);
+    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -2675,13 +2708,21 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
 
+        let path_prefixes = Arc::new(config_holder.path_prefixes);
+        let deployment_canonical = crate::config::toml::resolve_local_refs_to_canonical(
+            &config.deployment,
+            &path_prefixes,
+        )
+        .await?;
+
         let server_verified = Box::pin(ServerVerified::new(
             config,
+            deployment_canonical,
             codegen_cache,
             Arc::from(wasm_cache_dir),
             Arc::from(metadata_dir),
             VerifyParams::default().ignore_missing_env_vars,
-            Arc::new(config_holder.path_prefixes),
+            path_prefixes,
             &mut termination_watcher,
         ))
         .await?;

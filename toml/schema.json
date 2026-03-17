@@ -994,7 +994,7 @@
       ]
     },
     "JsLocationToml": {
-      "description": "Location of a JavaScript source file for JS activities.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported.",
+      "description": "Location of a JavaScript source file for JS activities.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported.\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
       "type": "string"
     },
     "JsParamToml": {

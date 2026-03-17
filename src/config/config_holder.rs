@@ -82,37 +82,6 @@ impl PathPrefixes {
         }
     }
 
-    pub(crate) fn replace_file_prefix_no_verify(&self, input_path: &str) -> String {
-        let path =
-            if let (Some(project_dirs), Some(base_dirs)) = (&self.project_dirs, &self.base_dirs) {
-                if let Some(suffix) = input_path.strip_prefix(HOME_DIR_PREFIX) {
-                    base_dirs.home_dir().join(suffix)
-                } else if let Some(suffix) = input_path.strip_prefix(DATA_DIR_PREFIX) {
-                    project_dirs.data_dir().join(suffix)
-                } else if let Some(suffix) = input_path.strip_prefix(CACHE_DIR_PREFIX) {
-                    project_dirs.cache_dir().join(suffix)
-                } else if let Some(suffix) = input_path.strip_prefix(CONFIG_DIR_PREFIX) {
-                    project_dirs.config_dir().join(suffix)
-                } else if let Some(suffix) = input_path.strip_prefix(OBELISK_TOML_DIR_PREFIX) {
-                    self.obelisk_toml_dir.join(suffix)
-                } else {
-                    PathBuf::from(input_path)
-                }
-            } else {
-                if input_path.starts_with(HOME_DIR_PREFIX)
-                    || input_path.starts_with(DATA_DIR_PREFIX)
-                    || input_path.starts_with(CACHE_DIR_PREFIX)
-                    || input_path.starts_with(CONFIG_DIR_PREFIX)
-                    || input_path.starts_with(OBELISK_TOML_DIR_PREFIX)
-                {
-                    warn!("Not expanding prefix of `{input_path}`");
-                }
-
-                PathBuf::from(input_path)
-            };
-        path.to_string_lossy().into_owned()
-    }
-
     pub(crate) async fn replace_path_prefix_mkdir(
         &self,
         dir: &str,

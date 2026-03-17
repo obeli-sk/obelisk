@@ -15,7 +15,7 @@ use crate::{
     config::{
         config_holder::{ConfigFileOption, ConfigHolder, ConfigSource},
         env_var::EnvVarConfig,
-        toml::DeploymentToml,
+        toml::DeploymentCanonical,
     },
 };
 use chrono::Utc;
@@ -1135,7 +1135,7 @@ async fn hot_redeploy_activity() {
         let active = conn.get_active_deployment().await.unwrap().unwrap();
 
         let config: serde_json::Value = serde_json::from_str(&active.config_json).unwrap();
-        let mut new_deployment: DeploymentToml = serde_json::from_value(config).unwrap();
+        let mut new_deployment: DeploymentCanonical = serde_json::from_value(config).unwrap();
         let found = new_deployment
             .activities_js
             .iter_mut()
@@ -1146,8 +1146,8 @@ async fn hot_redeploy_activity() {
             value: "updated_value".to_string(),
         }];
 
-        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
-        let new_config_hash = crate::config::toml::compute_config_hash(&new_deployment);
+        let (new_config_json, new_config_hash) =
+            crate::config::toml::compute_config_json_and_hash(&new_deployment);
 
         let now = Utc::now();
         conn.insert_deployment(DeploymentRecord {
@@ -1270,7 +1270,7 @@ async fn hot_redeploy_registry() {
         let active = conn.get_active_deployment().await.unwrap().unwrap();
 
         let config: serde_json::Value = serde_json::from_str(&active.config_json).unwrap();
-        let mut new_deployment: DeploymentToml = serde_json::from_value(config).unwrap();
+        let mut new_deployment: DeploymentCanonical = serde_json::from_value(config).unwrap();
         new_deployment
             .activities_stub
             .push(ActivityStubComponentConfigToml::Inline(
@@ -1282,8 +1282,8 @@ async fn hot_redeploy_registry() {
                 },
             ));
 
-        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
-        let new_config_hash = crate::config::toml::compute_config_hash(&new_deployment);
+        let (new_config_json, new_config_hash) =
+            crate::config::toml::compute_config_json_and_hash(&new_deployment);
 
         let now = Utc::now();
         conn.insert_deployment(DeploymentRecord {
