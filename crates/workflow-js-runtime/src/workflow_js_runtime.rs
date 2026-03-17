@@ -118,6 +118,7 @@ use crate::generated::obelisk::workflow::workflow_support::{
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{new_object, parse_ffqn};
+use boa_engine::context::time::FixedClock;
 use boa_engine::{
     Context, JsArgs, JsError, JsNativeError, JsResult, JsValue, Module, NativeFunction, Source,
     builtins::promise::PromiseState, js_string, object::builtins::JsFunction, property::Attribute,
@@ -238,6 +239,7 @@ pub fn execute(
     let executor = Rc::new(DeterministicJobExecutor::default());
     let mut context = Context::builder()
         .job_executor(executor.clone())
+        .clock(Rc::new(FixedClock::from_millis(0)))
         .build()
         .expect("building context must work");
 
