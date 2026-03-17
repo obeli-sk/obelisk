@@ -146,9 +146,12 @@ async fn load_config_json(config: Option<ConfigSource>) -> anyhow::Result<String
         ConfigFileOption::MustExist(config.unwrap_or_default()),
     )?;
     let config_toml = holder.load_config().await?;
-    let mut deployment = config_toml.deployment;
     let path_prefixes = holder.path_prefixes;
-    crate::config::toml::resolve_js_files(&mut deployment, &path_prefixes).await?;
+    let deployment = crate::config::toml::resolve_local_refs_to_canonical(
+        &config_toml.deployment,
+        &path_prefixes,
+    )
+    .await?;
     Ok(crate::config::toml::compute_config_json_and_hash(&deployment).0)
 }
 
@@ -157,6 +160,6 @@ fn format_status(status: grpc_gen::DeploymentStatus) -> &'static str {
         grpc_gen::DeploymentStatus::Candidate => "Candidate",
         grpc_gen::DeploymentStatus::Active => "Active",
         grpc_gen::DeploymentStatus::Superseded => "Superseded",
-        _ => "Unknown",
+        grpc_gen::DeploymentStatus::Unspecified => "Unknown",
     }
 }

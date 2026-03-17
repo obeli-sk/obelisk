@@ -25,7 +25,9 @@ use log::{LoggingConfig, LoggingStyle};
 use schemars::JsonSchema;
 use secrecy::SecretString;
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use sha2::{Digest as _, Sha256};
+use std::fmt::Display;
 use std::str::FromStr;
 use std::{
     net::SocketAddr,
@@ -135,12 +137,12 @@ fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
 
 /// Return a canonical JSON string of the deployment config for storage.
 pub(crate) fn compute_config_json_and_hash(
-    deployment: &DeploymentToml,
+    deployment: &DeploymentCanonical,
 ) -> (
     String, // JSON
     String, // hash
 ) {
-    let json_value = serde_json::to_value(deployment).expect("DeploymentToml is serializable");
+    let json_value = serde_json::to_value(deployment).expect("DeploymentCanonical is serializable");
     let sorted = sort_json_keys(json_value);
 
     let canonical_json = serde_json::to_string(&sorted).expect("infallible");
@@ -687,98 +689,21 @@ impl std::fmt::Display for ComponentLocationToml {
 /// Location of a JavaScript source file for JS activities.
 /// Supports local file paths and `gh://` GitHub release references.
 /// OCI references are not supported.
-#[derive(Debug, Clone, Hash, JsonSchema)]
+/// On-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.
+#[derive(Debug, Clone, Hash, JsonSchema, SerializeDisplay, DeserializeFromStr)]
 #[schemars(with = "String")]
 pub(crate) enum JsLocationToml {
     Path(String),
     GitHub(GitHubReleaseReference),
-    /// Resolved: JS source text embedded verbatim. Used in transit and storage, never on-disk.
-    Inline {
-        content: String,
-        file_name: String,
-    },
 }
-
-impl serde::Serialize for JsLocationToml {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            JsLocationToml::Path(p) => serializer.serialize_str(p),
-            JsLocationToml::GitHub(gh) => {
-                serializer.serialize_str(&format!("{GH_SCHEMA_PREFIX}{gh}"))
-            }
-            JsLocationToml::Inline { content, file_name } => {
-                use serde::ser::SerializeMap as _;
-                let mut map = serializer.serialize_map(Some(2))?;
-                map.serialize_entry("file_name", file_name)?;
-                map.serialize_entry("inline", content)?;
-                map.end()
-            }
-        }
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for JsLocationToml {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct JsLocationVisitor;
-        impl<'de> serde::de::Visitor<'de> for JsLocationVisitor {
-            type Value = JsLocationToml;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(
-                    f,
-                    "a string path/gh:// reference or {{\"inline\": \"...\", \"file_name\": \"...\"}}"
-                )
-            }
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                JsLocationToml::from_str(v).map_err(serde::de::Error::custom)
-            }
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut content: Option<String> = None;
-                let mut file_name: Option<String> = None;
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "inline" => {
-                            if content.is_some() {
-                                return Err(serde::de::Error::duplicate_field("inline"));
-                            }
-                            content = Some(map.next_value()?);
-                        }
-                        "file_name" => {
-                            if file_name.is_some() {
-                                return Err(serde::de::Error::duplicate_field("file_name"));
-                            }
-                            file_name = Some(map.next_value()?);
-                        }
-                        other => {
-                            return Err(serde::de::Error::unknown_field(
-                                other,
-                                &["inline", "file_name"],
-                            ));
-                        }
-                    }
-                }
-                let content = content.ok_or_else(|| serde::de::Error::missing_field("inline"))?;
-                let file_name =
-                    file_name.ok_or_else(|| serde::de::Error::missing_field("file_name"))?;
-                Ok(JsLocationToml::Inline { content, file_name })
-            }
-        }
-        deserializer.deserialize_any(JsLocationVisitor)
-    }
-}
-
-impl std::fmt::Display for JsLocationToml {
+impl Display for JsLocationToml {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             JsLocationToml::Path(p) => write!(f, "{p}"),
             JsLocationToml::GitHub(gh) => write!(f, "{GH_SCHEMA_PREFIX}{gh}"),
-            JsLocationToml::Inline { file_name, .. } => write!(f, "<inline:{file_name}>"),
         }
     }
 }
-
 impl FromStr for JsLocationToml {
     type Err = anyhow::Error;
 
@@ -795,120 +720,6 @@ impl FromStr for JsLocationToml {
             Ok(JsLocationToml::Path(s.to_string()))
         }
     }
-}
-
-impl JsLocationToml {
-    /// Returns just the file name (without directory) of the JS source location.
-    pub(crate) fn file_name(&self) -> String {
-        match self {
-            JsLocationToml::Path(path) => std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(path)
-                .to_string(),
-            JsLocationToml::GitHub(github_ref) => github_ref.asset_name.clone(),
-            JsLocationToml::Inline { file_name, .. } => file_name.clone(),
-        }
-    }
-
-    /// Fetch the JS source file and return its content as a string together with the resolved path.
-    ///
-    /// For local files, reads directly from the filesystem.
-    /// For GitHub releases, downloads to `wasm_cache_dir` (reusing the existing cache),
-    /// then reads the cached file.
-    pub(crate) async fn read_to_string(
-        &self,
-        wasm_cache_dir: &Path,
-        path_prefixes: &PathPrefixes,
-        expected_digest: Option<&ContentDigest>,
-    ) -> Result<String, anyhow::Error> {
-        let file_path = match self {
-            JsLocationToml::Path(path) => path_prefixes.replace_file_prefix_verify_exists(path)?,
-            JsLocationToml::GitHub(github_ref) => {
-                // Happy path: if content_digest is known and file exists in cache, use it
-                if let Some(expected) = expected_digest {
-                    let cached = content_digest_to_wasm_file(wasm_cache_dir, expected);
-                    if cached.exists() {
-                        trace!("Using cached JS source for known content digest");
-                        let content =
-                            tokio::fs::read_to_string(&cached).await.with_context(|| {
-                                format!("cannot read cached JS source file `{cached:?}`")
-                            })?;
-                        return Ok(content);
-                    }
-                }
-                let (actual_digest, cached_path) =
-                    github::pull_to_cache_dir(github_ref, wasm_cache_dir)
-                        .await
-                        .context("cannot fetch JS source from GitHub release")?;
-                if let Some(expected) = expected_digest {
-                    ensure!(
-                        *expected == actual_digest,
-                        "content digest mismatch for JS source: expected {expected}, got {actual_digest}"
-                    );
-                } else {
-                    info!(
-                        r#"No content_digest specified for GitHub release JS source. Consider adding content_digest = "{}" to avoid refetching"#,
-                        actual_digest.with_infix(":")
-                    );
-                }
-                cached_path
-            }
-            JsLocationToml::Inline { content, file_name } => {
-                if let Some(expected) = expected_digest {
-                    let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
-                    let actual = ContentDigest(Digest(hash));
-                    ensure!(
-                        *expected == actual,
-                        "content digest mismatch for inline JS `{file_name}`: expected {expected}, got {actual}"
-                    );
-                }
-                return Ok(content.clone());
-            }
-        };
-        let content = tokio::fs::read_to_string(&file_path)
-            .await
-            .with_context(|| format!("cannot read JS source file `{file_path:?}`"))?;
-        Ok(content)
-    }
-}
-
-/// Resolve all `JsLocationToml::Path` entries in `deployment` to `JsLocationToml::Inline`
-/// by reading the file contents. GitHub and already-inline locations are left unchanged.
-/// Must be called before `compute_config_json`/`compute_config_hash` to get content-stable hashes.
-pub(crate) async fn resolve_js_files(
-    deployment: &mut DeploymentToml,
-    path_prefixes: &PathPrefixes,
-) -> anyhow::Result<()> {
-    for activity in &mut deployment.activities_js {
-        resolve_js_location(&mut activity.location, path_prefixes).await?;
-    }
-    for workflow in &mut deployment.workflows_js {
-        resolve_js_location(&mut workflow.location, path_prefixes).await?;
-    }
-    for webhook in &mut deployment.webhooks_js {
-        resolve_js_location(&mut webhook.location, path_prefixes).await?;
-    }
-    Ok(())
-}
-
-async fn resolve_js_location(
-    location: &mut JsLocationToml,
-    path_prefixes: &PathPrefixes,
-) -> anyhow::Result<()> {
-    if let JsLocationToml::Path(path) = location {
-        let file_name = std::path::Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(path)
-            .to_string();
-        let full_path = path_prefixes.replace_file_prefix_verify_exists(path)?;
-        let content = tokio::fs::read_to_string(&full_path)
-            .await
-            .with_context(|| format!("cannot read JS file {full_path:?}"))?;
-        *location = JsLocationToml::Inline { content, file_name };
-    }
-    Ok(())
 }
 
 /// Activity, Webhook, Workflow or a Http server
@@ -1100,7 +911,7 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LogLevelToml {
     Off,
@@ -1585,125 +1396,6 @@ impl ActivityJsConfigVerified {
     }
 }
 
-impl ActivityJsComponentConfigToml {
-    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
-    pub(crate) async fn fetch_and_verify(
-        self,
-        wasm_path: Arc<Path>,
-        wasm_cache_dir: Arc<Path>,
-        path_prefixes: Arc<PathPrefixes>,
-        ignore_missing_env_vars: bool,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
-        fuel: Option<u64>,
-    ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
-        // Parse custom params or default to `params: list<string>`
-        let parsed_params = match self.params {
-            None => {
-                vec![concepts::ParameterType {
-                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
-                        val_json::type_wrapper::TypeWrapper::String,
-                    )),
-                    name: StrVariant::Static("params"),
-                    wit_type: StrVariant::Static("list<string>"),
-                }]
-            }
-            Some(params) => params
-                .iter()
-                .map(|p| {
-                    let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
-                        .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
-                    Ok(concepts::ParameterType {
-                        type_wrapper: tw,
-                        name: StrVariant::from(p.name.clone()),
-                        wit_type: StrVariant::from(p.wit_type.clone()),
-                    })
-                })
-                .collect::<Result<Vec<_>, anyhow::Error>>()?,
-        };
-
-        let js_source = self
-            .location
-            .read_to_string(
-                &wasm_cache_dir,
-                &path_prefixes,
-                self.content_digest.as_ref(),
-            )
-            .await?;
-
-        // Parse and validate return type
-        const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
-        let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
-        let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
-            .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
-        let return_type = concepts::ReturnType::detect(
-            return_type_tw,
-            StrVariant::from(return_type_str.to_string()),
-        );
-        let return_type = match return_type {
-            ReturnType::Extendable(rt) => rt,
-            ReturnType::NonExtendable(_) => bail!(
-                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
-                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
-            ),
-        };
-
-        // Compute content digest from source + ffqn + params + return_type
-        let component_digest = self.component_digest.unwrap_or_else(|| {
-            let mut hasher = Sha256::new();
-            hasher.update(b"activity_js:");
-            hasher.update(js_source.as_bytes());
-            hasher.update(self.ffqn.to_string().as_bytes());
-            for p in &parsed_params {
-                hasher.update(p.wit_type.as_ref().as_bytes());
-            }
-            hasher.update(return_type.wit_type.as_bytes());
-            let hash: [u8; 32] = hasher.finalize().into();
-            ComponentDigest(Digest(hash))
-        });
-        let component_id = ComponentId::new(
-            ComponentType::ActivityWasm,
-            StrVariant::from(self.name),
-            component_digest,
-        )?;
-
-        let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
-        let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
-
-        // Validate no collision between env_vars and secret env names
-        validate_no_env_collision(&env_vars, &allowed_hosts)?;
-
-        let activity_config = ActivityConfig {
-            component_id: component_id.clone(),
-            forward_stdout: self.forward_stdout.into(),
-            forward_stderr: self.forward_stderr.into(),
-            env_vars,
-            directories_config: None,
-            fuel,
-            allowed_hosts,
-        };
-
-        let retry_config = ComponentRetryConfig {
-            max_retries: Some(self.max_retries),
-            retry_exp_backoff: self.retry_exp_backoff.into(),
-        };
-
-        Ok(ActivityJsConfigVerified {
-            wasm_path,
-            js_source,
-            ffqn: self.ffqn,
-            params: parsed_params,
-            return_type,
-            activity_config,
-            exec_config: self.exec.into_exec_exec_config(
-                component_id,
-                global_executor_instance_limiter,
-                retry_config,
-            ),
-            logs_store_min_level: self.logs_store_min_level.into(),
-        })
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowJsComponentConfigToml {
@@ -1766,119 +1458,6 @@ impl WorkflowJsConfigVerified {
 
     pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
         FrameFilesToSourceContent::from([(self.js_file_name.clone(), self.js_source.clone())])
-    }
-}
-
-impl WorkflowJsComponentConfigToml {
-    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
-    pub(crate) async fn fetch_and_verify(
-        self,
-        wasm_path: Arc<Path>,
-        wasm_cache_dir: Arc<Path>,
-        path_prefixes: Arc<PathPrefixes>,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
-    ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
-        // Parse custom params or default to `params: list<string>`
-        let parsed_params = match self.params {
-            None => {
-                vec![concepts::ParameterType {
-                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
-                        val_json::type_wrapper::TypeWrapper::String,
-                    )),
-                    name: StrVariant::Static("params"),
-                    wit_type: StrVariant::Static("list<string>"),
-                }]
-            }
-            Some(params) => params
-                .iter()
-                .map(|p| {
-                    let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
-                        .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
-                    Ok(concepts::ParameterType {
-                        type_wrapper: tw,
-                        name: StrVariant::from(p.name.clone()),
-                        wit_type: StrVariant::from(p.wit_type.clone()),
-                    })
-                })
-                .collect::<Result<Vec<_>, anyhow::Error>>()?,
-        };
-
-        let js_source = self
-            .location
-            .read_to_string(
-                &wasm_cache_dir,
-                &path_prefixes,
-                self.content_digest.as_ref(),
-            )
-            .await?;
-
-        // Parse and validate return type
-        const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
-        let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
-        let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
-            .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
-        let return_type = concepts::ReturnType::detect(
-            return_type_tw,
-            StrVariant::from(return_type_str.to_string()),
-        );
-        let return_type = match return_type {
-            ReturnType::Extendable(rt) => rt,
-            ReturnType::NonExtendable(_) => bail!(
-                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
-                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
-            ),
-        };
-
-        // Compute content digest from source + ffqn + params + return_type
-        let component_digest = self.component_digest.unwrap_or_else(|| {
-            let mut hasher = Sha256::new();
-            hasher.update(b"workflow_js:");
-            hasher.update(js_source.as_bytes());
-            hasher.update(self.ffqn.to_string().as_bytes());
-            for p in &parsed_params {
-                hasher.update(p.wit_type.as_ref().as_bytes());
-            }
-            hasher.update(return_type.wit_type.as_bytes());
-            let hash: [u8; 32] = hasher.finalize().into();
-            ComponentDigest(Digest(hash))
-        });
-
-        let component_id = ComponentId::new(
-            ComponentType::Workflow, // Use Workflow type, not a separate WorkflowJs
-            StrVariant::from(self.name),
-            component_digest,
-        )?;
-
-        let workflow_config = WorkflowConfig {
-            component_id: component_id.clone(),
-            join_next_blocking_strategy: self.blocking_strategy.into(),
-            backtrace_persist: false, // JS workflows don't support backtraces
-            stub_wasi: false,
-            fuel: None, // Fuel is controlled by the JS runtime
-            lock_extension: self.lock_extension.into(),
-            subscription_interruption: None,
-        };
-
-        let retry_config = ComponentRetryConfig {
-            max_retries: None, // Workflows retry forever
-            retry_exp_backoff: self.retry_exp_backoff.into(),
-        };
-
-        Ok(WorkflowJsConfigVerified {
-            wasm_path,
-            js_source,
-            js_file_name: self.location.file_name(),
-            ffqn: self.ffqn,
-            params: parsed_params,
-            return_type,
-            workflow_config,
-            exec_config: self.exec.into_exec_exec_config(
-                component_id,
-                global_executor_instance_limiter,
-                retry_config,
-            ),
-            logs_store_min_level: self.logs_store_min_level.into(),
-        })
     }
 }
 
@@ -1962,73 +1541,17 @@ impl From<BlockingStrategyConfigToml> for JoinNextBlockingStrategy {
         }
     }
 }
-/// Location of a WASM backtrace source file: either a local path or embedded content.
+/// Location of a WASM backtrace source file.
+/// On-disk format only; resolved to `ComponentBacktraceConfigCanonical` before transmission
+/// and hash computation.
 ///
-/// Serialised as:
-/// - `"path/to/file.ts"` → `Path`
-/// - `{ "inline": "...source..." }` → `Inline`
-#[derive(Debug, Clone, JsonSchema)]
+/// Serialised as: `"path/to/file.ts"` → `Path`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
 #[schemars(with = "String")]
 pub(crate) enum BacktraceSourceLocation {
-    /// Local file path — resolved at runtime (on-disk only; replaced with `Inline` before submit).
+    /// Local file path — resolved at submit/startup time via `resolve_to_canonical`.
     Path(String),
-    /// Source text embedded inline (in transit and storage; never written by users).
-    Inline(String),
-}
-
-impl Serialize for BacktraceSourceLocation {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap as _;
-        match self {
-            Self::Path(p) => p.serialize(s),
-            Self::Inline(content) => {
-                let mut map = s.serialize_map(Some(1))?;
-                map.serialize_entry("inline", content)?;
-                map.end()
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for BacktraceSourceLocation {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = BacktraceSourceLocation;
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, r#"a path string or an object with "inline" key"#)
-            }
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                Ok(BacktraceSourceLocation::Path(v.to_string()))
-            }
-            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
-                Ok(BacktraceSourceLocation::Path(v))
-            }
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut inline: Option<String> = None;
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "inline" => {
-                            if inline.is_some() {
-                                return Err(serde::de::Error::duplicate_field("inline"));
-                            }
-                            inline = Some(map.next_value()?);
-                        }
-                        other => {
-                            return Err(serde::de::Error::unknown_field(other, &["inline"]));
-                        }
-                    }
-                }
-                inline
-                    .map(BacktraceSourceLocation::Inline)
-                    .ok_or_else(|| serde::de::Error::missing_field("inline"))
-            }
-        }
-        d.deserialize_any(Visitor)
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone)]
@@ -2038,33 +1561,71 @@ pub(crate) struct ComponentBacktraceConfig {
     #[schemars(with = "std::collections::HashMap<String, String>")]
     pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceLocation>,
 }
-impl ComponentBacktraceConfig {
-    async fn verify(self, path_prefixes: &PathPrefixes) -> FrameFilesToSourceContent {
-        let mut frame_files_to_sources = HashMap::new();
-        for (key, location) in self.frame_files_to_sources {
-            let content = match location {
-                BacktraceSourceLocation::Inline(content) => Some(content),
-                BacktraceSourceLocation::Path(path) => {
-                    async {
-                        let path = path_prefixes
-                            .replace_file_prefix_verify_exists(&path)
-                            .inspect_err(|err| warn!("Ignoring missing backtrace source - {err:?}"))
-                            .ok()?;
-                        tokio::fs::read_to_string(&path)
-                            .await
-                            .inspect_err(|err| {
-                                warn!("Cannot read backtrace source {path:?} - {err:?}");
-                            })
-                            .ok()
-                    }
-                    .await
+/// Canonical JS location — no local file paths.
+/// Used for hash computation, wire format in deployment submission, and DB storage.
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum JsLocationCanonical {
+    GitHub(GitHubReleaseReference),
+    Content { content: String, file_name: String },
+}
+impl JsLocationCanonical {
+    pub(crate) fn file_name(&self) -> String {
+        match self {
+            JsLocationCanonical::GitHub(gh) => gh.asset_name.clone(),
+            JsLocationCanonical::Content { file_name, .. } => file_name.clone(),
+        }
+    }
+
+    /// Return the JS source content. For `Content`, returns it directly (validating digest if
+    /// provided). For `GitHub`, downloads to `wasm_cache_dir`.
+    pub(crate) async fn get_content(
+        &self,
+        wasm_cache_dir: &Path,
+        expected_digest: Option<&ContentDigest>,
+    ) -> anyhow::Result<String> {
+        match self {
+            JsLocationCanonical::Content { content, file_name } => {
+                if let Some(expected) = expected_digest {
+                    let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
+                    let actual = ContentDigest(Digest(hash));
+                    ensure!(
+                        *expected == actual,
+                        "content digest mismatch for inline JS `{file_name}`: expected {expected}, got {actual}"
+                    );
                 }
-            };
-            if let Some(content) = content {
-                frame_files_to_sources.insert(key, content);
+                Ok(content.clone())
+            }
+            JsLocationCanonical::GitHub(github_ref) => {
+                if let Some(expected) = expected_digest {
+                    let cached = content_digest_to_wasm_file(wasm_cache_dir, expected);
+                    if cached.exists() {
+                        trace!("Using cached JS source for known content digest");
+                        return tokio::fs::read_to_string(&cached).await.with_context(|| {
+                            format!("cannot read cached JS source file `{cached:?}`")
+                        });
+                    }
+                }
+                let (actual_digest, cached_path) =
+                    github::pull_to_cache_dir(github_ref, wasm_cache_dir)
+                        .await
+                        .context("cannot fetch JS source from GitHub release")?;
+                if let Some(expected) = expected_digest {
+                    ensure!(
+                        *expected == actual_digest,
+                        "content digest mismatch for JS source: expected {expected}, got {actual_digest}"
+                    );
+                } else {
+                    info!(
+                        r#"No content_digest specified for GitHub release JS source. Consider adding content_digest = "{}" to avoid refetching"#,
+                        actual_digest.with_infix(":")
+                    );
+                }
+                tokio::fs::read_to_string(&cached_path)
+                    .await
+                    .with_context(|| format!("cannot read cached JS source file `{cached_path:?}`"))
             }
         }
-        frame_files_to_sources
     }
 }
 
@@ -2083,7 +1644,180 @@ impl WorkflowConfigVerified {
     }
 }
 
-impl WorkflowComponentConfigToml {
+// Canonical component config types
+// Used for wire format, hash computation, and DB storage.
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub(crate) struct ComponentBacktraceConfigCanonical {
+    pub(crate) frame_files_to_sources: HashMap<String, String>,
+}
+
+impl ComponentBacktraceConfigCanonical {
+    pub(crate) fn into_frame_files(self) -> FrameFilesToSourceContent {
+        self.frame_files_to_sources
+    }
+}
+
+/// Canonical form of `ActivityJsComponentConfigToml`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivityJsComponentConfigCanonical {
+    pub(crate) name: ConfigName,
+    pub(crate) location: JsLocationCanonical,
+    #[serde(default)]
+    pub(crate) content_digest: Option<ContentDigest>,
+    #[serde(default)]
+    pub(crate) component_digest: Option<ComponentDigest>,
+    pub(crate) ffqn: FunctionFqn,
+    #[serde(default)]
+    pub(crate) params: Option<Vec<JsParamToml>>,
+    #[serde(default)]
+    pub(crate) exec: ExecConfigToml,
+    #[serde(default = "default_max_retries")]
+    pub(crate) max_retries: u32,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) retry_exp_backoff: DurationConfig,
+    #[serde(default)]
+    pub(crate) forward_stdout: ComponentStdOutputToml,
+    #[serde(default)]
+    pub(crate) forward_stderr: ComponentStdOutputToml,
+    #[serde(default)]
+    pub(crate) logs_store_min_level: LogLevelToml,
+    #[serde(default)]
+    pub(crate) env_vars: Vec<EnvVarConfig>,
+    #[serde(default, rename = "allowed_host")]
+    pub(crate) allowed_hosts: Vec<AllowedHostToml>,
+    #[serde(default)]
+    pub(crate) return_type: Option<String>,
+}
+
+impl ActivityJsComponentConfigCanonical {
+    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
+    pub(crate) async fn fetch_and_verify(
+        self,
+        wasm_path: Arc<Path>,
+        wasm_cache_dir: Arc<Path>,
+        ignore_missing_env_vars: bool,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
+    ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
+        let parsed_params = match self.params {
+            None => {
+                vec![concepts::ParameterType {
+                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
+                        val_json::type_wrapper::TypeWrapper::String,
+                    )),
+                    name: StrVariant::Static("params"),
+                    wit_type: StrVariant::Static("list<string>"),
+                }]
+            }
+            Some(params) => params
+                .iter()
+                .map(|p| {
+                    let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
+                        .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
+                    Ok(concepts::ParameterType {
+                        type_wrapper: tw,
+                        name: StrVariant::from(p.name.clone()),
+                        wit_type: StrVariant::from(p.wit_type.clone()),
+                    })
+                })
+                .collect::<Result<Vec<_>, anyhow::Error>>()?,
+        };
+        let js_source = self
+            .location
+            .get_content(&wasm_cache_dir, self.content_digest.as_ref())
+            .await?;
+        const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
+        let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
+        let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
+            .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
+        let return_type = concepts::ReturnType::detect(
+            return_type_tw,
+            StrVariant::from(return_type_str.to_string()),
+        );
+        let return_type = match return_type {
+            ReturnType::Extendable(rt) => rt,
+            ReturnType::NonExtendable(_) => bail!(
+                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
+                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
+            ),
+        };
+        let component_digest = self.component_digest.unwrap_or_else(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(b"activity_js:");
+            hasher.update(js_source.as_bytes());
+            hasher.update(self.ffqn.to_string().as_bytes());
+            for p in &parsed_params {
+                hasher.update(p.wit_type.as_ref().as_bytes());
+            }
+            hasher.update(return_type.wit_type.as_bytes());
+            let hash: [u8; 32] = hasher.finalize().into();
+            ComponentDigest(Digest(hash))
+        });
+        let component_id = ComponentId::new(
+            ComponentType::ActivityWasm,
+            StrVariant::from(self.name),
+            component_digest,
+        )?;
+        let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
+        let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
+        validate_no_env_collision(&env_vars, &allowed_hosts)?;
+        let activity_config = ActivityConfig {
+            component_id: component_id.clone(),
+            forward_stdout: self.forward_stdout.into(),
+            forward_stderr: self.forward_stderr.into(),
+            env_vars,
+            directories_config: None,
+            fuel,
+            allowed_hosts,
+        };
+        let retry_config = ComponentRetryConfig {
+            max_retries: Some(self.max_retries),
+            retry_exp_backoff: self.retry_exp_backoff.into(),
+        };
+        Ok(ActivityJsConfigVerified {
+            wasm_path,
+            js_source,
+            ffqn: self.ffqn,
+            params: parsed_params,
+            return_type,
+            activity_config,
+            exec_config: self.exec.into_exec_exec_config(
+                component_id,
+                global_executor_instance_limiter,
+                retry_config,
+            ),
+            logs_store_min_level: self.logs_store_min_level.into(),
+        })
+    }
+}
+
+/// Canonical form of `WorkflowComponentConfigToml`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkflowComponentConfigCanonical {
+    #[serde(flatten)]
+    pub(crate) common: ComponentCommon,
+    #[serde(default)]
+    pub(crate) component_digest: Option<ComponentDigest>,
+    #[serde(default)]
+    pub(crate) exec: ExecConfigToml,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) retry_exp_backoff: DurationConfig,
+    #[serde(default)]
+    pub(crate) blocking_strategy: BlockingStrategyConfigToml,
+    #[serde(default)]
+    pub(crate) backtrace: ComponentBacktraceConfigCanonical,
+    #[serde(default)]
+    pub(crate) stub_wasi: bool,
+    #[serde(default = "default_lock_extension")]
+    lock_extension: DurationConfig,
+    #[serde(default)]
+    pub(crate) logs_store_min_level: LogLevelToml,
+}
+
+impl WorkflowComponentConfigCanonical {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()))]
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn fetch_and_verify(
@@ -2113,17 +1847,15 @@ impl WorkflowComponentConfigToml {
             &wasm_cache_dir,
         )
         .await?
-        .unwrap_or(wasm_path); // None means the original is already Component
-
+        .unwrap_or(wasm_path);
         let component_digest = self
             .component_digest
-            .unwrap_or(ComponentDigest(common.content_digest.0)); // NB: content digest belongs to the original (untransformed) file.
+            .unwrap_or(ComponentDigest(common.content_digest.0));
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(common.name),
             component_digest,
         )?;
-
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
             join_next_blocking_strategy: self.blocking_strategy.into(),
@@ -2133,7 +1865,7 @@ impl WorkflowComponentConfigToml {
             lock_extension: self.lock_extension.into(),
             subscription_interruption,
         };
-        let frame_files_to_sources = self.backtrace.verify(&path_prefixes).await;
+        let frame_files_to_sources = self.backtrace.into_frame_files();
         let retry_config = ComponentRetryConfig {
             max_retries: None,
             retry_exp_backoff,
@@ -2149,6 +1881,304 @@ impl WorkflowComponentConfigToml {
             frame_files_to_sources,
             logs_store_min_level: self.logs_store_min_level.into(),
         })
+    }
+}
+
+/// Canonical form of `WorkflowJsComponentConfigToml`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkflowJsComponentConfigCanonical {
+    pub(crate) name: ConfigName,
+    pub(crate) location: JsLocationCanonical,
+    #[serde(default)]
+    pub(crate) content_digest: Option<ContentDigest>,
+    #[serde(default)]
+    pub(crate) component_digest: Option<ComponentDigest>,
+    pub(crate) ffqn: FunctionFqn,
+    #[serde(default)]
+    pub(crate) params: Option<Vec<JsParamToml>>,
+    #[serde(default)]
+    pub(crate) exec: ExecConfigToml,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) retry_exp_backoff: DurationConfig,
+    #[serde(default)]
+    pub(crate) blocking_strategy: BlockingStrategyConfigToml,
+    #[serde(default = "default_lock_extension")]
+    lock_extension: DurationConfig,
+    #[serde(default)]
+    pub(crate) logs_store_min_level: LogLevelToml,
+    #[serde(default)]
+    pub(crate) return_type: Option<String>,
+}
+
+impl WorkflowJsComponentConfigCanonical {
+    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
+    pub(crate) async fn fetch_and_verify(
+        self,
+        wasm_path: Arc<Path>,
+        wasm_cache_dir: Arc<Path>,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
+        let parsed_params = match self.params {
+            None => {
+                vec![concepts::ParameterType {
+                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
+                        val_json::type_wrapper::TypeWrapper::String,
+                    )),
+                    name: StrVariant::Static("params"),
+                    wit_type: StrVariant::Static("list<string>"),
+                }]
+            }
+            Some(params) => params
+                .iter()
+                .map(|p| {
+                    let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
+                        .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
+                    Ok(concepts::ParameterType {
+                        type_wrapper: tw,
+                        name: StrVariant::from(p.name.clone()),
+                        wit_type: StrVariant::from(p.wit_type.clone()),
+                    })
+                })
+                .collect::<Result<Vec<_>, anyhow::Error>>()?,
+        };
+        let js_source = self
+            .location
+            .get_content(&wasm_cache_dir, self.content_digest.as_ref())
+            .await?;
+        const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
+        let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
+        let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
+            .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
+        let return_type = concepts::ReturnType::detect(
+            return_type_tw,
+            StrVariant::from(return_type_str.to_string()),
+        );
+        let return_type = match return_type {
+            ReturnType::Extendable(rt) => rt,
+            ReturnType::NonExtendable(_) => bail!(
+                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
+                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
+            ),
+        };
+        let component_digest = self.component_digest.unwrap_or_else(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(b"workflow_js:");
+            hasher.update(js_source.as_bytes());
+            hasher.update(self.ffqn.to_string().as_bytes());
+            for p in &parsed_params {
+                hasher.update(p.wit_type.as_ref().as_bytes());
+            }
+            hasher.update(return_type.wit_type.as_bytes());
+            let hash: [u8; 32] = hasher.finalize().into();
+            ComponentDigest(Digest(hash))
+        });
+        let component_id = ComponentId::new(
+            ComponentType::Workflow,
+            StrVariant::from(self.name),
+            component_digest,
+        )?;
+        let workflow_config = WorkflowConfig {
+            component_id: component_id.clone(),
+            join_next_blocking_strategy: self.blocking_strategy.into(),
+            backtrace_persist: false,
+            stub_wasi: false,
+            fuel: None,
+            lock_extension: self.lock_extension.into(),
+            subscription_interruption: None,
+        };
+        let retry_config = ComponentRetryConfig {
+            max_retries: None,
+            retry_exp_backoff: self.retry_exp_backoff.into(),
+        };
+        let js_file_name = self.location.file_name();
+        Ok(WorkflowJsConfigVerified {
+            wasm_path,
+            js_source,
+            js_file_name,
+            ffqn: self.ffqn,
+            params: parsed_params,
+            return_type,
+            workflow_config,
+            exec_config: self.exec.into_exec_exec_config(
+                component_id,
+                global_executor_instance_limiter,
+                retry_config,
+            ),
+            logs_store_min_level: self.logs_store_min_level.into(),
+        })
+    }
+}
+
+/// Canonical deployment configuration — no local file paths.
+/// Used for hash computation, wire format, and DB storage.
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+pub(crate) struct DeploymentCanonical {
+    #[serde(default, rename = "activity_wasm")]
+    pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
+    #[serde(default, rename = "activity_stub")]
+    pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
+    #[serde(default, rename = "activity_external")]
+    pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
+    #[serde(default, rename = "activity_js")]
+    pub(crate) activities_js: Vec<ActivityJsComponentConfigCanonical>,
+    #[serde(default, rename = "workflow")]
+    pub(crate) workflows: Vec<WorkflowComponentConfigCanonical>,
+    #[serde(default, rename = "workflow_js")]
+    pub(crate) workflows_js: Vec<WorkflowJsComponentConfigCanonical>,
+    #[serde(default, rename = "webhook_endpoint")]
+    pub(crate) webhooks: Vec<webhook::WebhookComponentConfigCanonical>,
+    #[serde(default, rename = "webhook_endpoint_js")]
+    pub(crate) webhooks_js: Vec<webhook::WebhookJsComponentConfigCanonical>,
+}
+
+/// Resolve a `DeploymentToml` to `DeploymentCanonical` by reading all local JS and backtrace
+/// source files. GitHub JS locations are left as references (downloaded lazily at verify time).
+pub(crate) async fn resolve_local_refs_to_canonical(
+    deployment: &DeploymentToml,
+    path_prefixes: &PathPrefixes,
+) -> anyhow::Result<DeploymentCanonical> {
+    let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
+    for a in &deployment.activities_js {
+        activities_js.push(ActivityJsComponentConfigCanonical {
+            name: a.name.clone(),
+            location: resolve_js_to_canonical(&a.location, path_prefixes).await?,
+            content_digest: a.content_digest.clone(),
+            component_digest: a.component_digest.clone(),
+            ffqn: a.ffqn.clone(),
+            params: a.params.clone(),
+            exec: a.exec.clone(),
+            max_retries: a.max_retries,
+            retry_exp_backoff: a.retry_exp_backoff,
+            forward_stdout: a.forward_stdout,
+            forward_stderr: a.forward_stderr,
+            logs_store_min_level: a.logs_store_min_level,
+            env_vars: a.env_vars.clone(),
+            allowed_hosts: a.allowed_hosts.clone(),
+            return_type: a.return_type.clone(),
+        });
+    }
+
+    let mut workflows = Vec::with_capacity(deployment.workflows.len());
+    for w in &deployment.workflows {
+        workflows.push(WorkflowComponentConfigCanonical {
+            common: w.common.clone(),
+            component_digest: w.component_digest.clone(),
+            exec: w.exec.clone(),
+            retry_exp_backoff: w.retry_exp_backoff,
+            blocking_strategy: w.blocking_strategy,
+            backtrace: resolve_backtrace_to_canonical(&w.backtrace, path_prefixes).await,
+            stub_wasi: w.stub_wasi,
+            lock_extension: w.lock_extension,
+            logs_store_min_level: w.logs_store_min_level,
+        });
+    }
+
+    let mut workflows_js = Vec::with_capacity(deployment.workflows_js.len());
+    for w in &deployment.workflows_js {
+        workflows_js.push(WorkflowJsComponentConfigCanonical {
+            name: w.name.clone(),
+            location: resolve_js_to_canonical(&w.location, path_prefixes).await?,
+            content_digest: w.content_digest.clone(),
+            component_digest: w.component_digest.clone(),
+            ffqn: w.ffqn.clone(),
+            params: w.params.clone(),
+            exec: w.exec.clone(),
+            retry_exp_backoff: w.retry_exp_backoff,
+            blocking_strategy: w.blocking_strategy,
+            lock_extension: w.lock_extension,
+            logs_store_min_level: w.logs_store_min_level,
+            return_type: w.return_type.clone(),
+        });
+    }
+
+    let mut webhooks = Vec::with_capacity(deployment.webhooks.len());
+    for w in &deployment.webhooks {
+        webhooks.push(webhook::WebhookComponentConfigCanonical {
+            common: w.common.clone(),
+            http_server: w.http_server.clone(),
+            routes: w.routes.clone(),
+            forward_stdout: w.forward_stdout,
+            forward_stderr: w.forward_stderr,
+            env_vars: w.env_vars.clone(),
+            backtrace: resolve_backtrace_to_canonical(&w.backtrace, path_prefixes).await,
+            logs_store_min_level: w.logs_store_min_level,
+            allowed_hosts: w.allowed_hosts.clone(),
+        });
+    }
+
+    let mut webhooks_js = Vec::with_capacity(deployment.webhooks_js.len());
+    for w in &deployment.webhooks_js {
+        webhooks_js.push(webhook::WebhookJsComponentConfigCanonical {
+            name: w.name.clone(),
+            location: resolve_js_to_canonical(&w.location, path_prefixes).await?,
+            content_digest: w.content_digest.clone(),
+            http_server: w.http_server.clone(),
+            routes: w.routes.clone(),
+            forward_stdout: w.forward_stdout,
+            forward_stderr: w.forward_stderr,
+            logs_store_min_level: w.logs_store_min_level,
+            allowed_hosts: w.allowed_hosts.clone(),
+        });
+    }
+
+    Ok(DeploymentCanonical {
+        activities_wasm: deployment.activities_wasm.clone(),
+        activities_stub: deployment.activities_stub.clone(),
+        activities_external: deployment.activities_external.clone(),
+        activities_js,
+        workflows,
+        workflows_js,
+        webhooks,
+        webhooks_js,
+    })
+}
+
+async fn resolve_js_to_canonical(
+    location: &JsLocationToml,
+    path_prefixes: &PathPrefixes,
+) -> anyhow::Result<JsLocationCanonical> {
+    match location {
+        JsLocationToml::Path(path) => {
+            let file_name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path)
+                .to_string();
+            let full_path = path_prefixes.replace_file_prefix_verify_exists(path)?;
+            let content = tokio::fs::read_to_string(&full_path)
+                .await
+                .with_context(|| format!("cannot read JS file {full_path:?}"))?;
+            Ok(JsLocationCanonical::Content { content, file_name })
+        }
+        JsLocationToml::GitHub(gh) => Ok(JsLocationCanonical::GitHub(gh.clone())),
+    }
+}
+
+async fn resolve_backtrace_to_canonical(
+    backtrace: &ComponentBacktraceConfig,
+    path_prefixes: &PathPrefixes,
+) -> ComponentBacktraceConfigCanonical {
+    let mut frame_files_to_sources = HashMap::new();
+    for (key, location) in &backtrace.frame_files_to_sources {
+        let BacktraceSourceLocation::Path(path) = location;
+        let content = async {
+            let full_path = path_prefixes
+                .replace_file_prefix_verify_exists(path)
+                .inspect_err(|err| warn!("Ignoring missing backtrace source - {err:?}"))
+                .ok()?;
+            tokio::fs::read_to_string(&full_path)
+                .await
+                .inspect_err(|err| warn!("Cannot read backtrace source {full_path:?} - {err:?}"))
+                .ok()
+        }
+        .await;
+        if let Some(content) = content {
+            frame_files_to_sources.insert(key.clone(), content);
+        }
+    }
+    ComponentBacktraceConfigCanonical {
+        frame_files_to_sources,
     }
 }
 
@@ -2470,9 +2500,9 @@ impl From<ComponentStdOutputToml> for Option<StdOutputConfig> {
 
 pub(crate) mod webhook {
     use super::{
-        AllowedHostToml, ComponentBacktraceConfig, ComponentCommon, ComponentStdOutputToml,
-        ConfigName, JsLocationToml, resolve_allowed_hosts, resolve_env_vars_plaintext,
-        validate_no_env_collision,
+        AllowedHostToml, ComponentBacktraceConfig, ComponentBacktraceConfigCanonical,
+        ComponentCommon, ComponentStdOutputToml, ConfigName, JsLocationCanonical, JsLocationToml,
+        resolve_allowed_hosts, resolve_env_vars_plaintext, validate_no_env_collision,
     };
     use crate::{
         command::server::FrameFilesToSourceContent,
@@ -2530,55 +2560,6 @@ pub(crate) mod webhook {
         /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
         #[serde(default, rename = "allowed_host")]
         pub(crate) allowed_hosts: Vec<AllowedHostToml>,
-    }
-
-    impl WebhookComponentConfigToml {
-        #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()), err)]
-        pub(crate) async fn fetch_and_verify(
-            self,
-            wasm_cache_dir: Arc<Path>,
-            metadata_dir: Arc<Path>,
-            ignore_missing_env_vars: bool,
-            path_prefixes: Arc<PathPrefixes>,
-            subscription_interruption: Option<Duration>,
-        ) -> Result<(ConfigName /* name */, WebhookComponentConfigVerified), anyhow::Error>
-        {
-            let (common, wasm_path) = self
-                .common
-                .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
-                .await?;
-            let frame_files_to_sources = self.backtrace.verify(&path_prefixes).await;
-            let component_id = ComponentId::new(
-                ComponentType::WebhookEndpoint,
-                StrVariant::from(common.name.clone()),
-                ComponentDigest(common.content_digest.0), // digest for webhooks is identifier only, as no locking strategy can be applied.
-            )?;
-            let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
-            let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
-
-            // Validate no collision between env_vars and secret env names
-            validate_no_env_collision(&env_vars, &allowed_hosts)?;
-
-            Ok((
-                common.name, // TODO: remove, already in component id
-                WebhookComponentConfigVerified {
-                    component_id,
-                    wasm_path,
-                    routes: self
-                        .routes
-                        .into_iter()
-                        .map(WebhookRouteVerified::try_from)
-                        .collect::<Result<Vec<_>, _>>()?,
-                    forward_stdout: self.forward_stdout.into(),
-                    forward_stderr: self.forward_stderr.into(),
-                    env_vars,
-                    frame_files_to_sources,
-                    subscription_interruption,
-                    logs_store_min_level: self.logs_store_min_level.into(),
-                    allowed_hosts,
-                },
-            ))
-        }
     }
 
     #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -2686,40 +2667,123 @@ pub(crate) mod webhook {
         pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
     }
 
-    impl WebhookJsComponentConfigToml {
+    impl WebhookJsConfigVerified {
+        pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
+            FrameFilesToSourceContent::from([(self.js_file_name.clone(), self.js_source.clone())])
+        }
+    }
+
+    /// Canonical form of `WebhookComponentConfigToml`.
+    #[derive(Debug, Deserialize, Serialize, Clone)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct WebhookComponentConfigCanonical {
+        #[serde(flatten)]
+        pub(crate) common: ComponentCommon,
+        #[serde(default = "default_external_server_name")]
+        pub(crate) http_server: ConfigName,
+        pub(crate) routes: Vec<WebhookRoute>,
+        #[serde(default)]
+        pub(crate) forward_stdout: ComponentStdOutputToml,
+        #[serde(default)]
+        pub(crate) forward_stderr: ComponentStdOutputToml,
+        #[serde(default)]
+        pub(crate) env_vars: Vec<EnvVarConfig>,
+        #[serde(default)]
+        pub(crate) backtrace: ComponentBacktraceConfigCanonical,
+        #[serde(default)]
+        pub(crate) logs_store_min_level: LogLevelToml,
+        #[serde(default, rename = "allowed_host")]
+        pub(crate) allowed_hosts: Vec<AllowedHostToml>,
+    }
+
+    impl WebhookComponentConfigCanonical {
+        #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()), err)]
+        pub(crate) async fn fetch_and_verify(
+            self,
+            wasm_cache_dir: Arc<Path>,
+            metadata_dir: Arc<Path>,
+            ignore_missing_env_vars: bool,
+            path_prefixes: Arc<PathPrefixes>,
+            subscription_interruption: Option<Duration>,
+        ) -> Result<(ConfigName, WebhookComponentConfigVerified), anyhow::Error> {
+            let (common, wasm_path) = self
+                .common
+                .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+                .await?;
+            let frame_files_to_sources = self.backtrace.into_frame_files();
+            let component_id = ComponentId::new(
+                ComponentType::WebhookEndpoint,
+                StrVariant::from(common.name.clone()),
+                ComponentDigest(common.content_digest.0),
+            )?;
+            let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
+            let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
+            validate_no_env_collision(&env_vars, &allowed_hosts)?;
+            Ok((
+                common.name,
+                WebhookComponentConfigVerified {
+                    component_id,
+                    wasm_path,
+                    routes: self
+                        .routes
+                        .into_iter()
+                        .map(WebhookRouteVerified::try_from)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    forward_stdout: self.forward_stdout.into(),
+                    forward_stderr: self.forward_stderr.into(),
+                    env_vars,
+                    frame_files_to_sources,
+                    subscription_interruption,
+                    logs_store_min_level: self.logs_store_min_level.into(),
+                    allowed_hosts,
+                },
+            ))
+        }
+    }
+
+    /// Canonical form of `WebhookJsComponentConfigToml`.
+    #[derive(Debug, Deserialize, Serialize, Clone)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct WebhookJsComponentConfigCanonical {
+        pub(crate) name: ConfigName,
+        pub(crate) location: JsLocationCanonical,
+        #[serde(default)]
+        pub(crate) content_digest: Option<ContentDigest>,
+        #[serde(default = "default_external_server_name")]
+        pub(crate) http_server: ConfigName,
+        pub(crate) routes: Vec<WebhookRoute>,
+        #[serde(default)]
+        pub(crate) forward_stdout: ComponentStdOutputToml,
+        #[serde(default)]
+        pub(crate) forward_stderr: ComponentStdOutputToml,
+        #[serde(default)]
+        pub(crate) logs_store_min_level: LogLevelToml,
+        #[serde(default, rename = "allowed_host")]
+        pub(crate) allowed_hosts: Vec<AllowedHostToml>,
+    }
+
+    impl WebhookJsComponentConfigCanonical {
         #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
         pub(crate) async fn fetch_and_verify(
             self,
             wasm_path: Arc<Path>,
             wasm_cache_dir: Arc<Path>,
-            path_prefixes: Arc<PathPrefixes>,
             ignore_missing_env_vars: bool,
-        ) -> Result<(ConfigName /* name */, WebhookJsConfigVerified), anyhow::Error> {
-            // Read JS source
+        ) -> Result<(ConfigName, WebhookJsConfigVerified), anyhow::Error> {
             let js_source = self
                 .location
-                .read_to_string(
-                    &wasm_cache_dir,
-                    &path_prefixes,
-                    self.content_digest.as_ref(),
-                )
+                .get_content(&wasm_cache_dir, self.content_digest.as_ref())
                 .await?;
-
-            // Compute content digest from source - FFQN is same for all webhooks
-
             let mut hasher = Sha256::new();
             hasher.update(b"webhook_js:");
             hasher.update(js_source.as_bytes());
             let hash: [u8; 32] = hasher.finalize().into();
-
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(self.name.clone()),
                 ComponentDigest(Digest(hash)),
             )?;
-
             let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
-
             Ok((
                 self.name,
                 WebhookJsConfigVerified {
@@ -2738,12 +2802,6 @@ pub(crate) mod webhook {
                     allowed_hosts,
                 },
             ))
-        }
-    }
-
-    impl WebhookJsConfigVerified {
-        pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
-            FrameFilesToSourceContent::from([(self.js_file_name.clone(), self.js_source.clone())])
         }
     }
 }

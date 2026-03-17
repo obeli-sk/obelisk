@@ -15,7 +15,7 @@ use crate::{
     config::{
         config_holder::{ConfigFileOption, ConfigHolder, ConfigSource},
         env_var::EnvVarConfig,
-        toml::DeploymentToml,
+        toml::DeploymentCanonical,
     },
 };
 use chrono::Utc;
@@ -1135,7 +1135,7 @@ async fn hot_redeploy_activity() {
         let active = conn.get_active_deployment().await.unwrap().unwrap();
 
         let config: serde_json::Value = serde_json::from_str(&active.config_json).unwrap();
-        let mut new_deployment: DeploymentToml = serde_json::from_value(config).unwrap();
+        let mut new_deployment: DeploymentCanonical = serde_json::from_value(config).unwrap();
         let found = new_deployment
             .activities_js
             .iter_mut()
@@ -1270,7 +1270,7 @@ async fn hot_redeploy_registry() {
         let active = conn.get_active_deployment().await.unwrap().unwrap();
 
         let config: serde_json::Value = serde_json::from_str(&active.config_json).unwrap();
-        let mut new_deployment: DeploymentToml = serde_json::from_value(config).unwrap();
+        let mut new_deployment: DeploymentCanonical = serde_json::from_value(config).unwrap();
         new_deployment
             .activities_stub
             .push(ActivityStubComponentConfigToml::Inline(

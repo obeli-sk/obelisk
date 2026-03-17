@@ -14,13 +14,12 @@ use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityStubInlineConfigVerified;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
-use crate::config::toml::ComponentBacktraceConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::ConfigToml;
 use crate::config::toml::DatabaseConfigToml;
-use crate::config::toml::DeploymentToml;
+use crate::config::toml::DeploymentCanonical;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::TimersWatcherTomlConfig;
@@ -409,13 +408,18 @@ pub(crate) async fn verify(
         ConfigHolder::new(project_dirs, base_dirs, ConfigFileOption::MustExist(config))?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
+    let path_prefixes = Arc::new(config_holder.path_prefixes);
+    let deployment =
+        crate::config::toml::resolve_local_refs_to_canonical(&config.deployment, &path_prefixes)
+            .await?;
     let deployment_id = DeploymentId::generate();
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     if skip_db {
         Box::pin(verify_config_compile_link(
             config,
-            Arc::new(config_holder.path_prefixes),
+            deployment,
+            path_prefixes,
             deployment_id,
             verify_params,
             &mut termination_watcher,
@@ -424,7 +428,8 @@ pub(crate) async fn verify(
     } else {
         Box::pin(verify_with_db_schema(
             config,
-            Arc::new(config_holder.path_prefixes),
+            deployment,
+            path_prefixes,
             deployment_id,
             verify_params,
             &mut termination_watcher,
@@ -446,6 +451,7 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
 /// Called by `verify` command.
 async fn verify_with_db_schema(
     config: ConfigToml,
+    deployment: DeploymentCanonical,
     path_prefixes: Arc<PathPrefixes>,
     deployment_id: DeploymentId,
     params: VerifyParams,
@@ -454,6 +460,7 @@ async fn verify_with_db_schema(
     let database = config.database.clone();
     let ok = Box::pin(verify_config_compile_link(
         config,
+        deployment,
         path_prefixes.clone(),
         deployment_id,
         params,
@@ -494,6 +501,7 @@ async fn verify_with_db_schema(
 #[instrument(skip_all, name = "verify")]
 pub(crate) async fn verify_config_compile_link(
     config: ConfigToml,
+    deployment: DeploymentCanonical,
     path_prefixes: Arc<PathPrefixes>,
     deployment_id: DeploymentId, // only to distinguish when writing to the same log file as running server
     params: VerifyParams,
@@ -555,6 +563,7 @@ pub(crate) async fn verify_config_compile_link(
 
     let server_verified = Box::pin(ServerVerified::new(
         config,
+        deployment,
         codegen_cache,
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
@@ -577,7 +586,7 @@ pub(crate) async fn verify_config_compile_link(
     Ok(compiled_and_linked)
 }
 
-async fn upsert_and_activate_deployment(
+async fn insert_and_activate_deployment_if_needed(
     db_pool: &dyn concepts::storage::DbPool,
     candidate_id: DeploymentId,
     config_json: String,
@@ -631,12 +640,12 @@ pub(crate) async fn run_internal(
     mut termination_watcher: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
     let deployment_id = DeploymentId::generate();
-    let mut deployment = config.deployment.clone();
-    crate::config::toml::resolve_js_files(&mut deployment, &path_prefixes)
-        .await
-        .context("cannot resolve JS files for deployment")?;
+    let deployment_canonical =
+        crate::config::toml::resolve_local_refs_to_canonical(&config.deployment, &path_prefixes)
+            .await
+            .context("cannot resolve deployment to canonical form")?;
     let (deployment_config_json, deployment_config_hash) =
-        crate::config::toml::compute_config_json_and_hash(&deployment);
+        crate::config::toml::compute_config_json_and_hash(&deployment_canonical);
     let span = info_span!("init", %deployment_id);
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
 
@@ -649,6 +658,7 @@ pub(crate) async fn run_internal(
     let database = config.database.clone();
     let compiled_and_linked = Box::pin(verify_config_compile_link(
         config.clone(),
+        deployment_canonical,
         path_prefixes.clone(),
         deployment_id,
         VerifyParams {
@@ -685,7 +695,7 @@ pub(crate) async fn run_internal(
                     .await
                     .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
             );
-            let deployment_id = upsert_and_activate_deployment(
+            let deployment_id = insert_and_activate_deployment_if_needed(
                 &*db_pool,
                 deployment_id,
                 deployment_config_json.clone(),
@@ -721,7 +731,7 @@ pub(crate) async fn run_internal(
                 .await
                 .context("canont initialize postgres connection pool")?,
             );
-            let deployment_id = upsert_and_activate_deployment(
+            let deployment_id = insert_and_activate_deployment_if_needed(
                 &*db_pool,
                 deployment_id,
                 deployment_config_json.clone(),
@@ -862,8 +872,10 @@ struct ServerVerified {
 
 impl ServerVerified {
     #[instrument(name = "ServerVerified::new", skip_all)]
+    #[expect(clippy::too_many_arguments)]
     async fn new(
-        mut config: ConfigToml,
+        config: ConfigToml,
+        mut deployment: DeploymentCanonical,
         codegen_cache_dir: Option<PathBuf>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -909,10 +921,9 @@ impl ServerVerified {
                 );
             }
             let target_url = format!("http://{}", config.api.listening_addr);
-            config
-                .deployment
+            deployment
                 .webhooks
-                .push(webhook::WebhookComponentConfigToml {
+                .push(webhook::WebhookComponentConfigCanonical {
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
                         location: WEBUI_LOCATION
@@ -928,7 +939,7 @@ impl ServerVerified {
                         key: "TARGET_URL".to_string(),
                         value: target_url.clone(),
                     }],
-                    backtrace: ComponentBacktraceConfig::default(),
+                    backtrace: crate::config::toml::ComponentBacktraceConfigCanonical::default(),
                     logs_store_min_level: LogLevelToml::Off,
                     allowed_hosts: vec![AllowedHostToml {
                         pattern: target_url,
@@ -965,7 +976,7 @@ impl ServerVerified {
         let database_subscription_interruption = config.database.get_subscription_interruption();
 
         let config = Box::pin(ConfigVerified::fetch_and_verify_all(
-            config.deployment,
+            deployment,
             http_servers,
             wasm_cache_dir,
             metadata_dir,
@@ -1383,7 +1394,7 @@ impl ConfigVerified {
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
-        deployment: DeploymentToml,
+        deployment: DeploymentCanonical,
         http_servers: Vec<webhook::HttpServer>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -1630,7 +1641,6 @@ impl ConfigVerified {
                             js.fetch_and_verify(
                                 activity_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
-                                path_prefixes.clone(),
                                 ignore_missing_env_vars,
                                 global_executor_instance_limiter.clone(),
                                 fuel,
@@ -1652,7 +1662,6 @@ impl ConfigVerified {
                             workflow_js.fetch_and_verify(
                                 workflow_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
-                                path_prefixes.clone(),
                                 global_executor_instance_limiter.clone(),
                             ).await?
                         );
@@ -1671,7 +1680,6 @@ impl ConfigVerified {
                         let (k, v) = webhook_js.fetch_and_verify(
                             webhook_js_wasm_path.clone(),
                             wasm_cache_dir.clone(),
-                            path_prefixes.clone(),
                             ignore_missing_env_vars,
                         ).await?;
                         webhooks_js_by_names.insert(k, v);
@@ -2700,13 +2708,21 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
 
+        let path_prefixes = Arc::new(config_holder.path_prefixes);
+        let deployment_canonical = crate::config::toml::resolve_local_refs_to_canonical(
+            &config.deployment,
+            &path_prefixes,
+        )
+        .await?;
+
         let server_verified = Box::pin(ServerVerified::new(
             config,
+            deployment_canonical,
             codegen_cache,
             Arc::from(wasm_cache_dir),
             Arc::from(metadata_dir),
             VerifyParams::default().ignore_missing_env_vars,
-            Arc::new(config_holder.path_prefixes),
+            path_prefixes,
             &mut termination_watcher,
         ))
         .await?;

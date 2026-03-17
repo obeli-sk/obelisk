@@ -1,6 +1,7 @@
 use anyhow::{Context, bail};
 use concepts::ContentDigest;
 use serde::Deserialize;
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     fmt::{self, Display},
     path::{Path, PathBuf},
@@ -16,7 +17,7 @@ const GITHUB_CLIENT_RETRIES: u64 = 10;
 
 /// Reference to a GitHub release asset.
 /// Format: `gh://owner/repo@tag/asset-name.wasm` or `gh://owner/repo@latest/asset-name.wasm`
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
 pub(crate) struct GitHubReleaseReference {
     pub owner: String,
     pub repo: String,
