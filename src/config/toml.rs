@@ -1539,7 +1539,10 @@ pub(crate) struct ComponentBacktraceConfig {
 pub(crate) enum JsLocationCanonical {
     #[schemars(with = "String")]
     GitHub(GitHubReleaseReference),
-    Content { content: String, file_name: String },
+    Content {
+        content: String,
+        file_name: String,
+    },
 }
 impl JsLocationCanonical {
     pub(crate) fn file_name(&self) -> String {
