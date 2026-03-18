@@ -17,7 +17,7 @@ impl args::Deployment {
                 verify,
                 api_url,
             } => {
-                let config_json = load_config_json(config).await?;
+                let config_json = load_config_json(Some(config)).await?;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let resp = client
@@ -61,7 +61,55 @@ impl args::Deployment {
                                 "Could not hot-redeploy; deployment queued. Restart the server to apply."
                             );
                         }
-                        println!("Deployment activated. Restart the server to apply.");
+                        println!("Deployment queued. Restart the server to apply.");
+                    }
+                    Outcome::SwitchOutcomeUnspecified => {
+                        bail!("Unexpected outcome from server.");
+                    }
+                }
+                Ok(())
+            }
+
+            args::Deployment::SubmitSwitch {
+                config,
+                hot,
+                verify,
+                api_url,
+            } => {
+                let config_json = load_config_json(Some(config)).await?;
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_deployment_repository_client(channel).await?;
+                let resp = client
+                    .submit_deployment(grpc_gen::SubmitDeploymentRequest {
+                        config_json,
+                        created_by: Some("cli".to_string()),
+                        verify: false,
+                    })
+                    .await?
+                    .into_inner();
+                let id = resp.deployment_id.context("missing deployment_id")?.id;
+                println!("Submitted as Candidate: {id}");
+
+                let resp = client
+                    .switch_deployment(grpc_gen::SwitchDeploymentRequest {
+                        deployment_id: Some(grpc_gen::DeploymentId { id }),
+                        verify,
+                        hot_redeploy: hot,
+                    })
+                    .await?
+                    .into_inner();
+
+                match resp.outcome() {
+                    Outcome::SwitchOutcomeSwitched => {
+                        println!("Hot-redeployed successfully.");
+                    }
+                    Outcome::SwitchOutcomeRestartRequired => {
+                        if hot {
+                            bail!(
+                                "Could not hot-redeploy; deployment queued. Restart the server to apply."
+                            );
+                        }
+                        println!("Deployment queued. Restart the server to apply.");
                     }
                     Outcome::SwitchOutcomeUnspecified => {
                         bail!("Unexpected outcome from server.");

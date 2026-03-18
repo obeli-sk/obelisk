@@ -44,9 +44,9 @@ pub(crate) enum Subcommand {
 pub(crate) enum Deployment {
     /// Upload a configuration file as a Candidate deployment; print the new deployment ID.
     Submit {
-        /// Path to the TOML configuration, defaults to `obelisk.toml`.
+        /// Path to the TOML configuration containing the new deployment.
         #[arg(long, short)]
-        config: Option<ConfigSource>,
+        config: ConfigSource,
         /// Verify all environment variables before persisting the deployment.
         #[arg(long)]
         verify: bool,
@@ -63,7 +63,21 @@ pub(crate) enum Deployment {
         /// Live swap without server restart (falls back to restart-required if not possible).
         #[arg(long, conflicts_with = "verify")]
         hot: bool,
-        /// Verify all environment variables before activating.
+        /// Verify all environment variables before queuing the deployment for next server restart.
+        #[arg(long, conflicts_with = "hot")]
+        verify: bool,
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+    },
+    SubmitSwitch {
+        /// Path to the TOML configuration containing the new deployment.
+        #[arg(long, short)]
+        config: ConfigSource,
+        /// Live swap without server restart (falls back to restart-required if not possible).
+        #[arg(long, conflicts_with = "verify")]
+        hot: bool,
+        /// Verify all environment variables before queuing the deployment for next server restart.
         #[arg(long, conflicts_with = "hot")]
         verify: bool,
         /// Address of the obelisk server
