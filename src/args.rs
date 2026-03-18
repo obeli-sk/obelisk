@@ -101,9 +101,15 @@ pub(crate) enum Deployment {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Generate {
-    /// Generate the Obelisk configuration schema in JSON schema format.
+    /// Generate the server configuration (server.toml) schema in JSON schema format.
     #[cfg(debug_assertions)]
-    ConfigSchema {
+    ServerConfigSchema {
+        /// Filename to write the schema to, defaults to <stdout>.
+        output: Option<PathBuf>,
+    },
+    /// Generate the deployment configuration (deployment.toml) schema in JSON schema format.
+    #[cfg(debug_assertions)]
+    DeploymentSchema {
         /// Filename to write the schema to, defaults to <stdout>.
         output: Option<PathBuf>,
     },

@@ -21,7 +21,9 @@ impl Generate {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
             #[cfg(debug_assertions)]
-            Generate::ConfigSchema { output } => generate_toml_schema(output),
+            Generate::ServerConfigSchema { output } => generate_server_config_schema(output),
+            #[cfg(debug_assertions)]
+            Generate::DeploymentSchema { output } => generate_deployment_schema(output),
             #[cfg(debug_assertions)]
             Generate::DbSchema { output } => generate_db_schema(output),
             #[cfg(debug_assertions)]
@@ -81,22 +83,31 @@ impl Generate {
 }
 
 #[cfg(debug_assertions)]
-pub(crate) fn generate_toml_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+fn write_schema<T: schemars::JsonSchema>(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     use std::{
         fs::File,
         io::{BufWriter, Write as _, stdout},
     };
-    let schema = schemars::schema_for!(crate::config::toml::ServerConfigToml);
+    let schema = schemars::schema_for!(T);
     if let Some(output) = output {
-        // Save to a file
         let mut writer = BufWriter::new(File::create(&output)?);
         serde_json::to_writer_pretty(&mut writer, &schema)?;
         writer.write_all(b"\n")?;
-        writer.flush()?; // Do not swallow errors
+        writer.flush()?;
     } else {
         serde_json::to_writer_pretty(stdout().lock(), &schema)?;
     }
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    write_schema::<crate::config::toml::ServerConfigToml>(output)
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn generate_deployment_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    write_schema::<crate::config::toml::DeploymentToml>(output)
 }
 
 #[cfg(debug_assertions)]
