@@ -117,9 +117,7 @@ pub(crate) struct ConfigToml {
 
 /// Return a canonical JSON string of the deployment config for storage.
 pub(crate) fn compute_config_json(deployment: &DeploymentCanonical) -> String {
-    let json_value =
-        serde_json::to_string(deployment).expect("DeploymentCanonical is serializable");
-    json_value
+    serde_json::to_string(deployment).expect("DeploymentCanonical is serializable")
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]

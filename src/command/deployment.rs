@@ -112,10 +112,7 @@ impl args::Deployment {
                     let status = format_status(dep.status());
                     let created = DateTime::from(dep.created_at.expect("created_at is sent"));
                     let updated = DateTime::from(dep.updated_at.expect("updated_at is sent"));
-                    println!(
-                        "{:<26}  {:<12}  {:<20}  {:<20}",
-                        id, status, created, updated
-                    );
+                    println!("{id:<26}  {status:<12}  {created:<20}  {updated:<20}");
                 }
                 Ok(())
             }
