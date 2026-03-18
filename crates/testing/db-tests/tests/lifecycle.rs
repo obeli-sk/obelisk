@@ -3366,8 +3366,8 @@ async fn deployment_insert_and_get(database: Database) {
     let record = DeploymentRecord {
         deployment_id,
         created_at: now,
-        updated_at: now,
-        status: DeploymentStatus::Candidate,
+        last_active_at: None,
+        status: DeploymentStatus::Inactive,
         config_json: r#"{"activities":[]}"#.to_string(),
         obelisk_version: "0.0.0-test".to_string(),
         created_by: Some("test".to_string()),
@@ -3380,10 +3380,10 @@ async fn deployment_insert_and_get(database: Database) {
         .unwrap()
         .unwrap();
     assert_eq!(deployment_id, fetched.deployment_id);
-    assert_eq!(DeploymentStatus::Candidate, fetched.status);
+    assert_eq!(DeploymentStatus::Inactive, fetched.status);
     assert_eq!("0.0.0-test", fetched.obelisk_version);
     assert_eq!(Some("test".to_string()), fetched.created_by);
-    assert_eq!(fetched.updated_at, now);
+    assert!(fetched.last_active_at.is_none());
 
     drop(api_conn);
     db_close.close().await;
@@ -3410,8 +3410,8 @@ async fn deployment_activate(database: Database) {
         .insert_deployment(DeploymentRecord {
             deployment_id,
             created_at: now,
-            updated_at: now,
-            status: DeploymentStatus::Candidate,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
             config_json: "{}".to_string(),
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
@@ -3427,7 +3427,8 @@ async fn deployment_activate(database: Database) {
     let active = api_conn.get_active_deployment().await.unwrap().unwrap();
     assert_eq!(deployment_id, active.deployment_id);
     assert_eq!(DeploymentStatus::Active, active.status);
-    assert!(active.updated_at >= now);
+    assert!(active.last_active_at.is_some());
+    assert!(active.last_active_at.unwrap() >= now);
 
     drop(api_conn);
     db_close.close().await;
@@ -3451,8 +3452,8 @@ async fn deployment_only_one_active_allowed(database: Database) {
         .insert_deployment(DeploymentRecord {
             deployment_id: id1,
             created_at: now,
-            updated_at: now,
-            status: DeploymentStatus::Candidate,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
             config_json: "{}".to_string(),
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
@@ -3467,8 +3468,8 @@ async fn deployment_only_one_active_allowed(database: Database) {
         .insert_deployment(DeploymentRecord {
             deployment_id: id2,
             created_at: now,
-            updated_at: now,
-            status: DeploymentStatus::Candidate,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
             config_json: "{}".to_string(),
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
@@ -3483,7 +3484,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
 
     // id1 must be inactive.
     let d1 = api_conn.get_deployment(id1).await.unwrap().unwrap();
-    assert_eq!(DeploymentStatus::Superseded, d1.status);
+    assert_eq!(DeploymentStatus::Inactive, d1.status);
 
     drop(api_conn);
     db_close.close().await;
@@ -3509,8 +3510,8 @@ async fn deployment_list(database: Database) {
             .insert_deployment(DeploymentRecord {
                 deployment_id: id,
                 created_at: now,
-                updated_at: now,
-                status: DeploymentStatus::Candidate,
+                last_active_at: None,
+                status: DeploymentStatus::Inactive,
                 config_json: "{}".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
                 created_by: None,

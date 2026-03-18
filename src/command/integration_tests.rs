@@ -1173,8 +1173,8 @@ async fn hot_redeploy_activity() {
         conn.insert_deployment(DeploymentRecord {
             deployment_id: second_id,
             created_at: now,
-            updated_at: now,
-            status: DeploymentStatus::Candidate,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
             config_json: new_config_json,
             obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
             created_by: Some("test".to_string()),
@@ -1307,8 +1307,8 @@ async fn hot_redeploy_registry() {
         conn.insert_deployment(DeploymentRecord {
             deployment_id: second_id,
             created_at: now,
-            updated_at: now,
-            status: DeploymentStatus::Candidate,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
             config_json: new_config_json,
             obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
             created_by: Some("test".to_string()),

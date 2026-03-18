@@ -586,9 +586,9 @@ pub(crate) async fn verify_config_compile_link(
     Ok(compiled_and_linked)
 }
 
-async fn insert_and_activate_deployment_if_needed(
+async fn insert_and_activate_deployment(
     db_pool: &dyn concepts::storage::DbPool,
-    candidate_id: DeploymentId,
+    deployment_id: DeploymentId,
     config_json: String,
 ) -> anyhow::Result<DeploymentId> {
     use chrono::Utc;
@@ -597,38 +597,26 @@ async fn insert_and_activate_deployment_if_needed(
     let api_conn = db_pool
         .external_api_conn()
         .await
-        .context("cannot get external api connection for deployment upsert")?;
-
-    // Noop if the active deployment already has the same config hash.
-    if let Some(active) = api_conn
-        .get_active_deployment()
-        .await
-        .context("cannot query active deployment")?
-        && active.config_json == config_json
-    {
-        info!(deployment_id = %active.deployment_id, "Deployment unchanged, reusing existing active deployment");
-        return Ok(active.deployment_id);
-    }
+        .context("cannot get external api connection for deployment activation")?;
 
     let now = Utc::now();
-    let record = DeploymentRecord {
-        deployment_id: candidate_id,
-        created_at: now,
-        updated_at: now,
-        status: DeploymentStatus::Candidate,
-        config_json,
-        obelisk_version: PKG_VERSION.to_string(),
-        created_by: Some("cli".to_string()),
-    };
     api_conn
-        .insert_deployment(record)
+        .insert_deployment(DeploymentRecord {
+            deployment_id,
+            created_at: now,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
+            config_json,
+            obelisk_version: PKG_VERSION.to_string(),
+            created_by: Some("server".to_string()),
+        })
         .await
-        .context("cannot upsert deployment")?;
+        .context("cannot insert deployment")?;
     api_conn
-        .activate_deployment(candidate_id, Utc::now())
+        .activate_deployment(deployment_id, Utc::now())
         .await
         .context("cannot activate deployment")?;
-    Ok(candidate_id)
+    Ok(deployment_id)
 }
 
 pub(crate) async fn run_internal(
@@ -692,12 +680,9 @@ pub(crate) async fn run_internal(
                     .await
                     .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
             );
-            let deployment_id = insert_and_activate_deployment_if_needed(
-                &*db_pool,
-                deployment_id,
-                deployment_config_json,
-            )
-            .await?;
+            let deployment_id =
+                insert_and_activate_deployment(&*db_pool, deployment_id, deployment_config_json)
+                    .await?;
             let db_close = Box::pin({
                 let db_pool = db_pool.clone();
                 async move {
@@ -727,12 +712,9 @@ pub(crate) async fn run_internal(
                 .await
                 .context("canont initialize postgres connection pool")?,
             );
-            let deployment_id = insert_and_activate_deployment_if_needed(
-                &*db_pool,
-                deployment_id,
-                deployment_config_json,
-            )
-            .await?;
+            let deployment_id =
+                insert_and_activate_deployment(&*db_pool, deployment_id, deployment_config_json)
+                    .await?;
             let db_close = Box::pin({
                 let db_pool = db_pool.clone();
                 async move {

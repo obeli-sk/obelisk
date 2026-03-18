@@ -39,8 +39,8 @@ async fn create_deployment_with_execution(
             .insert_deployment(DeploymentRecord {
                 deployment_id,
                 created_at: now,
-                updated_at: now,
-                status: DeploymentStatus::Candidate,
+                last_active_at: None,
+                status: DeploymentStatus::Inactive,
                 config_json: "{}".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
                 created_by: None,
