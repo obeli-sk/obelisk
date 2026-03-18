@@ -707,7 +707,7 @@ async fn insert_and_activate_deployment(
 
 type DbClose = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-#[instrument(skip_all, name = "init")]
+#[instrument(skip_all, name = "init", fields(deployment_id))]
 pub(crate) async fn run_internal(
     config: ServerConfigToml,
     deployment: Option<DeploymentToml>,
@@ -781,6 +781,7 @@ pub(crate) async fn run_internal(
                 .context("cannot resolve deployment to canonical form")?;
         let config_json = crate::config::toml::compute_config_json(&canonical);
         insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json).await?;
+        info!("Activated new deployment");
         (new_deployment_id, canonical)
     } else {
         // No --deployment: pick up from the DB.
@@ -805,11 +806,22 @@ pub(crate) async fn run_internal(
                 "deployment_id",
                 tracing::field::display(&record.deployment_id),
             );
+            if record.status == concepts::storage::DeploymentStatus::Enqueued {
+                info!("Activated enqueued deployment");
+            } else {
+                info!("Using the currently active deployment");
+            }
+
             (record.deployment_id, canonical)
         } else {
             let new_deployment_id = DeploymentId::generate();
             span.record("deployment_id", tracing::field::display(&new_deployment_id));
+
             info!("No deployment found in DB; starting with empty deployment");
+            let config_json =
+                crate::config::toml::compute_config_json(&DeploymentCanonical::default());
+            insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json).await?;
+
             (new_deployment_id, DeploymentCanonical::default())
         }
     };
