@@ -2102,23 +2102,25 @@ mod deployment {
     use chrono::{DateTime, Utc};
     use concepts::{
         prefixed_ulid::DeploymentId,
-        storage::{DeploymentState, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH, Pagination},
+        storage::{
+            DeploymentState, DeploymentStatus, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH, Pagination,
+        },
     };
 
     #[derive(Debug, Serialize, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub enum DeploymentStatusSer {
-        Candidate,
+        Inactive,
+        Enqueued,
         Active,
-        Superseded,
     }
 
-    impl From<&concepts::storage::DeploymentStatus> for DeploymentStatusSer {
-        fn from(s: &concepts::storage::DeploymentStatus) -> Self {
+    impl From<&DeploymentStatus> for DeploymentStatusSer {
+        fn from(s: &DeploymentStatus) -> Self {
             match s {
-                concepts::storage::DeploymentStatus::Candidate => Self::Candidate,
-                concepts::storage::DeploymentStatus::Active => Self::Active,
-                concepts::storage::DeploymentStatus::Superseded => Self::Superseded,
+                DeploymentStatus::Inactive => Self::Inactive,
+                DeploymentStatus::Enqueued => Self::Enqueued,
+                DeploymentStatus::Active => Self::Active,
             }
         }
     }
@@ -2137,8 +2139,8 @@ mod deployment {
         pub status: DeploymentStatusSer,
         /// When this deployment was submitted
         pub created_at: DateTime<Utc>,
-        /// Last status-change time (activation for Active, deactivation for Superseded)
-        pub updated_at: DateTime<Utc>,
+        /// When this deployment was last active; None if never active
+        pub last_active_at: Option<DateTime<Utc>>,
         /// Number of locked executions
         pub locked: u32,
         /// Number of pending executions
@@ -2157,7 +2159,7 @@ mod deployment {
                 deployment_id: deployment_state.deployment_id,
                 status: DeploymentStatusSer::from(&deployment_state.status),
                 created_at: deployment_state.created_at,
-                updated_at: deployment_state.updated_at,
+                last_active_at: deployment_state.last_active_at,
                 locked: deployment_state.locked,
                 pending: deployment_state.pending,
                 scheduled: deployment_state.scheduled,

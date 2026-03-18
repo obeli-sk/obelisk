@@ -1123,7 +1123,6 @@
           "deployment_id",
           "status",
           "created_at",
-          "updated_at",
           "locked",
           "pending",
           "scheduled",
@@ -1153,6 +1152,14 @@
             "description": "Number of finished executions",
             "minimum": 0
           },
+          "last_active_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When this deployment was last active; None if never active"
+          },
           "locked": {
             "type": "integer",
             "format": "int32",
@@ -1174,20 +1181,15 @@
           "status": {
             "$ref": "#/components/schemas/DeploymentStatusSer",
             "description": "Deployment lifecycle status"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Last status-change time (activation for Active, deactivation for Superseded)"
           }
         }
       },
       "DeploymentStatusSer": {
         "type": "string",
         "enum": [
-          "candidate",
-          "active",
-          "superseded"
+          "inactive",
+          "enqueued",
+          "active"
         ]
       },
       "ExecutionEventsResponse": {

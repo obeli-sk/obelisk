@@ -1560,12 +1560,12 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             })?;
         }
 
-        conn.activate_deployment(new_deployment_id, chrono::Utc::now())
+        conn.enqueue_deployment(new_deployment_id)
             .await
             .to_status()?;
 
         let outcome = grpc_gen::switch_deployment_response::Outcome::SwitchOutcomeRestartRequired;
-        info!(%new_deployment_id, ?outcome, "Deployment switched");
+        info!(%new_deployment_id, ?outcome, "Deployment enqueued for next restart");
         Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
             outcome: outcome.into(),
         }))
@@ -1621,8 +1621,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         conn.insert_deployment(DeploymentRecord {
             deployment_id,
             created_at: now,
-            updated_at: now,
-            status: DeploymentStatus::Candidate,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
             obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
             created_by: request.created_by,
             config_json,
@@ -1633,7 +1633,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         // Save sources for backtrace display.
         upsert_backtrace_sources(conn.as_ref(), &server_compiled).await;
 
-        info!(%deployment_id, "Deployment submitted as Candidate");
+        info!(%deployment_id, "Deployment submitted");
         Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {
             deployment_id: Some(deployment_id.into()),
         }))
@@ -1670,9 +1670,9 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
 
 fn status_to_grpc(status: DeploymentStatus) -> grpc_gen::DeploymentStatus {
     match status {
-        DeploymentStatus::Candidate => grpc_gen::DeploymentStatus::Candidate,
+        DeploymentStatus::Inactive => grpc_gen::DeploymentStatus::Inactive,
+        DeploymentStatus::Enqueued => grpc_gen::DeploymentStatus::Enqueued,
         DeploymentStatus::Active => grpc_gen::DeploymentStatus::Active,
-        DeploymentStatus::Superseded => grpc_gen::DeploymentStatus::Superseded,
     }
 }
 
@@ -1681,7 +1681,7 @@ fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grp
         deployment_id: Some(record.deployment_id.into()),
         status: status_to_grpc(record.status).into(),
         created_at: Some(prost_wkt_types::Timestamp::from(record.created_at)),
-        updated_at: Some(prost_wkt_types::Timestamp::from(record.updated_at)),
+        last_active_at: record.last_active_at.map(prost_wkt_types::Timestamp::from),
         config_json: Some(record.config_json),
     }
 }
@@ -1691,7 +1691,7 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
         deployment_id: Some(dep.deployment_id.into()),
         status: status_to_grpc(dep.status).into(),
         created_at: Some(prost_wkt_types::Timestamp::from(dep.created_at)),
-        updated_at: Some(prost_wkt_types::Timestamp::from(dep.updated_at)),
+        last_active_at: dep.last_active_at.map(prost_wkt_types::Timestamp::from),
         config_json: dep.config_json,
     };
     grpc_gen::DeploymentSummary {

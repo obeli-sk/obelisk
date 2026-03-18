@@ -1258,6 +1258,8 @@ pub trait DbExternalApi: DbConnection {
         include_config_json: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead>;
 
+    /// Insert a new deployment. The record must have `status == Inactive` and
+    /// `last_active_at == None`; activation is a separate step via [`Self::activate_deployment`].
     async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite>;
 
     async fn activate_deployment(
@@ -1265,6 +1267,11 @@ pub trait DbExternalApi: DbConnection {
         deployment_id: DeploymentId,
         now: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite>;
+
+    /// Mark a deployment as Enqueued (pending next server restart).
+    /// Returns `Err(DbErrorWriteNonRetriable::Conflict)` if the deployment is currently Active.
+    /// Any previously Enqueued deployment is demoted to Inactive.
+    async fn enqueue_deployment(&self, deployment_id: DeploymentId) -> Result<(), DbErrorWrite>;
 
     /// Returned [`DeploymentRecord`] must contain `config_json`.
     async fn get_deployment(
@@ -1315,25 +1322,26 @@ pub struct DeploymentState {
     /// None if not requested from db.
     pub config_json: Option<String>,
     pub created_at: DateTime<Utc>,
-    /// Last status-change time: creation for Candidate, activation for Active, deactivation for Superseded.
-    pub updated_at: DateTime<Utc>,
+    /// Set when the deployment becomes Active; None if it has never been active.
+    pub last_active_at: Option<DateTime<Utc>>,
     pub status: DeploymentStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeploymentStatus {
-    Candidate,
+    Inactive,
+    /// Queued to become Active on the next server restart.
+    Enqueued,
     Active,
-    Superseded,
 }
 
 impl DeploymentStatus {
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
-            DeploymentStatus::Candidate => "candidate",
+            DeploymentStatus::Inactive => "inactive",
+            DeploymentStatus::Enqueued => "enqueued",
             DeploymentStatus::Active => "active",
-            DeploymentStatus::Superseded => "superseded",
         }
     }
 }
@@ -1342,9 +1350,9 @@ impl std::str::FromStr for DeploymentStatus {
     type Err = StrVariant;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "candidate" => Ok(DeploymentStatus::Candidate),
+            "inactive" => Ok(DeploymentStatus::Inactive),
+            "enqueued" => Ok(DeploymentStatus::Enqueued),
             "active" => Ok(DeploymentStatus::Active),
-            "superseded" => Ok(DeploymentStatus::Superseded),
             _ => Err(StrVariant::from(format!("unknown deployment status: {s}"))),
         }
     }
@@ -1354,8 +1362,8 @@ impl std::str::FromStr for DeploymentStatus {
 pub struct DeploymentRecord {
     pub deployment_id: DeploymentId,
     pub created_at: DateTime<Utc>,
-    /// Last status-change time: creation for Candidate, activation for Active, deactivation for Superseded.
-    pub updated_at: DateTime<Utc>,
+    /// Set when the deployment becomes Active; None if it has never been active.
+    pub last_active_at: Option<DateTime<Utc>>,
     pub status: DeploymentStatus,
     pub config_json: String,
     pub obelisk_version: String,

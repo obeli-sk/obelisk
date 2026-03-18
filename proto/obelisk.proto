@@ -748,16 +748,16 @@ message ListDeploymentsRequest {
 
 enum DeploymentStatus {
     DEPLOYMENT_STATUS_UNSPECIFIED = 0;
-    DEPLOYMENT_STATUS_CANDIDATE = 1;
-    DEPLOYMENT_STATUS_ACTIVE = 2;
-    DEPLOYMENT_STATUS_SUPERSEDED = 3;
+    DEPLOYMENT_STATUS_INACTIVE = 1;
+    DEPLOYMENT_STATUS_ENQUEUED = 2;
+    DEPLOYMENT_STATUS_ACTIVE = 3;
 }
 
 message Deployment {
     DeploymentId deployment_id = 1;
     DeploymentStatus status = 2;
     google.protobuf.Timestamp created_at = 3;
-    google.protobuf.Timestamp updated_at = 4;
+    optional google.protobuf.Timestamp last_active_at = 4;
     optional string config_json = 5;
 }
 

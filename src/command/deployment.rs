@@ -88,7 +88,7 @@ impl args::Deployment {
                     .await?
                     .into_inner();
                 let id = resp.deployment_id.context("missing deployment_id")?.id;
-                println!("Submitted as Candidate: {id}");
+                println!("Submitted as {id}");
 
                 let resp = client
                     .switch_deployment(grpc_gen::SwitchDeploymentRequest {
@@ -136,7 +136,7 @@ impl args::Deployment {
 
                 println!(
                     "{:<26}  {:<12}  {:<20}  {:<20}",
-                    "ID", "STATUS", "CREATED_AT", "UPDATED_AT"
+                    "ID", "STATUS", "CREATED_AT", "LAST_ACTIVE_AT"
                 );
                 for summary in resp.deployments {
                     let dep = summary.deployment.context("missing deployment")?;
@@ -148,8 +148,11 @@ impl args::Deployment {
                         .to_string();
                     let status = format_status(dep.status());
                     let created = DateTime::from(dep.created_at.expect("created_at is sent"));
-                    let updated = DateTime::from(dep.updated_at.expect("updated_at is sent"));
-                    println!("{id:<26}  {status:<12}  {created:<20}  {updated:<20}");
+                    let last_active: String = dep
+                        .last_active_at
+                        .map(|t| DateTime::from(t).to_string())
+                        .unwrap_or_default();
+                    println!("{id:<26}  {status:<12}  {created:<20}  {last_active:<20}");
                 }
                 Ok(())
             }
@@ -191,9 +194,9 @@ async fn load_config_json(config: Option<ConfigSource>) -> anyhow::Result<String
 
 fn format_status(status: grpc_gen::DeploymentStatus) -> &'static str {
     match status {
-        grpc_gen::DeploymentStatus::Candidate => "Candidate",
+        grpc_gen::DeploymentStatus::Inactive => "Inactive",
+        grpc_gen::DeploymentStatus::Enqueued => "Enqueued",
         grpc_gen::DeploymentStatus::Active => "Active",
-        grpc_gen::DeploymentStatus::Superseded => "Superseded",
         grpc_gen::DeploymentStatus::Unspecified => "Unknown",
     }
 }

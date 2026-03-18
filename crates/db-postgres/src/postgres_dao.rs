@@ -286,8 +286,8 @@ CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_created_at ON t_log (execution
 CREATE TABLE IF NOT EXISTS t_deployment (
     deployment_id TEXT     NOT NULL PRIMARY KEY,
     created_at    TIMESTAMPTZ NOT NULL,
-    updated_at    TIMESTAMPTZ NOT NULL,
-    status        TEXT     NOT NULL DEFAULT 'candidate',
+    last_active_at TIMESTAMPTZ,
+    status        TEXT     NOT NULL DEFAULT 'inactive',
     config_json      TEXT     NOT NULL,
     obelisk_version  TEXT     NOT NULL,
     created_by       TEXT
@@ -296,12 +296,13 @@ CREATE TABLE IF NOT EXISTS t_deployment (
     pub const IDX_T_DEPLOYMENT_STATUS: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_deployment_status ON t_deployment (status);
 ";
-    pub const IDX_T_DEPLOYMENT_UPDATED_AT: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_deployment_updated_at ON t_deployment (updated_at);
-";
     // Enforces at most one active deployment at a time.
     pub const IDX_T_DEPLOYMENT_SINGLE_ACTIVE: &str = r"
 CREATE UNIQUE INDEX IF NOT EXISTS idx_t_deployment_single_active ON t_deployment ((1)) WHERE status = 'active';
+";
+    // Enforces at most one enqueued deployment at a time.
+    pub const IDX_T_DEPLOYMENT_SINGLE_ENQUEUED: &str = r"
+CREATE UNIQUE INDEX IF NOT EXISTS idx_t_deployment_single_enqueued ON t_deployment ((1)) WHERE status = 'enqueued';
 ";
 }
 
@@ -537,8 +538,8 @@ impl PostgresPool {
             ddl::IDX_T_LOG_EXECUTION_ID_CREATED_AT,
             ddl::CREATE_TABLE_T_DEPLOYMENT,
             ddl::IDX_T_DEPLOYMENT_STATUS,
-            ddl::IDX_T_DEPLOYMENT_UPDATED_AT,
             ddl::IDX_T_DEPLOYMENT_SINGLE_ACTIVE,
+            ddl::IDX_T_DEPLOYMENT_SINGLE_ENQUEUED,
         ];
 
         // Combine into one batch execution for atomicity per round-trip (or efficiency)
@@ -619,7 +620,7 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
     Ok(DeploymentRecord {
         deployment_id,
         created_at: get(row, "created_at")?,
-        updated_at: get(row, "updated_at")?,
+        last_active_at: get(row, "last_active_at")?,
         status,
         config_json: get(row, "config_json")?,
         obelisk_version: get(row, "obelisk_version")?,
@@ -1820,7 +1821,7 @@ async fn list_deployment_states(
 
             {config_json_col},
             d.created_at,
-            d.updated_at,
+            d.last_active_at,
             d.status
         FROM t_deployment d
         LEFT JOIN t_state s ON s.deployment_id = d.deployment_id"
@@ -1848,7 +1849,7 @@ async fn list_deployment_states(
 
     write!(
         sql,
-        " GROUP BY d.deployment_id, d.config_json, d.created_at, d.updated_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
+        " GROUP BY d.deployment_id, d.config_json, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -1889,7 +1890,7 @@ async fn list_deployment_states(
                 .expect("count is never negative"),
             config_json: get::<Option<String>, _>(&row, "config_json")?,
             created_at: get::<DateTime<Utc>, _>(&row, "created_at")?,
-            updated_at: get::<DateTime<Utc>, _>(&row, "updated_at")?,
+            last_active_at: get::<Option<DateTime<Utc>>, _>(&row, "last_active_at")?,
             status,
         });
     }
@@ -4364,20 +4365,28 @@ impl DbExternalApi for PostgresConnection {
 
     #[instrument(skip(self))]
     async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite> {
+        assert_eq!(
+            record.status,
+            DeploymentStatus::Inactive,
+            "insert_deployment requires Inactive status"
+        );
+        assert!(
+            record.last_active_at.is_none(),
+            "insert_deployment requires last_active_at == None"
+        );
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             (deployment_id, created_at, status, config_json, obelisk_version, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
             &[
                 &record.deployment_id.to_string(), // $1
-                &record.created_at,// $2
-                &record.updated_at,// $3
-                &record.status.as_str(),// $4
-                &record.config_json,// $5
-                &record.obelisk_version,//$6
-                &record.created_by,// $7
+                &record.created_at,                // $2
+                &record.status.as_str(),           // $3
+                &record.config_json,               // $4
+                &record.obelisk_version,           // $5
+                &record.created_by,                // $6
             ],
         )
         .await?;
@@ -4393,17 +4402,52 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        // Demote currently active deployment to superseded, recording deactivation time.
+        // Demote currently active or enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'superseded', updated_at = $1 WHERE status = 'active'",
-            &[&now],
+            "UPDATE t_deployment SET status = 'inactive' WHERE status IN ('active', 'enqueued')",
+            &[],
         )
         .await?;
-        // Set target deployment to active.
+        // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', updated_at = $1 WHERE deployment_id = $2",
+                "UPDATE t_deployment SET status = 'active', last_active_at = $1 WHERE deployment_id = $2",
                 &[&now, &deployment_id.to_string()],
+            )
+            .await?;
+        tx.commit().await?;
+        if rows == 0 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(())
+    }
+
+    async fn enqueue_deployment(&self, deployment_id: DeploymentId) -> Result<(), DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        // Guard: reject if target deployment is currently active.
+        let status_opt = tx
+            .query_opt(
+                "SELECT status FROM t_deployment WHERE deployment_id = $1",
+                &[&deployment_id.to_string()],
+            )
+            .await?;
+        match status_opt.as_ref().map(|r| r.get::<_, &str>("status")) {
+            None => return Err(DbErrorWrite::NotFound),
+            Some("active") => return Err(DbErrorWriteNonRetriable::Conflict.into()),
+            _ => {}
+        }
+        // Demote any previously enqueued deployment to inactive.
+        tx.execute(
+            "UPDATE t_deployment SET status = 'inactive' WHERE status = 'enqueued'",
+            &[],
+        )
+        .await?;
+        // Set target deployment to enqueued.
+        let rows = tx
+            .execute(
+                "UPDATE t_deployment SET status = 'enqueued' WHERE deployment_id = $1",
+                &[&deployment_id.to_string()],
             )
             .await?;
         tx.commit().await?;
@@ -4422,7 +4466,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, created_at, last_active_at, status, config_json, obelisk_version, created_by \
                  FROM t_deployment WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
@@ -4440,7 +4484,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, created_at, last_active_at, status, config_json, obelisk_version, created_by \
                  FROM t_deployment WHERE status = 'active' LIMIT 1",
                 &[],
             )
@@ -4466,7 +4510,7 @@ impl DbExternalApi for PostgresConnection {
         };
 
         let mut sql = String::from(
-            "SELECT deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by \
+            "SELECT deployment_id, created_at, last_active_at, status, config_json, obelisk_version, created_by \
              FROM t_deployment",
         );
 
