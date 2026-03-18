@@ -4479,6 +4479,7 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip(self))]
+    #[cfg(feature = "test")]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
@@ -4486,6 +4487,24 @@ impl DbExternalApi for PostgresConnection {
             .query_opt(
                 "SELECT deployment_id, created_at, last_active_at, status, config_json, obelisk_version, created_by \
                  FROM t_deployment WHERE status = 'active' LIMIT 1",
+                &[],
+            )
+            .await?;
+        tx.commit().await?;
+        match row {
+            None => Ok(None),
+            Some(r) => Ok(Some(deployment_record_from_pg_row(&r)?)),
+        }
+    }
+
+    async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let row = tx
+            .query_opt(
+                "SELECT deployment_id, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                 FROM t_deployment WHERE status IN ('enqueued', 'active') \
+                 ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
                 &[],
             )
             .await?;

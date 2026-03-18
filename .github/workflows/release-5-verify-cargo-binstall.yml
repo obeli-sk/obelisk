@@ -58,7 +58,7 @@ jobs:
       - name: Verify Obelisk
         run: |
           obelisk --version
-          obelisk server verify -c obelisk-testing-sqlite-oci.toml
+          obelisk server verify --deployment obelisk-testing-wasm-oci.toml
 
   cargo-binstall-alpine:
     runs-on: ubuntu-24.04
@@ -81,7 +81,7 @@ jobs:
             FROM alpine:latest
             ARG VERSION
             WORKDIR /root
-            COPY obelisk-testing-sqlite-oci.toml .
+            COPY obelisk-testing-wasm-oci.toml .
             RUN wget https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz \
             && tar xvfz cargo-binstall-x86_64-unknown-linux-musl.tgz
             RUN ./cargo-binstall \
@@ -90,7 +90,7 @@ jobs:
               -y \
               obelisk@$VERSION
             RUN ./obelisk --version
-            RUN ./obelisk server verify -c obelisk-testing-sqlite-oci.toml
+            RUN ./obelisk server verify --deployment obelisk-testing-wasm-oci.toml
           EOF
         env:
           TAG: ${{ steps.git-info.outputs.tag }}

@@ -1,22 +1,17 @@
 use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
 use crate::args;
-use crate::config::config_holder::ConfigFileOption;
-use crate::config::config_holder::ConfigHolder;
-use crate::config::config_holder::ConfigSource;
-use crate::config::config_holder::OBELISK_HELP_TOML;
+use crate::config::config_holder::{ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML};
 use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::OCI_SCHEMA_PREFIX;
 use crate::get_fn_repository_client;
 use crate::github;
-use crate::init;
-use crate::init::Guard;
 use crate::oci;
 use crate::project_dirs;
 use anyhow::Context;
 use concepts::ComponentType;
-use concepts::{ContentDigest, FunctionFqn, FunctionMetadata};
+use concepts::{ContentDigest, FunctionFqn};
 use directories::BaseDirs;
 use grpc::grpc_gen;
 use grpc::to_channel;
@@ -25,31 +20,10 @@ use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tracing::info;
 use utils::sha256sum::calculate_sha256_file;
-use utils::wasm_tools::WasmComponent;
 
 impl args::Component {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
-            args::Component::Inspect {
-                location,
-                component_type,
-                imports,
-                extensions,
-                config,
-            } => {
-                inspect(
-                    config,
-                    location,
-                    component_type,
-                    if imports {
-                        FunctionMetadataVerbosity::ExportsAndImports
-                    } else {
-                        FunctionMetadataVerbosity::ExportsOnly
-                    },
-                    extensions,
-                )
-                .await
-            }
             args::Component::List {
                 api_url,
                 imports,
@@ -73,9 +47,9 @@ impl args::Component {
                 component_type,
                 name,
                 location,
-                config,
+                deployment,
                 locked,
-            } => add(component_type, name, location, config, locked).await,
+            } => add(component_type, name, location, deployment, locked).await,
         }
     }
 }
@@ -84,24 +58,24 @@ pub(crate) async fn add(
     component_type: ComponentType,
     name: String,
     location: ComponentLocationToml,
-    config: Option<PathBuf>,
+    deployment_path: PathBuf,
     locked: bool,
 ) -> anyhow::Result<()> {
     // Check name
     ConfigName::new(name.clone().into()).context("name is invalid")?;
-    let toml_path = config.unwrap_or_else(|| PathBuf::from("obelisk.toml"));
+
     // Generate from default if file does not exist.
-    let (mut file, contents, prefix) = if toml_path.try_exists().unwrap_or_default() {
-        let contents = tokio::fs::read_to_string(&toml_path)
+    let (mut file, contents, prefix) = if deployment_path.try_exists().unwrap_or_default() {
+        let contents = tokio::fs::read_to_string(&deployment_path)
             .await
-            .with_context(|| format!("cannot read {toml_path:?}"))?;
+            .with_context(|| format!("cannot read {deployment_path:?}"))?;
         let file = OpenOptions::new()
             .create(false)
             .truncate(true)
             .write(true)
-            .open(&toml_path)
+            .open(&deployment_path)
             .await
-            .with_context(|| format!("cannot open {toml_path:?}"))?;
+            .with_context(|| format!("cannot open {deployment_path:?}"))?;
         (file, contents, "")
     } else {
         (
@@ -109,21 +83,20 @@ pub(crate) async fn add(
                 .create_new(true)
                 .write(true)
                 .append(false)
-                .open(&toml_path)
+                .open(&deployment_path)
                 .await
-                .with_context(|| format!("cannot create {toml_path:?}"))?,
+                .with_context(|| format!("cannot create {deployment_path:?}"))?,
             String::new(),
-            OBELISK_HELP_TOML,
+            OBELISK_HELP_DEPLOYMENT_TOML,
         )
     };
 
-    // Fetch, store to local Compute content_digest if `locked`
+    // Fetch, store to local cache and compute content_digest if `locked`
     let content_digest: Option<ContentDigest> = if locked {
-        let config_holder = ConfigHolder::new(
-            project_dirs(),
-            BaseDirs::new(),
-            ConfigFileOption::AllowMissing(Some(ConfigSource(toml_path))),
-        )?;
+        let project_dirs = project_dirs();
+        let base_dirs = BaseDirs::new();
+        // Use default server config (for wasm cache dir)
+        let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
         let config = config_holder.load_config().await?;
         let wasm_cache_dir = config
             .wasm_global_config
@@ -244,75 +217,6 @@ async fn compute_content_digest(
             info!("Fetched GitHub release asset, content_digest: {digest}");
             Ok(digest)
         }
-    }
-}
-
-pub(crate) async fn inspect(
-    config: Option<ConfigSource>,
-    location: ComponentLocationToml,
-    component_type: ComponentType,
-    verbosity: FunctionMetadataVerbosity,
-    extensions: bool,
-) -> anyhow::Result<()> {
-    let config_holder = ConfigHolder::new(
-        project_dirs(),
-        BaseDirs::new(),
-        ConfigFileOption::AllowMissing(config),
-    )?;
-    let config = config_holder.load_config().await?;
-    let _guard: Guard = init::init(&config)?;
-    let path_prefixes = &config_holder.path_prefixes;
-
-    let wasm_cache_dir = config
-        .wasm_global_config
-        .get_wasm_cache_directory(path_prefixes)
-        .await?;
-
-    let metadata_dir = wasm_cache_dir.join("metadata");
-    tokio::fs::create_dir_all(&metadata_dir)
-        .await
-        .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
-
-    let (_content_digest, wasm_path) = location
-        .fetch(&wasm_cache_dir, &metadata_dir, path_prefixes, None)
-        .await?;
-
-    let wasm_path = {
-        let output_parent = wasm_path
-            .parent()
-            .expect("direct parent of a file is never None");
-        let input_digest = calculate_sha256_file(&wasm_path).await?;
-        let transformed = WasmComponent::convert_core_module_to_component(
-            &wasm_path,
-            &input_digest,
-            output_parent,
-        )
-        .await?;
-        if let Some(transformed) = transformed {
-            println!("Transformed Core WASM {wasm_path:?} to Component {transformed:?}");
-            transformed
-        } else {
-            wasm_path
-        }
-    };
-
-    let content_digest = calculate_sha256_file(&wasm_path).await?;
-    println!("Content digest: {content_digest}");
-
-    let wasm_component = WasmComponent::new(wasm_path, component_type)?;
-
-    println!("Exports:");
-    inspect_fns(wasm_component.exported_functions(extensions));
-    if verbosity > FunctionMetadataVerbosity::ExportsOnly {
-        println!("Imports:");
-        inspect_fns(wasm_component.imported_functions());
-    }
-    Ok(())
-}
-
-fn inspect_fns(functions: &[FunctionMetadata]) {
-    for fn_metadata in functions {
-        println!("\t{fn_metadata}");
     }
 }
 

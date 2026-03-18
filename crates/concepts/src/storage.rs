@@ -1281,7 +1281,12 @@ pub trait DbExternalApi: DbConnection {
 
     /// Return active deployment.
     /// Returned [`DeploymentRecord`] must contain `config_json`.
+    #[cfg(feature = "test")]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead>;
+
+    /// Return the most relevant current deployment: Enqueued if present, otherwise Active.
+    /// Returned [`DeploymentRecord`] must contain `config_json`.
+    async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead>;
 
     async fn list_deployments(
         &self,

@@ -1,13 +1,6 @@
-[log.file]
-enabled = true
-target = true
-directory = "."
-prefix = "obelisk.log" # File name prefix
-level = "info,obeli=debug,app=debug"
-
 [[activity_js]]
 name = "test_add_activity"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/add.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/add.js"
 ffqn = "testing:integration/activities.add"
 params = [
   { name = "a", type = "u32" },
@@ -17,7 +10,7 @@ max_retries = 0
 
 [[workflow_js]]
 name = "test_add_via_activity_workflow"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/add_via_activity.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/add_via_activity.js"
 ffqn = "testing:integration/workflow-add-via-activity.add-via-activity"
 params = [
   { name = "a", type = "u32" },
@@ -26,7 +19,7 @@ params = [
 
 [[activity_js]]
 name = "test_read_env_activity"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/read_env.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/read_env.js"
 ffqn = "testing:integration/activity-env.read-env"
 params = [
   { name = "key", type = "string" },
@@ -36,7 +29,7 @@ env_vars = [{key = "TEST_ENV_VAR", value = "hello_from_env"}]
 
 [[activity_js]]
 name = "activity_js_fetch_get"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/activity/fetch_get.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/fetch_get.js"
 ffqn = "testing:js/activity.fetch-get"
 params = [
     {name = "url", type = "string"},
@@ -49,13 +42,13 @@ methods = ["GET"]
 
 [[workflow_js]]
 name = "workflow_js_test"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/fetch_components.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/fetch_components.js"
 ffqn = "testing:js/workflow.fetch-components"
 params = []
 
 [[workflow_js]]
 name = "test_call_activity_workflow"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/call_activity.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/call_activity.js"
 ffqn = "testing:integration/workflow-call-activity.call-activity"
 params = [
   { name = "a", type = "u32" },
@@ -64,12 +57,12 @@ params = [
 
 [[webhook_endpoint_js]]
 name = "webhook_js_hello"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/hello.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/hello.js"
 routes = [{ methods = ["GET"], route = "/hello" }]
 
 [[webhook_endpoint_js]]
 name = "webhook_js_fetch_components"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/fetch_components.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/fetch_components.js"
 routes = [{ methods = ["GET"], route = "/fetch" }]
 [[webhook_endpoint_js.allowed_host]]
 pattern = "http://localhost:5005"
@@ -77,14 +70,14 @@ methods = ["GET"]
 
 [[webhook_endpoint_js]]
 name = "webhook_js_call_activity"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/webhook/call_activity.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/call_activity.js"
 routes = [{ methods = ["GET"], route = "/call-activity/:a/:b" }]
 
 # stub
 
 [[workflow_js]]
 name = "test_call_stub_workflow"
-location = "${OBELISK_TOML_DIR}/crates/testing/test-programs/js/workflow/call_stub.js"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/call_stub.js"
 ffqn = "testing:integration/workflow-call-stub.call-stub"
 params = [
   { name = "id", type = "u64" },

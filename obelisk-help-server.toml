@@ -1,0 +1,123 @@
+## Server configuration
+## The API, webui, and external HTTP server are all enabled by default on localhost.
+## To disable any of them, set `enabled = false`. To change the address, override `listening_addr`.
+# api.enabled = false                           # Disable the API server (enabled by default).
+# api.listening_addr = "127.0.0.1:5005"        # Address and port on which the API server will listen.
+# webui.enabled = false                         # Disable the webui (enabled by default).
+# webui.listening_addr = "127.0.0.1:8080"      # Address and port on which the webui will listen.
+# external.enabled = false                      # Disable the external HTTP server (enabled by default).
+# external.listening_addr = "127.0.0.1:9090"   # Address and port on which the external HTTP server will listen.
+# Note: listening on all interfaces using [::]:port is not advised, as there is no auth yet.
+
+## Semver version requirement for the Obelisk binary.
+## If set, the server will fail to start if the binary version doesn't match.
+# obelisk-version = 0.1
+
+## SQLite configuration (enabled by default)
+# database.sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
+## Customize PRAGMA statements.
+## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
+# database.sqlite.pragma = { "cache_size" = "3000" }
+
+## Postgres configuration, keys support environment variable interpolation.
+# database.postgres.host =     "${POSTGRES_HOST}"
+# database.postgres.user =     "${POSTGRES_USER}"
+# database.postgres.password = "${POSTGRES_PASSWORD}"
+# database.postgres.db_name =  "${POSTGRES_DATABASE}"
+# database.postgres.provision_policy = "never" # One of "auto"|"never". If `auto` is selected, missing database will be created on startup.
+
+## Global WASM Configuration
+# [wasm]
+## WASM Cache dir
+## Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
+## By default "${CACHE_DIR}/wasm" or "./cache/wasm" if no valid home directory path could be retrieved from the operating system.
+# cache_directory = "${CACHE_DIR}/wasm"
+# backtrace.persist = true                       # Persist backtraces on effect calls for all workflows and webhook endpoints.
+# allocator_config = "auto"                      # One of "auto"|"on_demand"|"pooling"
+# global_executor_instance_limiter = "unlimited" # If set to an integer, limits the number of concurrent workflow and activity executions.
+# global_webhook_instance_limiter = "unlimited"  # If set to an integer, limits the number of concurrent webhook requests.
+# fuel = "unlimited"                             # If set to an integer, WASM instances consume fuel, details: https://docs.wasmtime.dev/api/wasmtime/struct.Store.html#method.set_fuel
+# build_semaphore = "unlimited"                  # If set to an integer, limit the number of AOT compilations that can run in parallel
+# parallel_compilation = true                    # Enable (default) or disable parallel AOT compilation of each WASM component.
+# debug = false                                  # Enable debugging of WASM components: Instruct wasmtime to emit DWARF debug info and disable cranelift optimizations.
+
+## Global Preopened Directories Configuration
+# [activities.directories]
+# enabled = false                           # Disabled by default.
+# parent_directory = "${TEMP_DIR}/obelisk"  # Make sure the folder is not on a RAM-backed filesystem if you plan to write large files.
+# cleanup.enabled = true                    # Periodic cleanup job can be disabled, it is enabled by default.
+# cleanup.run_every.minutes = 1             # Run the cleanup every minute by default.
+# cleanup.older_than.minutes = 5            # Delete folders belonging to executions that finished 5 minutes earlier by default.
+
+## Global Workflow Configuration
+# [workflows]
+# lock_extension_leeway.milliseconds = 100 # Starts extending the lock a little before it expires, specifically at expires_at minus the configured leeway.
+# subscription_interruption.seconds = 1    # Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism. Value can be "none" or a duration.
+
+# [wasm.codegen_cache]
+## Defaults:
+# enabled = true
+# directory = "${CACHE_DIR}/codegen" # Path to directory where AOT generated code is cached. Supports path prefixes.
+
+## Timers Watcher Configuration
+# [timers_watcher]
+# enabled = true
+# leeway.milliseconds = 500
+# tick_sleep.milliseconds = 100
+
+
+## Additional HTTP server definitions.
+## Named HTTP servers can be referenced by webhook endpoint components (in deployment.toml) via `http_server = "name"`.
+## The built-in "external" server (enabled by default at 127.0.0.1:9090) is always available without an explicit entry.
+# [[http_server]]
+# name = "my_server"
+# listening_addr = "0.0.0.0:9000"
+# max_inflight_requests = "unlimited" # If set to an integer, limits the number of inflight requests
+
+
+### Send spans via gRPC to an OTLP collector.
+# [otlp]
+## Run `docker run --rm -it  -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:1.60` to start collecting traces.
+# enabled = true
+## Defaults:
+# level = "info,app=debug"
+# service_name = "obelisk-server"
+# otlp_endpoint = "http://localhost:4317"
+
+### Console logging configuration, by default logs INFO and above.
+# [log.console]
+## Defaults:
+# enabled = true
+# level = "info,app=trace"
+# style = "plain_compact" # One of "plain","plain_compact","json"
+# span = "none" # One of "none","new","enter","exit","close","active","full"
+# target = false
+
+### Sample (rolling) file configuration
+# [log.file]
+# enabled = true
+# level = "info,obeli=debug,app=debug"
+# style = "plain"                           # One of "plain","plain_compact","json"
+# span = "none"                             # One of "none","new","enter","exit","close","active","full"
+# target = false
+# rotation = "daily"                        # One of "minutely"|"hourly"|"daily"|"never"
+# directory = "."
+# prefix = "obelisk_server_daily" # File name prefix
+
+# [log.file]
+# enabled = true
+# target = true
+# directory = "."
+# prefix = "obelisk.log"
+
+## Appendix: Supported path prefixes:
+# | Prefix                  | Default path           | Details
+# | ~                       | ~                      | Current user's home directory
+# | ${DATA_DIR}             | ~/.local/share/obelisk | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.data_dir
+# | ${CACHE_DIR}            | ~/.cache/obelisk       | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.cache_dir
+# | ${CONFIG_DIR}           | ~/.config/obelisk      | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.config_dir
+# | ${SERVER_CONFIG_DIR}    | N/A                    | Directory where the server.toml file is located
+# | ${TEMP_DIR}             | /tmp                   | https://doc.rust-lang.org/std/env/fn.temp_dir.html
+
+## Appendix: Environment variable interpolation
+# Keys that support environment variable interpolation can use `${SOME}` to get the value of environment variable `SOME`.

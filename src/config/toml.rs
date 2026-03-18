@@ -81,9 +81,9 @@ pub(crate) struct DeploymentToml {
     pub(crate) webhooks_js: Vec<WebhookJsComponentConfigToml>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ConfigToml {
+pub(crate) struct ServerConfigToml {
     #[serde(default, rename = "obelisk-version")]
     pub(crate) obelisk_version: Option<String>,
     #[serde(default)]
@@ -111,8 +111,6 @@ pub(crate) struct ConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
-    #[serde(default, flatten)]
-    pub(crate) deployment: DeploymentToml,
 }
 
 /// Return a canonical JSON string of the deployment config for storage.
@@ -236,7 +234,9 @@ impl SqliteConfigToml {
                 DEFAULT_SQLITE_DIR
             }
         });
-        path_prefixes.replace_path_prefix_mkdir(sqlite_file).await
+        path_prefixes
+            .server_config_replace_path_prefix_mkdir(sqlite_file)
+            .await
     }
 
     pub(crate) fn as_sqlite_config(&self) -> SqliteConfig {
@@ -345,7 +345,7 @@ impl WasmGlobalConfigToml {
             }
         });
         path_prefixes
-            .replace_path_prefix_mkdir(wasm_directory)
+            .server_config_replace_path_prefix_mkdir(wasm_directory)
             .await
     }
 }
@@ -420,7 +420,7 @@ impl ActivitiesDirectoriesGlobalConfigToml {
     ) -> Result<Arc<Path>, anyhow::Error> {
         assert!(self.enabled); // see `ActivitiesGlobalConfigToml::get_directories`
         path_prefixes
-            .replace_path_prefix_mkdir(&self.parent_directory)
+            .server_config_replace_path_prefix_mkdir(&self.parent_directory)
             .await
             .map(Arc::from)
     }
@@ -487,7 +487,7 @@ impl CodegenCache {
                 }
             });
             path_prefixes
-                .replace_path_prefix_mkdir(directory)
+                .server_config_replace_path_prefix_mkdir(directory)
                 .await
                 .map(Some)
         } else {
@@ -588,7 +588,8 @@ impl ComponentLocationToml {
 
         let (actual_digest, path) = match &self {
             ComponentLocationToml::Path(wasm_path) => {
-                let wasm_path = path_prefixes.replace_file_prefix_verify_exists(wasm_path)?;
+                let wasm_path =
+                    path_prefixes.deployment_config_replace_file_prefix_verify_exists(wasm_path)?;
                 let actual_digest = calculate_sha256_file(&wasm_path)
                     .await
                     .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
@@ -2116,7 +2117,8 @@ async fn resolve_js_to_canonical(
                 .and_then(|n| n.to_str())
                 .unwrap_or(path)
                 .to_string();
-            let full_path = path_prefixes.replace_file_prefix_verify_exists(path)?;
+            let full_path =
+                path_prefixes.deployment_config_replace_file_prefix_verify_exists(path)?;
             let content = tokio::fs::read_to_string(&full_path)
                 .await
                 .with_context(|| format!("cannot read JS file {full_path:?}"))?;
@@ -2135,7 +2137,7 @@ async fn resolve_backtrace_to_canonical(
         let BacktraceSourceLocation::Path(path) = location;
         let content = async {
             let full_path = path_prefixes
-                .replace_file_prefix_verify_exists(path)
+                .deployment_config_replace_file_prefix_verify_exists(path)
                 .inspect_err(|err| warn!("Ignoring missing backtrace source - {err:?}"))
                 .ok()?;
             tokio::fs::read_to_string(&full_path)
