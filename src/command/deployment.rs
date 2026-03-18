@@ -135,7 +135,7 @@ impl args::Deployment {
                 }
 
                 println!(
-                    "{:<26}  {:<12}  {:<20}  {:<20}",
+                    "{:<32}  {:<12}  {:<19}  {:<19}",
                     "ID", "STATUS", "CREATED_AT", "LAST_ACTIVE_AT"
                 );
                 for summary in resp.deployments {
@@ -147,12 +147,16 @@ impl args::Deployment {
                         .unwrap_or_default()
                         .to_string();
                     let status = format_status(dep.status());
-                    let created = DateTime::from(dep.created_at.expect("created_at is sent"));
-                    let last_active: String = dep
+                    let created: DateTime<_> = dep.created_at.expect("created_at is sent").into();
+                    let created = created.format("%Y-%m-%d %H:%M:%S");
+                    let last_active = dep
                         .last_active_at
-                        .map(|t| DateTime::from(t).to_string())
+                        .map(|t| {
+                            let dt: DateTime<_> = t.into();
+                            dt.format("%Y-%m-%d %H:%M:%S").to_string()
+                        })
                         .unwrap_or_default();
-                    println!("{id:<26}  {status:<12}  {created:<20}  {last_active:<20}");
+                    println!("{id:<32}  {status:<12}  {created:<19}  {last_active:<19}");
                 }
                 Ok(())
             }
