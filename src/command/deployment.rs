@@ -12,7 +12,11 @@ use grpc::to_channel;
 impl args::Deployment {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
-            args::Deployment::Submit { config, api_url } => {
+            args::Deployment::Submit {
+                config,
+                verify,
+                api_url,
+            } => {
                 let config_json = load_config_json(config).await?;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
@@ -20,6 +24,7 @@ impl args::Deployment {
                     .submit_deployment(grpc_gen::SubmitDeploymentRequest {
                         config_json,
                         created_by: Some("cli".to_string()),
+                        verify,
                     })
                     .await?
                     .into_inner();
@@ -30,32 +35,16 @@ impl args::Deployment {
 
             args::Deployment::Switch {
                 id,
-                config,
                 hot,
                 verify,
                 api_url,
             } => {
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
-                let deployment_id = if let Some(id) = id {
-                    id
-                } else {
-                    let config_json = load_config_json(config).await?;
-                    let resp = client
-                        .submit_deployment(grpc_gen::SubmitDeploymentRequest {
-                            config_json,
-                            created_by: Some("cli".to_string()),
-                        })
-                        .await?
-                        .into_inner();
-                    let id = resp.deployment_id.context("missing deployment_id")?.id;
-                    println!("Submitted as Candidate: {id}");
-                    id
-                };
 
                 let resp = client
                     .switch_deployment(grpc_gen::SwitchDeploymentRequest {
-                        deployment_id: Some(grpc_gen::DeploymentId { id: deployment_id }),
+                        deployment_id: Some(grpc_gen::DeploymentId { id }),
                         verify,
                         hot_redeploy: hot,
                     })

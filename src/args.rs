@@ -47,6 +47,9 @@ pub(crate) enum Deployment {
         /// Path to the TOML configuration, defaults to `obelisk.toml`.
         #[arg(long, short)]
         config: Option<ConfigSource>,
+        /// Verify all environment variables before persisting the deployment.
+        #[arg(long)]
+        verify: bool,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
@@ -55,16 +58,13 @@ pub(crate) enum Deployment {
     /// Defaults to submitting `obelisk.toml` when neither is provided.
     Switch {
         /// Existing Candidate deployment ID to activate.
-        #[arg(value_name = "ID", conflicts_with = "config")]
-        id: Option<String>,
-        /// Path to a TOML configuration to submit then activate, defaults to `obelisk.toml`.
-        #[arg(long, short, conflicts_with = "id")]
-        config: Option<ConfigSource>,
+        #[arg(value_name = "ID")]
+        id: String,
         /// Live swap without server restart (falls back to restart-required if not possible).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "verify")]
         hot: bool,
         /// Verify all environment variables before activating.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "hot")]
         verify: bool,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
