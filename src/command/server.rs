@@ -164,6 +164,7 @@ impl Server {
                 clean_codegen_cache,
                 server_config,
                 deployment,
+                deployment_empty,
                 suppress_type_checking_errors,
             } => {
                 Box::pin(run(
@@ -171,6 +172,7 @@ impl Server {
                     BaseDirs::new(),
                     server_config,
                     deployment,
+                    deployment_empty,
                     RunParams {
                         clean_cache,
                         clean_codegen_cache,
@@ -375,6 +377,7 @@ pub(crate) async fn run(
     base_dirs: Option<BaseDirs>,
     server_config: Option<PathBuf>,
     deployment: Option<PathBuf>,
+    deployment_empty: bool,
     params: RunParams,
 ) -> anyhow::Result<()> {
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
@@ -388,6 +391,8 @@ pub(crate) async fn run(
         let mut pp = config_holder.path_prefixes;
         pp.deployment_dir = Some(deployment_dir);
         (Some(toml), pp)
+    } else if deployment_empty {
+        (Some(DeploymentToml::default()), config_holder.path_prefixes)
     } else {
         (None, config_holder.path_prefixes)
     };
@@ -767,7 +772,7 @@ pub(crate) async fn run_internal(
     let span = Span::current();
     // Determine the deployment to compile and the active deployment_id.
     let (active_deployment_id, deployment_canonical) = if let Some(deployment_toml) = deployment {
-        // --deployment provided: resolve, insert, and activate.
+        // --deployment or `--deployment-empty` provided: resolve, insert, and activate.
         let new_deployment_id = DeploymentId::generate();
         span.record("deployment_id", tracing::field::display(&new_deployment_id));
         let canonical =
