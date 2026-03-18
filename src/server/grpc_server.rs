@@ -1586,7 +1586,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
 
         let config_json = crate::config::toml::compute_config_json(&deployment);
 
-        // Structural verification: ignore env vars - submitting should work, hot redeploy not.
+        // Submit will fail if structural verification (ignoring env vars) fails.
+        // When `verify` is set, env vars must be present.
         let config = self.config.clone();
         let verify_deployment_id = DeploymentId::generate();
         let mut termination_watcher = self.termination_watcher.clone();
@@ -1598,7 +1599,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             crate::command::server::VerifyParams {
                 clean_cache: false,
                 clean_codegen_cache: false,
-                ignore_missing_env_vars: true,
+                ignore_missing_env_vars: !request.verify,
                 suppress_type_checking_errors: false,
             },
             &mut termination_watcher,

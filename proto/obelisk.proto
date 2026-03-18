@@ -801,6 +801,8 @@ message SwitchDeploymentResponse {
 message SubmitDeploymentRequest {
     string config_json = 1;
     optional string created_by = 2;
+    // Verify all environment variables before persisting the deployment.
+    bool verify = 3;
 }
 message SubmitDeploymentResponse {
     DeploymentId deployment_id = 1;
