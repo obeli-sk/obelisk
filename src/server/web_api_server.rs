@@ -2149,8 +2149,6 @@ mod deployment {
         pub blocked: u32,
         /// Number of finished executions
         pub finished: u32,
-        /// SHA-256 hash of the canonical deployment config JSON. `null` when no deployment record exists.
-        pub config_hash: Option<String>,
     }
 
     impl DeploymentStateSer {
@@ -2165,7 +2163,6 @@ mod deployment {
                 scheduled: deployment_state.scheduled,
                 blocked: deployment_state.blocked,
                 finished: deployment_state.finished,
-                config_hash: deployment_state.config_hash.clone(),
             }
         }
     }

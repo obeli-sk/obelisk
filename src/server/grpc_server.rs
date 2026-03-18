@@ -1584,8 +1584,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 tonic::Status::invalid_argument(format!("cannot parse config_json: {err}"))
             })?;
 
-        let (config_hash, config_json) =
-            crate::config::toml::compute_config_json_and_hash(&deployment);
+        let config_json = crate::config::toml::compute_config_json(&deployment);
 
         // Structural verification: ignore env vars - submitting should work, hot redeploy not.
         let config = self.config.clone();
@@ -1623,10 +1622,9 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             created_at: now,
             updated_at: now,
             status: DeploymentStatus::Candidate,
-            config_json,
-            config_hash,
             obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
             created_by: request.created_by,
+            config_json,
         })
         .await
         .to_status()?;
@@ -1683,7 +1681,6 @@ fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grp
         status: status_to_grpc(record.status).into(),
         created_at: Some(prost_wkt_types::Timestamp::from(record.created_at)),
         updated_at: Some(prost_wkt_types::Timestamp::from(record.updated_at)),
-        config_hash: record.config_hash,
         config_json: Some(record.config_json),
     }
 }
@@ -1694,7 +1691,6 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
         status: status_to_grpc(dep.status).into(),
         created_at: Some(prost_wkt_types::Timestamp::from(dep.created_at)),
         updated_at: Some(prost_wkt_types::Timestamp::from(dep.updated_at)),
-        config_hash: dep.config_hash.unwrap_or_default(),
         config_json: dep.config_json,
     };
     grpc_gen::DeploymentSummary {

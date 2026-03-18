@@ -3369,7 +3369,6 @@ async fn deployment_insert_and_get(database: Database) {
         updated_at: now,
         status: DeploymentStatus::Candidate,
         config_json: r#"{"activities":[]}"#.to_string(),
-        config_hash: "abc123".to_string(),
         obelisk_version: "0.0.0-test".to_string(),
         created_by: Some("test".to_string()),
     };
@@ -3382,7 +3381,6 @@ async fn deployment_insert_and_get(database: Database) {
         .unwrap();
     assert_eq!(deployment_id, fetched.deployment_id);
     assert_eq!(DeploymentStatus::Candidate, fetched.status);
-    assert_eq!("abc123", fetched.config_hash);
     assert_eq!("0.0.0-test", fetched.obelisk_version);
     assert_eq!(Some("test".to_string()), fetched.created_by);
     assert_eq!(fetched.updated_at, now);
@@ -3415,7 +3413,6 @@ async fn deployment_activate(database: Database) {
             updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: "{}".to_string(),
-            config_hash: "hash1".to_string(),
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
         })
@@ -3457,7 +3454,6 @@ async fn deployment_only_one_active_allowed(database: Database) {
             updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: "{}".to_string(),
-            config_hash: "hash1".to_string(),
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
         })
@@ -3474,7 +3470,6 @@ async fn deployment_only_one_active_allowed(database: Database) {
             updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: "{}".to_string(),
-            config_hash: "hash2".to_string(),
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
         })
@@ -3509,7 +3504,7 @@ async fn deployment_list(database: Database) {
     let now = sim_clock.now();
     let id1 = concepts::prefixed_ulid::DeploymentId::generate();
     let id2 = concepts::prefixed_ulid::DeploymentId::generate();
-    for (id, hash) in [(id1, "hash1"), (id2, "hash2")] {
+    for id in [id1, id2] {
         api_conn
             .insert_deployment(DeploymentRecord {
                 deployment_id: id,
@@ -3517,7 +3512,6 @@ async fn deployment_list(database: Database) {
                 updated_at: now,
                 status: DeploymentStatus::Candidate,
                 config_json: "{}".to_string(),
-                config_hash: hash.to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
                 created_by: None,
             })

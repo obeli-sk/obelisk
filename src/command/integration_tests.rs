@@ -1167,8 +1167,7 @@ async fn hot_redeploy_activity() {
             value: "updated_value".to_string(),
         }];
 
-        let (new_config_json, new_config_hash) =
-            crate::config::toml::compute_config_json_and_hash(&new_deployment);
+        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
 
         let now = Utc::now();
         conn.insert_deployment(DeploymentRecord {
@@ -1177,7 +1176,6 @@ async fn hot_redeploy_activity() {
             updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: new_config_json,
-            config_hash: new_config_hash,
             obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
             created_by: Some("test".to_string()),
         })
@@ -1303,8 +1301,7 @@ async fn hot_redeploy_registry() {
                 },
             ));
 
-        let (new_config_json, new_config_hash) =
-            crate::config::toml::compute_config_json_and_hash(&new_deployment);
+        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
 
         let now = Utc::now();
         conn.insert_deployment(DeploymentRecord {
@@ -1313,7 +1310,6 @@ async fn hot_redeploy_registry() {
             updated_at: now,
             status: DeploymentStatus::Candidate,
             config_json: new_config_json,
-            config_hash: new_config_hash,
             obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
             created_by: Some("test".to_string()),
         })

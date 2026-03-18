@@ -115,39 +115,9 @@ pub(crate) struct ConfigToml {
     pub(crate) deployment: DeploymentToml,
 }
 
-/// Sort all JSON object keys recursively for deterministic serialization.
-fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut entries: Vec<_> = map.into_iter().collect();
-            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
-            serde_json::Value::Object(
-                entries
-                    .into_iter()
-                    .map(|(k, v)| (k, sort_json_keys(v)))
-                    .collect(),
-            )
-        }
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.into_iter().map(sort_json_keys).collect())
-        }
-        other => other,
-    }
-}
-
 /// Return a canonical JSON string of the deployment config for storage.
-pub(crate) fn compute_config_json_and_hash(
-    deployment: &DeploymentCanonical,
-) -> (
-    String, // JSON
-    String, // hash
-) {
-    let json_value = serde_json::to_value(deployment).expect("DeploymentCanonical is serializable");
-    let sorted = sort_json_keys(json_value);
-
-    let canonical_json = serde_json::to_string(&sorted).expect("infallible");
-    let hash = Sha256::digest(canonical_json.as_bytes());
-    (canonical_json, format!("{hash:x}"))
+pub(crate) fn compute_config_json(deployment: &DeploymentCanonical) -> String {
+    serde_json::to_string(deployment).expect("DeploymentCanonical is serializable")
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]

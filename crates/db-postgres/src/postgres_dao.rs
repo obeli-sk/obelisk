@@ -289,7 +289,6 @@ CREATE TABLE IF NOT EXISTS t_deployment (
     updated_at    TIMESTAMPTZ NOT NULL,
     status        TEXT     NOT NULL DEFAULT 'candidate',
     config_json      TEXT     NOT NULL,
-    config_hash      TEXT     NOT NULL,
     obelisk_version  TEXT     NOT NULL,
     created_by       TEXT
 );
@@ -623,7 +622,6 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
         updated_at: get(row, "updated_at")?,
         status,
         config_json: get(row, "config_json")?,
-        config_hash: get(row, "config_hash")?,
         obelisk_version: get(row, "obelisk_version")?,
         created_by: get(row, "created_by")?,
     })
@@ -1820,7 +1818,6 @@ async fn list_deployment_states(
 
             COUNT(*) FILTER (WHERE s.state = '{STATE_FINISHED}') AS finished,
 
-            d.config_hash,
             {config_json_col},
             d.created_at,
             d.updated_at,
@@ -1851,7 +1848,7 @@ async fn list_deployment_states(
 
     write!(
         sql,
-        " GROUP BY d.deployment_id, d.config_hash, d.config_json, d.created_at, d.updated_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
+        " GROUP BY d.deployment_id, d.config_json, d.created_at, d.updated_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -1890,7 +1887,6 @@ async fn list_deployment_states(
                 .expect("count is never negative"),
             finished: u32::try_from(get::<i64, _>(&row, "finished")?)
                 .expect("count is never negative"),
-            config_hash: get::<Option<String>, _>(&row, "config_hash")?,
             config_json: get::<Option<String>, _>(&row, "config_json")?,
             created_at: get::<DateTime<Utc>, _>(&row, "created_at")?,
             updated_at: get::<DateTime<Utc>, _>(&row, "updated_at")?,
@@ -4372,17 +4368,16 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+             (deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
             &[
-                &record.deployment_id.to_string(),
-                &record.created_at,
-                &record.updated_at,
-                &record.status.as_str(),
-                &record.config_json,
-                &record.config_hash,
-                &record.obelisk_version,
-                &record.created_by,
+                &record.deployment_id.to_string(), // $1
+                &record.created_at,// $2
+                &record.updated_at,// $3
+                &record.status.as_str(),// $4
+                &record.config_json,// $5
+                &record.obelisk_version,//$6
+                &record.created_by,// $7
             ],
         )
         .await?;
@@ -4427,7 +4422,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
+                "SELECT deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by \
                  FROM t_deployment WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
@@ -4445,7 +4440,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
+                "SELECT deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by \
                  FROM t_deployment WHERE status = 'active' LIMIT 1",
                 &[],
             )
@@ -4471,7 +4466,7 @@ impl DbExternalApi for PostgresConnection {
         };
 
         let mut sql = String::from(
-            "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
+            "SELECT deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by \
              FROM t_deployment",
         );
 
