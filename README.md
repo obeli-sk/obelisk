@@ -123,7 +123,7 @@ Check out the [Getting Started Guide](https://obeli.sk/docs/latest/getting-start
 
 ### Start the Server
 ```sh
-obelisk server run -c obelisk-testing-sqlite-oci.toml
+obelisk server run --deployment obelisk-testing-wasm-oci.toml
 ```
 
 ### Running with Postgres
@@ -140,7 +140,7 @@ export POSTGRES_USER="postgres"
 export POSTGRES_PASSWORD="postgres"
 export POSTGRES_DATABASE="obelisk"
 
-obelisk server run --config obelisk-testing-postgres-oci.toml
+obelisk server run --server-config obelisk-testing-pg-server.toml --deployment obelisk-testing-wasm-oci.toml
 ```
 
 ### [CLI Usage](https://obeli.sk/docs/latest/cli/)

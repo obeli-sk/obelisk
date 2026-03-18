@@ -13,7 +13,7 @@ use crate::config::toml::{
 use crate::{
     command::server::{RunParams, run_internal},
     config::{
-        config_holder::{ConfigFileOption, ConfigHolder, ConfigSource},
+        config_holder::{ConfigHolder, load_deployment_toml},
         env_var::EnvVarConfig,
         toml::DeploymentCanonical,
     },
@@ -74,15 +74,14 @@ macro_rules! test_addr {
 }
 pub(crate) use test_addr;
 
-/// Write a minimal TOML config to a temp file and return the path.
-/// The config references the JS fixtures from the workspace tree and
-/// places the `SQLite` database in a unique temp directory.
-fn write_test_toml(ip: &str) -> (tempfile::TempDir, PathBuf) {
+/// Write separate server and deployment TOML configs to temp files and return their paths.
+/// The server config includes API, DB, and wasm settings.
+/// The deployment config references the JS fixtures from the workspace tree.
+fn write_test_configs(ip: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let workspace = get_workspace_dir();
     let db_dir = tempfile::tempdir().unwrap();
-    let toml_contents = format!(
-        r#"
-api.listening_addr = "{ip}:{API_PORT}"
+    let server_contents = format!(
+        r#"api.listening_addr = "{ip}:{API_PORT}"
 webui.enabled = false
 external.listening_addr = "{ip}:{WEBHOOK_PORT}"
 
@@ -91,7 +90,18 @@ directory = "${{CACHE_DIR}}/codegen-it"
 
 [database.sqlite]
 directory = "{db_dir}"
+"#,
+        ip = ip,
+        API_PORT = API_PORT,
+        WEBHOOK_PORT = WEBHOOK_PORT,
+        db_dir = db_dir.path().display(),
+    );
+    let server_path = db_dir.path().join("obelisk-test-server.toml");
+    std::fs::write(&server_path, server_contents).unwrap();
 
+    let ws = workspace.display();
+    let deployment_contents = format!(
+        r#"
 [[activity_js]]
 name = "test_add_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/add.js"
@@ -271,16 +281,11 @@ location = "{ws}/crates/testing/test-programs/js/webhook/read_env.js"
 routes = [{{ methods = ["GET"], route = "/read-env" }}]
 env_vars = [{{key = "WEBHOOK_TEST_ENV_VAR", value = "hello_from_webhook_env"}}]
 "#,
-        ip = ip,
-        API_PORT = API_PORT,
-        WEBHOOK_PORT = WEBHOOK_PORT,
-        db_dir = db_dir.path().display(),
-        ws = workspace.display(),
     );
-    debug!("TOML:{toml_contents}");
-    let toml_path = db_dir.path().join("obelisk-test.toml");
-    std::fs::write(&toml_path, toml_contents).unwrap();
-    (db_dir, toml_path)
+    debug!("Deployment TOML:{deployment_contents}");
+    let deployment_path = db_dir.path().join("obelisk-test-deployment.toml");
+    std::fs::write(&deployment_path, deployment_contents).unwrap();
+    (db_dir, server_path, deployment_path)
 }
 
 struct TestServer {
@@ -298,17 +303,17 @@ impl TestServer {
     async fn start(ip: String) -> Self {
         test_utils::set_up();
 
-        let (tmp_dir, toml_path) = write_test_toml(&ip);
+        let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip);
 
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
-        let config_holder = ConfigHolder::new(
-            project_dirs,
-            base_dirs,
-            ConfigFileOption::MustExist(ConfigSource(toml_path)),
-        )
-        .unwrap();
+        let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path)).unwrap();
         let config = config_holder.load_config().await.unwrap();
+
+        let (deployment_toml, deployment_dir) =
+            load_deployment_toml(deployment_path).await.unwrap();
+        let mut path_prefixes = config_holder.path_prefixes;
+        path_prefixes.deployment_dir = Some(deployment_dir);
 
         let (termination_sender, termination_watcher) = watch::channel(());
 
@@ -322,7 +327,8 @@ impl TestServer {
         let server_handle = tokio::spawn(async move {
             Box::pin(run_internal(
                 config,
-                Arc::new(config_holder.path_prefixes),
+                Some(deployment_toml),
+                Arc::new(path_prefixes),
                 params,
                 termination_watcher,
             ))

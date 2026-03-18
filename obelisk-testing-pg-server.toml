@@ -1,0 +1,13 @@
+activities.directories.enabled = true
+
+database.postgres.host =     "${POSTGRES_HOST}"
+database.postgres.user =     "${POSTGRES_USER}"
+database.postgres.password = "${POSTGRES_PASSWORD}"
+database.postgres.db_name =  "${POSTGRES_DATABASE}"
+database.postgres.provision_policy = "auto"
+
+[log.file]
+enabled = true
+target = true
+directory = "."
+prefix = "obelisk.log" # File name prefix

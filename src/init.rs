@@ -1,7 +1,7 @@
 use std::io::IsTerminal as _;
 
 use crate::config::toml::{
-    ConfigToml,
+    ServerConfigToml,
     log::{AppenderConsoleWriter, LoggingStyle},
 };
 use tracing::warn;
@@ -36,7 +36,7 @@ fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
 
 #[cfg(feature = "otlp")]
 fn tokio_tracing_otlp<S>(
-    config: &ConfigToml,
+    config: &ServerConfigToml,
 ) -> Result<Option<impl tracing_subscriber::Layer<S>>, anyhow::Error>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
@@ -75,12 +75,12 @@ where
 #[cfg(not(feature = "otlp"))]
 #[expect(clippy::needless_pass_by_value)]
 fn tokio_tracing_otlp(
-    _config: &mut ConfigToml,
+    _config: &mut ServerConfigToml,
 ) -> Result<Option<tracing::level_filters::LevelFilter>, anyhow::Error> {
     None
 }
 
-pub(crate) fn init(config: &ConfigToml) -> Result<Guard, anyhow::Error> {
+pub(crate) fn init(config: &ServerConfigToml) -> Result<Guard, anyhow::Error> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 

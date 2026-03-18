@@ -19,8 +19,7 @@ push() {
     OUTPUT=$(cargo run -- component push "$RELATIVE_PATH" "$OCI_LOCATION")
 
     # Replace the old location with the actual OCI location
-    cargo run -- component add ${COMPONENT_TYPE} ${OUTPUT} --name ${FILE_NAME_WITHOUT_EXT} --config obelisk-testing-sqlite-oci.toml
-    cargo run -- component add ${COMPONENT_TYPE} ${OUTPUT} --name ${FILE_NAME_WITHOUT_EXT} --config obelisk-testing-postgres-oci.toml
+    cargo run -- component add ${COMPONENT_TYPE} ${OUTPUT} --name ${FILE_NAME_WITHOUT_EXT} --deployment obelisk-testing-wasm-oci.toml
 }
 
 # Make sure all components are fresh

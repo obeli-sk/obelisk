@@ -58,4 +58,4 @@ jobs:
         run: |
           source "$HOME/.cargo/env"
           obelisk --version
-          obelisk server verify -c obelisk-testing-sqlite-oci.toml
+          obelisk server verify --deployment obelisk-testing-wasm-oci.toml

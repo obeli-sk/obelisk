@@ -2,8 +2,7 @@ use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::server::{VerifyParams, verify_config_compile_link};
 use crate::command::termination_notifier::termination_notifier;
-use crate::config::config_holder::ConfigSource;
-use crate::config::config_holder::{ConfigFileOption, ConfigHolder};
+use crate::config::config_holder::{ConfigHolder, load_deployment_toml};
 use crate::init::{self};
 use crate::project_dirs;
 use crate::wit_printer::{OutputToFile, process_pkg_with_deps};
@@ -22,13 +21,26 @@ impl Generate {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
             #[cfg(debug_assertions)]
-            Generate::ConfigSchema { output } => generate_toml_schema(output),
+            Generate::ServerConfigSchema { output } => generate_server_config_schema(output),
+            #[cfg(debug_assertions)]
+            Generate::DeploymentSchema { output } => generate_deployment_schema(output),
+            #[cfg(debug_assertions)]
+            Generate::DeploymentCanonicalSchema { output } => {
+                generate_deployment_canonical_schema(output)
+            }
             #[cfg(debug_assertions)]
             Generate::DbSchema { output } => generate_db_schema(output),
             #[cfg(debug_assertions)]
             Generate::OpenApiSchema { output } => generate_openapi_schema(output),
-            Generate::Config { config, overwrite } => {
-                let config_file = ConfigHolder::generate_default_config(config, overwrite).await?;
+            Generate::ServerConfig { output, overwrite } => {
+                let config_file =
+                    ConfigHolder::generate_default_server_config(output, overwrite).await?;
+                println!("Generated {config_file:?}");
+                Ok(())
+            }
+            Generate::Deployment { output, overwrite } => {
+                let config_file =
+                    ConfigHolder::generate_default_deployment_config(output, overwrite).await?;
                 println!("Generated {config_file:?}");
                 Ok(())
             }
@@ -53,14 +65,14 @@ impl Generate {
                 overwrite,
             } => generate_support_wits(component_type, output_directory, overwrite).await,
             Generate::WitDeps {
-                config,
+                deployment,
                 output_directory,
                 overwrite,
             } => {
                 generate_wit_deps(
                     project_dirs(),
                     BaseDirs::new(),
-                    config,
+                    deployment,
                     output_directory,
                     overwrite,
                 )
@@ -75,22 +87,38 @@ impl Generate {
 }
 
 #[cfg(debug_assertions)]
-pub(crate) fn generate_toml_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+fn write_schema<T: schemars::JsonSchema>(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     use std::{
         fs::File,
         io::{BufWriter, Write as _, stdout},
     };
-    let schema = schemars::schema_for!(crate::config::toml::ConfigToml);
+    let schema = schemars::schema_for!(T);
     if let Some(output) = output {
-        // Save to a file
         let mut writer = BufWriter::new(File::create(&output)?);
         serde_json::to_writer_pretty(&mut writer, &schema)?;
         writer.write_all(b"\n")?;
-        writer.flush()?; // Do not swallow errors
+        writer.flush()?;
     } else {
         serde_json::to_writer_pretty(stdout().lock(), &schema)?;
     }
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    write_schema::<crate::config::toml::ServerConfigToml>(output)
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn generate_deployment_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    write_schema::<crate::config::toml::DeploymentToml>(output)
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn generate_deployment_canonical_schema(
+    output: Option<PathBuf>,
+) -> Result<(), anyhow::Error> {
+    write_schema::<crate::config::toml::DeploymentCanonical>(output)
 }
 
 #[cfg(debug_assertions)]
@@ -262,20 +290,19 @@ pub(crate) async fn generate_support_wits(
 pub(crate) async fn generate_wit_deps(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    config: Option<ConfigSource>,
+    deployment_path: PathBuf,
     output_directory: PathBuf,
     overwrite: bool,
 ) -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new(
-        project_dirs,
-        base_dirs,
-        ConfigFileOption::AllowMissing(config),
-    )?;
+    let (deployment_toml, deployment_dir) = load_deployment_toml(deployment_path).await?;
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
     let config = config_holder.load_config().await?;
     let _guard = init::init(&config)?;
-    let path_prefixes = Arc::new(config_holder.path_prefixes);
+    let mut path_prefixes = config_holder.path_prefixes;
+    path_prefixes.deployment_dir = Some(deployment_dir);
+    let path_prefixes = Arc::new(path_prefixes);
     let deployment =
-        crate::config::toml::resolve_local_refs_to_canonical(&config.deployment, &path_prefixes)
+        crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)
             .await?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });

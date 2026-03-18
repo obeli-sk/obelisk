@@ -4,8 +4,8 @@ use crate::command::server::SubmitError;
 use crate::command::server::VerifyParams;
 use crate::command::server::upsert_backtrace_sources;
 use crate::config::config_holder::PathPrefixes;
-use crate::config::toml::ConfigToml;
 use crate::config::toml::DeploymentCanonical;
+use crate::config::toml::ServerConfigToml;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
@@ -91,7 +91,7 @@ pub(crate) struct GrpcServer {
     #[debug(skip)]
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     #[debug(skip)]
-    config: ConfigToml,
+    config: ServerConfigToml,
     #[debug(skip)]
     path_prefixes: Arc<crate::config::config_holder::PathPrefixes>,
     #[debug(skip)]
@@ -106,7 +106,7 @@ impl GrpcServer {
         cancel_registry: CancelRegistry,
         engines: Engines,
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-        config: ConfigToml,
+        config: ServerConfigToml,
         path_prefixes: Arc<PathPrefixes>,
         deployment_ctx: DeploymentContextHandle,
     ) -> Self {

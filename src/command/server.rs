@@ -1,10 +1,9 @@
 use crate::args::Server;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
-use crate::config::config_holder::ConfigFileOption;
 use crate::config::config_holder::ConfigHolder;
-use crate::config::config_holder::ConfigSource;
 use crate::config::config_holder::PathPrefixes;
+use crate::config::config_holder::load_deployment_toml;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
 use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
@@ -17,11 +16,12 @@ use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
-use crate::config::toml::ConfigToml;
 use crate::config::toml::DatabaseConfigToml;
 use crate::config::toml::DeploymentCanonical;
+use crate::config::toml::DeploymentToml;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
+use crate::config::toml::ServerConfigToml;
 use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowConfigVerified;
@@ -80,6 +80,7 @@ use hashbrown::HashMap;
 use indexmap::IndexMap;
 use serde_json::json;
 use std::fmt::Debug;
+use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -161,13 +162,15 @@ impl Server {
                 clean_sqlite_directory,
                 clean_cache,
                 clean_codegen_cache,
-                config,
+                server_config,
+                deployment,
                 suppress_type_checking_errors,
             } => {
                 Box::pin(run(
                     project_dirs(),
                     BaseDirs::new(),
-                    config.unwrap_or_default(),
+                    server_config,
+                    deployment,
                     RunParams {
                         clean_cache,
                         clean_codegen_cache,
@@ -180,7 +183,8 @@ impl Server {
             Server::Verify {
                 clean_cache,
                 clean_codegen_cache,
-                config,
+                server_config,
+                deployment,
                 ignore_missing_env_vars,
                 suppress_type_checking_errors,
                 skip_db,
@@ -188,7 +192,8 @@ impl Server {
                 verify(
                     project_dirs(),
                     BaseDirs::new(),
-                    config.unwrap_or_default(),
+                    server_config,
+                    deployment,
                     VerifyParams {
                         clean_cache,
                         clean_codegen_cache,
@@ -368,19 +373,29 @@ pub(crate) struct RunParams {
 pub(crate) async fn run(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    config: ConfigSource,
+    server_config: Option<PathBuf>,
+    deployment: Option<PathBuf>,
     params: RunParams,
 ) -> anyhow::Result<()> {
-    let config_holder =
-        ConfigHolder::new(project_dirs, base_dirs, ConfigFileOption::MustExist(config))?;
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
     let (termination_sender, termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
 
+    let (deployment_toml, path_prefixes) = if let Some(deployment_path) = deployment {
+        let (toml, deployment_dir) = load_deployment_toml(deployment_path).await?;
+        let mut pp = config_holder.path_prefixes;
+        pp.deployment_dir = Some(deployment_dir);
+        (Some(toml), pp)
+    } else {
+        (None, config_holder.path_prefixes)
+    };
+
     Box::pin(run_internal(
         config,
-        Arc::new(config_holder.path_prefixes),
+        deployment_toml,
+        Arc::new(path_prefixes),
         params,
         termination_watcher,
     ))
@@ -400,25 +415,35 @@ pub(crate) struct VerifyParams {
 pub(crate) async fn verify(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    config: ConfigSource,
+    server_config: Option<PathBuf>,
+    deployment: Option<PathBuf>,
     verify_params: VerifyParams,
     skip_db: bool,
 ) -> Result<(), anyhow::Error> {
-    let config_holder =
-        ConfigHolder::new(project_dirs, base_dirs, ConfigFileOption::MustExist(config))?;
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
-    let path_prefixes = Arc::new(config_holder.path_prefixes);
-    let deployment =
-        crate::config::toml::resolve_local_refs_to_canonical(&config.deployment, &path_prefixes)
-            .await?;
+    let mut path_prefixes = config_holder.path_prefixes;
+    let deployment_toml_opt = if let Some(deployment_path) = deployment {
+        let (toml, deployment_dir) = load_deployment_toml(deployment_path).await?;
+        path_prefixes.deployment_dir = Some(deployment_dir);
+        Some(toml)
+    } else {
+        None
+    };
+    let path_prefixes = Arc::new(path_prefixes);
+    let deployment_canonical = if let Some(toml) = deployment_toml_opt {
+        crate::config::toml::resolve_local_refs_to_canonical(&toml, &path_prefixes).await?
+    } else {
+        get_deployment_canonical_from_db(&config.database, &path_prefixes).await?
+    };
     let deployment_id = DeploymentId::generate();
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     if skip_db {
         Box::pin(verify_config_compile_link(
             config,
-            deployment,
+            deployment_canonical,
             path_prefixes,
             deployment_id,
             verify_params,
@@ -428,7 +453,7 @@ pub(crate) async fn verify(
     } else {
         Box::pin(verify_with_db_schema(
             config,
-            deployment,
+            deployment_canonical,
             path_prefixes,
             deployment_id,
             verify_params,
@@ -450,7 +475,7 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
 /// Verifies configuration including database schema version.
 /// Called by `verify` command.
 async fn verify_with_db_schema(
-    config: ConfigToml,
+    config: ServerConfigToml,
     deployment: DeploymentCanonical,
     path_prefixes: Arc<PathPrefixes>,
     deployment_id: DeploymentId,
@@ -500,7 +525,7 @@ async fn verify_with_db_schema(
 /// Verifies configuration without database schema check.
 #[instrument(skip_all, name = "verify")]
 pub(crate) async fn verify_config_compile_link(
-    config: ConfigToml,
+    config: ServerConfigToml,
     deployment: DeploymentCanonical,
     path_prefixes: Arc<PathPrefixes>,
     deployment_id: DeploymentId, // only to distinguish when writing to the same log file as running server
@@ -586,11 +611,67 @@ pub(crate) async fn verify_config_compile_link(
     Ok(compiled_and_linked)
 }
 
+/// Look up the current deployment from the database.
+/// Prefers Enqueued over Active; errors if neither exists.
+async fn get_deployment_canonical_from_db(
+    database: &DatabaseConfigToml,
+    path_prefixes: &PathPrefixes,
+) -> anyhow::Result<DeploymentCanonical> {
+    let record = match database {
+        DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
+            let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes).await?;
+            let sqlite_config = sqlite_config_toml.as_sqlite_config();
+            let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
+            let pool = SqlitePool::new(&sqlite_file, sqlite_config)
+                .await
+                .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?;
+            let conn = pool
+                .external_api_conn()
+                .await
+                .context("cannot get db connection for deployment lookup")?;
+            let record = conn
+                .get_current_deployment()
+                .await
+                .context("cannot query current deployment")?;
+            pool.close().await;
+            record
+        }
+        DatabaseConfigToml::Postgres(postgres_config_toml) => {
+            let pool = db_postgres::postgres_dao::PostgresPool::new(
+                postgres_config_toml.as_config()?,
+                postgres_config_toml.as_provision_policy(),
+            )
+            .await
+            .context("cannot initialize postgres connection pool")?;
+            let conn = pool
+                .external_api_conn()
+                .await
+                .context("cannot get db connection for deployment lookup")?;
+            let record = conn
+                .get_current_deployment()
+                .await
+                .context("cannot query current deployment")?;
+            pool.close().await;
+            record
+        }
+    };
+
+    let record = record
+        .context("no Enqueued or Active deployment found in database; provide --deployment")?;
+
+    serde_json::from_str(&record.config_json).with_context(|| {
+        format!(
+            "cannot parse deployment config_json for {:?}",
+            record.deployment_id
+        )
+    })
+}
+
 async fn insert_and_activate_deployment(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_id: DeploymentId,
     config_json: String,
-) -> anyhow::Result<DeploymentId> {
+) -> anyhow::Result<()> {
     use chrono::Utc;
     use concepts::storage::{DeploymentRecord, DeploymentStatus};
 
@@ -616,22 +697,19 @@ async fn insert_and_activate_deployment(
         .activate_deployment(deployment_id, Utc::now())
         .await
         .context("cannot activate deployment")?;
-    Ok(deployment_id)
+    Ok(())
 }
 
+type DbClose = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+#[instrument(skip_all, name = "init")]
 pub(crate) async fn run_internal(
-    config: ConfigToml,
+    config: ServerConfigToml,
+    deployment: Option<DeploymentToml>,
     path_prefixes: Arc<PathPrefixes>,
     params: RunParams,
     mut termination_watcher: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
-    let deployment_id = DeploymentId::generate();
-    let deployment_canonical =
-        crate::config::toml::resolve_local_refs_to_canonical(&config.deployment, &path_prefixes)
-            .await
-            .context("cannot resolve deployment to canonical form")?;
-    let deployment_config_json = crate::config::toml::compute_config_json(&deployment_canonical);
-    let span = info_span!("init", %deployment_id);
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
 
     let global_webhook_instance_limiter = config
@@ -641,26 +719,10 @@ pub(crate) async fn run_internal(
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
     let database = config.database.clone();
-    let compiled_and_linked = Box::pin(verify_config_compile_link(
-        config.clone(),
-        deployment_canonical,
-        path_prefixes.clone(),
-        deployment_id,
-        VerifyParams {
-            clean_cache: params.clean_cache,
-            clean_codegen_cache: params.clean_codegen_cache,
-            ignore_missing_env_vars: false,
-            suppress_type_checking_errors: params.suppress_type_checking_errors,
-        },
-        &mut termination_watcher,
-    ))
-    .instrument(span.clone())
-    .await?;
 
-    let cancel_registry = CancelRegistry::new();
-    let subscription_interruption = database.get_subscription_interruption();
-
-    let server_init = match database {
+    // Open the database pool before compilation so that in the no-deployment case
+    // we can read the active/enqueued deployment from it.
+    let (db_pool, db_close): (Arc<dyn DbPool>, DbClose) = match &database {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
             let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes).await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
@@ -680,28 +742,11 @@ pub(crate) async fn run_internal(
                     .await
                     .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
             );
-            let deployment_id =
-                insert_and_activate_deployment(&*db_pool, deployment_id, deployment_config_json)
-                    .await?;
             let db_close = Box::pin({
                 let db_pool = db_pool.clone();
-                async move {
-                    db_pool.close().await;
-                }
+                async move { db_pool.close().await }
             });
-            spawn_tasks_and_threads(
-                deployment_id,
-                db_pool,
-                db_close,
-                compiled_and_linked,
-                global_webhook_instance_limiter,
-                timers_watcher,
-                cancel_watcher,
-                &cancel_registry,
-                &termination_watcher,
-            )
-            .instrument(span)
-            .await?
+            (db_pool, db_close)
         }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
@@ -712,30 +757,90 @@ pub(crate) async fn run_internal(
                 .await
                 .context("canont initialize postgres connection pool")?,
             );
-            let deployment_id =
-                insert_and_activate_deployment(&*db_pool, deployment_id, deployment_config_json)
-                    .await?;
             let db_close = Box::pin({
                 let db_pool = db_pool.clone();
-                async move {
-                    db_pool.close().await;
-                }
+                async move { db_pool.close().await }
             });
-            spawn_tasks_and_threads(
-                deployment_id,
-                db_pool,
-                db_close,
-                compiled_and_linked,
-                global_webhook_instance_limiter,
-                timers_watcher,
-                cancel_watcher,
-                &cancel_registry,
-                &termination_watcher,
-            )
-            .instrument(span)
-            .await?
+            (db_pool, db_close)
         }
     };
+    let span = Span::current();
+    // Determine the deployment to compile and the active deployment_id.
+    let (active_deployment_id, deployment_canonical) = if let Some(deployment_toml) = deployment {
+        // --deployment provided: resolve, insert, and activate.
+        let new_deployment_id = DeploymentId::generate();
+        span.record("deployment_id", tracing::field::display(&new_deployment_id));
+        let canonical =
+            crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)
+                .await
+                .context("cannot resolve deployment to canonical form")?;
+        let config_json = crate::config::toml::compute_config_json(&canonical);
+        insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json).await?;
+        (new_deployment_id, canonical)
+    } else {
+        // No --deployment: pick up from the DB.
+        // Activate any Enqueued deployment (queued for this restart), then use active.
+        let conn = db_pool
+            .external_api_conn()
+            .await
+            .context("cannot get db connection for deployment lookup")?;
+        if let Some(record) = conn
+            .get_current_deployment()
+            .await
+            .context("cannot query current deployment")?
+        {
+            if record.status == concepts::storage::DeploymentStatus::Enqueued {
+                conn.activate_deployment(record.deployment_id, chrono::Utc::now())
+                    .await
+                    .context("cannot activate enqueued deployment")?;
+            }
+            let canonical: DeploymentCanonical = serde_json::from_str(&record.config_json)
+                .context("cannot parse deployment config_json")?;
+            span.record(
+                "deployment_id",
+                tracing::field::display(&record.deployment_id),
+            );
+            (record.deployment_id, canonical)
+        } else {
+            let new_deployment_id = DeploymentId::generate();
+            span.record("deployment_id", tracing::field::display(&new_deployment_id));
+            info!("No deployment found in DB; starting with empty deployment");
+            (new_deployment_id, DeploymentCanonical::default())
+        }
+    };
+
+    let compiled_and_linked = Box::pin(verify_config_compile_link(
+        config.clone(),
+        deployment_canonical,
+        path_prefixes.clone(),
+        active_deployment_id,
+        VerifyParams {
+            clean_cache: params.clean_cache,
+            clean_codegen_cache: params.clean_codegen_cache,
+            ignore_missing_env_vars: false,
+            suppress_type_checking_errors: params.suppress_type_checking_errors,
+        },
+        &mut termination_watcher,
+    ))
+    .instrument(span.clone())
+    .await?;
+
+    let cancel_registry = CancelRegistry::new();
+    let subscription_interruption = database.get_subscription_interruption();
+
+    let server_init = spawn_tasks_and_threads(
+        active_deployment_id,
+        db_pool,
+        db_close,
+        compiled_and_linked,
+        global_webhook_instance_limiter,
+        timers_watcher,
+        cancel_watcher,
+        &cancel_registry,
+        &termination_watcher,
+    )
+    .instrument(span)
+    .await?;
 
     let grpc_server = Arc::new(GrpcServer::new(
         server_init.db_pool.clone(),
@@ -851,7 +956,7 @@ impl ServerVerified {
     #[instrument(name = "ServerVerified::new", skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn new(
-        config: ConfigToml,
+        config: ServerConfigToml,
         mut deployment: DeploymentCanonical,
         codegen_cache_dir: Option<PathBuf>,
         wasm_cache_dir: Arc<Path>,
@@ -2641,7 +2746,7 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{ServerCompiledLinked, ServerVerified, VerifyParams},
-        config::config_holder::{ConfigFileOption, ConfigHolder, ConfigSource},
+        config::config_holder::{ConfigHolder, load_deployment_toml},
     };
     use directories::BaseDirs;
     use rstest::rstest;
@@ -2655,42 +2760,44 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn server_verify(
-        #[values("obelisk-testing-sqlite-local.toml", "obelisk-testing-sqlite-oci.toml")]
-        obelisk_toml: &'static str,
+        #[values("obelisk-testing-sqlite-server.toml", "obelisk-testing-pg-server.toml")]
+        server_toml: &'static str,
+        #[values("obelisk-testing-wasm-local.toml", "obelisk-testing-wasm-oci.toml")]
+        deployment_toml: &'static str,
     ) -> Result<(), anyhow::Error> {
         test_utils::set_up();
 
-        let obelisk_toml = get_workspace_dir().join(obelisk_toml);
+        let workspace = get_workspace_dir();
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
-        let config_holder = ConfigHolder::new(
-            project_dirs,
-            base_dirs,
-            ConfigFileOption::MustExist(ConfigSource(obelisk_toml)),
-        )?;
+        let config_holder =
+            ConfigHolder::new(project_dirs, base_dirs, Some(workspace.join(server_toml)))?;
         let config = config_holder.load_config().await?;
+
+        let (deployment_toml, deployment_dir) =
+            load_deployment_toml(workspace.join(deployment_toml)).await?;
+        let mut path_prefixes = config_holder.path_prefixes;
+        path_prefixes.deployment_dir = Some(deployment_dir);
+        let path_prefixes = Arc::new(path_prefixes);
+
+        let deployment_canonical =
+            crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)
+                .await?;
 
         let wasm_cache_dir = config
             .wasm_global_config
-            .get_wasm_cache_directory(&config_holder.path_prefixes)
+            .get_wasm_cache_directory(&path_prefixes)
             .await?;
         let codegen_cache = config
             .wasm_global_config
             .codegen_cache
-            .get_directory(&config_holder.path_prefixes)
+            .get_directory(&path_prefixes)
             .await?;
         tokio::fs::create_dir_all(&wasm_cache_dir).await?;
         let metadata_dir = wasm_cache_dir.join("metadata");
         tokio::fs::create_dir_all(&metadata_dir).await?;
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
-
-        let path_prefixes = Arc::new(config_holder.path_prefixes);
-        let deployment_canonical = crate::config::toml::resolve_local_refs_to_canonical(
-            &config.deployment,
-            &path_prefixes,
-        )
-        .await?;
 
         let server_verified = Box::pin(ServerVerified::new(
             config,

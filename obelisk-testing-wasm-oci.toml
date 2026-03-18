@@ -1,9 +1,3 @@
-[log.file]
-enabled = true
-target = true
-directory = "."
-prefix = "obelisk.log"
-
 [[activity_wasm]]
 name = "test_programs_fibo_activity"
 location = "oci://docker.io/getobelisk/test_programs_fibo_activity:2026-03-10@sha256:802d602f0f2858d2bfc491760e8a7d9d712e98e3d4c97ce3d33d45036bdf6528"
@@ -13,13 +7,13 @@ max_retries = 0
 name = "test_programs_fibo_workflow"
 location = "oci://docker.io/getobelisk/test_programs_fibo_workflow:2026-03-10@sha256:8ff84102d0514361a9ea41a52da28e553a141951d8fe86aeb4ec1a8b90297c50"
 exec.lock_expiry.seconds = 2
-backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 
 [[webhook_endpoint]]
 name = "test_programs_fibo_webhook"
 location = "oci://docker.io/getobelisk/test_programs_fibo_webhook:2026-03-10@sha256:7c7cdd471bf652ffd39b8e30babed3ece1b28b94ce9b909e23ac9c00286544c1"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
-backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_http_get_activity"
@@ -28,7 +22,7 @@ location = "oci://docker.io/getobelisk/test_programs_http_get_activity:2026-03-1
 [[workflow]]
 name = "test_programs_http_get_workflow"
 location = "oci://docker.io/getobelisk/test_programs_http_get_workflow:2026-03-10@sha256:846733d08d6b2277fada656f5ba3d83000031562f8612e728556241ef183e5f3"
-backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
@@ -38,4 +32,4 @@ exec.lock_expiry.seconds = 10
 [[workflow]]
 name = "test_programs_sleep_workflow"
 location = "oci://docker.io/getobelisk/test_programs_sleep_workflow:2026-03-10@sha256:bff4854fb7146078fd21758d68fbc5500106cb6c6ec9c6ae73a37944b8db2d63"
-backtrace.sources = { ".../src/lib.rs" = "${OBELISK_TOML_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }

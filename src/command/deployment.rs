@@ -1,5 +1,5 @@
 use crate::args;
-use crate::config::config_holder::{ConfigFileOption, ConfigHolder, ConfigSource};
+use crate::config::config_holder::load_deployment_toml;
 use crate::get_deployment_repository_client;
 use crate::project_dirs;
 use anyhow::{Context as _, bail};
@@ -13,11 +13,11 @@ impl args::Deployment {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
             args::Deployment::Submit {
-                config,
+                deployment,
                 verify,
                 api_url,
             } => {
-                let config_json = load_config_json(Some(config)).await?;
+                let config_json = load_config_json(deployment).await?;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let resp = client
@@ -71,12 +71,12 @@ impl args::Deployment {
             }
 
             args::Deployment::SubmitSwitch {
-                config,
+                deployment,
                 hot,
                 verify,
                 api_url,
             } => {
-                let config_json = load_config_json(Some(config)).await?;
+                let config_json = load_config_json(deployment).await?;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let resp = client
@@ -176,19 +176,19 @@ impl args::Deployment {
     }
 }
 
-async fn load_config_json(config: Option<ConfigSource>) -> anyhow::Result<String> {
-    let holder = ConfigHolder::new(
-        project_dirs(),
-        BaseDirs::new(),
-        ConfigFileOption::MustExist(config.unwrap_or_default()),
-    )?;
-    let config_toml = holder.load_config().await?;
-    let path_prefixes = holder.path_prefixes;
-    let deployment = crate::config::toml::resolve_local_refs_to_canonical(
-        &config_toml.deployment,
-        &path_prefixes,
-    )
-    .await?;
+async fn load_config_json(deployment_path: std::path::PathBuf) -> anyhow::Result<String> {
+    let (deployment_toml, deployment_dir) = load_deployment_toml(deployment_path).await?;
+    let project_dirs = project_dirs();
+    let base_dirs = BaseDirs::new();
+    let path_prefixes = crate::config::config_holder::PathPrefixes {
+        server_config_dir: None,
+        deployment_dir: Some(deployment_dir),
+        project_dirs,
+        base_dirs,
+    };
+    let deployment =
+        crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)
+            .await?;
     Ok(crate::config::toml::compute_config_json(&deployment))
 }
 

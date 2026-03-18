@@ -3583,6 +3583,7 @@ impl SqlitePool {
         .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))
     }
 
+    #[cfg(feature = "test")]
     fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         tx.query_row(
             "SELECT deployment_id, created_at, last_active_at, status, config_json, obelisk_version, created_by \
@@ -4426,12 +4427,33 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
+    #[cfg(feature = "test")]
     #[instrument(skip(self))]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         self.transaction(
             move |tx| Self::get_active_deployment_tx(tx),
             TxType::Other,
             "get_active_deployment",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
+        self.transaction(
+            move |tx| {
+                tx.query_row(
+                    "SELECT deployment_id, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                     FROM t_deployment WHERE status IN ('enqueued', 'active') \
+                     ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
+                    [],
+                    deployment_record_from_row,
+                )
+                .optional()
+                .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))
+            },
+            TxType::Other,
+            "get_current_deployment",
         )
         .await
     }

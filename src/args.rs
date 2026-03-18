@@ -1,4 +1,3 @@
-use crate::config::config_holder::ConfigSource;
 use crate::config::toml::ComponentLocationToml;
 use clap::Parser;
 use concepts::{
@@ -42,11 +41,11 @@ pub(crate) enum Subcommand {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Deployment {
-    /// Upload a configuration file as a Candidate deployment; print the new deployment ID.
+    /// Upload a deployment.toml as a new deployment; print the new deployment ID.
     Submit {
-        /// Path to the TOML configuration containing the new deployment.
+        /// Path to the deployment TOML file.
         #[arg(long, short)]
-        config: ConfigSource,
+        deployment: PathBuf,
         /// Verify all environment variables before persisting the deployment.
         #[arg(long)]
         verify: bool,
@@ -54,10 +53,9 @@ pub(crate) enum Deployment {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
-    /// Activate a deployment. Accepts an existing Candidate ID or a config file to submit first.
-    /// Defaults to submitting `obelisk.toml` when neither is provided.
+    /// Activate a deployment. Accepts an existing deployment ID.
     Switch {
-        /// Existing Candidate deployment ID to activate.
+        /// Existing deployment ID to activate.
         #[arg(value_name = "ID")]
         id: String,
         /// Live swap without server restart (falls back to restart-required if not possible).
@@ -71,9 +69,9 @@ pub(crate) enum Deployment {
         api_url: String,
     },
     SubmitSwitch {
-        /// Path to the TOML configuration containing the new deployment.
+        /// Path to the deployment TOML file.
         #[arg(long, short)]
-        config: ConfigSource,
+        deployment: PathBuf,
         /// Live swap without server restart (falls back to restart-required if not possible).
         #[arg(long, conflicts_with = "verify")]
         hot: bool,
@@ -103,9 +101,21 @@ pub(crate) enum Deployment {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Generate {
-    /// Generate the Obelisk configuration schema in JSON schema format.
+    /// Generate the server configuration (server.toml) schema in JSON schema format.
     #[cfg(debug_assertions)]
-    ConfigSchema {
+    ServerConfigSchema {
+        /// Filename to write the schema to, defaults to <stdout>.
+        output: Option<PathBuf>,
+    },
+    /// Generate the deployment configuration (deployment.toml) schema in JSON schema format.
+    #[cfg(debug_assertions)]
+    DeploymentSchema {
+        /// Filename to write the schema to, defaults to <stdout>.
+        output: Option<PathBuf>,
+    },
+    /// Generate the canonical deployment schema (stored in the database) in JSON schema format.
+    #[cfg(debug_assertions)]
+    DeploymentCanonicalSchema {
         /// Filename to write the schema to, defaults to <stdout>.
         output: Option<PathBuf>,
     },
@@ -142,20 +152,29 @@ pub(crate) enum Generate {
         #[arg(long, short)]
         overwrite: bool,
     },
-    /// Generate WIT dependency folder based on activities and workflows found in provided TOML configuration.
+    /// Generate WIT dependency folder based on activities and workflows found in the deployment TOML.
     WitDeps {
-        /// Path to the TOML configuration, defaults to `obelisk.toml`.
+        /// Path to the deployment TOML file.
         #[arg(long, short)]
-        config: Option<ConfigSource>,
+        deployment: PathBuf,
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
         /// Overwrite existing files.
         #[arg(long, short)]
         overwrite: bool,
     },
-    Config {
-        /// Filename to write the TOML to, defaults to `obelisk.toml`.
-        config: Option<PathBuf>,
+    /// Generate a default server.toml.
+    ServerConfig {
+        /// Filename to write the TOML to, defaults to `server.toml`.
+        output: Option<PathBuf>,
+        /// Overwrite existing file.
+        #[arg(long, short)]
+        overwrite: bool,
+    },
+    /// Generate a default deployment.toml.
+    Deployment {
+        /// Filename to write the TOML to, defaults to `deployment.toml`.
+        output: Option<PathBuf>,
         /// Overwrite existing file.
         #[arg(long, short)]
         overwrite: bool,
@@ -175,9 +194,13 @@ pub(crate) enum Server {
         /// Clean the codegen cache directory
         #[arg(long)]
         clean_codegen_cache: bool,
-        /// Path to the TOML configuration, defaults to `obelisk.toml`.
-        #[arg(long, short)]
-        config: Option<ConfigSource>,
+        /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
+        #[arg(long)]
+        server_config: Option<PathBuf>,
+        /// Path to the deployment TOML file. If provided, the deployment is inserted and activated on startup,
+        /// overriding any existing Enqueued or Active deployment in the database.
+        #[arg(long)]
+        deployment: Option<PathBuf>,
         /// Ignore type checking errors
         #[arg(long, short)]
         suppress_type_checking_errors: bool,
@@ -190,9 +213,13 @@ pub(crate) enum Server {
         /// Clean the codegen cache
         #[arg(long)]
         clean_codegen_cache: bool,
-        /// Path to the TOML configuration, defaults to `obelisk.toml`.
-        #[arg(long, short)]
-        config: Option<ConfigSource>,
+        /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
+        #[arg(long)]
+        server_config: Option<PathBuf>,
+        /// Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used,
+        /// falling back to the Active deployment. Errors if neither is found.
+        #[arg(long)]
+        deployment: Option<PathBuf>,
         /// Do not verify existence of environment variables
         #[arg(long, short)]
         ignore_missing_env_vars: bool,
@@ -207,28 +234,6 @@ pub(crate) enum Server {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Component {
-    /// Parse WASM file and output its metadata.
-    Inspect {
-        /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
-        #[arg(required(true))]
-        component_type: ComponentType,
-
-        /// Path to the WASM file
-        #[arg(required(true))]
-        location: ComponentLocationToml,
-
-        /// Show component imports
-        #[arg(short, long)]
-        imports: bool,
-
-        /// Show auto-generated export extensions
-        #[arg(short, long)]
-        extensions: bool,
-
-        /// Path to the TOML configuration, defaults to `obelisk.toml`.
-        #[arg(long, short)]
-        config: Option<ConfigSource>,
-    },
     /// List components.
     List {
         /// Address of the obelisk server
@@ -250,7 +255,7 @@ pub(crate) enum Component {
         #[arg(required(true))]
         image_name: oci_client::Reference,
     },
-    /// Add a component to the TOML configuration file.
+    /// Add a component to the deployment TOML configuration file.
     Add {
         /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
         #[arg(required(true))]
@@ -260,9 +265,9 @@ pub(crate) enum Component {
         location: ComponentLocationToml,
         #[arg(long, short)]
         name: String,
-        /// Path to the TOML configuration, defaults to `obelisk.toml`.
+        /// Path to the deployment TOML file.
         #[arg(long, short)]
-        config: Option<PathBuf>,
+        deployment: PathBuf,
         /// Store the component in local cache and record its `content_digest` for reproducible builds.
         #[arg(long)]
         locked: bool,

@@ -1,11 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ConfigToml",
+  "title": "DeploymentToml",
   "type": "object",
   "properties": {
-    "activities": {
-      "$ref": "#/$defs/ActivitiesGlobalConfigToml"
-    },
     "activity_external": {
       "type": "array",
       "default": [],
@@ -34,50 +31,6 @@
         "$ref": "#/$defs/ActivityWasmComponentConfigToml"
       }
     },
-    "api": {
-      "$ref": "#/$defs/ApiConfig"
-    },
-    "cancel_watcher": {
-      "$ref": "#/$defs/CancelWatcherTomlConfig"
-    },
-    "database": {
-      "$ref": "#/$defs/DatabaseConfigToml"
-    },
-    "external": {
-      "$ref": "#/$defs/ExternalServerConfig"
-    },
-    "http_server": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/HttpServer"
-      }
-    },
-    "log": {
-      "$ref": "#/$defs/LoggingConfig"
-    },
-    "obelisk-version": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "default": null
-    },
-    "otlp": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/OtlpConfig"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "timers_watcher": {
-      "$ref": "#/$defs/TimersWatcherTomlConfig"
-    },
-    "wasm": {
-      "$ref": "#/$defs/WasmGlobalConfigToml"
-    },
     "webhook_endpoint": {
       "type": "array",
       "default": [],
@@ -92,9 +45,6 @@
         "$ref": "#/$defs/WebhookJsComponentConfigToml"
       }
     },
-    "webui": {
-      "$ref": "#/$defs/WebUIConfig"
-    },
     "workflow": {
       "type": "array",
       "default": [],
@@ -108,64 +58,10 @@
       "items": {
         "$ref": "#/$defs/WorkflowJsComponentConfigToml"
       }
-    },
-    "workflows": {
-      "$ref": "#/$defs/WorkflowsGlobalConfigToml"
     }
   },
   "additionalProperties": false,
   "$defs": {
-    "ActivitiesDirectoriesCleanupConfigToml": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "older_than": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "minutes": 5
-          }
-        },
-        "run_every": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "minutes": 1
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "ActivitiesDirectoriesGlobalConfigToml": {
-      "type": "object",
-      "properties": {
-        "cleanup": {
-          "$ref": "#/$defs/ActivitiesDirectoriesCleanupConfigToml"
-        },
-        "enabled": {
-          "type": "boolean",
-          "default": false
-        },
-        "parent_directory": {
-          "type": "string",
-          "default": "${TEMP_DIR}/obelisk"
-        }
-      },
-      "additionalProperties": false
-    },
-    "ActivitiesGlobalConfigToml": {
-      "type": "object",
-      "properties": {
-        "directories": {
-          "$ref": "#/$defs/ActivitiesDirectoriesGlobalConfigToml"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "directories"
-      ]
-    },
     "ActivityDirectoriesConfigToml": {
       "type": "object",
       "properties": {
@@ -551,89 +447,6 @@
         "pattern"
       ]
     },
-    "ApiConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "listening_addr": {
-          "type": "string",
-          "default": "127.0.0.1:5005"
-        }
-      },
-      "additionalProperties": false
-    },
-    "AppenderConsole": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "level": {
-          "$ref": "#/$defs/EnvFilter"
-        },
-        "span": {
-          "$ref": "#/$defs/SpanConfig"
-        },
-        "style": {
-          "$ref": "#/$defs/LoggingStyle"
-        },
-        "target": {
-          "type": "boolean",
-          "default": false
-        },
-        "writer": {
-          "$ref": "#/$defs/AppenderConsoleWriter"
-        }
-      },
-      "additionalProperties": false
-    },
-    "AppenderConsoleWriter": {
-      "type": "string",
-      "enum": [
-        "Stderr",
-        "Stdout"
-      ]
-    },
-    "AppenderRollingFile": {
-      "type": "object",
-      "properties": {
-        "directory": {
-          "type": "string"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "level": {
-          "$ref": "#/$defs/EnvFilter"
-        },
-        "prefix": {
-          "type": "string"
-        },
-        "rotation": {
-          "$ref": "#/$defs/Rotation"
-        },
-        "span": {
-          "$ref": "#/$defs/SpanConfig"
-        },
-        "style": {
-          "$ref": "#/$defs/LoggingStyle"
-        },
-        "target": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "directory",
-        "prefix"
-      ]
-    },
     "BlockingStrategyConfigCustomized": {
       "oneOf": [
         {
@@ -674,39 +487,6 @@
         }
       ]
     },
-    "CancelWatcherTomlConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "tick_sleep": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "seconds": 1
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "CodegenCache": {
-      "type": "object",
-      "properties": {
-        "directory": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": false
-    },
     "ComponentBacktraceConfig": {
       "type": "object",
       "properties": {
@@ -734,34 +514,6 @@
     "ConfigName": {
       "description": "Activity, Webhook, Workflow or a Http server",
       "type": "string"
-    },
-    "DatabaseConfigToml": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "sqlite": {
-              "$ref": "#/$defs/SqliteConfigToml"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "sqlite"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "postgres": {
-              "$ref": "#/$defs/PostgresConfigToml"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "postgres"
-          ]
-        }
-      ]
     },
     "DurationConfig": {
       "oneOf": [
@@ -823,75 +575,6 @@
         }
       ]
     },
-    "DurationConfigOptional": {
-      "oneOf": [
-        {
-          "type": "string",
-          "enum": [
-            "none"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "milliseconds": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "milliseconds"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "seconds": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "seconds"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "minutes": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "minutes"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "hours": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "hours"
-          ]
-        }
-      ]
-    },
-    "EnvFilter": {
-      "type": "string"
-    },
     "EnvVarConfig": {
       "anyOf": [
         {
@@ -951,48 +634,6 @@
       },
       "additionalProperties": false
     },
-    "ExternalServerConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "listening_addr": {
-          "type": "string",
-          "default": "127.0.0.1:9090"
-        }
-      },
-      "additionalProperties": false
-    },
-    "HttpServer": {
-      "type": "object",
-      "properties": {
-        "listening_addr": {
-          "type": "string"
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "listening_addr"
-      ]
-    },
-    "InflightSemaphore": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Unlimited"
-        },
-        {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        }
-      ]
-    },
     "JsLocationToml": {
       "description": "Location of a JavaScript source file for JS activities.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported.\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
       "type": "string"
@@ -1034,33 +675,6 @@
         "error"
       ]
     },
-    "LoggingConfig": {
-      "type": "object",
-      "properties": {
-        "console": {
-          "$ref": "#/$defs/AppenderConsole"
-        },
-        "file": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AppenderRollingFile"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "additionalProperties": false
-    },
-    "LoggingStyle": {
-      "type": "string",
-      "enum": [
-        "plain",
-        "plain_compact",
-        "json"
-      ]
-    },
     "MethodsInput": {
       "description": "Input for method restrictions in TOML configuration.\nSupports both `methods = \"*\"` and `methods = [\"GET\", \"POST\"]` syntax.",
       "anyOf": [
@@ -1080,78 +694,6 @@
     "MethodsInputStar": {
       "type": "null"
     },
-    "OtlpConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "level": {
-          "$ref": "#/$defs/EnvFilter"
-        },
-        "otlp_endpoint": {
-          "type": "string",
-          "default": "http://localhost:4317"
-        },
-        "service_name": {
-          "type": "string",
-          "default": "obelisk-server"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "enabled"
-      ]
-    },
-    "PostgresConfigToml": {
-      "type": "object",
-      "properties": {
-        "db_name": {
-          "type": "string"
-        },
-        "host": {
-          "type": "string"
-        },
-        "password": {
-          "type": "string"
-        },
-        "provision_policy": {
-          "$ref": "#/$defs/PostgresProvisionPolicy"
-        },
-        "subscription_interruption": {
-          "description": "Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism.",
-          "$ref": "#/$defs/DurationConfigOptional",
-          "default": {
-            "seconds": 1
-          }
-        },
-        "user": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "host",
-        "user",
-        "password",
-        "db_name"
-      ]
-    },
-    "PostgresProvisionPolicy": {
-      "oneOf": [
-        {
-          "type": "string",
-          "enum": [
-            "never"
-          ]
-        },
-        {
-          "description": "Create database if it does not exist.",
-          "type": "string",
-          "const": "auto"
-        }
-      ]
-    },
     "ReplaceIn": {
       "description": "Where in the outgoing request placeholders are replaced.",
       "type": "string",
@@ -1160,302 +702,6 @@
         "body",
         "params"
       ]
-    },
-    "Rotation": {
-      "type": "string",
-      "enum": [
-        "minutely",
-        "hourly",
-        "daily",
-        "never"
-      ]
-    },
-    "SpanConfig": {
-      "oneOf": [
-        {
-          "description": "spans are ignored (this is the default)",
-          "type": "string",
-          "const": "none"
-        },
-        {
-          "description": "one event when span is created",
-          "type": "string",
-          "const": "new"
-        },
-        {
-          "description": "one event per enter of a span",
-          "type": "string",
-          "const": "enter"
-        },
-        {
-          "description": "one event per exit of a span",
-          "type": "string",
-          "const": "exit"
-        },
-        {
-          "description": "one event when the span is dropped",
-          "type": "string",
-          "const": "close"
-        },
-        {
-          "description": "one event per enter/exit of a span",
-          "type": "string",
-          "const": "active"
-        },
-        {
-          "description": "events at all points (new, enter, exit, drop)",
-          "type": "string",
-          "const": "full"
-        }
-      ]
-    },
-    "SqliteConfigToml": {
-      "type": "object",
-      "properties": {
-        "directory": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "metrics_threshold": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DurationConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "pragma": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {}
-        },
-        "queue_capacity": {
-          "type": "integer",
-          "format": "uint",
-          "default": 100,
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false
-    },
-    "TimersWatcherTomlConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "leeway": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 500
-          }
-        },
-        "tick_sleep": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "Unlimited": {
-      "type": "string",
-      "enum": [
-        "unlimited"
-      ]
-    },
-    "ValueOrUnlimited": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Unlimited"
-        },
-        {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        }
-      ]
-    },
-    "WasmGlobalBacktrace": {
-      "type": "object",
-      "properties": {
-        "persist": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": false
-    },
-    "WasmGlobalConfigToml": {
-      "type": "object",
-      "properties": {
-        "allocator_config": {
-          "$ref": "#/$defs/WasmtimeAllocatorConfig"
-        },
-        "backtrace": {
-          "$ref": "#/$defs/WasmGlobalBacktrace"
-        },
-        "build_semaphore": {
-          "$ref": "#/$defs/ValueOrUnlimited"
-        },
-        "cache_directory": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "codegen_cache": {
-          "$ref": "#/$defs/CodegenCache"
-        },
-        "debug": {
-          "type": "boolean",
-          "default": false
-        },
-        "fuel": {
-          "$ref": "#/$defs/ValueOrUnlimited"
-        },
-        "global_executor_instance_limiter": {
-          "$ref": "#/$defs/InflightSemaphore"
-        },
-        "global_webhook_instance_limiter": {
-          "$ref": "#/$defs/InflightSemaphore"
-        },
-        "parallel_compilation": {
-          "type": "boolean",
-          "default": true
-        },
-        "wasmtime_pooling_config": {
-          "$ref": "#/$defs/WasmtimePoolingAllocatorConfig"
-        }
-      },
-      "additionalProperties": false
-    },
-    "WasmtimeAllocatorConfig": {
-      "type": "string",
-      "enum": [
-        "auto",
-        "on_demand",
-        "pooling"
-      ]
-    },
-    "WasmtimePoolingAllocatorConfig": {
-      "type": "object",
-      "properties": {
-        "memory_protection_keys": {
-          "description": "Enable memory protection keys for the pooling allocator; this can\noptimize the size of memory slots.",
-          "type": [
-            "boolean",
-            "null"
-          ],
-          "default": null
-        },
-        "pooling_max_memory_size": {
-          "description": "The maximum runtime size of each linear memory in the pooling\nallocator, in bytes.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_memory_keep_resident": {
-          "description": "How many bytes to keep resident between instantiations for the\npooling allocator in linear memories.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_table_keep_resident": {
-          "description": "How many bytes to keep resident between instantiations for the\npooling allocator in tables.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_component_instances": {
-          "description": "The maximum number of WebAssembly components which can be created\nwith the pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_core_instances": {
-          "description": "The maximum number of WebAssembly instances which can be created\nwith the pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_memories": {
-          "description": "The maximum number of WebAssembly memories which can be created with\nthe pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_stacks": {
-          "description": "The maximum number of WebAssembly stacks which can be created with\nthe pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_tables": {
-          "description": "The maximum number of WebAssembly tables which can be created with\nthe pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false
-    },
-    "WebUIConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "listening_addr": {
-          "type": "string",
-          "default": "127.0.0.1:8080"
-        }
-      },
-      "additionalProperties": false
     },
     "WebhookComponentConfigToml": {
       "type": "object",
@@ -1782,18 +1028,6 @@
         "location",
         "ffqn"
       ]
-    },
-    "WorkflowsGlobalConfigToml": {
-      "type": "object",
-      "properties": {
-        "lock_extension_leeway": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
-        }
-      },
-      "additionalProperties": false
     }
   }
 }

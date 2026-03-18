@@ -1,0 +1,7 @@
+activities.directories.enabled = true
+
+[log.file]
+enabled = true
+target = true
+directory = "."
+prefix = "obelisk.log" # File name prefix
