@@ -1534,9 +1534,10 @@ pub(crate) struct ComponentBacktraceConfig {
 }
 /// Canonical JS location — no local file paths.
 /// Used for hash computation, wire format in deployment submission, and DB storage.
-#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum JsLocationCanonical {
+    #[schemars(with = "String")]
     GitHub(GitHubReleaseReference),
     Content { content: String, file_name: String },
 }
@@ -1618,8 +1619,9 @@ impl WorkflowConfigVerified {
 // Canonical component config types
 // Used for wire format, hash computation, and DB storage.
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema, Debug, Default, Clone, Serialize, Deserialize)]
 pub(crate) struct ComponentBacktraceConfigCanonical {
+    #[schemars(with = "std::collections::HashMap<String, String>")]
     pub(crate) frame_files_to_sources: HashMap<String, String>,
 }
 
@@ -1630,7 +1632,7 @@ impl ComponentBacktraceConfigCanonical {
 }
 
 /// Canonical form of `ActivityJsComponentConfigToml`.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityJsComponentConfigCanonical {
     pub(crate) name: ConfigName,
@@ -1765,7 +1767,7 @@ impl ActivityJsComponentConfigCanonical {
 }
 
 /// Canonical form of `WorkflowComponentConfigToml`.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentConfigCanonical {
     #[serde(flatten)]
@@ -1856,7 +1858,7 @@ impl WorkflowComponentConfigCanonical {
 }
 
 /// Canonical form of `WorkflowJsComponentConfigToml`.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowJsComponentConfigCanonical {
     pub(crate) name: ConfigName,
@@ -1983,7 +1985,7 @@ impl WorkflowJsComponentConfigCanonical {
 
 /// Canonical deployment configuration — no local file paths.
 /// Used for hash computation, wire format, and DB storage.
-#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone, schemars::JsonSchema)]
 pub(crate) struct DeploymentCanonical {
     #[serde(default, rename = "activity_wasm")]
     pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
@@ -2650,7 +2652,7 @@ pub(crate) mod webhook {
     }
 
     /// Canonical form of `WebhookComponentConfigToml`.
-    #[derive(Debug, Deserialize, Serialize, Clone)]
+    #[derive(Debug, Deserialize, Serialize, Clone, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookComponentConfigCanonical {
         #[serde(flatten)]
@@ -2718,7 +2720,7 @@ pub(crate) mod webhook {
     }
 
     /// Canonical form of `WebhookJsComponentConfigToml`.
-    #[derive(Debug, Deserialize, Serialize, Clone)]
+    #[derive(Debug, Deserialize, Serialize, Clone, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookJsComponentConfigCanonical {
         pub(crate) name: ConfigName,

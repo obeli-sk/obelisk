@@ -113,6 +113,12 @@ pub(crate) enum Generate {
         /// Filename to write the schema to, defaults to <stdout>.
         output: Option<PathBuf>,
     },
+    /// Generate the canonical deployment schema (stored in the database) in JSON schema format.
+    #[cfg(debug_assertions)]
+    DeploymentCanonicalSchema {
+        /// Filename to write the schema to, defaults to <stdout>.
+        output: Option<PathBuf>,
+    },
     /// Generate the database storage schema in JSON schema format.
     #[cfg(debug_assertions)]
     DbSchema {

@@ -25,6 +25,10 @@ impl Generate {
             #[cfg(debug_assertions)]
             Generate::DeploymentSchema { output } => generate_deployment_schema(output),
             #[cfg(debug_assertions)]
+            Generate::DeploymentCanonicalSchema { output } => {
+                generate_deployment_canonical_schema(output)
+            }
+            #[cfg(debug_assertions)]
             Generate::DbSchema { output } => generate_db_schema(output),
             #[cfg(debug_assertions)]
             Generate::OpenApiSchema { output } => generate_openapi_schema(output),
@@ -108,6 +112,13 @@ pub(crate) fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(
 #[cfg(debug_assertions)]
 pub(crate) fn generate_deployment_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     write_schema::<crate::config::toml::DeploymentToml>(output)
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn generate_deployment_canonical_schema(
+    output: Option<PathBuf>,
+) -> Result<(), anyhow::Error> {
+    write_schema::<crate::config::toml::DeploymentCanonical>(output)
 }
 
 #[cfg(debug_assertions)]
