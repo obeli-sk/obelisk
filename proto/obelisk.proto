@@ -758,8 +758,7 @@ message Deployment {
     DeploymentStatus status = 2;
     google.protobuf.Timestamp created_at = 3;
     google.protobuf.Timestamp updated_at = 4;
-    string config_hash = 5;
-    optional string config_json = 6;
+    optional string config_json = 5;
 }
 
 message DeploymentSummary {

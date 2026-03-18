@@ -358,7 +358,6 @@ CREATE TABLE IF NOT EXISTS t_deployment (
     updated_at    TEXT NOT NULL,
     status        TEXT NOT NULL,
     config_json      TEXT NOT NULL,
-    config_hash      TEXT NOT NULL,
     obelisk_version  TEXT NOT NULL,
     created_by       TEXT
 ) STRICT
@@ -686,14 +685,7 @@ impl Default for SqliteConfig {
 struct ShutdownRequested;
 
 fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecord> {
-    let deployment_id_str: String = row.get("deployment_id")?;
-    let deployment_id = deployment_id_str.parse::<DeploymentId>().map_err(|_| {
-        rusqlite::Error::InvalidColumnType(
-            0,
-            "deployment_id".to_string(),
-            rusqlite::types::Type::Text,
-        )
-    })?;
+    let deployment_id: DeploymentId = row.get("deployment_id")?;
     let status_str: String = row.get("status")?;
     let status = status_str.parse::<DeploymentStatus>().map_err(|_| {
         rusqlite::Error::InvalidColumnType(3, "status".to_string(), rusqlite::types::Type::Text)
@@ -704,7 +696,6 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
         updated_at: row.get("updated_at")?,
         status,
         config_json: row.get("config_json")?,
-        config_hash: row.get("config_hash")?,
         obelisk_version: row.get("obelisk_version")?,
         created_by: row.get("created_by")?,
     })
@@ -3403,7 +3394,6 @@ impl SqlitePool {
             COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished > :now), 0) AS scheduled,
             COALESCE(SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}'), 0) AS blocked,
             COALESCE(SUM(s.state = '{STATE_FINISHED}'), 0) AS finished,
-            d.config_hash,
             {config_json_col},
             d.created_at,
             d.updated_at,
@@ -3434,7 +3424,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " GROUP BY d.deployment_id, d.config_hash, d.config_json, d.created_at, d.updated_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
+            " GROUP BY d.deployment_id, d.config_json, d.created_at, d.updated_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -3469,7 +3459,6 @@ impl SqlitePool {
                         scheduled: row.get("scheduled")?,
                         blocked: row.get("blocked")?,
                         finished: row.get("finished")?,
-                        config_hash: row.get("config_hash")?,
                         config_json: row.get("config_json")?,
                         created_at: row.get("created_at")?,
                         updated_at: row.get("updated_at")?,
@@ -3489,15 +3478,14 @@ impl SqlitePool {
     ) -> Result<(), DbErrorWrite> {
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by) \
-             VALUES (:deployment_id, :created_at, :updated_at, :status, :config_json, :config_hash, :obelisk_version, :created_by)",
+             (deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by) \
+             VALUES (:deployment_id, :created_at, :updated_at, :status, :config_json, :obelisk_version, :created_by)",
             rusqlite::named_params! {
                 ":deployment_id": record.deployment_id.to_string(),
                 ":created_at": record.created_at,
                 ":updated_at": record.updated_at,
                 ":status": record.status.as_str(),
                 ":config_json": record.config_json,
-                ":config_hash": record.config_hash,
                 ":obelisk_version": record.obelisk_version,
                 ":created_by": record.created_by,
             },
@@ -3538,7 +3526,7 @@ impl SqlitePool {
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         tx.query_row(
-            "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
+            "SELECT deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by \
              FROM t_deployment WHERE deployment_id = :deployment_id",
             rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
             deployment_record_from_row,
@@ -3549,7 +3537,7 @@ impl SqlitePool {
 
     fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         tx.query_row(
-            "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
+            "SELECT deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by \
              FROM t_deployment WHERE status = 'active' LIMIT 1",
             [],
             deployment_record_from_row,
@@ -3564,7 +3552,7 @@ impl SqlitePool {
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
         let mut sql = String::from(
-            "SELECT deployment_id, created_at, updated_at, status, config_json, config_hash, obelisk_version, created_by \
+            "SELECT deployment_id, created_at, updated_at, status, config_json, obelisk_version, created_by \
              FROM t_deployment",
         );
 

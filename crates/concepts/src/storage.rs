@@ -1266,11 +1266,14 @@ pub trait DbExternalApi: DbConnection {
         now: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite>;
 
+    /// Returned [`DeploymentRecord`] must contain `config_json`.
     async fn get_deployment(
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead>;
 
+    /// Return active deployment.
+    /// Returned [`DeploymentRecord`] must contain `config_json`.
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead>;
 
     async fn list_deployments(
@@ -1309,8 +1312,7 @@ pub struct DeploymentState {
     pub scheduled: u32,
     pub blocked: u32,
     pub finished: u32,
-    /// `None` when there is no matching `t_deployment` record.
-    pub config_hash: Option<String>,
+    /// None if not requested from db.
     pub config_json: Option<String>,
     pub created_at: DateTime<Utc>,
     /// Last status-change time: creation for Candidate, activation for Active, deactivation for Superseded.
@@ -1356,7 +1358,6 @@ pub struct DeploymentRecord {
     pub updated_at: DateTime<Utc>,
     pub status: DeploymentStatus,
     pub config_json: String,
-    pub config_hash: String,
     pub obelisk_version: String,
     pub created_by: Option<String>,
 }

@@ -42,7 +42,6 @@ async fn create_deployment_with_execution(
                 updated_at: now,
                 status: DeploymentStatus::Candidate,
                 config_json: "{}".to_string(),
-                config_hash: "test".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
                 created_by: None,
             })

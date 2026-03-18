@@ -590,7 +590,6 @@ async fn insert_and_activate_deployment_if_needed(
     db_pool: &dyn concepts::storage::DbPool,
     candidate_id: DeploymentId,
     config_json: String,
-    config_hash: String,
 ) -> anyhow::Result<DeploymentId> {
     use chrono::Utc;
     use concepts::storage::{DeploymentRecord, DeploymentStatus};
@@ -605,7 +604,7 @@ async fn insert_and_activate_deployment_if_needed(
         .get_active_deployment()
         .await
         .context("cannot query active deployment")?
-        && active.config_hash == config_hash
+        && active.config_json == config_json
     {
         info!(deployment_id = %active.deployment_id, "Deployment unchanged, reusing existing active deployment");
         return Ok(active.deployment_id);
@@ -618,7 +617,6 @@ async fn insert_and_activate_deployment_if_needed(
         updated_at: now,
         status: DeploymentStatus::Candidate,
         config_json,
-        config_hash,
         obelisk_version: PKG_VERSION.to_string(),
         created_by: Some("cli".to_string()),
     };
@@ -644,8 +642,7 @@ pub(crate) async fn run_internal(
         crate::config::toml::resolve_local_refs_to_canonical(&config.deployment, &path_prefixes)
             .await
             .context("cannot resolve deployment to canonical form")?;
-    let (deployment_config_json, deployment_config_hash) =
-        crate::config::toml::compute_config_json_and_hash(&deployment_canonical);
+    let deployment_config_json = crate::config::toml::compute_config_json(&deployment_canonical);
     let span = info_span!("init", %deployment_id);
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
 
@@ -698,8 +695,7 @@ pub(crate) async fn run_internal(
             let deployment_id = insert_and_activate_deployment_if_needed(
                 &*db_pool,
                 deployment_id,
-                deployment_config_json.clone(),
-                deployment_config_hash.clone(),
+                deployment_config_json,
             )
             .await?;
             let db_close = Box::pin({
@@ -734,8 +730,7 @@ pub(crate) async fn run_internal(
             let deployment_id = insert_and_activate_deployment_if_needed(
                 &*db_pool,
                 deployment_id,
-                deployment_config_json.clone(),
-                deployment_config_hash.clone(),
+                deployment_config_json,
             )
             .await?;
             let db_close = Box::pin({

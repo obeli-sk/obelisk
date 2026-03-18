@@ -98,7 +98,7 @@ impl args::Deployment {
                 }
 
                 println!(
-                    "{:<26}  {:<12}  {:<20}  {:<20}  CONFIG_HASH",
+                    "{:<26}  {:<12}  {:<20}  {:<20}",
                     "ID", "STATUS", "CREATED_AT", "UPDATED_AT"
                 );
                 for summary in resp.deployments {
@@ -113,8 +113,8 @@ impl args::Deployment {
                     let created = DateTime::from(dep.created_at.expect("created_at is sent"));
                     let updated = DateTime::from(dep.updated_at.expect("updated_at is sent"));
                     println!(
-                        "{:<26}  {:<12}  {:<20}  {:<20}  {}",
-                        id, status, created, updated, dep.config_hash
+                        "{:<26}  {:<12}  {:<20}  {:<20}",
+                        id, status, created, updated
                     );
                 }
                 Ok(())
@@ -152,7 +152,7 @@ async fn load_config_json(config: Option<ConfigSource>) -> anyhow::Result<String
         &path_prefixes,
     )
     .await?;
-    Ok(crate::config::toml::compute_config_json_and_hash(&deployment).0)
+    Ok(crate::config::toml::compute_config_json(&deployment))
 }
 
 fn format_status(status: grpc_gen::DeploymentStatus) -> &'static str {
