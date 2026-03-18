@@ -199,8 +199,12 @@ pub(crate) enum Server {
         server_config: Option<PathBuf>,
         /// Path to the deployment TOML file. If provided, the deployment is inserted and activated on startup,
         /// overriding any existing Enqueued or Active deployment in the database.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "deployment_empty")]
         deployment: Option<PathBuf>,
+        /// Start with an empty deployment, ignoring any Enqueued or Active deployment in the database.
+        /// Useful for recovering from a faulty deployment: start empty, then push a new deployment via gRPC.
+        #[arg(long)]
+        deployment_empty: bool,
         /// Ignore type checking errors
         #[arg(long, short)]
         suppress_type_checking_errors: bool,
