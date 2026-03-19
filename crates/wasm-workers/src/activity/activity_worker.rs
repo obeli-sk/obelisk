@@ -19,8 +19,8 @@ use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
-use std::{fmt::Debug, sync::Arc};
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
 use utils::wasm_tools::ExIm;
@@ -52,7 +52,7 @@ pub enum ProcessProvider {
 }
 
 #[derive(derive_more::Debug)]
-pub struct ActivityWorkerCompiled<S: Sleep> {
+pub struct ActivityWorkerCompiled {
     #[debug(skip)]
     engine: Arc<Engine>,
     #[debug(skip)]
@@ -61,17 +61,17 @@ pub struct ActivityWorkerCompiled<S: Sleep> {
     #[debug(skip)]
     clock_fn: Box<dyn ClockFn>,
     #[debug(skip)]
-    sleep: S,
+    sleep: Arc<dyn Sleep>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
 }
-impl<S: Sleep> ActivityWorkerCompiled<S> {
+impl ActivityWorkerCompiled {
     pub fn new_with_config(
         runnable_component: RunnableComponent,
         config: ActivityConfig,
         engine: Arc<Engine>,
         clock_fn: Box<dyn ClockFn>,
-        sleep: S,
+        sleep: Arc<dyn Sleep>,
     ) -> Result<Self, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&engine);
         // wasi
@@ -126,24 +126,28 @@ impl<S: Sleep> ActivityWorkerCompiled<S> {
         })
     }
 
+    #[must_use]
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(true)
     }
 
+    #[must_use]
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
         self.exim.get_exports_hierarchy_ext()
     }
 
+    #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.exim.imports_flat
     }
 
+    #[must_use]
     pub fn into_worker(
         self,
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
-    ) -> ActivityWorker<S> {
+    ) -> ActivityWorker {
         let stdout = StdOutputConfigWithSender::new(
             self.config.forward_stdout,
             log_forwarder_sender,
@@ -170,12 +174,12 @@ impl<S: Sleep> ActivityWorkerCompiled<S> {
     }
 }
 
-pub struct ActivityWorker<S: Sleep> {
+pub struct ActivityWorker {
     engine: Arc<Engine>,
     instance_pre: InstancePre<ActivityCtx>,
     exim: ExIm,
     clock_fn: Box<dyn ClockFn>,
-    sleep: S,
+    sleep: Arc<dyn Sleep>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
     cancel_registry: CancelRegistry,
@@ -184,22 +188,25 @@ pub struct ActivityWorker<S: Sleep> {
     logs_storage_config: Option<LogStrageConfig>,
 }
 
-impl<S: Sleep> ActivityWorker<S> {
+impl ActivityWorker {
+    #[must_use]
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(true)
     }
 
+    #[must_use]
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
         self.exim.get_exports_hierarchy_ext()
     }
 
+    #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.exim.imports_flat
     }
 }
 
 #[async_trait]
-impl<S: Sleep + 'static> Worker for ActivityWorker<S> {
+impl Worker for ActivityWorker {
     fn exported_functions_noext(&self) -> &[FunctionMetadata] {
         self.exim.get_exports(false)
     }
@@ -281,7 +288,7 @@ struct CallFuncParams {
     result_type: Type,
 }
 
-impl<S: Sleep + 'static> ActivityWorker<S> {
+impl ActivityWorker {
     async fn create_store(
         &self,
         ctx: &WorkerContext,
@@ -695,7 +702,7 @@ pub(crate) mod tests {
                     config_fn(component_id.clone()),
                     engine,
                     clock_fn,
-                    sleep,
+                    Arc::new(sleep),
                 )
                 .unwrap()
                 .into_worker(cancel_registry, &db_forwarder_sender, None),
@@ -2087,7 +2094,7 @@ pub(crate) mod tests {
             },
             engine,
             sim_clock.clone_box(),
-            TokioSleep,
+            Arc::new(TokioSleep),
         )
         .unwrap_err();
         let reason = assert_matches!(err, WasmFileError::LinkingError { reason, .. } => reason);

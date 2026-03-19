@@ -1,6 +1,7 @@
-use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
 pub trait ClockFn: Send + Sync + 'static {
@@ -8,18 +9,16 @@ pub trait ClockFn: Send + Sync + 'static {
     fn clone_box(&self) -> Box<dyn ClockFn>;
 }
 
-#[async_trait]
-pub trait Sleep: Send + Sync + Clone + 'static {
-    async fn sleep(&self, duration: Duration);
+pub trait Sleep: Send + Sync + 'static {
+    fn sleep(&self, duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }
 
 #[derive(Clone)]
 pub struct TokioSleep;
 
-#[async_trait]
 impl Sleep for TokioSleep {
-    async fn sleep(&self, duration: Duration) {
-        tokio::time::sleep(duration).await;
+    fn sleep(&self, duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(tokio::time::sleep(duration))
     }
 }
 

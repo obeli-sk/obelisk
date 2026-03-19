@@ -7,21 +7,21 @@ use executor::AbortOnDropHandle;
 use std::{error::Error, ffi::OsStr, path::Path, str::FromStr, sync::Arc, time::Duration};
 use tracing::{Instrument, debug, info_span, trace, warn};
 
-pub struct PreopensCleaner<S: Sleep> {
+pub struct PreopensCleaner {
     delete_older_than: Duration,
     parent_preopen_dir: Arc<Path>,
     sleep_duration: Duration,
-    sleep: S,
+    sleep: Arc<dyn Sleep>,
     clock_fn: Box<dyn ClockFn>,
     db_pool: Arc<dyn DbPool>,
 }
 
-impl<S: Sleep + 'static> PreopensCleaner<S> {
+impl PreopensCleaner {
     pub fn spawn_task(
         delete_older_than: Duration,
         parent_preopen_dir: Arc<Path>,
         sleep_duration: Duration,
-        sleep: S,
+        sleep: Arc<dyn Sleep>,
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
     ) -> AbortOnDropHandle {
