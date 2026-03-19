@@ -1258,7 +1258,7 @@ async fn spawn_tasks_and_threads(
             activities_cleanup.older_than.into(),
             parent_preopen_dir,
             activities_cleanup.run_every.into(),
-            TokioSleep,
+            Arc::new(TokioSleep),
             Now.clone_box(),
             db_pool.clone(),
         ))
@@ -1401,10 +1401,7 @@ impl ServerInit {
     }
 }
 
-type WebhookInstancesAndRoutes = (
-    WebhookEndpointInstanceLinked<TokioSleep>,
-    Vec<WebhookRouteVerified>,
-);
+type WebhookInstancesAndRoutes = (WebhookEndpointInstanceLinked, Vec<WebhookRouteVerified>);
 
 #[expect(clippy::too_many_arguments)]
 async fn start_http_servers(
@@ -1462,7 +1459,7 @@ async fn start_http_servers(
                 router,
                 db_pool.clone(),
                 Now.clone_box(),
-                TokioSleep,
+                Arc::new(TokioSleep),
                 fn_registry.clone(),
                 global_webhook_instance_limiter.clone(),
                 termination_watcher.clone(),
@@ -2257,7 +2254,7 @@ fn prespawn_activity(
         activity.activity_config,
         engine,
         Now.clone_box(),
-        TokioSleep,
+        Arc::new(TokioSleep),
     )
     .with_context(|| format!("cannot compile {component_id}"))?;
     let (worker, component_config) = WorkerCompiled::new_activity(
@@ -2285,7 +2282,7 @@ fn prespawn_js_activity(
         activity_js.activity_config,
         engines.activity_engine.clone(),
         Now.clone_box(),
-        TokioSleep,
+        Arc::new(TokioSleep),
     )
     .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?;
 
@@ -2481,8 +2478,8 @@ struct WorkflowJsWorkerCompiledWithConfig {
 }
 
 enum CompiledWorkerKind {
-    ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
-    ActivityJs(Box<ActivityJsWorkerCompiled<TokioSleep>>),
+    ActivityWasm(ActivityWorkerCompiled),
+    ActivityJs(Box<ActivityJsWorkerCompiled>),
     Workflow(WorkflowWorkerCompiledWithConfig),
     WorkflowJs(Box<WorkflowJsWorkerCompiledWithConfig>),
 }
@@ -2495,7 +2492,7 @@ struct WorkerCompiled {
 
 impl WorkerCompiled {
     fn new_activity(
-        worker: ActivityWorkerCompiled<TokioSleep>,
+        worker: ActivityWorkerCompiled,
         exec_config: ExecConfig,
         wit: String,
         logs_store_min_level: Option<LogLevel>,
@@ -2521,7 +2518,7 @@ impl WorkerCompiled {
     }
 
     fn new_js_activity(
-        worker: ActivityJsWorkerCompiled<TokioSleep>,
+        worker: ActivityJsWorkerCompiled,
         exec_config: ExecConfig,
         wit: String,
         logs_store_min_level: Option<LogLevel>,
@@ -2677,8 +2674,8 @@ struct WorkflowJsWorkerLinkedWithConfig {
 }
 
 enum LinkedWorkerKind {
-    ActivityWasm(ActivityWorkerCompiled<TokioSleep>),
-    ActivityJs(Box<ActivityJsWorkerCompiled<TokioSleep>>),
+    ActivityWasm(ActivityWorkerCompiled),
+    ActivityJs(Box<ActivityJsWorkerCompiled>),
     Workflow(WorkflowWorkerLinkedWithConfig),
     WorkflowJs(WorkflowJsWorkerLinkedWithConfig),
 }

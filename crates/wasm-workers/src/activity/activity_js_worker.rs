@@ -10,7 +10,6 @@ use crate::component_logger::LogStrageConfig;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use concepts::storage::LogInfoAppendRow;
-use concepts::time::Sleep;
 use concepts::{
     ComponentType, FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterType, Params,
     ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
@@ -27,8 +26,8 @@ use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
 /// Compiled JS activity. Holds the compiled Boa WASM component + JS source + user FFQN.
-pub struct ActivityJsWorkerCompiled<S: Sleep> {
-    inner: ActivityWorkerCompiled<S>,
+pub struct ActivityJsWorkerCompiled {
+    inner: ActivityWorkerCompiled,
     js_source: String,
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
@@ -37,9 +36,9 @@ pub struct ActivityJsWorkerCompiled<S: Sleep> {
     user_wasm_component: WasmComponent,
 }
 
-impl<S: Sleep> ActivityJsWorkerCompiled<S> {
+impl ActivityJsWorkerCompiled {
     pub fn new(
-        inner: ActivityWorkerCompiled<S>,
+        inner: ActivityWorkerCompiled,
         js_source: String,
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
@@ -58,14 +57,17 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
         })
     }
 
+    #[must_use]
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
         self.user_wasm_component.exported_functions(true)
     }
 
+    #[must_use]
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
         self.user_wasm_component.exports_hierarchy_ext()
     }
 
+    #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         self.inner.imported_functions()
     }
@@ -76,12 +78,13 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
         self.user_wasm_component.wit()
     }
 
+    #[must_use]
     pub fn into_worker(
         self,
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
-    ) -> ActivityJsWorker<S> {
+    ) -> ActivityJsWorker {
         let inner =
             self.inner
                 .into_worker(cancel_registry, log_forwarder_sender, logs_storage_config);
@@ -96,8 +99,8 @@ impl<S: Sleep> ActivityJsWorkerCompiled<S> {
     }
 }
 
-pub struct ActivityJsWorker<S: Sleep> {
-    inner: ActivityWorker<S>,
+pub struct ActivityJsWorker {
+    inner: ActivityWorker,
     js_source: String,
     #[allow(dead_code)] // Will be used for error context in future
     user_ffqn: FunctionFqn,
@@ -107,7 +110,7 @@ pub struct ActivityJsWorker<S: Sleep> {
 }
 
 #[async_trait]
-impl<S: Sleep + 'static> Worker for ActivityJsWorker<S> {
+impl Worker for ActivityJsWorker {
     fn exported_functions_noext(&self) -> &[FunctionMetadata] {
         &self.user_exports_noext
     }
@@ -287,8 +290,7 @@ mod tests {
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
     use concepts::storage::{Locked, Version};
-    use concepts::time::TokioSleep;
-    use concepts::time::{ClockFn, Now};
+    use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
     };
@@ -397,7 +399,7 @@ mod tests {
                 config,
                 engine,
                 clock_fn,
-                TokioSleep,
+                std::sync::Arc::new(TokioSleep),
             )
             .unwrap();
 

@@ -65,7 +65,7 @@ mod bench {
         db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
         clock_fn: Box<dyn ClockFn>,
-        sleep: impl Sleep + 'static,
+        sleep: impl Sleep + Clone + 'static,
         activity_engine: Arc<Engine>,
         cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
@@ -84,16 +84,17 @@ mod bench {
         db_pool: Arc<dyn DbPool>,
         wasm_path: &'static str,
         clock_fn: Box<dyn ClockFn>,
-        sleep: impl Sleep + 'static,
+        sleep: impl Sleep + Clone + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
         activity_engine: Arc<Engine>,
         cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
+        let sleep_arc: Arc<dyn Sleep> = Arc::new(sleep.clone());
         let (worker, component_id) = new_activity_worker_with_config(
             wasm_path,
             activity_engine,
             clock_fn.clone_box(),
-            sleep,
+            sleep_arc,
             config_fn,
             cancel_registry,
         );
@@ -113,7 +114,7 @@ mod bench {
             exec_config,
             clock_fn,
             db_pool,
-            TokioSleep,
+            sleep,
         )
     }
 
@@ -121,7 +122,7 @@ mod bench {
         wasm_path: &'static str,
         engine: Arc<Engine>,
         clock_fn: Box<dyn ClockFn>,
-        sleep: impl Sleep + 'static,
+        sleep: Arc<dyn Sleep>,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
         cancel_registry: CancelRegistry,
     ) -> (Arc<dyn Worker>, ComponentId) {
@@ -150,7 +151,7 @@ mod bench {
     pub(crate) fn spawn_activity_fibo(
         db_pool: Arc<dyn DbPool>,
         clock_fn: Box<dyn ClockFn>,
-        sleep: impl Sleep + 'static,
+        sleep: impl Sleep + Clone + 'static,
         activity_engine: Arc<Engine>,
         cancel_registry: CancelRegistry,
     ) -> ExecutorTaskHandle {
