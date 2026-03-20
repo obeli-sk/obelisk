@@ -4,63 +4,65 @@
   "description": "Canonical deployment configuration — no local file paths.\nUsed for hash computation, wire format, and DB storage.",
   "type": "object",
   "properties": {
-    "activity_external": {
+    "activities_external": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/ActivityExternalComponentConfigToml"
       }
     },
-    "activity_js": {
+    "activities_js": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/ActivityJsComponentConfigCanonical"
       }
     },
-    "activity_stub": {
+    "activities_stub": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/ActivityStubComponentConfigToml"
       }
     },
-    "activity_wasm": {
+    "activities_wasm": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/ActivityWasmComponentConfigToml"
       }
     },
-    "webhook_endpoint": {
+    "webhooks": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/WebhookComponentConfigCanonical"
       }
     },
-    "webhook_endpoint_js": {
+    "webhooks_js": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/WebhookJsComponentConfigCanonical"
       }
     },
-    "workflow": {
+    "workflows": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/WorkflowComponentConfigCanonical"
       }
     },
-    "workflow_js": {
+    "workflows_js": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/WorkflowJsComponentConfigCanonical"
       }
     }
   },
+  "required": [
+    "activities_wasm",
+    "activities_stub",
+    "activities_external",
+    "activities_js",
+    "workflows",
+    "workflows_js",
+    "webhooks",
+    "webhooks_js"
+  ],
   "$defs": {
     "ActivityDirectoriesConfigToml": {
       "type": "object",
@@ -123,9 +125,8 @@
       "description": "Canonical form of `ActivityJsComponentConfigToml`.",
       "type": "object",
       "properties": {
-        "allowed_host": {
+        "allowed_hosts": {
           "type": "array",
-          "default": [],
           "items": {
             "$ref": "#/$defs/AllowedHostToml"
           }
@@ -134,58 +135,41 @@
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         },
         "content_digest": {
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         },
         "env_vars": {
           "type": "array",
-          "default": [],
           "items": {
             "$ref": "#/$defs/EnvVarConfig"
           }
         },
         "exec": {
-          "$ref": "#/$defs/ExecConfigToml",
-          "default": {
-            "batch_size": 5,
-            "lock_expiry": {
-              "seconds": 1
-            },
-            "locking_strategy": null,
-            "tick_sleep": {
-              "milliseconds": 200
-            }
-          }
+          "$ref": "#/$defs/ExecConfigToml"
         },
         "ffqn": {
           "type": "string"
         },
         "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
+          "$ref": "#/$defs/ComponentStdOutputToml"
         },
         "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
+          "$ref": "#/$defs/ComponentStdOutputToml"
         },
         "location": {
           "$ref": "#/$defs/JsLocationCanonical"
         },
         "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
+          "$ref": "#/$defs/LogLevelToml"
         },
         "max_retries": {
           "type": "integer",
           "format": "uint32",
-          "default": 5,
           "minimum": 0
         },
         "name": {
@@ -196,30 +180,33 @@
             "array",
             "null"
           ],
-          "default": null,
           "items": {
             "$ref": "#/$defs/JsParamToml"
           }
         },
         "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
+          "$ref": "#/$defs/DurationConfig"
         },
         "return_type": {
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         }
       },
       "additionalProperties": false,
       "required": [
         "name",
         "location",
-        "ffqn"
+        "ffqn",
+        "exec",
+        "max_retries",
+        "retry_exp_backoff",
+        "forward_stdout",
+        "forward_stderr",
+        "logs_store_min_level",
+        "env_vars",
+        "allowed_hosts"
       ]
     },
     "ActivityStubComponentConfigToml": {
@@ -494,6 +481,30 @@
       },
       "required": [
         "frame_files_to_sources"
+      ]
+    },
+    "ComponentCommon": {
+      "type": "object",
+      "properties": {
+        "content_digest": {
+          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "location": {
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
       ]
     },
     "ComponentStdOutputToml": {
@@ -897,74 +908,46 @@
       "type": "object",
       "properties": {
         "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfigCanonical",
-          "default": {
-            "frame_files_to_sources": {}
-          }
+          "$ref": "#/$defs/ComponentBacktraceConfigCanonical"
         },
         "blocking_strategy": {
-          "$ref": "#/$defs/BlockingStrategyConfigToml",
-          "default": "await"
+          "$ref": "#/$defs/BlockingStrategyConfigToml"
+        },
+        "common": {
+          "$ref": "#/$defs/ComponentCommon"
         },
         "component_digest": {
           "type": [
             "string",
             "null"
-          ],
-          "default": null
-        },
-        "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
+          ]
         },
         "exec": {
-          "$ref": "#/$defs/ExecConfigToml",
-          "default": {
-            "batch_size": 5,
-            "lock_expiry": {
-              "seconds": 1
-            },
-            "locking_strategy": null,
-            "tick_sleep": {
-              "milliseconds": 200
-            }
-          }
-        },
-        "location": {
-          "type": "string"
+          "$ref": "#/$defs/ExecConfigToml"
         },
         "lock_extension": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "seconds": 1
-          }
+          "type": "boolean"
         },
         "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
+          "$ref": "#/$defs/LogLevelToml"
         },
         "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
+          "$ref": "#/$defs/DurationConfig"
         },
         "stub_wasi": {
-          "type": "boolean",
-          "default": false
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
       "required": [
-        "name",
-        "location"
+        "common",
+        "exec",
+        "retry_exp_backoff",
+        "blocking_strategy",
+        "backtrace",
+        "stub_wasi",
+        "lock_extension",
+        "logs_store_min_level"
       ]
     },
     "WorkflowJsComponentConfigCanonical": {
@@ -972,35 +955,22 @@
       "type": "object",
       "properties": {
         "blocking_strategy": {
-          "$ref": "#/$defs/BlockingStrategyConfigToml",
-          "default": "await"
+          "$ref": "#/$defs/BlockingStrategyConfigToml"
         },
         "component_digest": {
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         },
         "content_digest": {
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         },
         "exec": {
-          "$ref": "#/$defs/ExecConfigToml",
-          "default": {
-            "batch_size": 5,
-            "lock_expiry": {
-              "seconds": 1
-            },
-            "locking_strategy": null,
-            "tick_sleep": {
-              "milliseconds": 200
-            }
-          }
+          "$ref": "#/$defs/ExecConfigToml"
         },
         "ffqn": {
           "type": "string"
@@ -1009,14 +979,10 @@
           "$ref": "#/$defs/JsLocationCanonical"
         },
         "lock_extension": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "seconds": 1
-          }
+          "type": "boolean"
         },
         "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
+          "$ref": "#/$defs/LogLevelToml"
         },
         "name": {
           "$ref": "#/$defs/ConfigName"
@@ -1026,30 +992,30 @@
             "array",
             "null"
           ],
-          "default": null,
           "items": {
             "$ref": "#/$defs/JsParamToml"
           }
         },
         "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
+          "$ref": "#/$defs/DurationConfig"
         },
         "return_type": {
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         }
       },
       "additionalProperties": false,
       "required": [
         "name",
         "location",
-        "ffqn"
+        "ffqn",
+        "exec",
+        "retry_exp_backoff",
+        "blocking_strategy",
+        "logs_store_min_level",
+        "lock_extension"
       ]
     }
   }

@@ -1399,7 +1399,7 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     #[serde(default)]
     pub(crate) blocking_strategy: BlockingStrategyConfigToml,
     #[serde(default = "default_lock_extension")]
-    lock_extension: DurationConfig,
+    pub(crate) lock_extension: bool,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
     /// WIT return type. Defaults to `result<string, string>`.
@@ -1453,7 +1453,7 @@ pub(crate) struct WorkflowComponentConfigToml {
     #[serde(default)]
     pub(crate) stub_wasi: bool,
     #[serde(default = "default_lock_extension")]
-    lock_extension: DurationConfig,
+    pub(crate) lock_extension: bool,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
 }
@@ -1640,30 +1640,18 @@ impl ComponentBacktraceConfigCanonical {
 pub(crate) struct ActivityJsComponentConfigCanonical {
     pub(crate) name: ConfigName,
     pub(crate) location: JsLocationCanonical,
-    #[serde(default)]
     pub(crate) content_digest: Option<ContentDigest>,
-    #[serde(default)]
     pub(crate) component_digest: Option<ComponentDigest>,
     pub(crate) ffqn: FunctionFqn,
-    #[serde(default)]
     pub(crate) params: Option<Vec<JsParamToml>>,
-    #[serde(default)]
     pub(crate) exec: ExecConfigToml,
-    #[serde(default = "default_max_retries")]
     pub(crate) max_retries: u32,
-    #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
-    #[serde(default)]
     pub(crate) forward_stdout: ComponentStdOutputToml,
-    #[serde(default)]
     pub(crate) forward_stderr: ComponentStdOutputToml,
-    #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
-    #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
-    #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
-    #[serde(default)]
     pub(crate) return_type: Option<String>,
 }
 
@@ -1773,23 +1761,14 @@ impl ActivityJsComponentConfigCanonical {
 #[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowComponentConfigCanonical {
-    #[serde(flatten)]
     pub(crate) common: ComponentCommon,
-    #[serde(default)]
     pub(crate) component_digest: Option<ComponentDigest>,
-    #[serde(default)]
     pub(crate) exec: ExecConfigToml,
-    #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
-    #[serde(default)]
     pub(crate) blocking_strategy: BlockingStrategyConfigToml,
-    #[serde(default)]
     pub(crate) backtrace: ComponentBacktraceConfigCanonical,
-    #[serde(default)]
     pub(crate) stub_wasi: bool,
-    #[serde(default = "default_lock_extension")]
-    lock_extension: DurationConfig,
-    #[serde(default)]
+    pub(crate) lock_extension: bool,
     pub(crate) logs_store_min_level: LogLevelToml,
 }
 
@@ -1838,7 +1817,7 @@ impl WorkflowComponentConfigCanonical {
             backtrace_persist: global_backtrace_persist,
             stub_wasi: self.stub_wasi,
             fuel,
-            lock_extension: self.lock_extension.into(),
+            lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
             subscription_interruption,
         };
         let frame_files_to_sources = self.backtrace.into_frame_files();
@@ -1866,25 +1845,16 @@ impl WorkflowComponentConfigCanonical {
 pub(crate) struct WorkflowJsComponentConfigCanonical {
     pub(crate) name: ConfigName,
     pub(crate) location: JsLocationCanonical,
-    #[serde(default)]
     pub(crate) content_digest: Option<ContentDigest>,
-    #[serde(default)]
     pub(crate) component_digest: Option<ComponentDigest>,
     pub(crate) ffqn: FunctionFqn,
-    #[serde(default)]
     pub(crate) params: Option<Vec<JsParamToml>>,
-    #[serde(default)]
     pub(crate) exec: ExecConfigToml,
-    #[serde(default = "default_retry_exp_backoff")]
     pub(crate) retry_exp_backoff: DurationConfig,
-    #[serde(default)]
     pub(crate) blocking_strategy: BlockingStrategyConfigToml,
-    #[serde(default = "default_lock_extension")]
-    lock_extension: DurationConfig,
-    #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
-    #[serde(default)]
     pub(crate) return_type: Option<String>,
+    pub(crate) lock_extension: bool,
 }
 
 impl WorkflowJsComponentConfigCanonical {
@@ -1960,7 +1930,7 @@ impl WorkflowJsComponentConfigCanonical {
             backtrace_persist: false,
             stub_wasi: false,
             fuel: None,
-            lock_extension: self.lock_extension.into(),
+            lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
             subscription_interruption: None,
         };
         let retry_config = ComponentRetryConfig {
@@ -1990,21 +1960,13 @@ impl WorkflowJsComponentConfigCanonical {
 /// Used for hash computation, wire format, and DB storage.
 #[derive(Debug, Deserialize, Serialize, Default, Clone, schemars::JsonSchema)]
 pub(crate) struct DeploymentCanonical {
-    #[serde(default, rename = "activity_wasm")]
     pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
-    #[serde(default, rename = "activity_stub")]
     pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
-    #[serde(default, rename = "activity_external")]
     pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
-    #[serde(default, rename = "activity_js")]
     pub(crate) activities_js: Vec<ActivityJsComponentConfigCanonical>,
-    #[serde(default, rename = "workflow")]
     pub(crate) workflows: Vec<WorkflowComponentConfigCanonical>,
-    #[serde(default, rename = "workflow_js")]
     pub(crate) workflows_js: Vec<WorkflowJsComponentConfigCanonical>,
-    #[serde(default, rename = "webhook_endpoint")]
     pub(crate) webhooks: Vec<webhook::WebhookComponentConfigCanonical>,
-    #[serde(default, rename = "webhook_endpoint_js")]
     pub(crate) webhooks_js: Vec<webhook::WebhookJsComponentConfigCanonical>,
 }
 
@@ -3066,8 +3028,8 @@ const fn default_tick_sleep() -> DurationConfig {
     DurationConfig::Milliseconds(200)
 }
 
-const fn default_lock_extension() -> DurationConfig {
-    DurationConfig::Seconds(1)
+const fn default_lock_extension() -> bool {
+    true
 }
 
 const fn default_subscription_interruption() -> DurationConfigOptional {
