@@ -1500,15 +1500,15 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
 
                 // Stop old executors.
                 let old = std::mem::take(&mut ctx.exec_task_handles);
-
-                for exec_handle in old {
+                futures_util::future::join_all(old.iter().map(|exec_handle| {
                     let mode = if exec_handle.component_id().component_type.is_activity() {
                         WorkerShutdownMode::SkipWorkers
                     } else {
                         WorkerShutdownMode::WaitForWorkers
                     };
-                    exec_handle.close(mode).await;
-                }
+                    exec_handle.close(mode)
+                }))
+                .await;
 
                 // Spawn new executors.
                 let new_handles: Vec<ExecutorTaskHandle> = compiled

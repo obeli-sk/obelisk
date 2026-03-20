@@ -1393,14 +1393,15 @@ impl ServerInit {
             deployment_lock.closed = true;
             std::mem::take(&mut deployment_lock.exec_task_handles)
         };
-        for exec_handle in executors {
+        futures_util::future::join_all(executors.iter().map(|exec_handle| {
             let mode = if exec_handle.component_id().component_type.is_activity() {
                 WorkerShutdownMode::SkipWorkers
             } else {
                 WorkerShutdownMode::WaitForWorkers
             };
-            exec_handle.close(mode).await;
-        }
+            exec_handle.close(mode)
+        }))
+        .await;
         drop(log_db_forarder); // Some incoming messages might not be stored.
         db_close.await;
     }
