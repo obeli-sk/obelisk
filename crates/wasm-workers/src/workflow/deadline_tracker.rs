@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{storage::TimeoutOutcome, time::ClockFn};
-use std::{cmp::min, pin::Pin, sync::Arc, time::Duration};
+use std::{cmp::min, pin::Pin, time::Duration};
+use tokio::sync::watch;
 use tracing::{trace, warn};
 
 #[async_trait]
 pub trait DeadlineTracker: Send + Sync {
+    fn check_preempt(&self) -> Result<(), PreemptRequested>;
 
     /// Called after the workflow made progress and is now blocked waiting for a response.
     /// Return a future that resolves on deadline. If `max_duration` is specified, the future resolves
@@ -22,10 +24,17 @@ pub trait DeadlineTracker: Send + Sync {
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc>;
 }
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum PreemptRequested {
+    #[error("executor is closing")]
+    ExecutorClosing,
+}
+
 pub trait DeadlineTrackerFactory: Send + Sync {
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
+        unlock_executor_close_watcher: Option<watch::Receiver<bool>>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired>;
 }
 
@@ -35,16 +44,28 @@ pub struct LockAlreadyExpired {
     pub started_at: DateTime<Utc>,
 }
 
-
 pub(crate) struct DeadlineTrackerTokio {
     pub(crate) deadline: tokio::time::Instant,
     pub(crate) deadline_minus_leeway: tokio::time::Instant, // Tracked as instant because calling track happens later after creation.
     pub(crate) clock_fn: Box<dyn ClockFn>,
     pub(crate) leeway: Duration, // Fire this much sooner than requested.
+    executor_close_watcher: Option<watch::Receiver<bool>>,
 }
 
 #[async_trait]
 impl DeadlineTracker for DeadlineTrackerTokio {
+    fn check_preempt(&self) -> Result<(), PreemptRequested> {
+        let executor_closing = self
+            .executor_close_watcher
+            .as_ref()
+            .is_some_and(|executor_close_watcher| *executor_close_watcher.borrow());
+        if executor_closing {
+            Err(PreemptRequested::ExecutorClosing)
+        } else {
+            Ok(())
+        }
+    }
+
     fn track(
         &self,
         max_duration: Option<Duration>,
@@ -58,14 +79,19 @@ impl DeadlineTracker for DeadlineTrackerTokio {
             } else {
                 self.deadline_minus_leeway
             };
-
-            let mut interrupt_rx = self.hot_redeploy_signal.subscribe();
-            Some(Box::pin(async move {
-                tokio::select! {
-                    () = tokio::time::sleep_until(expiry) => TimeoutOutcome::Timeout,
-                    _ = interrupt_rx.wait_for(|&v| v) => TimeoutOutcome::Timeout,
-                }
-            }))
+            if let Some(mut executor_close_watcher) = self.executor_close_watcher.clone() {
+                Some(Box::pin(async move {
+                    tokio::select! {
+                        () = tokio::time::sleep_until(expiry) => TimeoutOutcome::Timeout,
+                        _ = executor_close_watcher.wait_for(|&v| v) => TimeoutOutcome::Timeout,
+                    }
+                }))
+            } else {
+                Some(Box::pin(async move {
+                    tokio::time::sleep_until(expiry).await;
+                    TimeoutOutcome::Timeout
+                }))
+            }
         }
     }
 
@@ -95,6 +121,12 @@ pub struct DeadlineTrackerFactoryTokio {
     pub leeway: Duration, // Fire this much sooner than requested.
     pub clock_fn: Box<dyn ClockFn>,
 }
+impl DeadlineTrackerFactoryTokio {
+    #[must_use]
+    pub fn new(leeway: Duration, clock_fn: Box<dyn ClockFn>) -> Self {
+        Self { leeway, clock_fn }
+    }
+}
 impl Clone for DeadlineTrackerFactoryTokio {
     fn clone(&self) -> Self {
         Self {
@@ -108,6 +140,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
+        executor_close_watcher: Option<watch::Receiver<bool>>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         let started_at = self.clock_fn.now();
         let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
@@ -129,6 +162,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
             deadline_minus_leeway,
             clock_fn: self.clock_fn.clone_box(),
             leeway: self.leeway,
+            executor_close_watcher,
         };
         Ok(Box::new(tracker))
     }
@@ -139,10 +173,10 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
 pub fn deadline_tracker_factory_test(
     sim_clock: &test_utils::sim_clock::SimClock,
 ) -> std::sync::Arc<impl DeadlineTrackerFactory + use<>> {
-    std::sync::Arc::new(DeadlineTrackerFactoryTokio {
-        leeway: Duration::ZERO,
-        clock_fn: sim_clock.clone_box(),
-    })
+    std::sync::Arc::new(DeadlineTrackerFactoryTokio::new(
+        Duration::ZERO,
+        sim_clock.clone_box(),
+    ))
 }
 
 pub struct DeadlineTrackerFactoryForReplay {}
@@ -151,11 +185,16 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryForReplay {
     fn create(
         &self,
         _lock_expires_at: DateTime<Utc>,
+        _executor_close_watcher: Option<watch::Receiver<bool>>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         Ok(Box::new(DeadlineTrackerFactoryForReplay {}))
     }
 }
 impl DeadlineTracker for DeadlineTrackerFactoryForReplay {
+    fn check_preempt(&self) -> Result<(), PreemptRequested> {
+        Ok(())
+    }
+
     fn track(
         &self,
         _max_duration: Option<Duration>,

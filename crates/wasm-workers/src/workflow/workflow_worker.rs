@@ -49,7 +49,7 @@ pub struct WorkflowConfig {
     pub backtrace_persist: bool,
     pub stub_wasi: bool,
     pub fuel: Option<u64>,
-    pub lock_extension: Duration,
+    pub lock_extension: Option<Duration>,
     pub subscription_interruption: Option<Duration>,
 }
 
@@ -425,7 +425,7 @@ impl WorkflowWorker {
 
         let deadline_tracker = match self
             .deadline_factory
-            .create(ctx.locked_event.lock_expires_at)
+            .create(ctx.locked_event.lock_expires_at, ctx.executor_close_watcher)
         {
             Ok(deadline_tracker) => deadline_tracker,
             Err(lock_already_expired) => {
@@ -820,7 +820,7 @@ impl WorkflowWorker {
         let config = WorkflowConfig {
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             backtrace_persist: false,
-            lock_extension: Duration::ZERO,
+            lock_extension: None,
             subscription_interruption: None,
             component_id,
             stub_wasi: true, // no harm, stub it in any case
@@ -850,6 +850,7 @@ impl WorkflowWorker {
                 lock_expires_at: clock_fn.now(), // does not matter, using DeadlineTrackerFactoryForReplay
                 retry_config: concepts::ComponentRetryConfig::WORKFLOW,
             },
+            executor_close_watcher: None,
         };
 
         let compiled = WorkflowWorkerCompiled::new_with_config_inner(
@@ -1082,7 +1083,7 @@ pub(crate) mod tests {
                     backtrace_persist: false,
                     stub_wasi: false,
                     fuel: None,
-                    lock_extension: Duration::ZERO,
+                    lock_extension: None,
                     subscription_interruption: None,
                 },
                 workflow_engine,
@@ -1094,10 +1095,7 @@ pub(crate) mod tests {
             .into_worker(
                 DEPLOYMENT_ID_DUMMY,
                 db_pool,
-                Arc::new(DeadlineTrackerFactoryTokio {
-                    leeway: Duration::ZERO,
-                    clock_fn,
-                }),
+                Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn)),
                 cancel_registry,
                 None, // logs_storage_config
             ),
@@ -1884,6 +1882,7 @@ pub(crate) mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
+            executor_close_watcher: None,
         };
         let worker_result = worker.run(ctx).await;
         assert_matches!(

@@ -69,7 +69,7 @@ use directories::BaseDirs;
 use directories::ProjectDirs;
 use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
-use executor::executor::{ExecConfig, ExecTask};
+use executor::executor::{ExecConfig, ExecTask, WorkerShutdownMode};
 use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
 use executor::worker::Worker;
@@ -1393,8 +1393,13 @@ impl ServerInit {
             deployment_lock.closed = true;
             std::mem::take(&mut deployment_lock.exec_task_handles)
         };
-        for exec_join_handle in executors {
-            exec_join_handle.close().await;
+        for exec_handle in executors {
+            let mode = if exec_handle.component_id().component_type.is_activity() {
+                WorkerShutdownMode::SkipWorkers
+            } else {
+                WorkerShutdownMode::WaitForWorkers
+            };
+            exec_handle.close(mode).await;
         }
         drop(log_db_forarder); // Some incoming messages might not be stored.
         db_close.await;
@@ -2713,25 +2718,27 @@ impl WorkerLinked {
                 ))
             }
             LinkedWorkerKind::Workflow(workflow_linked) => {
+                let factory = DeadlineTrackerFactoryTokio::new(
+                    workflow_linked.workflows_lock_extension_leeway,
+                    Now.clone_box(),
+                );
                 Arc::from(workflow_linked.worker.into_worker(
                     deployment_id,
                     db_pool.clone(),
-                    Arc::new(DeadlineTrackerFactoryTokio {
-                        leeway: workflow_linked.workflows_lock_extension_leeway,
-                        clock_fn: Now.clone_box(),
-                    }),
+                    Arc::new(factory),
                     cancel_registry,
                     logs_storage_config,
                 ))
             }
             LinkedWorkerKind::WorkflowJs(workflow_js_linked) => {
+                let factory = DeadlineTrackerFactoryTokio::new(
+                    workflow_js_linked.workflows_lock_extension_leeway,
+                    Now.clone_box(),
+                );
                 Arc::from(workflow_js_linked.worker.into_worker(
                     deployment_id,
                     db_pool.clone(),
-                    Arc::new(DeadlineTrackerFactoryTokio {
-                        leeway: workflow_js_linked.workflows_lock_extension_leeway,
-                        clock_fn: Now.clone_box(),
-                    }),
+                    Arc::new(factory),
                     cancel_registry,
                     logs_storage_config,
                 ))

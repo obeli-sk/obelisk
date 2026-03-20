@@ -90,3 +90,22 @@ params = [
   { name = "id", type = "u64" },
 ]
 return_type = "result<string, string>"
+
+# Busy workflow
+
+[[workflow_js]]
+name = "busy"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy.js"
+ffqn = "testing:integration/workflow-busy.busy"
+params = []
+exec.lock_expiry.seconds = 5
+
+[[activity_js]]
+name = "activity_sleep"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/sleep.js"
+ffqn = "testing:integration/sleep-activity.sleep"
+params = [
+  { name = "milliseconds", type = "u64" },
+]
+return_type = "result"
+max_retries = 0
