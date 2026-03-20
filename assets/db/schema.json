@@ -259,7 +259,7 @@
           ]
         },
         {
-          "description": "Returns execution to [`PendingState::PendingAt`] state at the specified time.\nThis can happen when:\n- executor is running out of resources like [`WorkerError::LimitReached`]\n- executor is shutting down",
+          "description": "Returns execution to [`PendingState::PendingAt`] state at the specified time.\nThis can happen when:\n- executor is running out of resources like [`WorkerError::LimitReached`]\n- workflow made progress but then its lock expired.",
           "type": "object",
           "properties": {
             "unlocked": {
