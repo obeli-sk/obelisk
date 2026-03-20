@@ -1378,15 +1378,7 @@ impl ServerInit {
             log_db_forarder,
             log_forwarder_sender,
         } = self;
-        // Explicit drop to avoid the pattern match footgun.
-        drop(db_pool);
-        drop(timers_watcher);
-        drop(cancel_watcher);
-        drop(http_servers_handles);
-        drop(epoch_ticker);
-        drop(preopens_cleaner);
-        drop(engines);
-        drop(log_forwarder_sender);
+
         debug!("Closing executors");
         let executors = {
             let mut deployment_lock = deployment_ctx.write().await;
@@ -1402,7 +1394,17 @@ impl ServerInit {
             exec_handle.close(mode)
         }))
         .await;
-        drop(log_db_forarder); // Some incoming messages might not be stored.
+        // Explicit drop to avoid the pattern match footgun.
+        // Close everything that is a dependency of executors or workers.
+        drop(db_pool);
+        drop(timers_watcher);
+        drop(cancel_watcher);
+        drop(http_servers_handles);
+        drop(epoch_ticker);
+        drop(preopens_cleaner);
+        drop(engines);
+        drop(log_forwarder_sender);
+        drop(log_db_forarder); // Some activity messages might not be stored.
         db_close.await;
     }
 }
