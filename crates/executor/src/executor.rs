@@ -45,6 +45,8 @@ pub struct ExecTask {
     clock_fn: Box<dyn ClockFn>, // Used for obtaining current time when the execution finishes.
     db_pool: Arc<dyn DbPool>,
     locking_strategy_holder: LockingStrategyHolder,
+    worker_count_tx: tokio::sync::watch::Sender<usize>,
+    executor_close_watcher: tokio::sync::watch::Receiver<bool>,
 }
 
 #[derive(derive_more::Debug, Default)]
@@ -66,6 +68,24 @@ impl ExecutionProgress {
     }
 }
 
+/// Controls whether [`ExecutorTaskHandle::close`] waits for in-progress worker
+/// tasks to finish after the executor loop exits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WorkerShutdownMode {
+    /// Fire the interrupt signal and return as soon as the executor loop exits.
+    /// In-progress workers may still be running; they will complete and update
+    /// the database on their own.  Use this for hot-redeploy where a new
+    /// executor takes over immediately.
+    SkipWorkers,
+    WaitForWorkers,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkerType {
+    Activity,
+    Workflow,
+}
+
 #[derive(derive_more::Debug)]
 pub struct ExecutorTaskHandle {
     #[debug(skip)]
@@ -74,24 +94,35 @@ pub struct ExecutorTaskHandle {
     abort_handle: AbortHandle,
     component_id: ComponentId,
     executor_id: ExecutorId,
+    executor_closing_signal_sender: tokio::sync::watch::Sender<bool>,
+    /// Tracks the number of worker tasks currently in-flight.
+    worker_count_rx: tokio::sync::watch::Receiver<usize>,
 }
 
 impl ExecutorTaskHandle {
-    #[instrument(level = Level::DEBUG, name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id))]
-    pub async fn close(&self) {
+    #[instrument(name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id))]
+    pub async fn close(&self, mode: WorkerShutdownMode) {
         trace!("Gracefully closing");
-        // TODO: Close all the workers tasks as well.
-        // Simple solution:
-        // Attempt to unlock all in-progress executions. Activities will not be penalized for shutdown, although the number of retries would increase,
-        // some progress will be lost.
-        // More complex solution:
-        // Activities will be awaited, up to some deadline, then unlocked.
-        // Workflows that are awating should be signaled using `DeadlineTracker`.
         self.is_closing.store(true, Ordering::Relaxed);
         while !self.abort_handle.is_finished() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        debug!("Gracefully closed");
+        if mode == WorkerShutdownMode::WaitForWorkers {
+            info!("Signaling workflow tasks to unlock");
+            let _ = self.executor_closing_signal_sender.send(true);
+            // `wait_for` re-checks the current value before awaiting, so no notifications are missed.
+            let _ = self
+                .worker_count_rx
+                .clone()
+                .wait_for(|&count| count == 0)
+                .await;
+        }
+        info!("Gracefully closed");
+    }
+
+    #[must_use]
+    pub fn component_id(&self) -> &ComponentId {
+        &self.component_id
     }
 }
 
@@ -147,12 +178,15 @@ impl ExecTask {
         db_pool: Arc<dyn DbPool>,
         ffqns: Arc<[FunctionFqn]>,
     ) -> Self {
-        Self {
+        let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
+        ExecTask {
             worker,
             locking_strategy_holder: config.locking_strategy.holder(ffqns),
             config,
             clock_fn,
             db_pool,
+            worker_count_tx,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         }
     }
 
@@ -164,12 +198,15 @@ impl ExecTask {
         db_pool: Arc<dyn DbPool>,
     ) -> Self {
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
+        let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
         Self {
             worker,
             locking_strategy_holder: config.locking_strategy.holder(ffqns),
             config,
             clock_fn,
             db_pool,
+            worker_count_tx,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         }
     }
 
@@ -186,6 +223,9 @@ impl ExecTask {
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         let component_id = config.component_id.clone();
         let executor_id = config.executor_id;
+        let (worker_count_tx, worker_count_rx) = tokio::sync::watch::channel(0);
+        let (executor_closing_signal_sender, executor_closing_signal) =
+            tokio::sync::watch::channel(false);
         let abort_handle = tokio::spawn(async move {
             debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
             let lock_strategy_holder = config.locking_strategy.holder(ffqns);
@@ -195,6 +235,8 @@ impl ExecTask {
                 db_pool,
                 locking_strategy_holder: lock_strategy_holder,
                 clock_fn: clock_fn.clone_box(),
+                worker_count_tx,
+                executor_close_watcher: executor_closing_signal,
             };
             let mut old_err = None;
             while !is_closing_inner.load(Ordering::Relaxed) {
@@ -218,6 +260,8 @@ impl ExecTask {
             abort_handle,
             component_id,
             executor_id,
+            executor_closing_signal_sender,
+            worker_count_rx,
         }
     }
 
@@ -335,6 +379,9 @@ impl ExecTask {
                     %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.config.executor_id, component_id = %self.config.component_id);
                 locked_execution.metadata.enrich(&worker_span);
                 let component_type = self.config.component_id.component_type;
+                let worker_count_tx = self.worker_count_tx.clone();
+                worker_count_tx.send_modify(|n| *n += 1);
+                let executor_close_watcher = self.executor_close_watcher.clone();
                 tokio::spawn({
                     let worker_span2 = worker_span.clone();
                     let retry_config = self.config.retry_config;
@@ -348,11 +395,13 @@ impl ExecTask {
                             locked_execution,
                             retry_config,
                             worker_span2,
+                            executor_close_watcher
                         )
                         .await;
                         if let Err(db_error) = res {
                             error!("Got db error `{db_error:?}`, expecting watcher to mark execution as timed out");
                         }
+                        worker_count_tx.send_modify(|n| *n -= 1);
                     }
                     .instrument(worker_span)
                 })
@@ -362,6 +411,7 @@ impl ExecTask {
         Ok(ExecutionProgress { executions })
     }
 
+    #[expect(clippy::too_many_arguments)]
     async fn run_worker(
         component_type: ComponentType,
         worker: Arc<dyn Worker>,
@@ -370,6 +420,7 @@ impl ExecTask {
         locked_execution: LockedExecution,
         retry_config: ComponentRetryConfig,
         worker_span: Span,
+        executor_close_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(), DbErrorWrite> {
         debug!("Worker::run starting");
         trace!(
@@ -399,6 +450,7 @@ impl ExecTask {
             can_be_retried: can_be_retried.is_some(),
             locked_event: locked_execution.locked_event,
             worker_span,
+            executor_close_watcher: Some(executor_close_watcher),
         };
         let worker_result = worker.run(ctx).await;
         debug!("Worker::run finished {worker_result:?}");

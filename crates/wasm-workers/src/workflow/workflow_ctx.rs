@@ -851,7 +851,7 @@ impl WorkflowCtx {
         fn_registry: Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
         locked_event: Locked,
-        lock_extension: Duration,
+        lock_extension: Option<Duration>,
         subscription_interruption: Option<Duration>,
         logs_storage_config: Option<LogStrageConfig>,
         is_replaying_finished: bool,
@@ -2875,19 +2875,16 @@ pub(crate) mod tests {
                 join_next_blocking_strategy,
                 tracing::info_span!("workflow-test"),
                 false,
-                DeadlineTrackerFactoryTokio {
-                    leeway: Duration::ZERO,
-                    clock_fn: self.clock_fn.clone_box(),
-                }
-                .create(ctx.locked_event.lock_expires_at)
-                .unwrap(),
+                DeadlineTrackerFactoryTokio::new(Duration::ZERO, self.clock_fn.clone_box())
+                    .create(ctx.locked_event.lock_expires_at, None)
+                    .unwrap(),
                 self.fn_registry.clone(),
                 cancel_registry,
                 ctx.locked_event,
-                Duration::from_secs(1), // lock extension
-                None,                   // subscription_interruption
-                None,                   // logs_storage_config,
-                false,                  // is_finished
+                Some(Duration::from_secs(1)), // lock extension
+                None,                         // subscription_interruption
+                None,                         // logs_storage_config,
+                false,                        // is_finished
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
@@ -3378,6 +3375,7 @@ pub(crate) mod tests {
                         lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                         retry_config: ComponentRetryConfig::ZERO,
                     },
+                    executor_close_watcher: None,
                 })
                 .await;
             // Run it SUBMITS times to close all join sets.
@@ -3425,6 +3423,7 @@ pub(crate) mod tests {
                             lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                             retry_config: ComponentRetryConfig::ZERO,
                         },
+                        executor_close_watcher: None,
                     })
                     .await;
             }
@@ -3481,6 +3480,7 @@ pub(crate) mod tests {
                     lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                     retry_config: ComponentRetryConfig::ZERO,
                 },
+                executor_close_watcher: None,
             })
             .await;
         assert_matches!(worker_result, WorkerResult::Ok(..), "should be finished");

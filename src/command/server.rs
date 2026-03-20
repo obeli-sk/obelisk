@@ -69,7 +69,7 @@ use directories::BaseDirs;
 use directories::ProjectDirs;
 use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
-use executor::executor::{ExecConfig, ExecTask};
+use executor::executor::{ExecConfig, ExecTask, WorkerShutdownMode};
 use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
 use executor::worker::Worker;
@@ -1378,7 +1378,24 @@ impl ServerInit {
             log_db_forarder,
             log_forwarder_sender,
         } = self;
+
+        debug!("Closing executors");
+        let executors = {
+            let mut deployment_lock = deployment_ctx.write().await;
+            deployment_lock.closed = true;
+            std::mem::take(&mut deployment_lock.exec_task_handles)
+        };
+        futures_util::future::join_all(executors.iter().map(|exec_handle| {
+            let mode = if exec_handle.component_id().component_type.is_activity() {
+                WorkerShutdownMode::SkipWorkers
+            } else {
+                WorkerShutdownMode::WaitForWorkers
+            };
+            exec_handle.close(mode)
+        }))
+        .await;
         // Explicit drop to avoid the pattern match footgun.
+        // Close everything that is a dependency of executors or workers.
         drop(db_pool);
         drop(timers_watcher);
         drop(cancel_watcher);
@@ -1387,16 +1404,7 @@ impl ServerInit {
         drop(preopens_cleaner);
         drop(engines);
         drop(log_forwarder_sender);
-        debug!("Closing executors");
-        let executors = {
-            let mut deployment_lock = deployment_ctx.write().await;
-            deployment_lock.closed = true;
-            std::mem::take(&mut deployment_lock.exec_task_handles)
-        };
-        for exec_join_handle in executors {
-            exec_join_handle.close().await;
-        }
-        drop(log_db_forarder); // Some incoming messages might not be stored.
+        drop(log_db_forarder); // Some activity messages might not be stored.
         db_close.await;
     }
 }
@@ -2713,25 +2721,27 @@ impl WorkerLinked {
                 ))
             }
             LinkedWorkerKind::Workflow(workflow_linked) => {
+                let factory = DeadlineTrackerFactoryTokio::new(
+                    workflow_linked.workflows_lock_extension_leeway,
+                    Now.clone_box(),
+                );
                 Arc::from(workflow_linked.worker.into_worker(
                     deployment_id,
                     db_pool.clone(),
-                    Arc::new(DeadlineTrackerFactoryTokio {
-                        leeway: workflow_linked.workflows_lock_extension_leeway,
-                        clock_fn: Now.clone_box(),
-                    }),
+                    Arc::new(factory),
                     cancel_registry,
                     logs_storage_config,
                 ))
             }
             LinkedWorkerKind::WorkflowJs(workflow_js_linked) => {
+                let factory = DeadlineTrackerFactoryTokio::new(
+                    workflow_js_linked.workflows_lock_extension_leeway,
+                    Now.clone_box(),
+                );
                 Arc::from(workflow_js_linked.worker.into_worker(
                     deployment_id,
                     db_pool.clone(),
-                    Arc::new(DeadlineTrackerFactoryTokio {
-                        leeway: workflow_js_linked.workflows_lock_extension_leeway,
-                        clock_fn: Now.clone_box(),
-                    }),
+                    Arc::new(factory),
                     cancel_registry,
                     logs_storage_config,
                 ))
@@ -2774,8 +2784,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn server_verify(
-        #[values("obelisk-testing-sqlite-server.toml", "obelisk-testing-pg-server.toml")]
-        server_toml: &'static str,
+        #[values("server-sqlite.toml", "server-postgres.toml")] server_toml: &'static str,
         #[values("obelisk-testing-wasm-local.toml", "obelisk-testing-wasm-oci.toml")]
         deployment_toml: &'static str,
     ) -> Result<(), anyhow::Error> {

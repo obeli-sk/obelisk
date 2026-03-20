@@ -463,6 +463,7 @@ mod tests {
                 lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
+            executor_close_watcher: None,
         }
     }
 
@@ -494,6 +495,7 @@ mod tests {
                 lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
+            executor_close_watcher: None,
         }
     }
 

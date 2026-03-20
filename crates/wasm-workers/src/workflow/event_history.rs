@@ -8,6 +8,7 @@ use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
+use crate::workflow::deadline_tracker::PreemptRequested;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
@@ -116,7 +117,7 @@ pub(crate) struct EventHistory {
     responses: Vec<(ResponseWithCursor, ProcessingStatus)>,
     worker_span: Span,
     deadline_tracker: Box<dyn DeadlineTracker>,
-    lock_extension: Duration,
+    lock_extension: Duration, // 0 == disabled
     locked_event: Locked,
     pub(crate) fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
@@ -145,7 +146,7 @@ impl EventHistory {
         cancel_registry: CancelRegistry,
         deadline_tracker: Box<dyn DeadlineTracker>,
         locked_event: Locked,
-        lock_extension: Duration,
+        lock_extension: Option<Duration>,
         subscription_interruption: Option<Duration>,
         worker_span: Span,
     ) -> EventHistory {
@@ -168,7 +169,7 @@ impl EventHistory {
             fn_registry,
             cancel_registry,
             locked_event,
-            lock_extension,
+            lock_extension: lock_extension.unwrap_or_default(),
             subscription_interruption,
             index_join_set_to_unawaited_requests: IndexMap::default(),
         }
@@ -253,6 +254,30 @@ impl EventHistory {
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
         debug!("applying {event_call:?}, Version:{}", db_connection.version);
+
+        match self.deadline_tracker.check_preempt() {
+            Ok(()) => {}
+            Err(PreemptRequested::ExecutorClosing) => {
+                // best effort to append `Unlocked` event. If this fails, execution will be marked as timed out and be retried later.
+                db_connection
+                    .append_blocking(
+                        db_connection.execution_id.clone(),
+                        AppendRequest {
+                            created_at: called_at,
+                            event: ExecutionRequest::Unlocked {
+                                backoff_expires_at: called_at,
+                                reason: "executor closing".into(),
+                            },
+                        },
+                        called_at,
+                        None,
+                        &self.locked_event.component_id,
+                    )
+                    .await?;
+
+                return Err(ApplyError::InterruptDbUpdated);
+            }
+        }
 
         if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
             self.extend_lock(db_connection, called_at).await?;
@@ -3760,7 +3785,7 @@ mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> (EventHistory, CachingDbConnection) {
         let execution_deadline = now + lock_expires_at;
-        let deadline_tracker = deadline_factory.create(execution_deadline).unwrap();
+        let deadline_tracker = deadline_factory.create(execution_deadline, None).unwrap();
 
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let caching_db_connection = CachingDbConnection {
@@ -3786,8 +3811,8 @@ mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            Duration::ZERO, // lock_extension
-            None,           // subscription_interruption
+            None, // lock_extension
+            None, // subscription_interruption
             info_span!("worker-test"),
         );
 

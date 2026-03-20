@@ -349,7 +349,7 @@ pub enum ExecutionRequest {
     /// Returns execution to [`PendingState::PendingAt`] state at the specified time.
     /// This can happen when:
     /// - executor is running out of resources like [`WorkerError::LimitReached`]
-    /// - executor is shutting down
+    /// - workflow made progress but then its lock expired.
     #[display("Unlocked(`{backoff_expires_at}`)")]
     Unlocked {
         backoff_expires_at: DateTime<Utc>,

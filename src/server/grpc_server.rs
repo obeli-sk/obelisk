@@ -42,7 +42,7 @@ use concepts::storage::Version;
 use concepts::storage::VersionType;
 use concepts::time::ClockFn;
 use concepts::time::Now;
-use executor::executor::ExecutorTaskHandle;
+use executor::executor::{ExecutorTaskHandle, WorkerShutdownMode};
 use grpc::TonicRespResult;
 use grpc::TonicResult;
 use grpc::grpc_gen;
@@ -1460,11 +1460,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                     ))
                 })?;
 
-            // Compare non-activity parts.
-            if non_activity_json_value(&running_deployment)
-                == non_activity_json_value(&target_deployment)
-            {
-                // Hot redeploy path: only activities changed (or nothing changed).
+            if is_transition_hot_deployable(&running_deployment, &target_deployment) {
+                // Hot redeploy path: only activities/workflows changed (or nothing changed).
                 let config = self.config.clone();
                 let verify_deployment_id = DeploymentId::generate();
                 let mut termination_watcher = self.termination_watcher.clone();
@@ -1496,17 +1493,24 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                     ));
                 }
 
-                let old = std::mem::take(&mut ctx.exec_task_handles);
-                for h in old {
-                    h.close().await;
-                }
-
                 // Activate deployment in DB.
                 conn.activate_deployment(new_deployment_id, chrono::Utc::now())
                     .await
                     .to_status()?;
 
-                // Spawn new activity executors.
+                // Stop old executors.
+                let old = std::mem::take(&mut ctx.exec_task_handles);
+                futures_util::future::join_all(old.iter().map(|exec_handle| {
+                    let mode = if exec_handle.component_id().component_type.is_activity() {
+                        WorkerShutdownMode::SkipWorkers
+                    } else {
+                        WorkerShutdownMode::WaitForWorkers
+                    };
+                    exec_handle.close(mode)
+                }))
+                .await;
+
+                // Spawn new executors.
                 let new_handles: Vec<ExecutorTaskHandle> = compiled
                     .compiled_components
                     .workers_linked
@@ -1534,7 +1538,6 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                     outcome: outcome.into(),
                 }));
             }
-            // Non-activity parts changed: fall through to normal activate + RestartRequired.
         }
 
         if request.verify {
@@ -1705,16 +1708,17 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
 }
 
 // Will be removed once webhooks and workflws are supported for hot redeploy.
-fn non_activity_json_value(deployment: &DeploymentCanonical) -> serde_json::Value {
-    let mut v = serde_json::to_value(deployment)
-        .expect("DeploymentCanonical has no custom serialization that could fail");
-    if let Some(obj) = v.as_object_mut() {
-        obj.remove("activity_wasm");
-        obj.remove("activity_stub");
-        obj.remove("activity_external");
-        obj.remove("activity_js");
-    }
-    v
+/// Returns `true` when switching from `src` to `dst` can be done as a hot
+/// redeploy.  Activities and workflows are always hot-redeployable; only a
+/// change in webhook configuration requires a full restart.
+fn is_transition_hot_deployable(src: &DeploymentCanonical, dst: &DeploymentCanonical) -> bool {
+    let to_webhook_json = |d: &DeploymentCanonical| {
+        serde_json::json!({
+            "webhook_endpoint": d.webhooks,
+            "webhook_endpoint_js": d.webhooks_js,
+        })
+    };
+    to_webhook_json(src) == to_webhook_json(dst)
 }
 
 #[cfg(test)]

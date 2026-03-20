@@ -16,6 +16,7 @@ mod bench {
     use concepts::{prefixed_ulid::ExecutorId, storage::CreateRequest};
     use db_tests::Database;
     use divan::{self};
+    use executor::executor::WorkerShutdownMode;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle, LockingStrategy};
     use executor::worker::Worker;
     use serde_json::json;
@@ -196,7 +197,7 @@ mod bench {
                     backtrace_persist: false,
                     stub_wasi: false,
                     fuel: None,
-                    lock_extension: Duration::ZERO,
+                    lock_extension: None,
                     subscription_interruption: None,
                 },
                 workflow_engine,
@@ -208,10 +209,10 @@ mod bench {
             .into_worker(
                 DEPLOYMENT_ID_DUMMY,
                 db_pool.clone(),
-                Arc::new(DeadlineTrackerFactoryTokio {
-                    leeway: Duration::ZERO,
-                    clock_fn: clock_fn.clone_box(),
-                }),
+                Arc::new(DeadlineTrackerFactoryTokio::new(
+                    Duration::ZERO,
+                    clock_fn.clone_box(),
+                )),
                 cancel_registry,
                 None, // logs_storage_config
             ),
@@ -323,8 +324,16 @@ mod bench {
             tokio.block_on(async move { fibo_workflow(1, iterations, db_pool).await });
         });
 
-        tokio.block_on(async move { workflow_exec_task.close().await });
-        tokio.block_on(async move { activity_exec_task.close().await });
+        tokio.block_on(async move {
+            workflow_exec_task
+                .close(WorkerShutdownMode::SkipWorkers)
+                .await;
+        });
+        tokio.block_on(async move {
+            activity_exec_task
+                .close(WorkerShutdownMode::SkipWorkers)
+                .await;
+        });
 
         tokio.block_on(async move { db_close.close().await });
     }

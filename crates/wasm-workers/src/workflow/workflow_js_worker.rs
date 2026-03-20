@@ -23,7 +23,6 @@ use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{Span, debug};
 use utils::wasm_tools::WasmComponent;
 use val_json::type_wrapper::TypeWrapper;
@@ -355,7 +354,7 @@ impl WorkflowJsWorker {
             join_next_blocking_strategy:
                 super::workflow_worker::JoinNextBlockingStrategy::Interrupt,
             backtrace_persist: false,
-            lock_extension: Duration::ZERO,
+            lock_extension: None,
             subscription_interruption: None,
             component_id,
             stub_wasi: true, // no harm, stub it in any case
@@ -422,6 +421,7 @@ impl WorkflowJsWorker {
                 lock_expires_at: clock_fn.now(),
                 retry_config: ComponentRetryConfig::WORKFLOW,
             },
+            executor_close_watcher: None,
         };
 
         let compiled = WorkflowWorkerCompiled::new_with_config_inner(
@@ -535,7 +535,7 @@ mod tests {
             backtrace_persist: false,
             stub_wasi: false,
             fuel: None,
-            lock_extension: Duration::from_secs(1),
+            lock_extension: Some(Duration::from_secs(1)),
             subscription_interruption: None,
         };
 
@@ -566,10 +566,7 @@ mod tests {
         let linked = js_compiled.link(fn_registry).unwrap();
 
         let db_pool = Arc::new(InMemoryPool::new());
-        let deadline_factory = Arc::new(DeadlineTrackerFactoryTokio {
-            leeway: Duration::ZERO,
-            clock_fn,
-        });
+        let deadline_factory = Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn));
 
         Arc::new(linked.into_worker(
             DEPLOYMENT_ID_DUMMY,
@@ -612,6 +609,7 @@ mod tests {
                 lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::WORKFLOW,
             },
+            executor_close_watcher: None,
         }
     }
 
@@ -796,7 +794,7 @@ mod tests {
             backtrace_persist: false,
             stub_wasi: false,
             fuel: None,
-            lock_extension: Duration::ZERO,
+            lock_extension: None,
             subscription_interruption: None,
         };
 
@@ -824,10 +822,7 @@ mod tests {
 
         let linked = js_compiled.link(fn_registry).unwrap();
 
-        let deadline_factory = Arc::new(DeadlineTrackerFactoryTokio {
-            leeway: Duration::ZERO,
-            clock_fn,
-        });
+        let deadline_factory = Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn));
 
         (
             linked.into_worker(
