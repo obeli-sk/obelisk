@@ -2781,8 +2781,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn server_verify(
-        #[values("obelisk-testing-sqlite-server.toml", "obelisk-testing-pg-server.toml")]
-        server_toml: &'static str,
+        #[values("server-sqlite.toml", "server-postgres.toml")] server_toml: &'static str,
         #[values("obelisk-testing-wasm-local.toml", "obelisk-testing-wasm-oci.toml")]
         deployment_toml: &'static str,
     ) -> Result<(), anyhow::Error> {
