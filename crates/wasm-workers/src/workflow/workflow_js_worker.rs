@@ -470,8 +470,8 @@ mod tests {
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutorId, RunId};
     use concepts::storage::{
-        CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable, JoinSetResponse, Locked,
-        PendingState, PendingStateFinished, PendingStateFinishedError,
+        CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest,
+        JoinSetResponse, Locked, PendingState, PendingStateFinished, PendingStateFinishedError,
         PendingStateFinishedResultKind, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
@@ -853,6 +853,31 @@ mod tests {
             locking_strategy: LockingStrategy::ByComponentDigest,
         };
         ExecTask::new_all_ffqns_test(Arc::new(worker), exec_config, clock_fn, db_pool)
+    }
+
+    fn new_js_workflow_exec_task_with_close_watcher(
+        worker: WorkflowJsWorker,
+        clock_fn: Box<dyn ClockFn>,
+        db_pool: Arc<dyn DbPool>,
+        close_watcher: tokio::sync::watch::Receiver<bool>,
+    ) -> ExecTask {
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(3),
+            tick_sleep: TICK_SLEEP,
+            component_id: worker.inner.config.component_id.clone(),
+            task_limiter: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::WORKFLOW,
+            locking_strategy: LockingStrategy::ByComponentDigest,
+        };
+        ExecTask::new_all_ffqns_test_with_close_watcher(
+            Arc::new(worker),
+            exec_config,
+            clock_fn,
+            db_pool,
+            close_watcher,
+        )
     }
 
     /// Test: joinNextTry successfully finds a delay response after it expires
@@ -1655,5 +1680,103 @@ mod tests {
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished { retval, .. } => retval);
         assert_matches!(retval, SupportedFunctionReturnValue::Err(None));
+    }
+
+    /// When the executor signals close while a JS workflow worker is running,
+    /// the worker must write an `Unlocked` event and exit.
+    ///
+    /// Test steps:
+    /// 1. Spawn the busy workflow worker task via `tick_test` (returns immediately
+    ///    with a handle to the in-progress worker task).
+    /// 2. Send the executor-close signal.
+    /// 3. Join the worker task.
+    /// 4. Assert the execution log contains an `Unlocked` event.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn executor_close_writes_unlocked_event(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+            export default function busy(params) {
+                for (let i = 0; i < 30; i++) {
+                    obelisk.sleep({ milliseconds: 300 });
+                }
+                return 'done';
+            }
+        ";
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "busy");
+
+        let (close_sender, close_receiver) = tokio::sync::watch::channel(false);
+
+        let sim_clock = SimClock::epoch();
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (worker, component_id, _) = compile_js_workflow_worker(
+            js_source,
+            &ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry,
+            workflow_engine,
+        )
+        .await;
+
+        let exec_task = new_js_workflow_exec_task_with_close_watcher(
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            close_receiver,
+        );
+
+        // Register the execution so the DB is ready for the Unlocked append.
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        // Spawn the busy worker task. tick_test returns as soon as the task is
+        // spawned — the worker itself runs concurrently.
+        let progress = exec_task
+            .tick_test(sim_clock.now(), RunId::generate())
+            .await;
+
+        // Signal the executor to close. The worker bails on the next apply()
+        // call (i.e. at the very first obelisk.sleep) and writes Unlocked.
+        close_sender.send(true).unwrap();
+
+        // Join the worker task.
+        progress.wait_for_tasks().await;
+
+        // Verify the Unlocked event is present in the execution log.
+        let log = db_connection.get(&execution_id).await.unwrap();
+        let has_unlocked = log
+            .events
+            .iter()
+            .any(|e| matches!(e.event, ExecutionRequest::Unlocked { .. }));
+        assert!(
+            has_unlocked,
+            "expected Unlocked event in execution log, got: {:?}",
+            log.events
+        );
+
+        db_close.close().await;
     }
 }
