@@ -100,8 +100,6 @@ pub enum ExecutionFailureKind {
 pub enum TrapKind {
     #[display("trap")]
     Trap,
-    #[display("post_return_trap")]
-    PostReturnTrap,
     #[display("out of fuel")]
     OutOfFuel,
     #[display("host function error")]

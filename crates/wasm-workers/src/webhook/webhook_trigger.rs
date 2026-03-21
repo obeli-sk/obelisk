@@ -1,8 +1,6 @@
-use crate::activity::activity_ctx::HttpClientTracesContainer;
-use crate::component_logger::log_activities::obelisk::log::log::Host;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
-use crate::http_request_policy::HttpRequestPolicy;
+use crate::http_hooks::{HttpClientTracesContainer, HttpHooks};
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
 use crate::webhook::webhook_trigger::types::obelisk::types::join_set::JoinNextError;
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
@@ -16,8 +14,7 @@ use concepts::storage::{
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent,
     HistoryEventScheduleAt, JoinSetRequest, LogInfoAppendRow, LogLevel, LogStreamType,
     PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, TimeoutOutcome,
-    Version,
-    http_client_trace::{HttpClientTrace, RequestTrace, ResponseTrace},
+    Version, http_client_trace::HttpClientTrace,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -38,7 +35,7 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::select;
-use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot, watch};
+use tokio::sync::{OwnedSemaphorePermit, mpsc, watch};
 use tracing::{
     Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace, warn,
 };
@@ -51,13 +48,11 @@ use wasmtime::component::types::ComponentFunc;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::bindings::ProxyPre;
-use wasmtime_wasi_http::bindings::http::types::Scheme;
-use wasmtime_wasi_http::body::HyperOutgoingBody;
-use wasmtime_wasi_http::types::{
-    HostFutureIncomingResponse, OutgoingRequestConfig, default_send_request_handler,
-};
-use wasmtime_wasi_http::{HttpResult, WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_http::WasiHttpCtx;
+use wasmtime_wasi_http::p2::bindings::ProxyPre;
+use wasmtime_wasi_http::p2::bindings::http::types::Scheme;
+use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
+use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
 use wasmtime_wasi_io::IoView;
 
 const HTTP_HANDLER_FFQN: FunctionFqn =
@@ -227,7 +222,7 @@ impl WebhookEndpointCompiled {
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
             .map_err(|err| WasmFileError::linking_error("cannot link `wasmtime_wasi`", err))?;
         // Link wasi-http
-        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
             .map_err(|err| WasmFileError::linking_error("cannot link `wasmtime_wasi_http`", err))?;
         // Link log and types
         WebhookEndpointCtx::add_to_linker(&mut linker)?;
@@ -527,8 +522,7 @@ struct WebhookEndpointCtx {
     subscription_interruption: Option<Duration>,
     connection_drop_watcher: watch::Receiver<()>,
     server_termination_watcher: watch::Receiver<()>,
-    http_client_traces: HttpClientTracesContainer,
-    http_policy: HttpRequestPolicy,
+    http_hooks: HttpHooks,
 }
 
 impl HostJoinSet for WebhookEndpointCtx {
@@ -1552,9 +1546,15 @@ impl WebhookEndpointCtx {
             wasi_ctx.env(key, val);
         }
         let wasi_ctx = wasi_ctx.build();
+        let component_logger = ComponentLogger {
+            span: request_span,
+            execution_id: ExecutionId::TopLevel(execution_id),
+            run_id,
+            logs_storage_config,
+        };
         // All child executions are part of the same join set.
         let ctx = WebhookEndpointCtx {
-            clock_fn,
+            clock_fn: clock_fn.clone_box(),
             sleep,
             db_pool,
             fn_registry,
@@ -1566,17 +1566,16 @@ impl WebhookEndpointCtx {
             deployment_id,
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
-            component_logger: ComponentLogger {
-                span: request_span,
-                execution_id: ExecutionId::TopLevel(execution_id),
-                run_id,
-                logs_storage_config,
-            },
+            component_logger: component_logger.clone(),
             subscription_interruption: config.subscription_interruption,
             connection_drop_watcher,
             server_termination_watcher,
-            http_client_traces: HttpClientTracesContainer::default(),
-            http_policy,
+            http_hooks: HttpHooks {
+                clock_fn,
+                http_client_traces: HttpClientTracesContainer::default(),
+                http_policy,
+                component_logger,
+            },
         };
         let mut store = Store::new(engine, ctx);
 
@@ -1646,7 +1645,8 @@ impl WebhookEndpointCtx {
         };
         if let Some(version) = self.version {
             let http_client_traces = Some(
-                self.http_client_traces
+                self.http_hooks
+                    .http_client_traces
                     .into_iter()
                     .map(|(req, mut resp)| HttpClientTrace {
                         req,
@@ -1710,65 +1710,12 @@ impl IoView for WebhookEndpointCtx {
     }
 }
 impl WasiHttpView for WebhookEndpointCtx {
-    fn ctx(&mut self) -> &mut WasiHttpCtx {
-        &mut self.http_ctx
-    }
-
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-
-    fn send_request(
-        &mut self,
-        mut request: hyper::Request<HyperOutgoingBody>,
-        config: OutgoingRequestConfig,
-    ) -> HttpResult<HostFutureIncomingResponse> {
-        // Prepare request trace & channel
-        let req = RequestTrace {
-            sent_at: self.clock_fn.now(),
-            uri: request.uri().to_string(),
-            method: request.method().to_string(),
-        };
-        let (resp_trace_tx, resp_trace_rx) = oneshot::channel();
-        self.http_client_traces.push((req, resp_trace_rx));
-
-        // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
-        let http_policy_res = self.http_policy.apply(&mut request);
-        if let Err(err) = http_policy_res {
-            self.warn(format!("{err}")); // Append to execution's logs table
-            let _ = resp_trace_tx.send(ResponseTrace {
-                finished_at: self.clock_fn.now(),
-                status: Err(err.to_string()),
-            });
-            let err = wasmtime_wasi_http::bindings::http::types::ErrorCode::from(err);
-            return Err(err.into());
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.http_ctx,
+            table: &mut self.table,
+            hooks: &mut self.http_hooks,
         }
-
-        let span = info_span!(parent: &self.component_logger.span, "send_request",
-            otel.name = format!("send_request {} {}", request.method(), request.uri()),
-            method = %request.method(),
-            uri = %request.uri(),
-        );
-        let clock_fn = self.clock_fn.clone_box();
-        let http_policy = self.http_policy.clone();
-        span.in_scope(|| debug!("Sending {request:?}"));
-        let handle = wasmtime_wasi::runtime::spawn(
-            async move {
-                http_policy.apply_body_replacement(&mut request).await;
-                let resp_result = default_send_request_handler(request, config).await;
-                debug!("Got response {resp_result:?}");
-                let _ = resp_trace_tx.send(ResponseTrace {
-                    finished_at: clock_fn.now(),
-                    status: resp_result
-                        .as_ref()
-                        .map(|resp| resp.resp.status().as_u16())
-                        .map_err(std::string::ToString::to_string),
-                });
-                Ok(resp_result)
-            }
-            .instrument(span),
-        );
-        Ok(HostFutureIncomingResponse::pending(handle))
     }
 }
 
@@ -1892,10 +1839,12 @@ impl RequestHandler {
             );
             let req = store
                 .data_mut()
+                .http()
                 .new_incoming_request(Scheme::Http, req)
                 .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?;
             let out = store
                 .data_mut()
+                .http()
                 .new_response_outparam(sender)
                 .map_err(|err| HandleRequestError::ResponseCreationError(err.into()))?;
             let proxy = found_instance
@@ -1963,7 +1912,7 @@ pub enum HandleRequestError {
     #[error("instantiation error: {0}")]
     InstantiationError(StdError),
     #[error("error code: {0}")]
-    ErrorCode(wasmtime_wasi_http::bindings::http::types::ErrorCode),
+    ErrorCode(wasmtime_wasi_http::p2::bindings::http::types::ErrorCode),
     #[error("execution error: {0}")]
     ExecutionError(StdError),
     #[error("route not found")]

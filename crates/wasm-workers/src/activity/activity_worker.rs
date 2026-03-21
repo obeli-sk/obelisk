@@ -22,7 +22,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, trace};
 use utils::wasm_tools::ExIm;
 use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
 use wasmtime::{Engine, component::Val};
@@ -78,7 +78,7 @@ impl ActivityWorkerCompiled {
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
             .map_err(|err| WasmFileError::linking_error("cannot link wasi", err))?;
         // wasi-http
-        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
             .map_err(|err| WasmFileError::linking_error("cannot link wasi-http", err))?;
         // obelisk:log
         log_activities::obelisk::log::log::add_to_linker::<_, ActivityCtx>(&mut linker, |x| x)
@@ -261,7 +261,7 @@ impl Worker for ActivityWorker {
                         now = %self.clock_fn.now(),
                         "Run timed out")
                     );
-                let http_client_traces = Some(activity_ctx.http_client_traces
+                let http_client_traces = Some(activity_ctx.http_hooks.http_client_traces
                     .into_iter()
                         .map(|(req, mut resp)| HttpClientTrace {
                             req,
@@ -471,17 +471,7 @@ impl ActivityWorker {
                     result_type,
                 )
             });
-        match res {
-            Ok((val, r#type)) => {
-                let result = SupportedFunctionReturnValue::new(val, r#type);
-                // post_return is only called if `call` succeeds, after the return value has been processed.
-                if let Err(err) = func.post_return_async(store).await {
-                    warn!("Error in `post_return_async - {err:?}");
-                }
-                Ok(result)
-            }
-            Err(err) => Err(err),
-        }
+        res.map(|(val, r#type)| SupportedFunctionReturnValue::new(val, r#type))
     }
 
     fn process_res(
@@ -492,6 +482,7 @@ impl ActivityWorker {
     ) -> WorkerResult {
         let http_client_traces = Some(
             activity_ctx
+                .http_hooks
                 .http_client_traces
                 .into_iter()
                 .map(|(req, mut resp)| HttpClientTrace {

@@ -156,7 +156,6 @@ impl Engines {
         config: EngineConfig,
     ) -> Result<Arc<Engine>, EngineError> {
         dst_wasmtime_config.wasm_component_model(true);
-        dst_wasmtime_config.async_support(true);
 
         dst_wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
         dst_wasmtime_config.epoch_interruption(true);
