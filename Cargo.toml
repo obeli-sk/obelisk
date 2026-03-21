@@ -247,7 +247,7 @@ cargo_metadata = "0.23"
 cfg-if = "1.0.4"
 chrono = { version = "0.4.44", features = ["arbitrary", "serde"] }
 clap = { version = "4.6.0", features = ["derive"] }
-config = { version = "0.15.21", default-features = false, features = [
+config = { version = "0.15.22", default-features = false, features = [
     "toml",
     "preserve_order",
     "async",
@@ -338,8 +338,8 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.18"
-toml = { version = "1.0.6", features = ["preserve_order"] }
-toml_edit = "0.25.4"
+toml = { version = "1.0.7", features = ["preserve_order"] }
+toml_edit = "0.25.5"
 tonic = { version = "0.14.5", default-features = false }
 tonic-prost = "0.14.5"
 tonic-prost-build = "0.14.5"
@@ -388,7 +388,7 @@ wstd = "0.6.6"
 opentelemetry = "0.31.0"
 opentelemetry-http = "0.31.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.0", features = [
+opentelemetry-otlp = { version = "0.31.1", features = [
     "tls",
     "tls-roots",
     "grpc-tonic",
