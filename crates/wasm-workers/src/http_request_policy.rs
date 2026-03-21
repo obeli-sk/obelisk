@@ -4,7 +4,7 @@ use rand::RngCore;
 use secrecy::{ExposeSecret, SecretString};
 use std::fmt;
 use tracing::{debug, trace};
-use wasmtime_wasi_http::bindings::http::types::ErrorCode;
+use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 
 /// Where in the outgoing request placeholders are replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -312,7 +312,7 @@ impl HttpRequestPolicy {
     /// Returns the (possibly modified) request, or an error if the host is denied.
     pub(crate) fn apply(
         &self,
-        request: &mut hyper::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
+        request: &mut hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
     ) -> Result<(), PolicyError> {
         let Some((scheme, host, port)) = extract_request_target(request.uri()) else {
             return Err(PolicyError::RequestHasNoHost(request.uri().clone()));
@@ -411,7 +411,7 @@ impl HttpRequestPolicy {
     /// Buffers the body, replaces placeholders in text content types, and re-wraps.
     pub(crate) async fn apply_body_replacement(
         &self,
-        request: &mut hyper::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
+        request: &mut hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
     ) {
         let body_secrets = self.body_secrets_for(request.uri(), request.method());
         if body_secrets.is_empty() {

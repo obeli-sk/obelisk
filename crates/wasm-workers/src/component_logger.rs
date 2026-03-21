@@ -7,6 +7,7 @@ use concepts::{
 use tokio::sync::mpsc;
 use tracing::{Span, debug, error, info, trace, warn};
 
+#[derive(Clone)]
 pub(crate) struct ComponentLogger {
     pub(crate) span: Span,
     pub(crate) execution_id: ExecutionId,

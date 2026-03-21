@@ -545,16 +545,6 @@ impl WorkflowWorker {
         let result_types = component_func.results();
         let mut results = vec![Val::Bool(false); result_types.len()];
         let func_call_result = func.call_async(&mut store, &params, &mut results).await;
-        if func_call_result.is_ok()
-            && let Err(post_return_err) = func.post_return_async(&mut store).await
-        {
-            return Err(RunError::Trap {
-                reason: post_return_err.to_string(),
-                detail: Some(format!("{post_return_err:?}")),
-                workflow_ctx: store.into_data(),
-                kind: TrapKind::PostReturnTrap,
-            });
-        }
         let workflow_ctx = store.into_data();
 
         match func_call_result {
