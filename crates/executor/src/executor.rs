@@ -210,6 +210,27 @@ impl ExecTask {
         }
     }
 
+    #[cfg(feature = "test")]
+    pub fn new_all_ffqns_test_with_close_watcher(
+        worker: Arc<dyn Worker>,
+        config: ExecConfig,
+        clock_fn: Box<dyn ClockFn>,
+        db_pool: Arc<dyn DbPool>,
+        executor_close_watcher: tokio::sync::watch::Receiver<bool>,
+    ) -> Self {
+        let ffqns = extract_exported_ffqns_noext(worker.as_ref());
+        let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
+        Self {
+            worker,
+            locking_strategy_holder: config.locking_strategy.holder(ffqns),
+            config,
+            clock_fn,
+            db_pool,
+            worker_count_tx,
+            executor_close_watcher,
+        }
+    }
+
     pub fn spawn_new(
         deployment_id: DeploymentId,
         worker: Arc<dyn Worker>,
