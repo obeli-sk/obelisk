@@ -94,13 +94,15 @@ pub struct ExecutorTaskHandle {
     abort_handle: AbortHandle,
     component_id: ComponentId,
     executor_id: ExecutorId,
+    deployment_id: DeploymentId,
     executor_closing_signal_sender: tokio::sync::watch::Sender<bool>,
     /// Tracks the number of worker tasks currently in-flight.
     worker_count_rx: tokio::sync::watch::Receiver<usize>,
 }
 
 impl ExecutorTaskHandle {
-    #[instrument(name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id))]
+    #[instrument(name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id,
+        deployment_id = %self.deployment_id))]
     pub async fn close(&self, mode: WorkerShutdownMode) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
@@ -286,6 +288,7 @@ impl ExecTask {
             abort_handle,
             component_id,
             executor_id,
+            deployment_id,
             executor_closing_signal_sender,
             worker_count_rx,
         }
