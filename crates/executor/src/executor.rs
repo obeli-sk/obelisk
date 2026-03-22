@@ -110,12 +110,17 @@ impl ExecutorTaskHandle {
         if mode == WorkerShutdownMode::WaitForWorkers {
             info!("Signaling workflow tasks to unlock");
             let _ = self.executor_closing_signal_sender.send(true);
-            // `wait_for` re-checks the current value before awaiting, so no notifications are missed.
-            let _ = self
-                .worker_count_rx
-                .clone()
-                .wait_for(|&count| count == 0)
-                .await;
+            let mut worker_count_rx = self.worker_count_rx.clone();
+            loop {
+                tokio::select! {
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {
+                        info!("Waiting for {} workers to shut down", *self.worker_count_rx.borrow());
+                    }
+                    _ = worker_count_rx.wait_for(|&count| count == 0) => {
+                        break;
+                    }
+                }
+            }
         }
         info!("Gracefully closed");
     }
