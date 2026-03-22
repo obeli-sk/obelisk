@@ -1,4 +1,4 @@
-use std::{error::Error, fmt::Debug, path::PathBuf, sync::Arc};
+use std::{error::Error, fmt::Debug, path::Path, sync::Arc};
 use tracing::{debug, warn};
 use wasmtime::{Cache, CacheConfig, Engine, EngineWeak, WasmBacktraceDetails};
 
@@ -99,7 +99,7 @@ impl PoolingConfig {
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     pub pooling_config: PoolingConfig,
-    pub codegen_cache_dir: Option<PathBuf>,
+    pub codegen_cache_dir: Option<Arc<Path>>,
     pub consume_fuel: bool,
     pub parallel_compilation: bool,
     pub debug: bool,
@@ -109,13 +109,13 @@ impl EngineConfig {
     #[cfg(any(test, feature = "test"))]
     #[must_use]
     pub fn on_demand_testing() -> Self {
-        let workspace_dir = PathBuf::from(
+        let workspace_dir = std::path::PathBuf::from(
             std::env::var("CARGO_WORKSPACE_DIR").expect("CARGO_WORKSPACE_DIR must be set"),
         );
         let codegen_cache = workspace_dir.join("test-codegen-cache");
         Self {
             pooling_config: PoolingConfig::OnDemand,
-            codegen_cache_dir: Some(codegen_cache),
+            codegen_cache_dir: Some(Arc::from(codegen_cache)),
             consume_fuel: false,
             parallel_compilation: true,
             debug: false,
@@ -171,7 +171,7 @@ impl Engines {
         dst_wasmtime_config.allocation_strategy(config.pooling_config.strategy());
         if let Some(codegen_cache_dir) = config.codegen_cache_dir {
             let mut cache_config = CacheConfig::new();
-            cache_config.with_directory(codegen_cache_dir);
+            cache_config.with_directory(codegen_cache_dir.as_ref());
             let cache =
                 Cache::new(cache_config).map_err(|err| EngineError::CodegenCache(err.into()))?;
             dst_wasmtime_config.cache(Some(cache));

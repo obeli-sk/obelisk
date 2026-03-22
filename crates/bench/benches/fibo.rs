@@ -278,7 +278,7 @@ mod bench {
         let codegen_cache_dir = workspace_dir.join("test-codegen-cache");
         let engine_config = EngineConfig {
             pooling_config: PoolingConfig::OnDemand, // TODO test with pooling engine as well.
-            codegen_cache_dir: Some(codegen_cache_dir),
+            codegen_cache_dir: Some(Arc::from(codegen_cache_dir)),
             consume_fuel: false,
             parallel_compilation: true,
             debug: false,

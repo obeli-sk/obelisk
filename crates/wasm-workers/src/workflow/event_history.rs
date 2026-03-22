@@ -116,9 +116,9 @@ pub(crate) struct EventHistory {
     index_delay_id_to_expires_at: IndexMap<DelayId, DateTime<Utc>>,
     responses: Vec<(ResponseWithCursor, ProcessingStatus)>,
     worker_span: Span,
-    deadline_tracker: Box<dyn DeadlineTracker>,
+    pub(crate) deadline_tracker: Box<dyn DeadlineTracker>,
     lock_extension: Duration, // 0 == disabled
-    locked_event: Locked,
+    pub(crate) locked_event: Locked,
     pub(crate) fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
 

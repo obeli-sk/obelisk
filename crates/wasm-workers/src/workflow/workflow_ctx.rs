@@ -14,6 +14,7 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
+use crate::workflow::deadline_tracker::EpochCallbackError;
 use crate::workflow::event_history::{
     JoinSetCreate, ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitChildIntent,
 };
@@ -69,6 +70,10 @@ pub(crate) enum WorkflowFunctionError {
     InterruptDbUpdated,
     #[error(transparent)]
     DbError(DbErrorWrite),
+    #[error("lock expired")]
+    LockExpired,
+    #[error("executor closing")]
+    ExecutorClosing,
 }
 
 #[derive(Debug)]
@@ -76,6 +81,8 @@ pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
     // retriable:
     InterruptDbUpdated,
+    LockExpired(Version),
+    ExecutorClosing,
     DbError(DbErrorWrite),
 }
 
@@ -106,6 +113,8 @@ impl WorkflowFunctionError {
             WorkflowFunctionError::ConstraintViolation(reason) => {
                 WorkerPartialResult::FatalError(FatalError::ConstraintViolation { reason }, version)
             }
+            WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired(version),
+            WorkflowFunctionError::ExecutorClosing => WorkerPartialResult::ExecutorClosing,
         }
     }
 }
@@ -891,6 +900,14 @@ impl WorkflowCtx {
             wasi_ctx: wasi_ctx_builder.build(),
             is_replaying_finished,
         }
+    }
+
+    pub(crate) fn component_id(&self) -> ComponentId {
+        self.event_history.locked_event.component_id.clone()
+    }
+
+    pub(crate) fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
+        self.event_history.deadline_tracker.check_epoch_callback()
     }
 
     pub(crate) async fn flush(&mut self) -> Result<(), DbErrorWrite> {
@@ -2754,13 +2771,22 @@ pub(crate) mod tests {
         fn from(worker_partial_result: WorkerPartialResult) -> Self {
             match worker_partial_result {
                 WorkerPartialResult::FatalError(err, version) => {
-                    WorkerResult::Err(executor::worker::WorkerError::FatalError(err, version))
+                    Err(executor::worker::WorkerError::FatalError(err, version))
                 }
                 WorkerPartialResult::InterruptDbUpdated => {
-                    WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+                    Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
                 }
                 WorkerPartialResult::DbError(db_err) => {
-                    WorkerResult::Err(executor::worker::WorkerError::DbError(db_err))
+                    Err(executor::worker::WorkerError::DbError(db_err))
+                }
+                WorkerPartialResult::LockExpired(version) => {
+                    Err(executor::worker::WorkerError::TemporaryTimeout {
+                        http_client_traces: None,
+                        version,
+                    })
+                }
+                WorkerPartialResult::ExecutorClosing => {
+                    unreachable!()
                 }
             }
         }

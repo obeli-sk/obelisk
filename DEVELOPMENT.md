@@ -38,6 +38,13 @@ direnv allow
 ```
 Or manually install dependencies (see [dev-deps.txt](dev-deps.txt)).
 
+## Checking Compilation
+
+```sh
+# Check all crates and targets (including tests)
+scripts/check.sh
+```
+
 ## Running Tests
 
 Postgres must be running. See `.envrc-example` for environment variables.

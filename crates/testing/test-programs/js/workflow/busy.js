@@ -11,15 +11,6 @@ function sleep_via_activity() {
 
 function sleep() {
     for (let i = 0; i < 30; i++) {
-        obelisk.sleep({ milliseconds: 300 });
-    }
-}
-
-
-function cpu_activity() {
-    for (let i = 0; ; i++) {
-        if (i % 100000 == 0) {
-            console.log(i);
-        }
+        obelisk.sleep({ milliseconds: 400 });
     }
 }

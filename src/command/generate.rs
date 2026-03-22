@@ -1,6 +1,8 @@
 use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
-use crate::command::server::{VerifyParams, verify_config_compile_link};
+use crate::command::server::{
+    PrepareDirsParams, VerifyParams, create_engines, prepare_dirs, verify_config_compile_link,
+};
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{ConfigHolder, load_deployment_toml};
 use crate::init::{self};
@@ -306,17 +308,24 @@ pub(crate) async fn generate_wit_deps(
             .await?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
+    let verify_params = VerifyParams {
+        dir_params: PrepareDirsParams {
+            clean_cache: false,
+            clean_codegen_cache: false,
+        },
+        ignore_missing_env_vars: true,
+        suppress_type_checking_errors: true, // Just extracting WITs, not running components
+    };
+    let prepared_dirs = prepare_dirs(&config, &verify_params.dir_params, &path_prefixes).await?;
+    let engines = create_engines(&config, &prepared_dirs)?;
     let compiled_and_linked = Box::pin(verify_config_compile_link(
         config,
+        engines,
+        &prepared_dirs,
         deployment,
         path_prefixes,
         DeploymentId::generate(),
-        VerifyParams {
-            ignore_missing_env_vars: true,
-            clean_cache: false,
-            clean_codegen_cache: false,
-            suppress_type_checking_errors: true, // Just extracting WITs, not running components
-        },
+        verify_params,
         &mut termination_watcher,
     ))
     .await?;

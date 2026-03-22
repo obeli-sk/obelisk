@@ -1,7 +1,5 @@
 activities.directories.enabled = true
 
-workflows.lock_extension_leeway.seconds = 1
-
 [log.file]
 level = "info,obeli_sk_wasm_workers=debug"
 enabled = true

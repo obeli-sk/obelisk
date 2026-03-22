@@ -1,5 +1,7 @@
 use crate::command::server;
 use crate::command::server::DeploymentContextHandle;
+use crate::command::server::PrepareDirsParams;
+use crate::command::server::PreparedDirs;
 use crate::command::server::SubmitError;
 use crate::command::server::VerifyParams;
 use crate::command::server::upsert_backtrace_sources;
@@ -89,6 +91,8 @@ pub(crate) struct GrpcServer {
     #[debug(skip)]
     engines: Engines,
     #[debug(skip)]
+    prepared_dirs: PreparedDirs,
+    #[debug(skip)]
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     #[debug(skip)]
     config: ServerConfigToml,
@@ -105,6 +109,7 @@ impl GrpcServer {
         termination_watcher: watch::Receiver<()>,
         cancel_registry: CancelRegistry,
         engines: Engines,
+        prepared_dirs: PreparedDirs,
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
         config: ServerConfigToml,
         path_prefixes: Arc<PathPrefixes>,
@@ -115,6 +120,7 @@ impl GrpcServer {
             termination_watcher,
             cancel_registry,
             engines,
+            prepared_dirs,
             log_forwarder_sender,
             config,
             path_prefixes,
@@ -1467,12 +1473,16 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 let mut termination_watcher = self.termination_watcher.clone();
                 let compiled = crate::command::server::verify_config_compile_link(
                     config,
+                    self.engines.clone(),
+                    &self.prepared_dirs,
                     target_deployment,
                     self.path_prefixes.clone(),
                     verify_deployment_id,
                     VerifyParams {
-                        clean_cache: false,
-                        clean_codegen_cache: false,
+                        dir_params: PrepareDirsParams {
+                            clean_cache: false,
+                            clean_codegen_cache: false,
+                        },
                         ignore_missing_env_vars: false,
                         suppress_type_checking_errors: false,
                     },
@@ -1546,12 +1556,16 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             let mut termination_watcher = self.termination_watcher.clone();
             crate::command::server::verify_config_compile_link(
                 config,
+                self.engines.clone(),
+                &self.prepared_dirs,
                 target_deployment,
                 self.path_prefixes.clone(),
                 verify_deployment_id,
                 VerifyParams {
-                    clean_cache: false,
-                    clean_codegen_cache: false,
+                    dir_params: PrepareDirsParams {
+                        clean_cache: false,
+                        clean_codegen_cache: false,
+                    },
                     ignore_missing_env_vars: false,
                     suppress_type_checking_errors: false,
                 },
@@ -1596,12 +1610,16 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let mut termination_watcher = self.termination_watcher.clone();
         let server_compiled = crate::command::server::verify_config_compile_link(
             config,
+            self.engines.clone(),
+            &self.prepared_dirs,
             deployment,
             self.path_prefixes.clone(),
             verify_deployment_id,
             crate::command::server::VerifyParams {
-                clean_cache: false,
-                clean_codegen_cache: false,
+                dir_params: PrepareDirsParams {
+                    clean_cache: false,
+                    clean_codegen_cache: false,
+                },
                 ignore_missing_env_vars: !request.verify,
                 suppress_type_checking_errors: false,
             },
