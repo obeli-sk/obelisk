@@ -75,7 +75,7 @@ pub enum WorkerError {
     /// This event does not increase temporary event count.
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
-    // Used by activity worker, best effort. If this is not persisted, the expired timers watcher will append it.
+    // Used by activity or workflow worker, best effort. If this is not persisted, the expired timers watcher will append it.
     #[error("temporary timeout")]
     TemporaryTimeout {
         http_client_traces: Option<Vec<HttpClientTrace>>,

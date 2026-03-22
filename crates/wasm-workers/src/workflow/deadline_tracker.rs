@@ -7,6 +7,7 @@ use tracing::{trace, warn};
 
 #[async_trait]
 pub trait DeadlineTracker: Send + Sync {
+    /// Host functions must check whether the executor is closing.
     fn check_preempt(&self) -> Result<(), PreemptRequested>;
 
     /// Called after the workflow made progress and is now blocked waiting for a response.
@@ -19,6 +20,8 @@ pub trait DeadlineTracker: Send + Sync {
     ) -> Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>;
 
     fn close_to_expired(&self) -> bool;
+
+    fn check_epoch_callback(&self) -> Result<(), EpochCallbackError>;
 
     /// Called after `close_to_expired` returned `true`, Return new lock expiry date (now + duration). Internally track that time minus leeway.
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc>;
@@ -42,6 +45,14 @@ pub trait DeadlineTrackerFactory: Send + Sync {
 #[error("lock already expired before {started_at}")]
 pub struct LockAlreadyExpired {
     pub started_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum EpochCallbackError {
+    #[error("lock expired")]
+    LockExpired,
+    #[error("executor is closing")]
+    ExecutorClosing,
 }
 
 pub(crate) struct DeadlineTrackerTokio {
@@ -97,6 +108,20 @@ impl DeadlineTracker for DeadlineTrackerTokio {
 
     fn close_to_expired(&self) -> bool {
         self.deadline_minus_leeway <= tokio::time::Instant::now()
+    }
+
+    fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
+        let executor_closing = self
+            .executor_close_watcher
+            .as_ref()
+            .is_some_and(|executor_close_watcher| *executor_close_watcher.borrow());
+        if executor_closing {
+            Err(EpochCallbackError::ExecutorClosing)
+        } else if self.deadline <= tokio::time::Instant::now() {
+            Err(EpochCallbackError::LockExpired)
+        } else {
+            Ok(())
+        }
     }
 
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {
@@ -204,6 +229,10 @@ impl DeadlineTracker for DeadlineTrackerFactoryForReplay {
 
     fn close_to_expired(&self) -> bool {
         false
+    }
+
+    fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
+        Ok(())
     }
 
     fn extend_by(&mut self, _lock_extension: Duration) -> DateTime<Utc> {

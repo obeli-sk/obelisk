@@ -11,7 +11,7 @@ use crate::config::toml::{
     ActivityStubComponentConfigToml, ActivityStubInlineConfigToml, ConfigName,
 };
 use crate::{
-    command::server::{RunParams, run_internal},
+    command::server::{PrepareDirsParams, RunParams, prepare_dirs, run_internal},
     config::{
         config_holder::{ConfigHolder, load_deployment_toml},
         env_var::EnvVarConfig,
@@ -318,11 +318,14 @@ impl TestServer {
         let (termination_sender, termination_watcher) = watch::channel(());
 
         let params = RunParams {
-            clean_cache: false,
-            clean_codegen_cache: false,
+            dir_params: PrepareDirsParams::default(),
             clean_sqlite_directory: false,
             suppress_type_checking_errors: false,
         };
+
+        let prepared_dirs = prepare_dirs(&config, &params.dir_params, &path_prefixes)
+            .await
+            .unwrap();
 
         let server_handle = tokio::spawn(async move {
             Box::pin(run_internal(
@@ -330,6 +333,7 @@ impl TestServer {
                 Some(deployment_toml),
                 Arc::new(path_prefixes),
                 params,
+                prepared_dirs,
                 termination_watcher,
             ))
             .await

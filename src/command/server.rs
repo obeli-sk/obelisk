@@ -174,8 +174,10 @@ impl Server {
                     deployment,
                     deployment_empty,
                     RunParams {
-                        clean_cache,
-                        clean_codegen_cache,
+                        dir_params: PrepareDirsParams {
+                            clean_cache,
+                            clean_codegen_cache,
+                        },
                         clean_sqlite_directory,
                         suppress_type_checking_errors,
                     },
@@ -197,8 +199,10 @@ impl Server {
                     server_config,
                     deployment,
                     VerifyParams {
-                        clean_cache,
-                        clean_codegen_cache,
+                        dir_params: PrepareDirsParams {
+                            clean_cache,
+                            clean_codegen_cache,
+                        },
                         ignore_missing_env_vars,
                         suppress_type_checking_errors,
                     },
@@ -364,10 +368,8 @@ pub(crate) async fn submit(
     }
 }
 
-#[expect(clippy::struct_excessive_bools)]
 pub(crate) struct RunParams {
-    pub(crate) clean_cache: bool,
-    pub(crate) clean_codegen_cache: bool,
+    pub(crate) dir_params: PrepareDirsParams,
     pub(crate) clean_sqlite_directory: bool,
     pub(crate) suppress_type_checking_errors: bool,
 }
@@ -383,25 +385,27 @@ pub(crate) async fn run(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
-    let (termination_sender, termination_watcher) = watch::channel(());
-    tokio::spawn(async move { termination_notifier(termination_sender).await });
-
     let (deployment_toml, path_prefixes) = if let Some(deployment_path) = deployment {
         let (toml, deployment_dir) = load_deployment_toml(deployment_path).await?;
-        let mut pp = config_holder.path_prefixes;
-        pp.deployment_dir = Some(deployment_dir);
-        (Some(toml), pp)
+        let mut path_prefixes = config_holder.path_prefixes;
+        path_prefixes.deployment_dir = Some(deployment_dir);
+        (Some(toml), path_prefixes)
     } else if deployment_empty {
         (Some(DeploymentToml::default()), config_holder.path_prefixes)
     } else {
         (None, config_holder.path_prefixes)
     };
 
+    let (termination_sender, termination_watcher) = watch::channel(());
+    tokio::spawn(async move { termination_notifier(termination_sender).await });
+
+    let prepared_dirs = prepare_dirs(&config, &params.dir_params, &path_prefixes).await?;
     Box::pin(run_internal(
         config,
         deployment_toml,
         Arc::new(path_prefixes),
         params,
+        prepared_dirs,
         termination_watcher,
     ))
     .await?;
@@ -409,10 +413,8 @@ pub(crate) async fn run(
 }
 
 #[derive(Debug, Default, Clone)]
-#[expect(clippy::struct_excessive_bools)]
 pub(crate) struct VerifyParams {
-    pub(crate) clean_cache: bool,
-    pub(crate) clean_codegen_cache: bool,
+    pub(crate) dir_params: PrepareDirsParams,
     pub(crate) ignore_missing_env_vars: bool,
     pub(crate) suppress_type_checking_errors: bool,
 }
@@ -444,10 +446,14 @@ pub(crate) async fn verify(
     };
     let deployment_id = DeploymentId::generate();
     let (termination_sender, mut termination_watcher) = watch::channel(());
+    let prepared_dirs = prepare_dirs(&config, &verify_params.dir_params, &path_prefixes).await?;
+    let engines = create_engines(&config, &prepared_dirs)?;
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     if skip_db {
         Box::pin(verify_config_compile_link(
             config,
+            engines,
+            &prepared_dirs,
             deployment_canonical,
             path_prefixes,
             deployment_id,
@@ -458,6 +464,8 @@ pub(crate) async fn verify(
     } else {
         Box::pin(verify_with_db_schema(
             config,
+            engines,
+            &prepared_dirs,
             deployment_canonical,
             path_prefixes,
             deployment_id,
@@ -479,8 +487,11 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
 
 /// Verifies configuration including database schema version.
 /// Called by `verify` command.
+#[expect(clippy::too_many_arguments)]
 async fn verify_with_db_schema(
     config: ServerConfigToml,
+    engines: Engines,
+    prepared_dirs: &PreparedDirs,
     deployment: DeploymentCanonical,
     path_prefixes: Arc<PathPrefixes>,
     deployment_id: DeploymentId,
@@ -490,6 +501,8 @@ async fn verify_with_db_schema(
     let database = config.database.clone();
     let ok = Box::pin(verify_config_compile_link(
         config,
+        engines,
+        prepared_dirs,
         deployment,
         path_prefixes.clone(),
         deployment_id,
@@ -527,44 +540,27 @@ async fn verify_with_db_schema(
     Ok(ok)
 }
 
-/// Verifies configuration without database schema check.
-#[instrument(skip_all, name = "verify")]
-pub(crate) async fn verify_config_compile_link(
-    config: ServerConfigToml,
-    deployment: DeploymentCanonical,
-    path_prefixes: Arc<PathPrefixes>,
-    deployment_id: DeploymentId, // only to distinguish when writing to the same log file as running server
-    params: VerifyParams,
-    termination_watcher: &mut watch::Receiver<()>,
-) -> Result<ServerCompiledLinked, anyhow::Error> {
-    Span::current().record("deployment_id", tracing::field::display(&deployment_id));
-    info!("Verifying configuration, compiling WASM components");
-    debug!("Using toml config: {config:#?}");
+#[derive(Debug, Default, Clone)]
+pub(crate) struct PrepareDirsParams {
+    pub(crate) clean_cache: bool,
+    pub(crate) clean_codegen_cache: bool,
+}
 
-    // Check obelisk-version compatibility if specified
-    if let Some(version_req_str) = &config.obelisk_version {
-        let version_req = semver::VersionReq::parse(version_req_str)
-            .with_context(|| format!("Invalid obelisk-version requirement: {version_req_str}"))?;
-        let current_version = semver::Version::parse(PKG_VERSION)
-            .with_context(|| format!("Invalid current version: {PKG_VERSION}",))?;
-        if !version_req.matches(&current_version) {
-            bail!(
-                "Obelisk version mismatch: config requires {version_req_str}, but running version is {PKG_VERSION}",
-            );
-        }
-        info!("Obelisk version {PKG_VERSION} matches requirement {version_req_str}",);
-    }
-
+pub(crate) async fn prepare_dirs(
+    config: &ServerConfigToml,
+    params: &PrepareDirsParams,
+    path_prefixes: &PathPrefixes,
+) -> Result<PreparedDirs, anyhow::Error> {
     let wasm_cache_dir = config
         .wasm_global_config
-        .get_wasm_cache_directory(&path_prefixes)
+        .get_wasm_cache_directory(path_prefixes)
         .await?;
-    let codegen_cache = config
+    let codegen_cache_dir = config
         .wasm_global_config
         .codegen_cache
-        .get_directory(&path_prefixes)
+        .get_directory(path_prefixes)
         .await?;
-    debug!("Using codegen cache? {codegen_cache:?}");
+    debug!("Using codegen cache? {codegen_cache_dir:?}");
     if params.clean_cache {
         tokio::fs::remove_dir_all(&wasm_cache_dir)
             .await
@@ -572,7 +568,7 @@ pub(crate) async fn verify_config_compile_link(
             .with_context(|| format!("cannot delete wasm cache directory {wasm_cache_dir:?}"))?;
     }
     if (params.clean_cache || params.clean_codegen_cache)
-        && let Some(codegen_cache) = &codegen_cache
+        && let Some(codegen_cache) = &codegen_cache_dir
     {
         // delete codegen_cache
         tokio::fs::remove_dir_all(codegen_cache)
@@ -590,13 +586,55 @@ pub(crate) async fn verify_config_compile_link(
     tokio::fs::create_dir_all(&metadata_dir)
         .await
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
+    Ok(PreparedDirs {
+        codegen_cache_dir: codegen_cache_dir.map(Arc::from),
+        wasm_cache_dir: Arc::from(wasm_cache_dir),
+        metadata_dir: Arc::from(metadata_dir),
+    })
+}
 
+#[derive(Debug, Clone)]
+#[expect(clippy::struct_field_names)]
+pub(crate) struct PreparedDirs {
+    codegen_cache_dir: Option<Arc<Path>>,
+    wasm_cache_dir: Arc<Path>,
+    metadata_dir: Arc<Path>,
+}
+
+/// Verifies configuration without database schema check.
+#[expect(clippy::too_many_arguments)]
+#[instrument(skip_all, name = "verify", fields(%deployment_id))]
+pub(crate) async fn verify_config_compile_link(
+    config: ServerConfigToml,
+    engines: Engines,
+    prepared_dirs: &PreparedDirs,
+    deployment: DeploymentCanonical,
+    path_prefixes: Arc<PathPrefixes>,
+    deployment_id: DeploymentId, // only to distinguish when writing to the same log file as running server
+    params: VerifyParams,
+    termination_watcher: &mut watch::Receiver<()>,
+) -> Result<ServerCompiledLinked, anyhow::Error> {
+    info!("Verifying configuration, compiling WASM components");
+    debug!("Using toml config: {config:#?}");
+    // Check obelisk-version compatibility if specified
+    if let Some(version_req_str) = &config.obelisk_version {
+        let version_req = semver::VersionReq::parse(version_req_str)
+            .with_context(|| format!("Invalid obelisk-version requirement: {version_req_str}"))?;
+        let current_version = semver::Version::parse(PKG_VERSION)
+            .with_context(|| format!("Invalid current version: {PKG_VERSION}",))?;
+        if !version_req.matches(&current_version) {
+            bail!(
+                "Obelisk version mismatch: config requires {version_req_str}, but running version is {PKG_VERSION}",
+            );
+        }
+        info!("Obelisk version {PKG_VERSION} matches requirement {version_req_str}",);
+    }
     let server_verified = Box::pin(ServerVerified::new(
+        engines,
         config,
         deployment,
-        codegen_cache,
-        Arc::from(wasm_cache_dir),
-        Arc::from(metadata_dir),
+        prepared_dirs.wasm_cache_dir.clone(),
+        prepared_dirs.metadata_dir.clone(),
         params.ignore_missing_env_vars,
         path_prefixes,
         termination_watcher,
@@ -707,12 +745,37 @@ async fn insert_and_activate_deployment(
 
 type DbClose = Pin<Box<dyn Future<Output = ()> + Send>>;
 
+pub(crate) fn create_engines(
+    config: &ServerConfigToml,
+    prepared_dirs: &PreparedDirs,
+) -> Result<Engines, anyhow::Error> {
+    let fuel: Option<u64> = config.wasm_global_config.fuel.into();
+    let consume_fuel = fuel.is_some();
+    let engine_config = EngineConfig {
+        codegen_cache_dir: prepared_dirs.codegen_cache_dir.clone(),
+        consume_fuel,
+        parallel_compilation: config.wasm_global_config.parallel_compilation,
+        debug: config.wasm_global_config.debug,
+        pooling_config: match config.wasm_global_config.allocator_config {
+            WasmtimeAllocatorConfig::OnDemand => PoolingConfig::OnDemand,
+            WasmtimeAllocatorConfig::Pooling => {
+                PoolingConfig::Pooling(config.wasm_global_config.wasmtime_pooling_config.into())
+            }
+            WasmtimeAllocatorConfig::Auto => PoolingConfig::PoolingWithFallback(
+                config.wasm_global_config.wasmtime_pooling_config.into(),
+            ),
+        },
+    };
+    Ok(Engines::new(engine_config)?)
+}
+
 #[instrument(skip_all, name = "init", fields(deployment_id))]
 pub(crate) async fn run_internal(
     config: ServerConfigToml,
     deployment: Option<DeploymentToml>,
     path_prefixes: Arc<PathPrefixes>,
     params: RunParams,
+    prepared_dirs: PreparedDirs,
     mut termination_watcher: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
@@ -825,15 +888,19 @@ pub(crate) async fn run_internal(
             (new_deployment_id, DeploymentCanonical::default())
         }
     };
-
+    let engines = create_engines(&config, &prepared_dirs)?;
     let compiled_and_linked = Box::pin(verify_config_compile_link(
         config.clone(),
+        engines,
+        &prepared_dirs,
         deployment_canonical,
         path_prefixes.clone(),
         active_deployment_id,
         VerifyParams {
-            clean_cache: params.clean_cache,
-            clean_codegen_cache: params.clean_codegen_cache,
+            dir_params: PrepareDirsParams {
+                clean_cache: params.dir_params.clean_cache,
+                clean_codegen_cache: params.dir_params.clean_codegen_cache,
+            },
             ignore_missing_env_vars: false,
             suppress_type_checking_errors: params.suppress_type_checking_errors,
         },
@@ -864,6 +931,7 @@ pub(crate) async fn run_internal(
         termination_watcher.clone(),
         cancel_registry.clone(),
         server_init.engines.clone(),
+        prepared_dirs.clone(),
         server_init.log_forwarder_sender.clone(),
         config,
         path_prefixes.clone(),
@@ -973,37 +1041,15 @@ impl ServerVerified {
     #[instrument(name = "ServerVerified::new", skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn new(
+        engines: Engines,
         config: ServerConfigToml,
         mut deployment: DeploymentCanonical,
-        codegen_cache_dir: Option<PathBuf>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         path_prefixes: Arc<PathPrefixes>,
         termination_watcher: &mut watch::Receiver<()>,
     ) -> Result<Self, anyhow::Error> {
-        let fuel: Option<u64> = config.wasm_global_config.fuel.into();
-        let workflows_lock_extension_leeway =
-            config.workflows_global_config.lock_extension_leeway.into();
-        let engines = {
-            let consume_fuel = fuel.is_some();
-            let engine_config = EngineConfig {
-                codegen_cache_dir,
-                consume_fuel,
-                parallel_compilation: config.wasm_global_config.parallel_compilation,
-                debug: config.wasm_global_config.debug,
-                pooling_config: match config.wasm_global_config.allocator_config {
-                    WasmtimeAllocatorConfig::OnDemand => PoolingConfig::OnDemand,
-                    WasmtimeAllocatorConfig::Pooling => PoolingConfig::Pooling(
-                        config.wasm_global_config.wasmtime_pooling_config.into(),
-                    ),
-                    WasmtimeAllocatorConfig::Auto => PoolingConfig::PoolingWithFallback(
-                        config.wasm_global_config.wasmtime_pooling_config.into(),
-                    ),
-                },
-            };
-            Engines::new(engine_config)?
-        };
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
@@ -1053,6 +1099,9 @@ impl ServerVerified {
                 listening_addr: config.external.listening_addr,
             });
         }
+        let fuel: Option<u64> = config.wasm_global_config.fuel.into();
+        let workflows_lock_extension_leeway =
+            config.workflows_global_config.lock_extension_leeway.into();
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
         let parent_preopen_dir = OptionFuture::from(
             config
@@ -2769,7 +2818,10 @@ pub(crate) fn gen_trace_id() -> String {
 #[cfg(test)]
 mod tests {
     use crate::{
-        command::server::{ServerCompiledLinked, ServerVerified, VerifyParams},
+        command::server::{
+            PrepareDirsParams, ServerCompiledLinked, ServerVerified, VerifyParams, create_engines,
+            prepare_dirs,
+        },
         config::config_holder::{ConfigHolder, load_deployment_toml},
     };
     use directories::BaseDirs;
@@ -2807,27 +2859,17 @@ mod tests {
             crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)
                 .await?;
 
-        let wasm_cache_dir = config
-            .wasm_global_config
-            .get_wasm_cache_directory(&path_prefixes)
-            .await?;
-        let codegen_cache = config
-            .wasm_global_config
-            .codegen_cache
-            .get_directory(&path_prefixes)
-            .await?;
-        tokio::fs::create_dir_all(&wasm_cache_dir).await?;
-        let metadata_dir = wasm_cache_dir.join("metadata");
-        tokio::fs::create_dir_all(&metadata_dir).await?;
+        let prepared_dirs =
+            prepare_dirs(&config, &PrepareDirsParams::default(), &path_prefixes).await?;
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
-
+        let engines = create_engines(&config, &prepared_dirs)?;
         let server_verified = Box::pin(ServerVerified::new(
+            engines,
             config,
             deployment_canonical,
-            codegen_cache,
-            Arc::from(wasm_cache_dir),
-            Arc::from(metadata_dir),
+            prepared_dirs.wasm_cache_dir.clone(),
+            prepared_dirs.metadata_dir.clone(),
             VerifyParams::default().ignore_missing_env_vars,
             path_prefixes,
             &mut termination_watcher,

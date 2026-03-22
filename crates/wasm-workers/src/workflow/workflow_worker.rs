@@ -4,13 +4,15 @@ use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
-use crate::workflow::deadline_tracker::DeadlineTrackerFactoryForReplay;
+use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
 use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
-use concepts::storage::{DbConnection, DbErrorWrite, DbPool, Locked, Version};
+use concepts::storage::{
+    AppendRequest, DbConnection, DbErrorWrite, DbPool, ExecutionRequest, Locked, Version,
+};
 use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
 use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, PackageIfcFns,
@@ -378,6 +380,8 @@ enum WorkerResultRefactored {
     DbUpdatedByWorkerOrWatcher,
     FatalError(FatalError, WorkflowCtx),
     DbError(DbErrorWrite),
+    LockExpired(Version),
+    ExecutorClosing(WorkflowCtx),
 }
 
 type CallFuncResult = Result<(SupportedFunctionReturnValue, WorkflowCtx), RunError>;
@@ -390,6 +394,8 @@ pub enum WorkflowError {
     DbError(DbErrorWrite),
     #[error("fatal error: {0}")]
     FatalError(FatalError, Version),
+    #[error("lock expired")]
+    LockExpired(Version),
 }
 impl From<WorkflowError> for WorkerError {
     fn from(value: WorkflowError) -> Self {
@@ -401,6 +407,10 @@ impl From<WorkflowError> for WorkerError {
             WorkflowError::FatalError(fatal_error, version) => {
                 WorkerError::FatalError(fatal_error, version)
             }
+            WorkflowError::LockExpired(version) => WorkerError::TemporaryTimeout {
+                http_client_traces: None,
+                version,
+            },
         }
     }
 }
@@ -475,11 +485,24 @@ impl WorkflowWorker {
         }
 
         // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|_store_ctx| {
-            Ok(wasmtime::UpdateDeadline::YieldCustom(
-                1,
-                Box::pin(tokio::task::yield_now()),
-            ))
+        store.epoch_deadline_callback(|store_ctx| {
+            let ctx = store_ctx.data();
+            match ctx.check_epoch_callback() {
+                Ok(()) => Ok(wasmtime::UpdateDeadline::YieldCustom(
+                    1,
+                    Box::pin(tokio::task::yield_now()),
+                )),
+                Err(EpochCallbackError::LockExpired) => {
+                    warn!("Deadline reached in epoch callback");
+                    Err(wasmtime::Error::from(WorkflowFunctionError::LockExpired))
+                }
+                Err(EpochCallbackError::ExecutorClosing) => {
+                    warn!("Executor closing");
+                    Err(wasmtime::Error::from(
+                        WorkflowFunctionError::ExecutorClosing,
+                    ))
+                }
+            }
         });
 
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
@@ -662,6 +685,30 @@ impl WorkflowWorker {
                 }
             }
             WorkerResultRefactored::DbError(err) => Err(WorkflowError::DbError(err)),
+            WorkerResultRefactored::LockExpired(version) => {
+                Err(WorkflowError::LockExpired(version))
+            }
+            WorkerResultRefactored::ExecutorClosing(mut workflow_ctx) => {
+                let called_at = workflow_ctx.clock_fn.now();
+                workflow_ctx
+                    .db_connection
+                    .append_blocking(
+                        workflow_ctx.execution_id.clone(),
+                        AppendRequest {
+                            created_at: called_at,
+                            event: ExecutionRequest::Unlocked {
+                                backoff_expires_at: called_at,
+                                reason: "executor closing".into(),
+                            },
+                        },
+                        called_at,
+                        None,
+                        &workflow_ctx.component_id(),
+                    )
+                    .await
+                    .map_err(WorkflowError::DbError)?;
+                Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+            }
         }
     }
 
@@ -720,6 +767,14 @@ impl WorkflowWorker {
                         WorkerResultRefactored::DbUpdatedByWorkerOrWatcher
                     }
                     WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::DbError(db_err),
+                    WorkerPartialResult::LockExpired(version) => {
+                        // logged in epoch callback
+                        WorkerResultRefactored::LockExpired(version)
+                    }
+                    WorkerPartialResult::ExecutorClosing => {
+                        // logged in epoch callback
+                        WorkerResultRefactored::ExecutorClosing(workflow_ctx)
+                    }
                 }
             }
             Err(RunError::ResultParsingError(err, mut workflow_ctx)) => {
@@ -885,6 +940,9 @@ pub enum ReplayError {
     // Transient error
     #[error(transparent)]
     DbError(#[from] DbErrorWrite),
+    // Transient error
+    #[error("lock expired")]
+    LockExpired,
     /// Replay failed
     #[error("fatal error: {0}")]
     ReplayFailed(FatalError),
@@ -899,6 +957,7 @@ impl From<WorkflowError> for ReplayError {
             WorkflowError::FatalError(fatal_error, _version) => {
                 ReplayError::ReplayFailed(fatal_error)
             }
+            WorkflowError::LockExpired(_version) => ReplayError::LockExpired,
         }
     }
 }
