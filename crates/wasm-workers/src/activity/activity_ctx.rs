@@ -24,6 +24,7 @@ pub struct ActivityCtx {
     pub(crate) http_hooks: HttpHooks,
     pub(crate) preopened_dir: Option<Arc<Path>>,
     pub(crate) process_provider: Option<ProcessProvider>,
+    pub(crate) executor_close_watcher: tokio::sync::watch::Receiver<bool>,
 }
 
 impl wasmtime::component::HasData for ActivityCtx {
@@ -62,7 +63,7 @@ pub(crate) struct ActivityPreopenIoError {
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn store(
     engine: &Engine,
-    ctx: &WorkerContext,
+    ctx: WorkerContext,
     config: &ActivityConfig,
     clock_fn: Box<dyn ClockFn>,
     preopened_dir: Option<PathBuf>,
@@ -70,7 +71,7 @@ pub(crate) fn store(
     stderr: Option<StdOutput>,
     logs_storage_config: Option<LogStrageConfig>,
 ) -> Result<Store<ActivityCtx>, ActivityPreopenIoError> {
-    let execution_id = ctx.execution_id.clone();
+    let execution_id = ctx.execution_id;
     let run_id = ctx.locked_event.run_id;
 
     let mut wasi_ctx = WasiCtxBuilder::new();
@@ -109,7 +110,7 @@ pub(crate) fn store(
     }
 
     let component_logger = ComponentLogger {
-        span: ctx.worker_span.clone(),
+        span: ctx.worker_span,
         execution_id,
         run_id,
         logs_storage_config,
@@ -130,6 +131,7 @@ pub(crate) fn store(
             .directories_config
             .as_ref()
             .and_then(|dir| dir.process_provider),
+        executor_close_watcher: ctx.executor_close_watcher,
     };
     Ok(Store::new(engine, ctx))
 }
