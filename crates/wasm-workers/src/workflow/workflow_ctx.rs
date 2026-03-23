@@ -2776,10 +2776,7 @@ pub(crate) mod tests {
                 WorkerPartialResult::DbError(db_err) => {
                     Err(executor::worker::WorkerError::DbError(db_err))
                 }
-                WorkerPartialResult::LockExpired => {
-                    unreachable!()
-                }
-                WorkerPartialResult::ExecutorClosing => {
+                WorkerPartialResult::LockExpired | WorkerPartialResult::ExecutorClosing => {
                     unreachable!()
                 }
             }

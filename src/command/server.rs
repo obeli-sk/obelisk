@@ -1434,8 +1434,7 @@ impl ServerInit {
             deployment_lock.closed = true;
             std::mem::take(&mut deployment_lock.exec_task_handles)
         };
-        futures_util::future::join_all(executors.iter().map(|exec_handle| exec_handle.close()))
-            .await;
+        futures_util::future::join_all(executors.iter().map(ExecutorTaskHandle::close)).await;
         // Explicit drop to avoid the pattern match footgun.
         // Close everything that is a dependency of executors or workers.
         drop(db_pool);
