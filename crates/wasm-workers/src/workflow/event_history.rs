@@ -3785,7 +3785,9 @@ mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> (EventHistory, CachingDbConnection) {
         let execution_deadline = now + lock_expires_at;
-        let deadline_tracker = deadline_factory.create(execution_deadline, None).unwrap();
+        let deadline_tracker = deadline_factory
+            .create(execution_deadline, tokio::sync::watch::channel(false).1)
+            .unwrap();
 
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let caching_db_connection = CachingDbConnection {

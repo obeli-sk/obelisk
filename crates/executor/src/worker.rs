@@ -49,7 +49,7 @@ pub struct WorkerContext {
     pub can_be_retried: bool,
     pub worker_span: Span,
     pub locked_event: Locked,
-    pub executor_close_watcher: Option<tokio::sync::watch::Receiver<bool>>,
+    pub executor_close_watcher: tokio::sync::watch::Receiver<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]

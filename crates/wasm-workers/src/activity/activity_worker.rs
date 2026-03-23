@@ -1113,7 +1113,7 @@ pub(crate) mod tests {
                         lock_expires_at: Now.now() + lock_expiry,
                         retry_config: ComponentRetryConfig::ZERO,
                     },
-                    executor_close_watcher: None,
+                    executor_close_watcher: tokio::sync::watch::channel(false).1,
                 };
                 tokio::spawn(async move { fibo_worker.run(ctx).await })
             })
@@ -1282,7 +1282,7 @@ pub(crate) mod tests {
                 lock_expires_at: executed_at + TIMEOUT,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: None,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()
@@ -1337,7 +1337,7 @@ pub(crate) mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: None,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()

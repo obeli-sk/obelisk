@@ -252,7 +252,7 @@ impl ExecTask {
         let component_id = config.component_id.clone();
         let executor_id = config.executor_id;
         let (worker_count_tx, worker_count_rx) = tokio::sync::watch::channel(0);
-        let (executor_closing_signal_sender, executor_closing_signal) =
+        let (executor_closing_signal_sender, executor_close_watcher) =
             tokio::sync::watch::channel(false);
         let abort_handle = tokio::spawn(async move {
             debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
@@ -264,7 +264,7 @@ impl ExecTask {
                 locking_strategy_holder: lock_strategy_holder,
                 clock_fn: clock_fn.clone_box(),
                 worker_count_tx,
-                executor_close_watcher: executor_closing_signal,
+                executor_close_watcher,
             };
             let mut old_err = None;
             while !is_closing_inner.load(Ordering::Relaxed) {
@@ -479,7 +479,7 @@ impl ExecTask {
             can_be_retried: can_be_retried.is_some(),
             locked_event: locked_execution.locked_event,
             worker_span,
-            executor_close_watcher: Some(executor_close_watcher),
+            executor_close_watcher,
         };
         let worker_result = worker.run(ctx).await;
         debug!("Worker::run finished {worker_result:?}");

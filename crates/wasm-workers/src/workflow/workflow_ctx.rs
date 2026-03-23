@@ -2902,7 +2902,10 @@ pub(crate) mod tests {
                 tracing::info_span!("workflow-test"),
                 false,
                 DeadlineTrackerFactoryTokio::new(Duration::ZERO, self.clock_fn.clone_box())
-                    .create(ctx.locked_event.lock_expires_at, None)
+                    .create(
+                        ctx.locked_event.lock_expires_at,
+                        tokio::sync::watch::channel(false).1,
+                    )
                     .unwrap(),
                 self.fn_registry.clone(),
                 cancel_registry,
@@ -3401,7 +3404,7 @@ pub(crate) mod tests {
                         lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                         retry_config: ComponentRetryConfig::ZERO,
                     },
-                    executor_close_watcher: None,
+                    executor_close_watcher: tokio::sync::watch::channel(false).1,
                 })
                 .await;
             // Run it SUBMITS times to close all join sets.
@@ -3449,7 +3452,7 @@ pub(crate) mod tests {
                             lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                             retry_config: ComponentRetryConfig::ZERO,
                         },
-                        executor_close_watcher: None,
+                        executor_close_watcher: tokio::sync::watch::channel(false).1,
                     })
                     .await;
             }
@@ -3506,7 +3509,7 @@ pub(crate) mod tests {
                     lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                     retry_config: ComponentRetryConfig::ZERO,
                 },
-                executor_close_watcher: None,
+                executor_close_watcher: tokio::sync::watch::channel(false).1,
             })
             .await;
         assert_matches!(worker_result, WorkerResult::Ok(..), "should be finished");

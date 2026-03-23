@@ -877,6 +877,7 @@ impl WorkflowWorker {
             .await
             .map_err(DbErrorWrite::from)?;
         let is_finished = log.is_finished();
+        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false); // TODO: consider using current exec's watcher
         let ctx = WorkerContext {
             execution_id,
             metadata: ExecutionMetadata::empty(),
@@ -895,7 +896,7 @@ impl WorkflowWorker {
                 lock_expires_at: clock_fn.now(), // does not matter, using DeadlineTrackerFactoryForReplay
                 retry_config: concepts::ComponentRetryConfig::WORKFLOW,
             },
-            executor_close_watcher: None,
+            executor_close_watcher,
         };
 
         let compiled = WorkflowWorkerCompiled::new_with_config_inner(
@@ -1912,7 +1913,6 @@ pub(crate) mod tests {
         // simulate a scheduling problem where deadline < Now.clone_box(), meaning there is no point in running the execution.
         let execution_deadline = sim_clock.now();
         sim_clock.move_time_forward(Duration::from_millis(100));
-
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
@@ -1931,7 +1931,7 @@ pub(crate) mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: None,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         };
         let worker_result = worker.run(ctx).await;
         assert_matches!(
