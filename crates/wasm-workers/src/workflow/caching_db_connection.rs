@@ -10,7 +10,7 @@ use concepts::{
     },
 };
 use std::pin::Pin;
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 pub(crate) struct CachingDbConnection {
     pub(crate) db_connection: Box<dyn DbConnection>,
@@ -413,7 +413,23 @@ impl CachingDbConnection {
         }
         Ok(())
     }
+}
 
+impl Drop for CachingDbConnection {
+    fn drop(&mut self) {
+        if let Some(caching_buffer) = &self.caching_buffer
+            && !caching_buffer.non_blocking_event_batch.is_empty()
+        {
+            warn!(
+                execution_id = %self.execution_id,
+                cache_len = caching_buffer.non_blocking_event_batch.len(),
+                "CachingDbConnection dropped with non-empty cache"
+            );
+        }
+    }
+}
+
+impl CachingDbConnection {
     async fn persist_backtrace_blocking(
         &mut self,
         version: &Version,

@@ -3027,7 +3027,7 @@ pub(crate) mod tests {
                 if let Err(err) = res {
                     info!("Sending {err:?}");
                     return err
-                        .into_worker_partial_result(workflow_ctx.db_connection.version)
+                        .into_worker_partial_result(workflow_ctx.db_connection.version.clone())
                         .into();
                 }
             }
@@ -3036,7 +3036,7 @@ pub(crate) mod tests {
                     info!("Finishing");
                     WorkerResult::Ok(WorkerResultOk::RunFinished {
                         retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                        version: workflow_ctx.db_connection.version,
+                        version: workflow_ctx.db_connection.version.clone(),
                         http_client_traces: None,
                     })
                 }
