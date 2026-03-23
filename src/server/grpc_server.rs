@@ -44,7 +44,7 @@ use concepts::storage::Version;
 use concepts::storage::VersionType;
 use concepts::time::ClockFn;
 use concepts::time::Now;
-use executor::executor::{ExecutorTaskHandle, WorkerShutdownMode};
+use executor::executor::ExecutorTaskHandle;
 use grpc::TonicRespResult;
 use grpc::TonicResult;
 use grpc::grpc_gen;
@@ -1510,11 +1510,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
 
                 // Stop old executors.
                 let old = std::mem::take(&mut ctx.exec_task_handles);
-                futures_util::future::join_all(
-                    old.iter()
-                        .map(|exec_handle| exec_handle.close(WorkerShutdownMode::WaitForWorkers)),
-                )
-                .await;
+                futures_util::future::join_all(old.iter().map(|exec_handle| exec_handle.close()))
+                    .await;
 
                 // Spawn new executors.
                 let new_handles: Vec<ExecutorTaskHandle> = compiled

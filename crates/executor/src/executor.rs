@@ -68,18 +68,6 @@ impl ExecutionProgress {
     }
 }
 
-/// Controls whether [`ExecutorTaskHandle::close`] waits for in-progress worker
-/// tasks to finish after the executor loop exits.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum WorkerShutdownMode {
-    /// Fire the interrupt signal and return as soon as the executor loop exits.
-    /// In-progress workers may still be running; they will complete and update
-    /// the database on their own.  Use this for hot-redeploy where a new
-    /// executor takes over immediately.
-    SkipWorkers,
-    WaitForWorkers,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkerType {
     Activity,
@@ -103,24 +91,22 @@ pub struct ExecutorTaskHandle {
 impl ExecutorTaskHandle {
     #[instrument(name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id,
         deployment_id = %self.deployment_id))]
-    pub async fn close(&self, mode: WorkerShutdownMode) {
+    pub async fn close(&self) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
         while !self.abort_handle.is_finished() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        if mode == WorkerShutdownMode::WaitForWorkers {
-            trace!("Signaling workflow tasks to unlock");
-            let _ = self.executor_closing_signal_sender.send(true);
-            let mut worker_count_rx = self.worker_count_rx.clone();
-            loop {
-                tokio::select! {
-                    () = tokio::time::sleep(Duration::from_secs(1)) => {
-                        info!("Waiting for {} workers to shut down", *self.worker_count_rx.borrow());
-                    }
-                    _ = worker_count_rx.wait_for(|&count| count == 0) => {
-                        break;
-                    }
+        trace!("Signaling workflow tasks to unlock");
+        let _ = self.executor_closing_signal_sender.send(true);
+        let mut worker_count_rx = self.worker_count_rx.clone();
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_secs(1)) => {
+                    info!("Waiting for {} workers to shut down", *self.worker_count_rx.borrow());
+                }
+                _ = worker_count_rx.wait_for(|&count| count == 0) => {
+                    break;
                 }
             }
         }

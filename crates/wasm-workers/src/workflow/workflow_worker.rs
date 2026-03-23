@@ -697,7 +697,7 @@ impl WorkflowWorker {
                         AppendRequest {
                             created_at: called_at,
                             event: ExecutionRequest::Unlocked {
-                                backoff_expires_at: called_at,
+                                backoff_expires_at: called_at, // continue right when new executor starts
                                 reason: "executor closing".into(),
                             },
                         },
