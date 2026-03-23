@@ -498,7 +498,7 @@ impl WorkflowWorker {
                     Err(wasmtime::Error::from(WorkflowFunctionError::LockExpired))
                 }
                 Err(EpochCallbackError::ExecutorClosing) => {
-                    info!("Executor closing");
+                    info!("Executor closing detected in epoch callback");
                     Err(wasmtime::Error::from(
                         WorkflowFunctionError::ExecutorClosing,
                     ))
@@ -804,6 +804,9 @@ impl WorkflowWorker {
             )),
             Err(ApplyError::ConstraintViolation(reason)) => Err(WorkflowError::FatalError(
                 FatalError::ConstraintViolation { reason },
+                workflow_ctx.db_connection.version.clone(),
+            )),
+            Err(ApplyError::ExecutorClosing) => Err(WorkflowError::ExecutorClosing(
                 workflow_ctx.db_connection.version.clone(),
             )),
         }

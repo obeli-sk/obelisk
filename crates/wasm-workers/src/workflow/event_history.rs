@@ -102,6 +102,8 @@ pub(crate) enum ApplyError {
     DbError(#[from] DbErrorWrite),
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
+    #[error("executor closing")]
+    ExecutorClosing,
 }
 
 #[expect(clippy::struct_field_names)]
@@ -258,24 +260,8 @@ impl EventHistory {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
             Err(PreemptRequested::ExecutorClosing) => {
-                // best effort to append `Unlocked` event. If this fails, execution will be marked as timed out and be retried later.
-                db_connection
-                    .append_blocking(
-                        db_connection.execution_id.clone(),
-                        AppendRequest {
-                            created_at: called_at,
-                            event: ExecutionRequest::Unlocked {
-                                backoff_expires_at: called_at, // continue right when new executor starts
-                                reason: "executor closing".into(),
-                            },
-                        },
-                        called_at,
-                        None,
-                        &self.locked_event.component_id,
-                    )
-                    .await?;
-
-                return Err(ApplyError::InterruptDbUpdated);
+                info!("Executor closing detected in host function call");
+                return Err(ApplyError::ExecutorClosing);
             }
         }
 

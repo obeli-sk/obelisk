@@ -130,6 +130,7 @@ impl From<ApplyError> for WorkflowFunctionError {
             ApplyError::ConstraintViolation(reason) => {
                 WorkflowFunctionError::ConstraintViolation(reason)
             }
+            ApplyError::ExecutorClosing => WorkflowFunctionError::ExecutorClosing,
         }
     }
 }
