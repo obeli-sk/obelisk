@@ -195,7 +195,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "params": {
-          "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to a single `(params: list<string>)` parameter.",
+          "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to no parameters.",
           "type": [
             "array",
             "null"
@@ -212,7 +212,7 @@
           }
         },
         "return_type": {
-          "description": "WIT return type. Defaults to `result<string, string>`.\nMust be `result<T, string>` — the error type must be `string` since JS throws strings.",
+          "description": "WIT return type. Defaults to `result`.\nMust be `result<T, string>` — the error type must be `string` since JS throws strings.",
           "type": [
             "string",
             "null"
@@ -993,7 +993,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "params": {
-          "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to a single `(params: list<string>)` parameter.",
+          "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to no parameters.",
           "type": [
             "array",
             "null"
@@ -1010,7 +1010,7 @@
           }
         },
         "return_type": {
-          "description": "WIT return type. Defaults to `result<string, string>`.\nMust be `result`, `result<T>`, `result<T, string>`, or\n`result<T, variant { execution-failed, ... }>`.",
+          "description": "WIT return type. Defaults to `result`.\nMust be `result`, `result<T>`, `result<T, string>`, or\n`result<T, variant { execution-failed, ... }>`.",
           "type": [
             "string",
             "null"

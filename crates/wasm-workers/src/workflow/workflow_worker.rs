@@ -510,7 +510,7 @@ impl WorkflowWorker {
             Ok(instance) => instance,
             Err(err) => {
                 let reason = err.to_string();
-                let version = store.into_data().db_connection.version;
+                let version = store.into_data().db_connection.version.clone();
                 if reason.starts_with("maximum concurrent") {
                     return Err(WorkflowError::LimitReached { reason, version });
                 }
@@ -534,7 +534,7 @@ impl WorkflowWorker {
                         ),
                         detail: None,
                     },
-                    store.into_data().db_connection.version,
+                    store.into_data().db_connection.version.clone(),
                 ));
             };
             instance
@@ -649,7 +649,7 @@ impl WorkflowWorker {
                 match Self::close_join_sets(&mut workflow_ctx).await {
                     Ok(CloseJoinSetOk::Ok) => Ok(WorkerResultOk::RunFinished {
                         retval,
-                        version: workflow_ctx.db_connection.version,
+                        version: workflow_ctx.db_connection.version.clone(),
                         http_client_traces: None,
                     }),
                     Ok(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher) => {
@@ -672,7 +672,7 @@ impl WorkflowWorker {
                         // Propagate the original error
                         Err(WorkflowError::FatalError(
                             err,
-                            workflow_ctx.db_connection.version,
+                            workflow_ctx.db_connection.version.clone(),
                         ))
                     }
                     Err(closing_err) => {
@@ -694,7 +694,7 @@ impl WorkflowWorker {
                     .await
                     .map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::LockExpired(
-                    workflow_ctx.db_connection.version,
+                    workflow_ctx.db_connection.version.clone(),
                 ))
             }
             WorkerResultRefactored::ExecutorClosing(mut workflow_ctx) => {
@@ -705,7 +705,7 @@ impl WorkflowWorker {
                     .await
                     .map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::ExecutorClosing(
-                    workflow_ctx.db_connection.version,
+                    workflow_ctx.db_connection.version.clone(),
                 ))
             }
         }

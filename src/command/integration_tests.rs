@@ -110,6 +110,7 @@ params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
+return_type = "result<string, string>"
 max_retries = 0
 
 [[activity_js]]
@@ -119,6 +120,7 @@ ffqn = "testing:integration/activity-greet.greet"
 params = [
   {{ name = "name", type = "string" }},
 ]
+return_type = "result<string, string>"
 max_retries = 0
 
 [[activity_js]]
@@ -129,6 +131,7 @@ params = [
   {{ name = "url", type = "string" }},
   {{ name = "headers", type = "list<tuple<string,string>>" }},
 ]
+return_type = "result<string, string>"
 max_retries = 0
 
 [[activity_js]]
@@ -139,6 +142,7 @@ params = [
   {{ name = "url", type = "string" }},
   {{ name = "headers", type = "list<tuple<string,string>>" }},
 ]
+return_type = "result<string, string>"
 max_retries = 0
 [[activity_js.allowed_host]]
 pattern = "http://{ip}:{API_PORT}"
@@ -151,6 +155,7 @@ ffqn = "testing:integration/activity-env.read-env"
 params = [
   {{ name = "key", type = "string" }},
 ]
+return_type = "result<string, string>"
 max_retries = 0
 env_vars = [{{key = "TEST_ENV_VAR", value = "hello_from_env"}}]
 
@@ -188,6 +193,7 @@ params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
+return_type = "result<string, string>"
 
 [[workflow_js]]
 name = "test_add_via_activity_workflow"
@@ -197,6 +203,7 @@ params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
+return_type = "result<string, string>"
 
 [[workflow_js]]
 name = "test_call_activity_workflow"
@@ -206,6 +213,7 @@ params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
+return_type = "result<string, string>"
 
 [[workflow_js]]
 name = "test_make_record_workflow"
@@ -237,6 +245,7 @@ ffqn = "testing:integration/workflow-call-stub.call-stub"
 params = [
   {{ name = "id", type = "u64" }},
 ]
+return_type = "result<string, string>"
 
 [[activity_stub]]
 name = "test_inline_stub"
@@ -683,7 +692,6 @@ async fn submit_workflow_and_replay() {
     let server = TestServer::start(test_addr!(8)).await;
     let exec_id = server.generate_execution_id().await;
 
-    // JS workflows return result<string, string>.
     let resp = server
         .submit_follow_with_id(
             &exec_id,

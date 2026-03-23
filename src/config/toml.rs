@@ -1313,7 +1313,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS function.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
-    /// If omitted, defaults to a single `(params: list<string>)` parameter.
+    /// If omitted, defaults to no parameters.
     #[serde(default)]
     pub(crate) params: Option<Vec<JsParamToml>>,
     #[serde(default)]
@@ -1333,7 +1333,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
-    /// WIT return type. Defaults to `result<string, string>`.
+    /// WIT return type. Defaults to `result`.
     /// Must be `result<T, string>` — the error type must be `string` since JS throws strings.
     #[serde(default)]
     pub(crate) return_type: Option<String>,
@@ -1389,7 +1389,7 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS workflow function.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
-    /// If omitted, defaults to a single `(params: list<string>)` parameter.
+    /// If omitted, defaults to no parameters.
     #[serde(default)]
     pub(crate) params: Option<Vec<JsParamToml>>,
     #[serde(default)]
@@ -1402,7 +1402,7 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) lock_extension: bool,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
-    /// WIT return type. Defaults to `result<string, string>`.
+    /// WIT return type. Defaults to `result`.
     /// Must be `result`, `result<T>`, `result<T, string>`, or
     /// `result<T, variant { execution-failed, ... }>`.
     #[serde(default)]
@@ -1666,15 +1666,7 @@ impl ActivityJsComponentConfigCanonical {
         fuel: Option<u64>,
     ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
         let parsed_params = match self.params {
-            None => {
-                vec![concepts::ParameterType {
-                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
-                        val_json::type_wrapper::TypeWrapper::String,
-                    )),
-                    name: StrVariant::Static("params"),
-                    wit_type: StrVariant::Static("list<string>"),
-                }]
-            }
+            None => vec![],
             Some(params) => params
                 .iter()
                 .map(|p| {
@@ -1692,7 +1684,7 @@ impl ActivityJsComponentConfigCanonical {
             .location
             .get_content(&wasm_cache_dir, self.content_digest.as_ref())
             .await?;
-        const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
+        const DEFAULT_RETURN_TYPE: &str = "result";
         let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
         let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
             .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
@@ -1866,15 +1858,7 @@ impl WorkflowJsComponentConfigCanonical {
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
         let parsed_params = match self.params {
-            None => {
-                vec![concepts::ParameterType {
-                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
-                        val_json::type_wrapper::TypeWrapper::String,
-                    )),
-                    name: StrVariant::Static("params"),
-                    wit_type: StrVariant::Static("list<string>"),
-                }]
-            }
+            None => vec![],
             Some(params) => params
                 .iter()
                 .map(|p| {
@@ -1892,7 +1876,7 @@ impl WorkflowJsComponentConfigCanonical {
             .location
             .get_content(&wasm_cache_dir, self.content_digest.as_ref())
             .await?;
-        const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
+        const DEFAULT_RETURN_TYPE: &str = "result";
         let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
         let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
             .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
