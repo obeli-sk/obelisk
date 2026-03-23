@@ -94,13 +94,13 @@ return_type = "result<string, string>"
 # Busy workflow
 
 [[workflow_js]]
-name = "busy"
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy.js"
+name = "workflow_busy_sleep"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy-sleep.js"
 ffqn = "testing:integration/workflow-busy.busy"
 params = []
 
 [[activity_js]]
-name = "activity_sleep"
+name = "activity_busy_sleep"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/sleep.js"
 ffqn = "testing:integration/sleep-activity.sleep"
 params = [
@@ -110,8 +110,15 @@ return_type = "result"
 max_retries = 0
 
 [[workflow_js]]
-name = "busycpu"
+name = "workflow_busy_cpu"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy-cpu.js"
 ffqn = "testing:integration/workflow-busy-cpu.busy-cpu"
+params = []
+exec.lock_expiry.seconds = 10
+
+[[activity_js]]
+name = "activity_busy_cpu"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/busy-cpu.js"
+ffqn = "testing:integration/activity-busy-cpu.busy-cpu"
 params = []
 exec.lock_expiry.seconds = 10

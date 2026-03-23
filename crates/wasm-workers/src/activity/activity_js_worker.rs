@@ -463,7 +463,7 @@ mod tests {
                 lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: None,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         }
     }
 
@@ -495,7 +495,7 @@ mod tests {
                 lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: None,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         }
     }
 

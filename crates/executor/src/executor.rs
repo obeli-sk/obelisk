@@ -68,18 +68,6 @@ impl ExecutionProgress {
     }
 }
 
-/// Controls whether [`ExecutorTaskHandle::close`] waits for in-progress worker
-/// tasks to finish after the executor loop exits.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum WorkerShutdownMode {
-    /// Fire the interrupt signal and return as soon as the executor loop exits.
-    /// In-progress workers may still be running; they will complete and update
-    /// the database on their own.  Use this for hot-redeploy where a new
-    /// executor takes over immediately.
-    SkipWorkers,
-    WaitForWorkers,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkerType {
     Activity,
@@ -103,24 +91,22 @@ pub struct ExecutorTaskHandle {
 impl ExecutorTaskHandle {
     #[instrument(name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id,
         deployment_id = %self.deployment_id))]
-    pub async fn close(&self, mode: WorkerShutdownMode) {
+    pub async fn close(&self) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
         while !self.abort_handle.is_finished() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        if mode == WorkerShutdownMode::WaitForWorkers {
-            info!("Signaling workflow tasks to unlock");
-            let _ = self.executor_closing_signal_sender.send(true);
-            let mut worker_count_rx = self.worker_count_rx.clone();
-            loop {
-                tokio::select! {
-                    () = tokio::time::sleep(Duration::from_secs(1)) => {
-                        info!("Waiting for {} workers to shut down", *self.worker_count_rx.borrow());
-                    }
-                    _ = worker_count_rx.wait_for(|&count| count == 0) => {
-                        break;
-                    }
+        trace!("Signaling workflow tasks to unlock");
+        let _ = self.executor_closing_signal_sender.send(true);
+        let mut worker_count_rx = self.worker_count_rx.clone();
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_secs(1)) => {
+                    info!("Waiting for {} workers to shut down", *self.worker_count_rx.borrow());
+                }
+                _ = worker_count_rx.wait_for(|&count| count == 0) => {
+                    break;
                 }
             }
         }
@@ -252,7 +238,7 @@ impl ExecTask {
         let component_id = config.component_id.clone();
         let executor_id = config.executor_id;
         let (worker_count_tx, worker_count_rx) = tokio::sync::watch::channel(0);
-        let (executor_closing_signal_sender, executor_closing_signal) =
+        let (executor_closing_signal_sender, executor_close_watcher) =
             tokio::sync::watch::channel(false);
         let abort_handle = tokio::spawn(async move {
             debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
@@ -264,7 +250,7 @@ impl ExecTask {
                 locking_strategy_holder: lock_strategy_holder,
                 clock_fn: clock_fn.clone_box(),
                 worker_count_tx,
-                executor_close_watcher: executor_closing_signal,
+                executor_close_watcher,
             };
             let mut old_err = None;
             while !is_closing_inner.load(Ordering::Relaxed) {
@@ -479,7 +465,7 @@ impl ExecTask {
             can_be_retried: can_be_retried.is_some(),
             locked_event: locked_execution.locked_event,
             worker_span,
-            executor_close_watcher: Some(executor_close_watcher),
+            executor_close_watcher,
         };
         let worker_result = worker.run(ctx).await;
         debug!("Worker::run finished {worker_result:?}");
@@ -511,7 +497,7 @@ impl ExecTask {
         }
     }
 
-    /// Map the `WorkerError` to an temporary or a permanent failure.
+    /// Map the `WorkerError` to an optional append event
     fn worker_result_to_execution_event(
         component_type: ComponentType,
         execution_id: ExecutionId,
@@ -593,6 +579,13 @@ impl ExecTask {
                 let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
 
                 let (primary_event, child_finished, version) = match err {
+                    WorkerError::ExecutorClosing(version) => {
+                        let primary_event = ExecutionRequest::Unlocked {
+                            backoff_expires_at: result_obtained_at, // continue right when new executor starts
+                            reason: "executor closing".into(),
+                        };
+                        (primary_event, None, version)
+                    }
                     WorkerError::TemporaryTimeout {
                         http_client_traces,
                         version,

@@ -37,7 +37,7 @@ pub trait DeadlineTrackerFactory: Send + Sync {
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
-        unlock_executor_close_watcher: Option<watch::Receiver<bool>>,
+        unlock_executor_close_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired>;
 }
 
@@ -60,16 +60,13 @@ pub(crate) struct DeadlineTrackerTokio {
     pub(crate) deadline_minus_leeway: tokio::time::Instant, // Tracked as instant because calling track happens later after creation.
     pub(crate) clock_fn: Box<dyn ClockFn>,
     pub(crate) leeway: Duration, // Fire this much sooner than requested.
-    executor_close_watcher: Option<watch::Receiver<bool>>,
+    executor_close_watcher: watch::Receiver<bool>,
 }
 
 #[async_trait]
 impl DeadlineTracker for DeadlineTrackerTokio {
     fn check_preempt(&self) -> Result<(), PreemptRequested> {
-        let executor_closing = self
-            .executor_close_watcher
-            .as_ref()
-            .is_some_and(|executor_close_watcher| *executor_close_watcher.borrow());
+        let executor_closing = *self.executor_close_watcher.borrow();
         if executor_closing {
             Err(PreemptRequested::ExecutorClosing)
         } else {
@@ -90,19 +87,13 @@ impl DeadlineTracker for DeadlineTrackerTokio {
             } else {
                 self.deadline_minus_leeway
             };
-            if let Some(mut executor_close_watcher) = self.executor_close_watcher.clone() {
-                Some(Box::pin(async move {
-                    tokio::select! {
-                        () = tokio::time::sleep_until(expiry) => TimeoutOutcome::Timeout,
-                        _ = executor_close_watcher.wait_for(|&v| v) => TimeoutOutcome::Timeout,
-                    }
-                }))
-            } else {
-                Some(Box::pin(async move {
-                    tokio::time::sleep_until(expiry).await;
-                    TimeoutOutcome::Timeout
-                }))
-            }
+            let mut executor_close_watcher = self.executor_close_watcher.clone();
+            Some(Box::pin(async move {
+                tokio::select! {
+                    () = tokio::time::sleep_until(expiry) => TimeoutOutcome::Timeout,
+                    _ = executor_close_watcher.wait_for(|&v| v) => TimeoutOutcome::Timeout,
+                }
+            }))
         }
     }
 
@@ -111,10 +102,7 @@ impl DeadlineTracker for DeadlineTrackerTokio {
     }
 
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
-        let executor_closing = self
-            .executor_close_watcher
-            .as_ref()
-            .is_some_and(|executor_close_watcher| *executor_close_watcher.borrow());
+        let executor_closing = *self.executor_close_watcher.borrow();
         if executor_closing {
             Err(EpochCallbackError::ExecutorClosing)
         } else if self.deadline <= tokio::time::Instant::now() {
@@ -165,7 +153,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
-        executor_close_watcher: Option<watch::Receiver<bool>>,
+        executor_close_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         let started_at = self.clock_fn.now();
         let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
@@ -210,7 +198,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryForReplay {
     fn create(
         &self,
         _lock_expires_at: DateTime<Utc>,
-        _executor_close_watcher: Option<watch::Receiver<bool>>,
+        _executor_close_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         Ok(Box::new(DeadlineTrackerFactoryForReplay {}))
     }

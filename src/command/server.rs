@@ -69,7 +69,7 @@ use directories::BaseDirs;
 use directories::ProjectDirs;
 use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
-use executor::executor::{ExecConfig, ExecTask, WorkerShutdownMode};
+use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
 use executor::worker::Worker;
@@ -1434,15 +1434,7 @@ impl ServerInit {
             deployment_lock.closed = true;
             std::mem::take(&mut deployment_lock.exec_task_handles)
         };
-        futures_util::future::join_all(executors.iter().map(|exec_handle| {
-            let mode = if exec_handle.component_id().component_type.is_activity() {
-                WorkerShutdownMode::SkipWorkers
-            } else {
-                WorkerShutdownMode::WaitForWorkers
-            };
-            exec_handle.close(mode)
-        }))
-        .await;
+        futures_util::future::join_all(executors.iter().map(ExecutorTaskHandle::close)).await;
         // Explicit drop to avoid the pattern match footgun.
         // Close everything that is a dependency of executors or workers.
         drop(db_pool);

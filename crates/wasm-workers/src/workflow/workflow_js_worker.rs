@@ -402,7 +402,7 @@ impl WorkflowJsWorker {
             .into_iter(),
         )
         .expect("types checked at compile time");
-
+        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false); // TODO: consider using current exec's watcher
         let ctx = WorkerContext {
             execution_id,
             metadata: ExecutionMetadata::empty(),
@@ -421,7 +421,7 @@ impl WorkflowJsWorker {
                 lock_expires_at: clock_fn.now(),
                 retry_config: ComponentRetryConfig::WORKFLOW,
             },
-            executor_close_watcher: None,
+            executor_close_watcher,
         };
 
         let compiled = WorkflowWorkerCompiled::new_with_config_inner(
@@ -609,7 +609,7 @@ mod tests {
                 lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::WORKFLOW,
             },
-            executor_close_watcher: None,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         }
     }
 

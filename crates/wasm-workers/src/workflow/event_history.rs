@@ -102,6 +102,8 @@ pub(crate) enum ApplyError {
     DbError(#[from] DbErrorWrite),
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
+    #[error("executor closing")]
+    ExecutorClosing,
 }
 
 #[expect(clippy::struct_field_names)]
@@ -258,24 +260,8 @@ impl EventHistory {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
             Err(PreemptRequested::ExecutorClosing) => {
-                // best effort to append `Unlocked` event. If this fails, execution will be marked as timed out and be retried later.
-                db_connection
-                    .append_blocking(
-                        db_connection.execution_id.clone(),
-                        AppendRequest {
-                            created_at: called_at,
-                            event: ExecutionRequest::Unlocked {
-                                backoff_expires_at: called_at,
-                                reason: "executor closing".into(),
-                            },
-                        },
-                        called_at,
-                        None,
-                        &self.locked_event.component_id,
-                    )
-                    .await?;
-
-                return Err(ApplyError::InterruptDbUpdated);
+                info!("Executor closing detected in host function call");
+                return Err(ApplyError::ExecutorClosing);
             }
         }
 
@@ -3785,7 +3771,9 @@ mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> (EventHistory, CachingDbConnection) {
         let execution_deadline = now + lock_expires_at;
-        let deadline_tracker = deadline_factory.create(execution_deadline, None).unwrap();
+        let deadline_tracker = deadline_factory
+            .create(execution_deadline, tokio::sync::watch::channel(false).1)
+            .unwrap();
 
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let caching_db_connection = CachingDbConnection {

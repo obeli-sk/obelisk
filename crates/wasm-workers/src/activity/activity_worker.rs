@@ -9,10 +9,11 @@ use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::http_client_trace::HttpClientTrace;
-use concepts::storage::{LogInfoAppendRow, LogStreamType};
+use concepts::storage::{LogInfoAppendRow, LogStreamType, Version};
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{
-    ComponentId, FunctionFqn, PackageIfcFns, StrVariant, SupportedFunctionReturnValue, TrapKind,
+    ComponentId, FunctionFqn, PackageIfcFns, Params, StrVariant, SupportedFunctionReturnValue,
+    TrapKind,
 };
 use concepts::{FunctionMetadata, ResultParsingError};
 use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
@@ -224,7 +225,12 @@ impl Worker for ActivityWorker {
             tracing::field::display(&ctx.locked_event.lock_expires_at),
         );
 
-        let (mut store, deadline_duration) = match self.create_store(&ctx, started_at).await {
+        let ffqn = ctx.ffqn.clone();
+        let params = ctx.params.clone();
+        let version = ctx.version.clone();
+        let worker_span = ctx.worker_span.clone();
+
+        let (mut store, deadline_duration) = match self.create_store(ctx, started_at).await {
             Ok(store) => store,
             Err(err) => return WorkerResult::Err(err),
         };
@@ -232,7 +238,10 @@ impl Worker for ActivityWorker {
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
 
         let call_function = {
-            let call_func_params = match self.call_func_params(&ctx, &mut store).await {
+            let call_func_params = match self
+                .call_func_params(&ffqn, &params, &version, &mut store)
+                .await
+            {
                 Ok(ok) => ok,
                 Err(err) => return WorkerResult::Err(err),
             };
@@ -242,21 +251,25 @@ impl Worker for ActivityWorker {
         tokio::select! { // future's liveness: Dropping the loser immediately.
             res = call_function => {
                 let activity_ctx = store.into_data();
-                let res = self.process_res(res, &ctx, activity_ctx);
-                ctx.worker_span.in_scope(|| {
-                    if let WorkerResult::Err(err) = &res {
-                        info!(%err, duration = ?stopwatch_for_reporting.elapsed(),
-                        "Run finished with an error");
-                    } else {
-                        info!(duration = ?stopwatch_for_reporting.elapsed(),
-                        "Run finished successfully");
+                let res = self.process_res(res, &version, activity_ctx);
+                worker_span.in_scope(|| {
+                    match &res {
+                        Ok(_) => {
+                            info!(duration = ?stopwatch_for_reporting.elapsed(), "Run finished successfully");
+                        }
+                        Err(WorkerError::ExecutorClosing(_)) => {
+                            info!("Executor closing");
+                        }
+                        Err(err) => {
+                            info!(%err, duration = ?stopwatch_for_reporting.elapsed(), "Run finished with an error");
+                        }
                     }
                 });
                 return res;
             },
             ()  = self.sleep.sleep(deadline_duration) => {
                 let activity_ctx = store.into_data();
-                ctx.worker_span.in_scope(||
+                worker_span.in_scope(||
                         info!(duration = ?stopwatch_for_reporting.elapsed(), %started_at,
                         now = %self.clock_fn.now(),
                         "Run timed out")
@@ -270,13 +283,14 @@ impl Worker for ActivityWorker {
                         .collect_vec());
                 return WorkerResult::Err(WorkerError::TemporaryTimeout{
                     http_client_traces,
-                    version: ctx.version,
+                    version,
                 });
             }
             cancel_res = cancelation_token => {
                 // TODO: Add http traces
+                info!("Activity cancelled");
                 assert!(cancel_res.is_ok(), "only closed channels are dropped");
-                return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, ctx.version));
+                return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, version));
             }
         }
     }
@@ -291,7 +305,7 @@ struct CallFuncParams {
 impl ActivityWorker {
     async fn create_store(
         &self,
-        ctx: &WorkerContext,
+        ctx: WorkerContext,
         started_at: DateTime<Utc>,
     ) -> Result<(Store<ActivityCtx>, Duration /* deadline duration*/), WorkerError> {
         let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
@@ -330,21 +344,27 @@ impl ActivityWorker {
         } else {
             None
         };
+        let lock_expires_at = ctx.locked_event.lock_expires_at;
+        let worker_span = ctx.worker_span.clone();
+        let version = ctx.version.clone();
+
+        let stdout = self
+            .stdout
+            .as_ref()
+            .map(|it| it.build(&ctx.execution_id, ctx.locked_event.run_id));
+        let stderr = self
+            .stderr
+            .as_ref()
+            .map(|it| it.build(&ctx.execution_id, ctx.locked_event.run_id));
 
         let mut store = match activity_ctx::store(
             &self.engine,
-            ctx.execution_id.clone(),
-            ctx.locked_event.run_id,
+            ctx,
             &self.config,
-            ctx.worker_span.clone(),
             self.clock_fn.clone_box(),
             preopened_dir,
-            self.stdout
-                .as_ref()
-                .map(|it| it.build(&ctx.execution_id, ctx.locked_event.run_id)),
-            self.stderr
-                .as_ref()
-                .map(|it| it.build(&ctx.execution_id, ctx.locked_event.run_id)),
+            stdout,
+            stderr,
             self.logs_storage_config.clone(),
         ) {
             Ok(store) => store,
@@ -354,7 +374,7 @@ impl ActivityWorker {
                         "not found although preopened directory was just created - {err}"
                     ),
                     detail: format!("{err:?}"),
-                    version: ctx.version.clone(),
+                    version,
                 });
             }
         };
@@ -367,24 +387,31 @@ impl ActivityWorker {
         }
 
         // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|_store_ctx| {
-            Ok(UpdateDeadline::YieldCustom(
-                1,
-                Box::pin(tokio::task::yield_now()),
-            ))
+        store.epoch_deadline_callback(|store_ctx| {
+            let executor_closing = *store_ctx.data().executor_close_watcher.borrow();
+            if executor_closing {
+                info!("Executor closing");
+                Ok(UpdateDeadline::Interrupt) // Interpreted as executor closing in `process_res`
+            } else {
+                Ok(UpdateDeadline::YieldCustom(
+                    1,
+                    Box::pin(tokio::task::yield_now()),
+                ))
+            }
         });
-        let deadline_delta = ctx.locked_event.lock_expires_at - started_at;
+
+        let deadline_delta = lock_expires_at - started_at;
         let Ok(deadline_duration) = deadline_delta.to_std() else {
-            ctx.worker_span.in_scope(|| {
-                info!(execution_deadline = %ctx.locked_event.lock_expires_at, %started_at,
+            worker_span.in_scope(|| {
+                info!(execution_deadline = %lock_expires_at, %started_at,
                     "Timed out - started_at later than execution_deadline");
             });
             return Err(WorkerError::TemporaryTimeout {
                 http_client_traces: None,
-                version: ctx.version.clone(),
+                version,
             });
         };
-        ctx.worker_span.record(
+        worker_span.record(
             "deadline_duration",
             tracing::field::debug(&deadline_duration),
         );
@@ -393,7 +420,9 @@ impl ActivityWorker {
 
     async fn call_func_params(
         &self,
-        ctx: &WorkerContext,
+        ffqn: &FunctionFqn,
+        params: &Params,
+        version: &Version,
         store: &mut Store<ActivityCtx>,
     ) -> Result<CallFuncParams, WorkerError> {
         let instance = match self.instance_pre.instantiate_async(&mut *store).await {
@@ -403,7 +432,7 @@ impl ActivityWorker {
                 if reason.starts_with("maximum concurrent") {
                     return Err(WorkerError::LimitReached {
                         reason,
-                        version: ctx.version.clone(),
+                        version: version.clone(),
                     });
                 }
                 return Err(WorkerError::FatalError(
@@ -411,14 +440,14 @@ impl ActivityWorker {
                         reason: format!("cannot instantiate: {err}"),
                         detail: Some(format!("{err:?}")),
                     },
-                    ctx.version.clone(),
+                    version.clone(),
                 ));
             }
         };
         let func = {
             let fn_export_index = self
                 .exported_ffqn_to_index
-                .get(&ctx.ffqn)
+                .get(ffqn)
                 .expect("executor only calls `run` with ffqns that are exported");
             instance
                 .get_func(&mut *store, fn_export_index)
@@ -426,12 +455,12 @@ impl ActivityWorker {
         };
 
         let component_func = func.ty(store);
-        let params = match ctx.params.as_vals(component_func.params()) {
+        let params = match params.as_vals(component_func.params()) {
             Ok(params) => params,
             Err(err) => {
                 return Err(WorkerError::FatalError(
                     FatalError::ParamsParsingError(err),
-                    ctx.version.clone(),
+                    version.clone(),
                 ));
             }
         };
@@ -477,7 +506,7 @@ impl ActivityWorker {
     fn process_res(
         &self,
         res: Result<Result<SupportedFunctionReturnValue, ResultParsingError>, wasmtime::Error>,
-        ctx: &WorkerContext,
+        version: &Version,
         activity_ctx: ActivityCtx,
     ) -> WorkerResult {
         let http_client_traces = Some(
@@ -494,12 +523,12 @@ impl ActivityWorker {
         match res {
             Ok(Ok(result)) => WorkerResult::Ok(WorkerResultOk::RunFinished {
                 retval: result,
-                version: ctx.version.clone(),
+                version: version.clone(),
                 http_client_traces,
             }),
             Ok(Err(result_parsing_err)) => WorkerResult::Err(WorkerError::FatalError(
                 FatalError::ResultParsingError(result_parsing_err),
-                ctx.version.clone(),
+                version.clone(),
             )),
             Err(err) => WorkerResult::Err(
                 if let Some(trap) = err
@@ -516,15 +545,17 @@ impl ActivityWorker {
                             ),
                             detail: None,
                             trap_kind: TrapKind::OutOfFuel,
-                            version: ctx.version.clone(),
+                            version: version.clone(),
                             http_client_traces,
                         }
+                    } else if *trap == wasmtime::Trap::Interrupt {
+                        WorkerError::ExecutorClosing(version.clone())
                     } else {
                         WorkerError::ActivityTrap {
                             reason: trap.to_string(),
                             detail: Some(format!("{err:?}")),
                             trap_kind: TrapKind::Trap,
-                            version: ctx.version.clone(),
+                            version: version.clone(),
                             http_client_traces,
                         }
                     }
@@ -533,7 +564,7 @@ impl ActivityWorker {
                         reason: err.to_string(),
                         trap_kind: TrapKind::HostFunctionError,
                         detail: Some(format!("{err:?}")),
-                        version: ctx.version.clone(),
+                        version: version.clone(),
                         http_client_traces,
                     }
                 },
@@ -1111,7 +1142,7 @@ pub(crate) mod tests {
                         lock_expires_at: Now.now() + lock_expiry,
                         retry_config: ComponentRetryConfig::ZERO,
                     },
-                    executor_close_watcher: None,
+                    executor_close_watcher: tokio::sync::watch::channel(false).1,
                 };
                 tokio::spawn(async move { fibo_worker.run(ctx).await })
             })
@@ -1280,7 +1311,7 @@ pub(crate) mod tests {
                 lock_expires_at: executed_at + TIMEOUT,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: None,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()
@@ -1335,7 +1366,7 @@ pub(crate) mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: None,
+            executor_close_watcher: tokio::sync::watch::channel(false).1,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()

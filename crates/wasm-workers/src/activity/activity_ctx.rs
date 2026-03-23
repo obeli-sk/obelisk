@@ -3,13 +3,11 @@ use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::http_hooks::{HttpClientTracesContainer, HttpHooks};
 use crate::policy_builder::build_http_policy;
 use crate::std_output_stream::{LogStream, StdOutput};
-use concepts::ExecutionId;
-use concepts::prefixed_ulid::RunId;
 use concepts::storage::LogLevel;
 use concepts::time::ClockFn;
+use executor::worker::WorkerContext;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::Span;
 use wasmtime::Engine;
 use wasmtime::{Store, component::ResourceTable};
 use wasmtime_wasi::{DirPerms, FilePerms};
@@ -26,6 +24,7 @@ pub struct ActivityCtx {
     pub(crate) http_hooks: HttpHooks,
     pub(crate) preopened_dir: Option<Arc<Path>>,
     pub(crate) process_provider: Option<ProcessProvider>,
+    pub(crate) executor_close_watcher: tokio::sync::watch::Receiver<bool>,
 }
 
 impl wasmtime::component::HasData for ActivityCtx {
@@ -64,16 +63,17 @@ pub(crate) struct ActivityPreopenIoError {
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn store(
     engine: &Engine,
-    execution_id: ExecutionId,
-    run_id: RunId,
+    ctx: WorkerContext,
     config: &ActivityConfig,
-    worker_span: Span,
     clock_fn: Box<dyn ClockFn>,
     preopened_dir: Option<PathBuf>,
     stdout: Option<StdOutput>,
     stderr: Option<StdOutput>,
     logs_storage_config: Option<LogStrageConfig>,
 ) -> Result<Store<ActivityCtx>, ActivityPreopenIoError> {
+    let execution_id = ctx.execution_id;
+    let run_id = ctx.locked_event.run_id;
+
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = stdout {
         let stdout = LogStream::new(
@@ -110,7 +110,7 @@ pub(crate) fn store(
     }
 
     let component_logger = ComponentLogger {
-        span: worker_span,
+        span: ctx.worker_span,
         execution_id,
         run_id,
         logs_storage_config,
@@ -131,6 +131,7 @@ pub(crate) fn store(
             .directories_config
             .as_ref()
             .and_then(|dir| dir.process_provider),
+        executor_close_watcher: ctx.executor_close_watcher,
     };
     Ok(Store::new(engine, ctx))
 }

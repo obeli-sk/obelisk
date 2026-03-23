@@ -16,7 +16,6 @@ mod bench {
     use concepts::{prefixed_ulid::ExecutorId, storage::CreateRequest};
     use db_tests::Database;
     use divan::{self};
-    use executor::executor::WorkerShutdownMode;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle, LockingStrategy};
     use executor::worker::Worker;
     use serde_json::json;
@@ -325,14 +324,10 @@ mod bench {
         });
 
         tokio.block_on(async move {
-            workflow_exec_task
-                .close(WorkerShutdownMode::SkipWorkers)
-                .await;
+            workflow_exec_task.close().await;
         });
         tokio.block_on(async move {
-            activity_exec_task
-                .close(WorkerShutdownMode::SkipWorkers)
-                .await;
+            activity_exec_task.close().await;
         });
 
         tokio.block_on(async move { db_close.close().await });

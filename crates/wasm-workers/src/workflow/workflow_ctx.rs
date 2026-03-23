@@ -81,7 +81,7 @@ pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
     // retriable:
     InterruptDbUpdated,
-    LockExpired(Version),
+    LockExpired,
     ExecutorClosing,
     DbError(DbErrorWrite),
 }
@@ -113,7 +113,7 @@ impl WorkflowFunctionError {
             WorkflowFunctionError::ConstraintViolation(reason) => {
                 WorkerPartialResult::FatalError(FatalError::ConstraintViolation { reason }, version)
             }
-            WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired(version),
+            WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
             WorkflowFunctionError::ExecutorClosing => WorkerPartialResult::ExecutorClosing,
         }
     }
@@ -130,6 +130,7 @@ impl From<ApplyError> for WorkflowFunctionError {
             ApplyError::ConstraintViolation(reason) => {
                 WorkflowFunctionError::ConstraintViolation(reason)
             }
+            ApplyError::ExecutorClosing => WorkflowFunctionError::ExecutorClosing,
         }
     }
 }
@@ -900,10 +901,6 @@ impl WorkflowCtx {
             wasi_ctx: wasi_ctx_builder.build(),
             is_replaying_finished,
         }
-    }
-
-    pub(crate) fn component_id(&self) -> ComponentId {
-        self.event_history.locked_event.component_id.clone()
     }
 
     pub(crate) fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
@@ -2779,13 +2776,7 @@ pub(crate) mod tests {
                 WorkerPartialResult::DbError(db_err) => {
                     Err(executor::worker::WorkerError::DbError(db_err))
                 }
-                WorkerPartialResult::LockExpired(version) => {
-                    Err(executor::worker::WorkerError::TemporaryTimeout {
-                        http_client_traces: None,
-                        version,
-                    })
-                }
-                WorkerPartialResult::ExecutorClosing => {
+                WorkerPartialResult::LockExpired | WorkerPartialResult::ExecutorClosing => {
                     unreachable!()
                 }
             }
@@ -2902,7 +2893,10 @@ pub(crate) mod tests {
                 tracing::info_span!("workflow-test"),
                 false,
                 DeadlineTrackerFactoryTokio::new(Duration::ZERO, self.clock_fn.clone_box())
-                    .create(ctx.locked_event.lock_expires_at, None)
+                    .create(
+                        ctx.locked_event.lock_expires_at,
+                        tokio::sync::watch::channel(false).1,
+                    )
                     .unwrap(),
                 self.fn_registry.clone(),
                 cancel_registry,
@@ -3401,7 +3395,7 @@ pub(crate) mod tests {
                         lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                         retry_config: ComponentRetryConfig::ZERO,
                     },
-                    executor_close_watcher: None,
+                    executor_close_watcher: tokio::sync::watch::channel(false).1,
                 })
                 .await;
             // Run it SUBMITS times to close all join sets.
@@ -3449,7 +3443,7 @@ pub(crate) mod tests {
                             lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                             retry_config: ComponentRetryConfig::ZERO,
                         },
-                        executor_close_watcher: None,
+                        executor_close_watcher: tokio::sync::watch::channel(false).1,
                     })
                     .await;
             }
@@ -3506,7 +3500,7 @@ pub(crate) mod tests {
                     lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                     retry_config: ComponentRetryConfig::ZERO,
                 },
-                executor_close_watcher: None,
+                executor_close_watcher: tokio::sync::watch::channel(false).1,
             })
             .await;
         assert_matches!(worker_result, WorkerResult::Ok(..), "should be finished");
