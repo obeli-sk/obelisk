@@ -330,13 +330,14 @@ impl ActivityWorker {
         } else {
             None
         };
+        let lock_expires_at = ctx.locked_event.lock_expires_at;
+        let worker_span = ctx.worker_span.clone();
+        let version = ctx.version.clone();
 
         let mut store = match activity_ctx::store(
             &self.engine,
-            ctx.execution_id.clone(),
-            ctx.locked_event.run_id,
+            ctx,
             &self.config,
-            ctx.worker_span.clone(),
             self.clock_fn.clone_box(),
             preopened_dir,
             self.stdout
@@ -373,18 +374,19 @@ impl ActivityWorker {
                 Box::pin(tokio::task::yield_now()),
             ))
         });
-        let deadline_delta = ctx.locked_event.lock_expires_at - started_at;
+
+        let deadline_delta = lock_expires_at - started_at;
         let Ok(deadline_duration) = deadline_delta.to_std() else {
-            ctx.worker_span.in_scope(|| {
-                info!(execution_deadline = %ctx.locked_event.lock_expires_at, %started_at,
+            worker_span.in_scope(|| {
+                info!(execution_deadline = %lock_expires_at, %started_at,
                     "Timed out - started_at later than execution_deadline");
             });
             return Err(WorkerError::TemporaryTimeout {
                 http_client_traces: None,
-                version: ctx.version.clone(),
+                version,
             });
         };
-        ctx.worker_span.record(
+        worker_span.record(
             "deadline_duration",
             tracing::field::debug(&deadline_duration),
         );
