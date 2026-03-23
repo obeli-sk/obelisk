@@ -10,9 +10,7 @@ use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
-use concepts::storage::{
-    AppendRequest, DbConnection, DbErrorWrite, DbPool, ExecutionRequest, Locked, Version,
-};
+use concepts::storage::{DbConnection, DbErrorWrite, DbPool, Locked, Version};
 use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
 use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, PackageIfcFns,
@@ -380,7 +378,7 @@ enum WorkerResultRefactored {
     DbUpdatedByWorkerOrWatcher,
     FatalError(FatalError, WorkflowCtx),
     DbError(DbErrorWrite),
-    LockExpired(Version),
+    LockExpired(WorkflowCtx),
     ExecutorClosing(WorkflowCtx),
 }
 
@@ -396,6 +394,8 @@ pub enum WorkflowError {
     FatalError(FatalError, Version),
     #[error("lock expired")]
     LockExpired(Version),
+    #[error("executor closing")]
+    ExecutorClosing(Version),
 }
 impl From<WorkflowError> for WorkerError {
     fn from(value: WorkflowError) -> Self {
@@ -411,6 +411,7 @@ impl From<WorkflowError> for WorkerError {
                 http_client_traces: None,
                 version,
             },
+            WorkflowError::ExecutorClosing(version) => WorkerError::ExecutorClosing(version),
         }
     }
 }
@@ -685,29 +686,27 @@ impl WorkflowWorker {
                 }
             }
             WorkerResultRefactored::DbError(err) => Err(WorkflowError::DbError(err)),
-            WorkerResultRefactored::LockExpired(version) => {
-                Err(WorkflowError::LockExpired(version))
+            WorkerResultRefactored::LockExpired(mut workflow_ctx) => {
+                let called_at = workflow_ctx.clock_fn.now();
+                workflow_ctx
+                    .db_connection
+                    .flush_non_blocking_event_cache(called_at)
+                    .await
+                    .map_err(WorkflowError::DbError)?;
+                Err(WorkflowError::LockExpired(
+                    workflow_ctx.db_connection.version,
+                ))
             }
             WorkerResultRefactored::ExecutorClosing(mut workflow_ctx) => {
                 let called_at = workflow_ctx.clock_fn.now();
                 workflow_ctx
                     .db_connection
-                    .append_blocking(
-                        workflow_ctx.execution_id.clone(),
-                        AppendRequest {
-                            created_at: called_at,
-                            event: ExecutionRequest::Unlocked {
-                                backoff_expires_at: called_at, // continue right when new executor starts
-                                reason: "executor closing".into(),
-                            },
-                        },
-                        called_at,
-                        None,
-                        &workflow_ctx.component_id(),
-                    )
+                    .flush_non_blocking_event_cache(called_at)
                     .await
                     .map_err(WorkflowError::DbError)?;
-                Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+                Err(WorkflowError::ExecutorClosing(
+                    workflow_ctx.db_connection.version,
+                ))
             }
         }
     }
@@ -767,9 +766,9 @@ impl WorkflowWorker {
                         WorkerResultRefactored::DbUpdatedByWorkerOrWatcher
                     }
                     WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::DbError(db_err),
-                    WorkerPartialResult::LockExpired(version) => {
+                    WorkerPartialResult::LockExpired => {
                         // logged in epoch callback
-                        WorkerResultRefactored::LockExpired(version)
+                        WorkerResultRefactored::LockExpired(workflow_ctx)
                     }
                     WorkerPartialResult::ExecutorClosing => {
                         // logged in epoch callback
@@ -944,6 +943,9 @@ pub enum ReplayError {
     // Transient error
     #[error("lock expired")]
     LockExpired,
+    // Transient error
+    #[error("executor closing")]
+    ExecutorClosing,
     /// Replay failed
     #[error("fatal error: {0}")]
     ReplayFailed(FatalError),
@@ -959,6 +961,7 @@ impl From<WorkflowError> for ReplayError {
                 ReplayError::ReplayFailed(fatal_error)
             }
             WorkflowError::LockExpired(_version) => ReplayError::LockExpired,
+            WorkflowError::ExecutorClosing(_version) => ReplayError::ExecutorClosing,
         }
     }
 }

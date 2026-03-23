@@ -81,7 +81,7 @@ pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
     // retriable:
     InterruptDbUpdated,
-    LockExpired(Version),
+    LockExpired,
     ExecutorClosing,
     DbError(DbErrorWrite),
 }
@@ -113,7 +113,7 @@ impl WorkflowFunctionError {
             WorkflowFunctionError::ConstraintViolation(reason) => {
                 WorkerPartialResult::FatalError(FatalError::ConstraintViolation { reason }, version)
             }
-            WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired(version),
+            WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
             WorkflowFunctionError::ExecutorClosing => WorkerPartialResult::ExecutorClosing,
         }
     }
@@ -900,10 +900,6 @@ impl WorkflowCtx {
             wasi_ctx: wasi_ctx_builder.build(),
             is_replaying_finished,
         }
-    }
-
-    pub(crate) fn component_id(&self) -> ComponentId {
-        self.event_history.locked_event.component_id.clone()
     }
 
     pub(crate) fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
@@ -2779,11 +2775,8 @@ pub(crate) mod tests {
                 WorkerPartialResult::DbError(db_err) => {
                     Err(executor::worker::WorkerError::DbError(db_err))
                 }
-                WorkerPartialResult::LockExpired(version) => {
-                    Err(executor::worker::WorkerError::TemporaryTimeout {
-                        http_client_traces: None,
-                        version,
-                    })
+                WorkerPartialResult::LockExpired => {
+                    unreachable!()
                 }
                 WorkerPartialResult::ExecutorClosing => {
                     unreachable!()
