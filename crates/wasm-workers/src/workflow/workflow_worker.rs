@@ -493,11 +493,11 @@ impl WorkflowWorker {
                     Box::pin(tokio::task::yield_now()),
                 )),
                 Err(EpochCallbackError::LockExpired) => {
-                    warn!("Deadline reached in epoch callback");
+                    info!("Deadline reached in epoch callback");
                     Err(wasmtime::Error::from(WorkflowFunctionError::LockExpired))
                 }
                 Err(EpochCallbackError::ExecutorClosing) => {
-                    warn!("Executor closing");
+                    info!("Executor closing");
                     Err(wasmtime::Error::from(
                         WorkflowFunctionError::ExecutorClosing,
                     ))

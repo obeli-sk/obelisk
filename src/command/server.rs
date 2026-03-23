@@ -1434,14 +1434,11 @@ impl ServerInit {
             deployment_lock.closed = true;
             std::mem::take(&mut deployment_lock.exec_task_handles)
         };
-        futures_util::future::join_all(executors.iter().map(|exec_handle| {
-            let mode = if exec_handle.component_id().component_type.is_activity() {
-                WorkerShutdownMode::SkipWorkers
-            } else {
-                WorkerShutdownMode::WaitForWorkers
-            };
-            exec_handle.close(mode)
-        }))
+        futures_util::future::join_all(
+            executors
+                .iter()
+                .map(|exec_handle| exec_handle.close(WorkerShutdownMode::WaitForWorkers)),
+        )
         .await;
         // Explicit drop to avoid the pattern match footgun.
         // Close everything that is a dependency of executors or workers.

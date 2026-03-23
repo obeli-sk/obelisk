@@ -238,7 +238,10 @@ impl Worker for ActivityWorker {
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
 
         let call_function = {
-            let call_func_params = match self.call_func_params(&ffqn, &params, &version, &mut store).await {
+            let call_func_params = match self
+                .call_func_params(&ffqn, &params, &version, &mut store)
+                .await
+            {
                 Ok(ok) => ok,
                 Err(err) => return WorkerResult::Err(err),
             };
@@ -250,12 +253,16 @@ impl Worker for ActivityWorker {
                 let activity_ctx = store.into_data();
                 let res = self.process_res(res, &version, activity_ctx);
                 worker_span.in_scope(|| {
-                    if let WorkerResult::Err(err) = &res {
-                        info!(%err, duration = ?stopwatch_for_reporting.elapsed(),
-                        "Run finished with an error");
-                    } else {
-                        info!(duration = ?stopwatch_for_reporting.elapsed(),
-                        "Run finished successfully");
+                    match &res {
+                        Ok(_) => {
+                            info!(duration = ?stopwatch_for_reporting.elapsed(), "Run finished successfully");
+                        }
+                        Err(WorkerError::ExecutorClosing(_)) => {
+                            info!("Executor closing");
+                        }
+                        Err(err) => {
+                            info!(%err, duration = ?stopwatch_for_reporting.elapsed(), "Run finished with an error");
+                        }
                     }
                 });
                 return res;
@@ -281,6 +288,7 @@ impl Worker for ActivityWorker {
             }
             cancel_res = cancelation_token => {
                 // TODO: Add http traces
+                info!("Activity cancelled");
                 assert!(cancel_res.is_ok(), "only closed channels are dropped");
                 return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, version));
             }
@@ -379,11 +387,17 @@ impl ActivityWorker {
         }
 
         // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|_store_ctx| {
-            Ok(UpdateDeadline::YieldCustom(
-                1,
-                Box::pin(tokio::task::yield_now()),
-            ))
+        store.epoch_deadline_callback(|store_ctx| {
+            let executor_closing = *store_ctx.data().executor_close_watcher.borrow();
+            if executor_closing {
+                info!("Executor closing");
+                Ok(UpdateDeadline::Interrupt) // Interpreted as executor closing in `process_res`
+            } else {
+                Ok(UpdateDeadline::YieldCustom(
+                    1,
+                    Box::pin(tokio::task::yield_now()),
+                ))
+            }
         });
 
         let deadline_delta = lock_expires_at - started_at;
@@ -534,6 +548,8 @@ impl ActivityWorker {
                             version: version.clone(),
                             http_client_traces,
                         }
+                    } else if *trap == wasmtime::Trap::Interrupt {
+                        WorkerError::ExecutorClosing(version.clone())
                     } else {
                         WorkerError::ActivityTrap {
                             reason: trap.to_string(),

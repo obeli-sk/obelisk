@@ -110,7 +110,7 @@ impl ExecutorTaskHandle {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         if mode == WorkerShutdownMode::WaitForWorkers {
-            info!("Signaling workflow tasks to unlock");
+            trace!("Signaling workflow tasks to unlock");
             let _ = self.executor_closing_signal_sender.send(true);
             let mut worker_count_rx = self.worker_count_rx.clone();
             loop {
@@ -511,7 +511,7 @@ impl ExecTask {
         }
     }
 
-    /// Map the `WorkerError` to an temporary or a permanent failure.
+    /// Map the `WorkerError` to an optional append event
     fn worker_result_to_execution_event(
         component_type: ComponentType,
         execution_id: ExecutionId,
@@ -593,6 +593,13 @@ impl ExecTask {
                 let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
 
                 let (primary_event, child_finished, version) = match err {
+                    WorkerError::ExecutorClosing(version) => {
+                        let primary_event = ExecutionRequest::Unlocked {
+                            backoff_expires_at: result_obtained_at, // continue right when new executor starts
+                            reason: "executor closing".into(),
+                        };
+                        (primary_event, None, version)
+                    }
                     WorkerError::TemporaryTimeout {
                         http_client_traces,
                         version,
