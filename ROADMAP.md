@@ -2,8 +2,6 @@
 
 # Upcoming goals
 
-## Add DB JSON Schema
-
 ## feat: `generate wit-extensions` with specified interface(s)
 Allows self referential exports, also enables generating on import side.
 
@@ -19,18 +17,6 @@ Perform a cascading delete of top-level executions that finished more than a cer
 
 ## feat: Multiple execution queues
 Allow specifying queue ID when submitting, and when configuring an executor.
-
-## feat: Configurable network access for activities, webhooks
-Enable allow/deny lists of remote hosts for HTTP client.
-
-## feat: Support WIT-only WASM files
-Allow pushing and declaring WASM resources only containing the WIT.
-Needed for external activities.
-
-## feat: Long running monitor trigger
-Similar to a webhook endpoint, new component type with `main`, restarts on exit or trap.
-Can listen to a HTTP stream and trigger an execution.
-Could be used to monitor MQTT, UDP etc.
 
 ## feat: Keepalives for activities, extending the lock until completion
 
