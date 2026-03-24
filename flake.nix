@@ -174,6 +174,7 @@
             nativeBuildInputs = with pkgs;
               [
                 (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+                cargo-audit
                 cargo-edit
                 cargo-expand
                 cargo-insta
