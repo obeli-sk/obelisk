@@ -44,8 +44,11 @@ pub(crate) enum Deployment {
     /// Upload a deployment.toml as a new deployment; print the new deployment ID.
     Submit {
         /// Path to the deployment TOML file.
-        #[arg(long, short)]
-        deployment: PathBuf,
+        #[arg(long, short, required_unless_present = "deployment_empty", conflicts_with = "deployment_empty")]
+        deployment: Option<PathBuf>,
+        /// Submit an empty deployment with no components.
+        #[arg(long)]
+        deployment_empty: bool,
         /// Verify all environment variables before persisting the deployment.
         #[arg(long)]
         verify: bool,
@@ -70,8 +73,11 @@ pub(crate) enum Deployment {
     },
     SubmitSwitch {
         /// Path to the deployment TOML file.
-        #[arg(long, short)]
-        deployment: PathBuf,
+        #[arg(long, short, required_unless_present = "deployment_empty", conflicts_with = "deployment_empty")]
+        deployment: Option<PathBuf>,
+        /// Submit an empty deployment with no components.
+        #[arg(long)]
+        deployment_empty: bool,
         /// Live swap without server restart (falls back to restart-required if not possible).
         #[arg(long, conflicts_with = "verify")]
         hot: bool,

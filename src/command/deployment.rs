@@ -14,10 +14,11 @@ impl args::Deployment {
         match self {
             args::Deployment::Submit {
                 deployment,
+                deployment_empty,
                 verify,
                 api_url,
             } => {
-                let config_json = load_config_json(deployment).await?;
+                let config_json = load_config_json_or_empty(deployment, deployment_empty).await?;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let resp = client
@@ -72,11 +73,12 @@ impl args::Deployment {
 
             args::Deployment::SubmitSwitch {
                 deployment,
+                deployment_empty,
                 hot,
                 verify,
                 api_url,
             } => {
-                let config_json = load_config_json(deployment).await?;
+                let config_json = load_config_json_or_empty(deployment, deployment_empty).await?;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let resp = client
@@ -177,6 +179,29 @@ impl args::Deployment {
                 Ok(())
             }
         }
+    }
+}
+
+async fn load_config_json_or_empty(
+    deployment_path: Option<std::path::PathBuf>,
+    deployment_empty: bool,
+) -> anyhow::Result<String> {
+    if let Some(deployment_path) = deployment_path {
+        load_config_json(deployment_path).await
+    } else {
+        assert!(deployment_empty);
+        let path_prefixes = crate::config::config_holder::PathPrefixes {
+            server_config_dir: None,
+            deployment_dir: None,
+            project_dirs: project_dirs(),
+            base_dirs: BaseDirs::new(),
+        };
+        let deployment = crate::config::toml::resolve_local_refs_to_canonical(
+            &crate::config::toml::DeploymentToml::default(),
+            &path_prefixes,
+        )
+        .await?;
+        Ok(crate::config::toml::compute_config_json(&deployment))
     }
 }
 
