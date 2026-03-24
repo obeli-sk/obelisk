@@ -205,6 +205,7 @@
               # tools
               git
               curl
+              helix
               wget
               htop
               zellij
@@ -221,6 +222,7 @@
               export NIX_SSL_CERT_FILE=$SSL_CERT_FILE
               REAL_RESOLV=$(realpath /etc/resolv.conf)
               REAL_HOSTS=$(realpath /etc/hosts)
+              REAL_GITCONFIG=$(realpath "$HOME/.gitconfig")
 
               # Construct mocked /run/current-system/sw/bin
               MOCKED_SYSTEM_BIN=$(mktemp -d)
@@ -250,6 +252,8 @@
                 # --- Network ---
                 --ro-bind "$REAL_RESOLV" /etc/resolv.conf
                 --ro-bind "$REAL_HOSTS"  /etc/hosts
+                # Git
+                --ro-bind "$REAL_GITCONFIG" /tmp/.gitconfig
                 # Claude
                 --bind $HOME/.claude /tmp/.claude
                 --bind $HOME/.claude.json /tmp/.claude.json
