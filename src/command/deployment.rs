@@ -1,23 +1,27 @@
-use crate::args;
+use crate::args::{self, DeploymentSource};
 use crate::config::config_holder::load_deployment_toml;
 use crate::get_deployment_repository_client;
 use crate::project_dirs;
 use anyhow::{Context as _, bail};
 use chrono::DateTime;
+use concepts::prefixed_ulid::DeploymentId;
 use directories::BaseDirs;
 use grpc::grpc_gen;
 use grpc::grpc_gen::switch_deployment_response::Outcome;
+use grpc::injector::TracingInjector;
 use grpc::to_channel;
+use tonic::transport::Channel;
 
 impl args::Deployment {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
             args::Deployment::Submit {
-                deployment,
+                file,
+                empty,
                 verify,
                 api_url,
             } => {
-                let config_json = load_config_json(deployment).await?;
+                let config_json = load_config_json_from_file_or_empty(file, empty).await?;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let resp = client
@@ -33,89 +37,51 @@ impl args::Deployment {
                 Ok(())
             }
 
-            args::Deployment::Switch {
-                id,
-                hot,
+            args::Deployment::Enqueue {
+                source,
+                empty,
                 verify,
                 api_url,
             } => {
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
-
-                let resp = client
-                    .switch_deployment(grpc_gen::SwitchDeploymentRequest {
-                        deployment_id: Some(grpc_gen::DeploymentId { id }),
-                        verify,
-                        hot_redeploy: hot,
-                    })
-                    .await?
-                    .into_inner();
-
-                match resp.outcome() {
-                    Outcome::SwitchOutcomeSwitched => {
-                        println!("Hot-redeployed successfully.");
-                    }
-                    Outcome::SwitchOutcomeRestartRequired => {
-                        if hot {
-                            bail!(
-                                "Could not hot-redeploy; deployment queued. Restart the server to apply."
-                            );
-                        }
-                        println!("Deployment queued. Restart the server to apply.");
-                    }
-                    Outcome::SwitchOutcomeUnspecified => {
-                        bail!("Unexpected outcome from server.");
-                    }
-                }
-                Ok(())
+                let id = submit_deployment(
+                    &mut client,
+                    source,
+                    empty,
+                    false, // will be verified in switch
+                )
+                .await?;
+                switch_deployment(
+                    &mut client,
+                    id,
+                    verify,
+                    false, // hot
+                )
+                .await
             }
 
-            args::Deployment::SubmitSwitch {
-                deployment,
-                hot,
-                verify,
+            args::Deployment::Apply {
+                source,
+                empty,
                 api_url,
             } => {
-                let config_json = load_config_json(deployment).await?;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
-                let resp = client
-                    .submit_deployment(grpc_gen::SubmitDeploymentRequest {
-                        config_json,
-                        created_by: Some("cli".to_string()),
-                        verify: false,
-                    })
-                    .await?
-                    .into_inner();
-                let id = resp.deployment_id.context("missing deployment_id")?.id;
-                println!("Submitted as {id}");
-
-                let resp = client
-                    .switch_deployment(grpc_gen::SwitchDeploymentRequest {
-                        deployment_id: Some(grpc_gen::DeploymentId { id }),
-                        verify,
-                        hot_redeploy: hot,
-                    })
-                    .await?
-                    .into_inner();
-
-                match resp.outcome() {
-                    Outcome::SwitchOutcomeSwitched => {
-                        println!("Hot-redeployed successfully.");
-                    }
-                    Outcome::SwitchOutcomeRestartRequired => {
-                        if hot {
-                            bail!(
-                                "Could not hot-redeploy; deployment queued. Restart the server to apply."
-                            );
-                        }
-                        println!("Deployment queued. Restart the server to apply.");
-                    }
-                    Outcome::SwitchOutcomeUnspecified => {
-                        bail!("Unexpected outcome from server.");
-                    }
-                }
-                Ok(())
+                let id = submit_deployment(
+                    &mut client,
+                    source,
+                    empty,
+                    false, // will be verified in switch
+                )
+                .await?;
+                switch_deployment(
+                    &mut client,
+                    id,
+                    true, // does not matter, will be verified in any case
+                    true, // hot
+                )
+                .await
             }
 
             args::Deployment::List { api_url } => {
@@ -180,15 +146,103 @@ impl args::Deployment {
     }
 }
 
-async fn load_config_json(deployment_path: std::path::PathBuf) -> anyhow::Result<String> {
-    let (deployment_toml, deployment_dir) = load_deployment_toml(deployment_path).await?;
-    let project_dirs = project_dirs();
-    let base_dirs = BaseDirs::new();
+type DeploymentClient = grpc::grpc_gen::deployment_repository_client::DeploymentRepositoryClient<
+    tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
+>;
+
+/// If the source is a file, submit it and return the new ID. If it's an ID, return it directly.
+/// If `empty`, submit an empty deployment and return the new ID.
+async fn submit_deployment(
+    client: &mut DeploymentClient,
+    source: Option<DeploymentSource>,
+    empty: bool,
+    verify: bool,
+) -> anyhow::Result<DeploymentId> {
+    assert_ne!(source.is_some(), empty);
+    let config_json = match source {
+        Some(DeploymentSource::Id(id)) => {
+            return Ok(id);
+        }
+        Some(DeploymentSource::File(path)) => load_config_json(path).await?,
+        None => load_config_json_from_file_or_empty(None, empty).await?,
+    };
+    let resp = client
+        .submit_deployment(grpc_gen::SubmitDeploymentRequest {
+            config_json,
+            created_by: Some("cli".to_string()),
+            verify,
+        })
+        .await?
+        .into_inner();
+    let id = DeploymentId::try_from(resp.deployment_id.context("missing deployment_id")?)?;
+    println!("Submitted as {id}");
+    Ok(id)
+}
+
+async fn switch_deployment(
+    client: &mut DeploymentClient,
+    id: DeploymentId,
+    verify: bool,
+    hot: bool,
+) -> anyhow::Result<()> {
+    let resp = client
+        .switch_deployment(grpc_gen::SwitchDeploymentRequest {
+            deployment_id: Some(grpc_gen::DeploymentId::from(id)),
+            verify,
+            hot_redeploy: hot,
+        })
+        .await?
+        .into_inner();
+
+    match resp.outcome() {
+        Outcome::SwitchOutcomeSwitched => {
+            println!("Applied successfully.");
+        }
+        Outcome::SwitchOutcomeRestartRequired => {
+            if hot {
+                bail!(
+                    "Could not apply immediately; deployment enqueued. Restart the server to apply."
+                );
+            }
+            println!("Deployment enqueued. Restart the server to apply.");
+        }
+        Outcome::SwitchOutcomeUnspecified => {
+            bail!("Unexpected outcome from server.");
+        }
+    }
+    Ok(())
+}
+
+async fn load_config_json_from_file_or_empty(
+    file: Option<std::path::PathBuf>,
+    empty: bool,
+) -> anyhow::Result<String> {
+    assert_ne!(file.is_some(), empty);
+    if let Some(path) = file {
+        load_config_json(path).await
+    } else {
+        let path_prefixes = crate::config::config_holder::PathPrefixes {
+            server_config_dir: None,
+            deployment_dir: None,
+            project_dirs: project_dirs(),
+            base_dirs: BaseDirs::new(),
+        };
+        let deployment = crate::config::toml::resolve_local_refs_to_canonical(
+            &crate::config::toml::DeploymentToml::default(),
+            &path_prefixes,
+        )
+        .await?;
+        Ok(crate::config::toml::compute_config_json(&deployment))
+    }
+}
+
+async fn load_config_json(path: std::path::PathBuf) -> anyhow::Result<String> {
+    let (deployment_toml, deployment_dir) = load_deployment_toml(path).await?;
     let path_prefixes = crate::config::config_holder::PathPrefixes {
         server_config_dir: None,
         deployment_dir: Some(deployment_dir),
-        project_dirs,
-        base_dirs,
+        project_dirs: project_dirs(),
+        base_dirs: BaseDirs::new(),
     };
     let deployment =
         crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)

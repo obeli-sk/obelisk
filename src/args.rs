@@ -2,9 +2,28 @@ use crate::config::toml::ComponentLocationToml;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
-    prefixed_ulid::ExecutionIdDerived,
+    prefixed_ulid::{DeploymentId, ExecutionIdDerived},
 };
 use std::{path::PathBuf, str::FromStr};
+
+/// A deployment source: either a path to a TOML file or an existing deployment ID.
+#[derive(Debug, Clone)]
+pub(crate) enum DeploymentSource {
+    File(PathBuf),
+    Id(DeploymentId),
+}
+
+impl FromStr for DeploymentSource {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(id) = s.parse::<DeploymentId>() {
+            Ok(DeploymentSource::Id(id))
+        } else {
+            Ok(DeploymentSource::File(PathBuf::from(s)))
+        }
+    }
+}
 
 pub(crate) mod shadow {
     pub(crate) const PKG_VERSION: &str = env!("PKG_VERSION");
@@ -41,43 +60,56 @@ pub(crate) enum Subcommand {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Deployment {
-    /// Upload a deployment.toml as a new deployment; print the new deployment ID.
+    /// Upload a deployment TOML as a new deployment; print the new deployment ID.
     Submit {
         /// Path to the deployment TOML file.
-        #[arg(long, short)]
-        deployment: PathBuf,
-        /// Verify all environment variables before persisting the deployment.
+        #[arg(
+            value_name = "PATH",
+            required_unless_present = "empty",
+            conflicts_with = "empty"
+        )]
+        file: Option<PathBuf>,
+        /// Submit an empty deployment with no components.
+        #[arg(long)]
+        empty: bool,
+        /// Verify all environment variables before persisting.
         #[arg(long)]
         verify: bool,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
-    /// Activate a deployment. Accepts an existing deployment ID.
-    Switch {
-        /// Existing deployment ID to activate.
-        #[arg(value_name = "ID")]
-        id: String,
-        /// Live swap without server restart (falls back to restart-required if not possible).
-        #[arg(long, conflicts_with = "verify")]
-        hot: bool,
-        /// Verify all environment variables before queuing the deployment for next server restart.
-        #[arg(long, conflicts_with = "hot")]
+    /// Submit (if a file is given) and enqueue for next server restart.
+    Enqueue {
+        /// Path to a deployment TOML file, or an existing deployment ID.
+        #[arg(
+            value_name = "PATH|ID",
+            required_unless_present = "empty",
+            conflicts_with = "empty"
+        )]
+        source: Option<DeploymentSource>,
+        /// Enqueue an empty deployment with no components.
+        #[arg(long)]
+        empty: bool,
+        /// Verify all environment variables before enqueuing.
+        #[arg(long)]
         verify: bool,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
-    SubmitSwitch {
-        /// Path to the deployment TOML file.
-        #[arg(long, short)]
-        deployment: PathBuf,
-        /// Live swap without server restart (falls back to restart-required if not possible).
-        #[arg(long, conflicts_with = "verify")]
-        hot: bool,
-        /// Verify all environment variables before queuing the deployment for next server restart.
-        #[arg(long, conflicts_with = "hot")]
-        verify: bool,
+    /// Submit (if a file is given) and hot-redeploy immediately. Fails if not possible.
+    Apply {
+        /// Path to a deployment TOML file, or an existing deployment ID.
+        #[arg(
+            value_name = "PATH|ID",
+            required_unless_present = "empty",
+            conflicts_with = "empty"
+        )]
+        source: Option<DeploymentSource>,
+        /// Apply an empty deployment with no components.
+        #[arg(long)]
+        empty: bool,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
