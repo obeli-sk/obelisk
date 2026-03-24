@@ -1470,18 +1470,10 @@ async fn start_http_servers(
         for (webhook_instance_linked, routes) in webhooks {
             for route in routes {
                 if route.methods.is_empty() {
-                    router.add(
-                        None,
-                        &route.route,
-                        webhook_instance_linked.clone().build(log_forwarder_sender),
-                    );
+                    router.add(None, &route.route, webhook_instance_linked.clone());
                 } else {
                     for method in route.methods {
-                        router.add(
-                            Some(method),
-                            &route.route,
-                            webhook_instance_linked.clone().build(log_forwarder_sender),
-                        );
+                        router.add(Some(method), &route.route, webhook_instance_linked.clone());
                     }
                 }
             }
@@ -1506,6 +1498,7 @@ async fn start_http_servers(
                 tcp_listener,
                 engine.clone(),
                 router,
+                log_forwarder_sender.clone(),
                 db_pool.clone(),
                 Now.clone_box(),
                 Arc::new(TokioSleep),

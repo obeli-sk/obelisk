@@ -310,7 +310,7 @@ impl WebhookEndpointCompiled {
         })?);
 
         Ok(WebhookEndpointInstanceLinked {
-            config: self.config,
+            config: Arc::new(self.config),
             proxy_pre,
         })
     }
@@ -320,12 +320,12 @@ impl WebhookEndpointCompiled {
 pub struct WebhookEndpointInstanceLinked {
     #[debug(skip)]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx>>,
-    config: WebhookEndpointConfig,
+    config: Arc<WebhookEndpointConfig>,
 }
 impl WebhookEndpointInstanceLinked {
     #[must_use]
     pub fn build(
-        self,
+        &self,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
     ) -> WebhookEndpointInstance {
         let stdout = StdOutputConfigWithSender::new(
@@ -339,7 +339,7 @@ impl WebhookEndpointInstanceLinked {
             LogStreamType::StdErr,
         );
         WebhookEndpointInstance {
-            proxy_pre: self.proxy_pre,
+            proxy_pre: self.proxy_pre.clone(),
             stdout,
             stderr,
             logs_storage_config: self.config.logs_store_min_level.map(|min_level| {
@@ -348,7 +348,7 @@ impl WebhookEndpointInstanceLinked {
                     log_sender: log_forwarder_sender.clone(),
                 }
             }),
-            config: self.config,
+            config: self.config.clone(),
         }
     }
 }
@@ -357,7 +357,7 @@ impl WebhookEndpointInstanceLinked {
 pub struct WebhookEndpointInstance {
     #[debug(skip)]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx>>,
-    pub config: WebhookEndpointConfig,
+    config: Arc<WebhookEndpointConfig>,
     #[debug(skip)]
     stdout: Option<StdOutputConfigWithSender>,
     #[debug(skip)]
@@ -418,7 +418,8 @@ pub async fn server(
     http_server: StrVariant,
     listener: TcpListener,
     engine: Arc<Engine>,
-    router: MethodAwareRouter<WebhookEndpointInstance>,
+    router: MethodAwareRouter<WebhookEndpointInstanceLinked>,
+    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     db_pool: Arc<dyn DbPool>,
     clock_fn: Box<dyn ClockFn>,
     sleep: Arc<dyn Sleep>,
@@ -448,6 +449,7 @@ pub async fn server(
                 let connection_span = info_span!("connection", %http_server);
                 let max_inflight_requests = max_inflight_requests.clone();
                 let server_termination_watcher = server_termination_watcher.clone();
+                let log_forwarder_sender = log_forwarder_sender.clone();
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
 
@@ -469,6 +471,7 @@ pub async fn server(
                                         router: router.clone(),
                                         connection_drop_watcher: connection_drop_watcher.clone(),
                                         server_termination_watcher: server_termination_watcher.clone(),
+                                        log_forwarder_sender: log_forwarder_sender.clone()
                                     }
                                     .handle_request(req, max_inflight_requests.clone())
                                 }.instrument(info_span!(parent: &connection_span, "request"))
@@ -1493,7 +1496,7 @@ impl WebhookEndpointCtx {
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
         deployment_id: DeploymentId,
-        config: WebhookEndpointConfig,
+        config: Arc<WebhookEndpointConfig>,
         engine: &Engine,
         clock_fn: Box<dyn ClockFn>,
         sleep: Arc<dyn Sleep>,
@@ -1562,7 +1565,7 @@ impl WebhookEndpointCtx {
             wasi_ctx,
             http_ctx: WasiHttpCtx::new(),
             version: None,
-            component_id: config.component_id,
+            component_id: config.component_id.clone(),
             deployment_id,
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
@@ -1727,9 +1730,10 @@ struct RequestHandler {
     db_pool: Arc<dyn DbPool>,
     fn_registry: Arc<dyn FunctionRegistry>,
     execution_id: ExecutionIdTopLevel,
-    router: Arc<MethodAwareRouter<WebhookEndpointInstance>>,
+    router: Arc<MethodAwareRouter<WebhookEndpointInstanceLinked>>,
     connection_drop_watcher: watch::Receiver<()>,
     server_termination_watcher: watch::Receiver<()>,
+    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 }
 
 fn respond(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
@@ -1811,6 +1815,7 @@ impl RequestHandler {
 
         if let Some(instance_match) = self.router.find(req.method(), req.uri()) {
             let found_instance = instance_match.handler();
+            let found_instance = found_instance.build(&self.log_forwarder_sender);
             let run_id = RunId::generate();
             let stdout = found_instance.stdout.as_ref().map(|stdoutput| {
                 stdoutput.build(&ExecutionId::TopLevel(self.execution_id), run_id)
@@ -2067,8 +2072,7 @@ pub(crate) mod tests {
                     )
                     .unwrap()
                     .link(&engine, fn_registry.as_ref())
-                    .unwrap()
-                    .build(&db_forwarder_sender);
+                    .unwrap();
                     let mut router = MethodAwareRouter::default();
                     router.add(Some(Method::GET), "/fibo/:N/:ITERATIONS", instance);
                     router
@@ -2084,6 +2088,7 @@ pub(crate) mod tests {
                     tcp_listener,
                     engine,
                     router,
+                    db_forwarder_sender,
                     db_pool.clone(),
                     sim_clock.clone_box(),
                     Arc::new(TokioSleep),
@@ -2347,8 +2352,7 @@ pub(crate) mod tests {
                 )
                 .unwrap()
                 .link(&engine, fn_registry.as_ref())
-                .unwrap()
-                .build(&db_forwarder_sender);
+                .unwrap();
                 let mut router = MethodAwareRouter::default();
                 router.add(Some(Method::GET), "/http-get/:PORT", instance);
                 router
@@ -2365,6 +2369,7 @@ pub(crate) mod tests {
                 tcp_listener,
                 engine,
                 router,
+                db_forwarder_sender,
                 db_pool.clone(),
                 sim_clock.clone_box(),
                 Arc::new(TokioSleep),
@@ -2516,8 +2521,7 @@ pub(crate) mod tests {
                 )
                 .unwrap()
                 .link(&engine, fn_registry.as_ref())
-                .unwrap()
-                .build(&db_forwarder_sender);
+                .unwrap();
                 let mut router = MethodAwareRouter::default();
                 router.add(Some(Method::GET), "/http-get/:PORT", instance);
                 router
@@ -2534,6 +2538,7 @@ pub(crate) mod tests {
                 tcp_listener,
                 engine,
                 router,
+                db_forwarder_sender,
                 db_pool.clone(),
                 sim_clock.clone_box(),
                 Arc::new(TokioSleep),
@@ -2625,8 +2630,7 @@ pub(crate) mod tests {
                 )
                 .unwrap()
                 .link(&engine, fn_registry.as_ref())
-                .unwrap()
-                .build(&db_forwarder_sender);
+                .unwrap();
                 let mut router = MethodAwareRouter::default();
                 router.add(None, "", instance);
                 router
@@ -2644,6 +2648,7 @@ pub(crate) mod tests {
                 tcp_listener,
                 engine,
                 router,
+                db_forwarder_sender,
                 db_pool,
                 sim_clock.clone_box(),
                 Arc::new(TokioSleep),
@@ -2762,8 +2767,7 @@ pub(crate) mod tests {
                 )
                 .unwrap()
                 .link(&engine, fn_registry.as_ref())
-                .unwrap()
-                .build(&db_forwarder_sender);
+                .unwrap();
                 let mut router = MethodAwareRouter::default();
                 router.add(None, "", instance);
                 router
@@ -2784,6 +2788,7 @@ pub(crate) mod tests {
                 tcp_listener,
                 engine,
                 router,
+                db_forwarder_sender,
                 db_pool,
                 sim_clock.clone_box(),
                 Arc::new(TokioSleep),
@@ -3031,8 +3036,7 @@ pub(crate) mod tests {
                     )
                     .unwrap()
                     .link(&engine, fn_registry.as_ref())
-                    .unwrap()
-                    .build(&db_forwarder_sender);
+                    .unwrap();
                     let mut router = MethodAwareRouter::default();
                     router.add(None, "", instance);
                     router
@@ -3054,6 +3058,7 @@ pub(crate) mod tests {
                     tcp_listener,
                     engine,
                     router,
+                    db_forwarder_sender,
                     db_pool.clone(),
                     sim_clock.clone_box(),
                     Arc::new(TokioSleep),
