@@ -120,12 +120,14 @@ use wasm_workers::registry::ComponentConfigRegistry;
 use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::registry::JsWorkflowReplayInfo;
 use wasm_workers::registry::WorkflowReplayInfo;
+use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointCompiled;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointConfig;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstanceLinked;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointJsConfig;
+use wasm_workers::webhook::webhook_trigger::WebhookServerState;
 use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerCompiled;
@@ -610,7 +612,7 @@ pub(crate) async fn verify_config_compile_link(
     prepared_dirs: &PreparedDirs,
     deployment: DeploymentCanonical,
     path_prefixes: Arc<PathPrefixes>,
-    deployment_id: DeploymentId, // only to distinguish when writing to the same log file as running server
+    deployment_id: DeploymentId,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<ServerCompiledLinked, anyhow::Error> {
@@ -641,6 +643,7 @@ pub(crate) async fn verify_config_compile_link(
     ))
     .await?;
     let compiled_and_linked = ServerCompiledLinked::new(
+        deployment_id,
         server_verified,
         termination_watcher,
         params.suppress_type_checking_errors,
@@ -936,6 +939,7 @@ pub(crate) async fn run_internal(
         config,
         path_prefixes.clone(),
         server_init.deployment_ctx.clone(),
+        server_init.webhook_registry.clone(),
     ));
 
     let mut grpc = RoutesBuilder::default();
@@ -1156,54 +1160,109 @@ pub(crate) type FrameFilesToSourceContent = HashMap<
     String, //content
 >;
 
+pub(crate) type HttpServersToWebhooksAndState = Vec<(
+    webhook::HttpServer,
+    (Vec<WebhookInstancesAndRoutes>, Arc<WebhookServerState>),
+)>;
+
 pub(crate) struct ServerCompiledLinked {
     engines: Engines,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
-    pub(crate) compiled_components: LinkedComponents,
+    pub(crate) workers_linked: Vec<WorkerLinked>,
     parent_preopen_dir: Option<Arc<Path>>,
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
-    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
+    pub(crate) http_servers_to_webhooks_and_state: HttpServersToWebhooksAndState,
     supressed_errors: Option<String>,
     frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)>,
 }
 
 impl ServerCompiledLinked {
     async fn new(
+        deployment_id: DeploymentId,
         server_verified: ServerVerified,
         termination_watcher: &mut watch::Receiver<()>,
         suppress_type_checking_errors: bool,
     ) -> Result<Self, anyhow::Error> {
-        let (compiled_components, component_registry_ro, supressed_errors, backtrace_frame_files) =
-            compile_and_verify(
-                &server_verified.engines,
-                server_verified.config.activities_wasm,
-                server_verified.config.activities_js,
-                server_verified.config.activities_stub_ext,
-                server_verified.config.activities_stub_inline,
-                server_verified.config.workflows,
-                server_verified.config.workflows_js,
-                server_verified.config.webhooks_by_names,
-                server_verified.config.webhooks_js_by_names,
-                server_verified.config.global_backtrace_persist,
-                server_verified.config.fuel,
-                server_verified.build_semaphore,
-                server_verified.workflows_lock_extension_leeway,
-                termination_watcher,
-            )
-            .await?;
-        if !suppress_type_checking_errors && supressed_errors.is_some() {
+        let linked = compile_and_link(
+            &server_verified.engines,
+            server_verified.config.activities_wasm,
+            server_verified.config.activities_js,
+            server_verified.config.activities_stub_ext,
+            server_verified.config.activities_stub_inline,
+            server_verified.config.workflows,
+            server_verified.config.workflows_js,
+            server_verified.config.webhooks_by_names,
+            server_verified.config.webhooks_js_by_names,
+            server_verified.config.global_backtrace_persist,
+            server_verified.config.fuel,
+            server_verified.build_semaphore,
+            server_verified.workflows_lock_extension_leeway,
+            termination_watcher,
+        )
+        .await?;
+        if !suppress_type_checking_errors && linked.supressed_errors.is_some() {
             bail!("type checking errors detected");
         }
-        Ok(Self {
-            compiled_components,
-            component_registry_ro,
+        let http_server_len = server_verified.config.http_servers_to_webhook_names.len();
+        let http_servers_to_webhooks = Self::connect_http_servers_to_webhooks(
+            &server_verified.config.http_servers_to_webhook_names,
+            linked.webhooks_by_names,
+        );
+        assert_eq!(
+            http_server_len,
+            http_servers_to_webhooks.len(),
+            "must not omit empty http servers"
+        );
+
+        let fn_registry: Arc<dyn FunctionRegistry> =
+            Arc::from(linked.component_registry_ro.clone());
+        let http_servers_to_webhooks_and_state: Vec<_> = http_servers_to_webhooks
+            .into_iter()
+            .map(|(http_server, webhooks)| {
+                let state = Arc::new(build_webhook_server_state(
+                    deployment_id,
+                    &webhooks,
+                    fn_registry.clone(),
+                ));
+                (http_server, (webhooks, state))
+            })
+            .collect();
+        assert_eq!(
+            http_server_len,
+            http_servers_to_webhooks_and_state.len(),
+            "must not omit empty http servers"
+        );
+
+        Ok(ServerCompiledLinked {
+            workers_linked: linked.workers,
+            component_registry_ro: linked.component_registry_ro,
             engines: server_verified.engines,
             parent_preopen_dir: server_verified.parent_preopen_dir,
             activities_cleanup: server_verified.activities_cleanup,
-            http_servers_to_webhook_names: server_verified.config.http_servers_to_webhook_names,
-            supressed_errors,
-            frame_files: backtrace_frame_files,
+            http_servers_to_webhooks_and_state,
+            supressed_errors: linked.supressed_errors,
+            frame_files: linked.all_frame_files,
         })
+    }
+
+    fn connect_http_servers_to_webhooks(
+        http_servers_to_webhook_names: &[(webhook::HttpServer, Vec<ConfigName>)],
+        mut webhooks_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
+    ) -> Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)> {
+        http_servers_to_webhook_names
+            .iter()
+            .map(|(http_server, webhook_names)| {
+                let instances = webhook_names
+                    .iter()
+                    .map(|name| {
+                        webhooks_by_names
+                            .shift_remove(name)
+                            .expect("all webhooks must be verified")
+                    })
+                    .collect();
+                (http_server.clone(), instances)
+            })
+            .collect()
     }
 }
 
@@ -1239,7 +1298,7 @@ async fn spawn_tasks_and_threads(
     deployment_id: DeploymentId,
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
-    mut server_compiled_linked: ServerCompiledLinked,
+    server_compiled_linked: ServerCompiledLinked,
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
     cancel_watcher: CancelWatcherTomlConfig,
@@ -1315,27 +1374,6 @@ async fn spawn_tasks_and_threads(
         None
     };
 
-    // Associate webhooks with http servers
-    let http_servers_to_webhooks = {
-        server_compiled_linked
-            .http_servers_to_webhook_names
-            .into_iter()
-            .map(|(http_server, webhook_names)| {
-                let instances_and_routes = webhook_names
-                    .into_iter()
-                    .map(|name| {
-                        server_compiled_linked
-                            .compiled_components
-                            .webhooks_by_names
-                            .shift_remove(&name)
-                            .expect("all webhooks must be verified")
-                    })
-                    .collect::<Vec<_>>();
-                (http_server, instances_and_routes)
-            })
-            .collect()
-    };
-
     // Spawn Log -> Db Forwarder
     let (log_forwarder_sender, log_db_forarder) = {
         let (log_forwarder_sender, receiver) = mpsc::channel(1000); // TODO: make configurable
@@ -1345,7 +1383,6 @@ async fn spawn_tasks_and_threads(
 
     // Spawn executors
     let exec_join_handles: Vec<ExecutorTaskHandle> = server_compiled_linked
-        .compiled_components
         .workers_linked
         .into_iter()
         .map(|pre_spawn| {
@@ -1358,13 +1395,23 @@ async fn spawn_tasks_and_threads(
         })
         .collect();
 
+    let webhook_registry = WebhookRegistry::new(
+        server_compiled_linked
+            .http_servers_to_webhooks_and_state
+            .iter()
+            .map(|(http_server, (_instance, state))| (http_server.name.to_string(), state.clone())),
+    );
     // Start webhook HTTP servers
+    let http_servers = server_compiled_linked
+        .http_servers_to_webhooks_and_state
+        .iter()
+        .map(|(http_server, _)| http_server);
+
     let http_servers_handles: Vec<AbortOnDropHandle> = start_http_servers(
-        deployment_id,
-        http_servers_to_webhooks,
+        http_servers,
+        &webhook_registry,
         &server_compiled_linked.engines,
         db_pool.clone(),
-        Arc::from(server_compiled_linked.component_registry_ro.clone()),
         global_webhook_instance_limiter.clone(),
         termination_watcher,
         &log_forwarder_sender,
@@ -1391,6 +1438,7 @@ async fn spawn_tasks_and_threads(
         log_db_forarder,
         engines: server_compiled_linked.engines,
         log_forwarder_sender,
+        webhook_registry: Arc::new(webhook_registry),
     };
     Ok(server_init)
 }
@@ -1409,6 +1457,7 @@ struct ServerInit {
     preopens_cleaner: Option<AbortOnDropHandle>,
     log_db_forarder: AbortOnDropHandle,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+    webhook_registry: Arc<WebhookRegistry>,
 }
 impl ServerInit {
     async fn close(self) {
@@ -1426,6 +1475,7 @@ impl ServerInit {
             preopens_cleaner,
             log_db_forarder,
             log_forwarder_sender,
+            webhook_registry,
         } = self;
 
         debug!("Closing executors");
@@ -1444,6 +1494,7 @@ impl ServerInit {
         drop(epoch_ticker);
         drop(preopens_cleaner);
         drop(engines);
+        drop(webhook_registry);
         drop(log_forwarder_sender);
         drop(log_db_forarder); // Some activity messages might not be stored.
         db_close.await;
@@ -1452,32 +1503,51 @@ impl ServerInit {
 
 type WebhookInstancesAndRoutes = (WebhookEndpointInstanceLinked, Vec<WebhookRouteVerified>);
 
-#[expect(clippy::too_many_arguments)]
-async fn start_http_servers(
+/// Build a `WebhookServerState` from a list of webhook instances and their routes.
+/// Used both at startup and during hot-redeploy.
+pub(crate) fn build_webhook_server_state(
     deployment_id: DeploymentId,
-    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)>,
+    webhooks: &[WebhookInstancesAndRoutes],
+    fn_registry: Arc<dyn FunctionRegistry>,
+) -> WebhookServerState {
+    let mut router = MethodAwareRouter::default();
+    for (webhook_instance_linked, routes) in webhooks {
+        for route in routes {
+            if route.methods.is_empty() {
+                router.add(None, &route.route, webhook_instance_linked.clone());
+            } else {
+                for method in &route.methods {
+                    router.add(
+                        Some(method.clone()),
+                        &route.route,
+                        webhook_instance_linked.clone(),
+                    );
+                }
+            }
+        }
+    }
+    WebhookServerState {
+        deployment_id,
+        router: Arc::new(router),
+        fn_registry,
+    }
+}
+
+async fn start_http_servers(
+    http_servers: impl Iterator<Item = &webhook::HttpServer>,
+    webhook_registry: &WebhookRegistry,
     engines: &Engines,
     db_pool: Arc<dyn DbPool>,
-    fn_registry: Arc<dyn FunctionRegistry>,
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     termination_watcher: &watch::Receiver<()>,
     log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
-    let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
+    let mut abort_handles = Vec::new();
     let engine = &engines.webhook_engine;
-    for (http_server, webhooks) in http_servers_to_webhooks {
-        let mut router = MethodAwareRouter::default();
-        for (webhook_instance_linked, routes) in webhooks {
-            for route in routes {
-                if route.methods.is_empty() {
-                    router.add(None, &route.route, webhook_instance_linked.clone());
-                } else {
-                    for method in route.methods {
-                        router.add(Some(method), &route.route, webhook_instance_linked.clone());
-                    }
-                }
-            }
-        }
+    for http_server in http_servers {
+        let state_watcher = webhook_registry
+            .get_watcher(http_server.name.as_ref())
+            .expect("wh_server_state_watcher must exist for every http_server");
         let tcp_listener = TcpListener::bind(&http_server.listening_addr)
             .await
             .with_context(|| {
@@ -1493,16 +1563,14 @@ async fn start_http_servers(
         );
         let server = AbortOnDropHandle::new(
             tokio::spawn(webhook_trigger::server(
-                deployment_id,
-                StrVariant::from(http_server.name),
+                http_server.name.to_string(),
                 tcp_listener,
                 engine.clone(),
-                router,
+                state_watcher,
                 log_forwarder_sender.clone(),
                 db_pool.clone(),
                 Now.clone_box(),
                 Arc::new(TokioSleep),
-                fn_registry.clone(),
                 global_webhook_instance_limiter.clone(),
                 termination_watcher.clone(),
             ))
@@ -1582,6 +1650,7 @@ impl ConfigVerified {
                 }
                 map
             };
+            let http_servers_len = http_servers.len();
             let http_servers_to_webhook_names = {
                 let mut vec = Vec::new();
                 for http_server in http_servers {
@@ -1601,6 +1670,11 @@ impl ConfigVerified {
                         .collect::<Vec<_>>()
                 );
             }
+            assert_eq!(
+                http_servers_len,
+                http_servers_to_webhook_names.len(),
+                "http servers with empty names must not be removed"
+            );
             http_servers_to_webhook_names
         };
 
@@ -1846,10 +1920,12 @@ impl ConfigVerified {
     }
 }
 
-/// Holds all the work that does not require a database connection.
-pub(crate) struct LinkedComponents {
-    pub(crate) workers_linked: Vec<WorkerLinked>,
+struct Linked {
+    workers: Vec<WorkerLinked>,
     webhooks_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
+    component_registry_ro: ComponentConfigRegistryRO,
+    supressed_errors: Option<String>,
+    all_frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)>,
 }
 
 #[expect(clippy::large_enum_variant)]
@@ -1871,8 +1947,8 @@ enum CompiledComponent {
 }
 
 #[instrument(skip_all)]
-#[expect(clippy::too_many_arguments, clippy::type_complexity)]
-async fn compile_and_verify(
+#[expect(clippy::too_many_arguments)]
+async fn compile_and_link(
     engines: &Engines,
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
@@ -1887,15 +1963,7 @@ async fn compile_and_verify(
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
     termination_watcher: &mut watch::Receiver<()>,
-) -> Result<
-    (
-        LinkedComponents,
-        ComponentConfigRegistryRO,
-        Option<String>,                                    // supressed_errors
-        Vec<(ComponentDigest, FrameFilesToSourceContent)>, // Frame files to sources
-    ),
-    anyhow::Error,
-> {
+) -> Result<Linked, anyhow::Error> {
     let build_semaphore = build_semaphore.map(|permits| {
         semaphore::Semaphore::new(permits.try_into().expect("u64 must fit into usize"))
     });
@@ -2223,10 +2291,12 @@ async fn compile_and_verify(
                         .with_context(||format!("cannot compile {component_id}"))
                 })
                 .collect::<Result<IndexMap<_,_>,_>>()?;
-            Ok((LinkedComponents {
-                workers_linked,
+            Ok(Linked {
+                workers: workers_linked,
                 webhooks_by_names,
-            }, component_registry_ro, supressed_errors, all_frame_files))
+             component_registry_ro,
+              supressed_errors,
+               all_frame_files})
         },
         _ = termination_watcher.changed() => {
             warn!("Received SIGINT, canceling while compiling the components");
@@ -2809,6 +2879,7 @@ mod tests {
         },
         config::config_holder::{ConfigHolder, load_deployment_toml},
     };
+    use concepts::prefixed_ulid::DeploymentId;
     use directories::BaseDirs;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
@@ -2860,7 +2931,13 @@ mod tests {
             &mut termination_watcher,
         ))
         .await?;
-        ServerCompiledLinked::new(server_verified, &mut termination_watcher, false).await?;
+        ServerCompiledLinked::new(
+            DeploymentId::generate(),
+            server_verified,
+            &mut termination_watcher,
+            false,
+        )
+        .await?;
         Ok(())
     }
 }

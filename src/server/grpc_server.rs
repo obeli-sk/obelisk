@@ -78,6 +78,7 @@ use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::Engines;
+use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
 use wasm_workers::workflow::workflow_worker::WorkflowWorker;
 
@@ -100,6 +101,8 @@ pub(crate) struct GrpcServer {
     path_prefixes: Arc<crate::config::config_holder::PathPrefixes>,
     #[debug(skip)]
     deployment_ctx: DeploymentContextHandle,
+    #[debug(skip)]
+    webhook_registry: Arc<WebhookRegistry>,
 }
 
 impl GrpcServer {
@@ -114,6 +117,7 @@ impl GrpcServer {
         config: ServerConfigToml,
         path_prefixes: Arc<PathPrefixes>,
         deployment_ctx: DeploymentContextHandle,
+        webhook_registry: Arc<WebhookRegistry>,
     ) -> Self {
         Self {
             db_pool,
@@ -125,6 +129,7 @@ impl GrpcServer {
             config,
             path_prefixes,
             deployment_ctx,
+            webhook_registry,
         }
     }
 }
@@ -1452,101 +1457,91 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             })?;
 
         if request.hot_redeploy {
-            // Get the running deployment's config_json from DB.
-            let running_deployment_id = self.deployment_ctx.read().await.deployment_id;
-            let running_record = conn
-                .get_deployment(running_deployment_id)
-                .await
-                .to_status()?
-                .must_exist("running deployment")?;
-            let running_deployment: DeploymentCanonical =
-                serde_json::from_str(&running_record.config_json).map_err(|err| {
-                    tonic::Status::internal(format!(
-                        "cannot parse running deployment config: {err}"
-                    ))
-                })?;
-
-            if is_transition_hot_deployable(&running_deployment, &target_deployment) {
-                // Hot redeploy path: only activities/workflows changed (or nothing changed).
-                let config = self.config.clone();
-                let verify_deployment_id = DeploymentId::generate();
-                let mut termination_watcher = self.termination_watcher.clone();
-                let compiled = crate::command::server::verify_config_compile_link(
-                    config,
-                    self.engines.clone(),
-                    &self.prepared_dirs,
-                    target_deployment,
-                    self.path_prefixes.clone(),
-                    verify_deployment_id,
-                    VerifyParams {
-                        dir_params: PrepareDirsParams {
-                            clean_cache: false,
-                            clean_codegen_cache: false,
-                        },
-                        ignore_missing_env_vars: false,
-                        suppress_type_checking_errors: false,
+            // Hot redeploy path: activities, workflows, and webhooks are all hot-redeployable.
+            let config = self.config.clone();
+            let verify_deployment_id = DeploymentId::generate();
+            let mut termination_watcher = self.termination_watcher.clone();
+            let linked = server::verify_config_compile_link(
+                config,
+                self.engines.clone(),
+                &self.prepared_dirs,
+                target_deployment,
+                self.path_prefixes.clone(),
+                verify_deployment_id,
+                VerifyParams {
+                    dir_params: PrepareDirsParams {
+                        clean_cache: false,
+                        clean_codegen_cache: false,
                     },
-                    &mut termination_watcher,
-                )
-                .await
-                .map_err(|err| {
-                    tonic::Status::failed_precondition(format!("verification failed: {err:#}"))
-                })?;
+                    ignore_missing_env_vars: false,
+                    suppress_type_checking_errors: false,
+                },
+                &mut termination_watcher,
+            )
+            .await
+            .map_err(|err| {
+                tonic::Status::failed_precondition(format!("verification failed: {err:#}"))
+            })?;
 
-                // Hold the write lock for the entire swap: drain old executors,
-                // activate in DB, write new context (registry + new handles).
-                // This prevents ServerInit::close from racing between drain and spawn.
-                let mut ctx = self.deployment_ctx.write().await;
-                if ctx.closed {
-                    return Err(tonic::Status::failed_precondition(
-                        "server is being shut down",
-                    ));
-                }
-
-                // Activate deployment in DB.
-                conn.activate_deployment(new_deployment_id, chrono::Utc::now())
-                    .await
-                    .to_status()?;
-
-                // Stop old executors.
-                let old = std::mem::take(&mut ctx.exec_task_handles);
-                futures_util::future::join_all(old.iter().map(ExecutorTaskHandle::close)).await;
-
-                // Spawn new executors.
-                let new_handles: Vec<ExecutorTaskHandle> = compiled
-                    .compiled_components
-                    .workers_linked
-                    .into_iter()
-                    .map(|pre_spawn| {
-                        pre_spawn.spawn(
-                            new_deployment_id,
-                            &self.db_pool,
-                            self.cancel_registry.clone(),
-                            &self.log_forwarder_sender,
-                        )
-                    })
-                    .collect();
-
-                *ctx = crate::command::server::DeploymentContext {
-                    deployment_id: new_deployment_id,
-                    component_registry_ro: compiled.component_registry_ro.clone(),
-                    exec_task_handles: new_handles,
-                    closed: false,
-                };
-
-                let outcome = grpc_gen::switch_deployment_response::Outcome::SwitchOutcomeSwitched;
-                info!(%new_deployment_id, ?outcome, "Deployment hot-redeployed");
-                return Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
-                    outcome: outcome.into(),
-                }));
+            // Hold the write lock for the entire swap: drain old executors,
+            // activate in DB, write new context (registry + new handles).
+            // This prevents ServerInit::close from racing between drain and spawn.
+            let mut ctx = self.deployment_ctx.write().await;
+            if ctx.closed {
+                return Err(tonic::Status::failed_precondition(
+                    "server is being shut down",
+                ));
             }
+
+            // Activate deployment in DB.
+            conn.activate_deployment(new_deployment_id, chrono::Utc::now())
+                .await
+                .to_status()?;
+
+            // Stop old executors.
+            let old = std::mem::take(&mut ctx.exec_task_handles);
+            futures_util::future::join_all(old.iter().map(ExecutorTaskHandle::close)).await;
+
+            self.webhook_registry
+                .swap(linked.http_servers_to_webhooks_and_state.iter().map(
+                    |(http_server, (_instance, state))| {
+                        (http_server.name.to_string(), state.clone())
+                    },
+                ));
+
+            // Spawn new executors.
+            let new_handles: Vec<ExecutorTaskHandle> = linked
+                .workers_linked
+                .into_iter()
+                .map(|pre_spawn| {
+                    pre_spawn.spawn(
+                        new_deployment_id,
+                        &self.db_pool,
+                        self.cancel_registry.clone(),
+                        &self.log_forwarder_sender,
+                    )
+                })
+                .collect();
+
+            *ctx = server::DeploymentContext {
+                deployment_id: new_deployment_id,
+                component_registry_ro: linked.component_registry_ro.clone(),
+                exec_task_handles: new_handles,
+                closed: false,
+            };
+
+            let outcome = grpc_gen::switch_deployment_response::Outcome::SwitchOutcomeSwitched;
+            info!(%new_deployment_id, ?outcome, "Deployment hot-redeployed");
+            return Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
+                outcome: outcome.into(),
+            }));
         }
 
         if request.verify {
             let config = self.config.clone();
             let verify_deployment_id = DeploymentId::generate();
             let mut termination_watcher = self.termination_watcher.clone();
-            crate::command::server::verify_config_compile_link(
+            server::verify_config_compile_link(
                 config,
                 self.engines.clone(),
                 &self.prepared_dirs,
@@ -1600,14 +1595,14 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let config = self.config.clone();
         let verify_deployment_id = DeploymentId::generate();
         let mut termination_watcher = self.termination_watcher.clone();
-        let server_compiled = crate::command::server::verify_config_compile_link(
+        let server_compiled = server::verify_config_compile_link(
             config,
             self.engines.clone(),
             &self.prepared_dirs,
             deployment,
             self.path_prefixes.clone(),
             verify_deployment_id,
-            crate::command::server::VerifyParams {
+            server::VerifyParams {
                 dir_params: PrepareDirsParams {
                     clean_cache: false,
                     clean_codegen_cache: false,
@@ -1715,20 +1710,6 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
         blocked: dep.blocked,
         finished: dep.finished,
     }
-}
-
-// Will be removed once webhooks and workflws are supported for hot redeploy.
-/// Returns `true` when switching from `src` to `dst` can be done as a hot
-/// redeploy.  Activities and workflows are always hot-redeployable; only a
-/// change in webhook configuration requires a full restart.
-fn is_transition_hot_deployable(src: &DeploymentCanonical, dst: &DeploymentCanonical) -> bool {
-    let to_webhook_json = |d: &DeploymentCanonical| {
-        serde_json::json!({
-            "webhook_endpoint": d.webhooks,
-            "webhook_endpoint_js": d.webhooks_js,
-        })
-    };
-    to_webhook_json(src) == to_webhook_json(dst)
 }
 
 #[cfg(test)]
