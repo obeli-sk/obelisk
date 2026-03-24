@@ -7,10 +7,11 @@ use crate::config::config_holder::load_deployment_toml;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
 use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
+use crate::config::toml::ActivityExternalConfigVerified;
 use crate::config::toml::ActivityJsConfigVerified;
 use crate::config::toml::ActivityStubConfigVerified;
 use crate::config::toml::ActivityStubExtConfigVerified;
-use crate::config::toml::ActivityStubInlineConfigVerified;
+use crate::config::toml::ActivityStubExtInlineConfigVerified;
 use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentCommon;
@@ -1188,7 +1189,7 @@ impl ServerCompiledLinked {
             server_verified.config.activities_wasm,
             server_verified.config.activities_js,
             server_verified.config.activities_stub_ext,
-            server_verified.config.activities_stub_inline,
+            server_verified.config.activities_stub_ext_inline,
             server_verified.config.workflows,
             server_verified.config.workflows_js,
             server_verified.config.webhooks_by_names,
@@ -1586,7 +1587,7 @@ struct ConfigVerified {
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
-    activities_stub_inline: Vec<ActivityStubInlineConfigVerified>,
+    activities_stub_ext_inline: Vec<ActivityStubExtInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,
@@ -1828,12 +1829,19 @@ impl ConfigVerified {
             ((activity_wasm_results, (activity_stub_task_results, activity_external_task_results), workflow_results, webhook_results, activity_js_runtime_result), workflow_js_runtime_result, webhook_js_runtime_result) = all => {
                 let activities_wasm = activity_wasm_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
                 let stub_results: Vec<ActivityStubConfigVerified> = activity_stub_task_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
-                let mut activities_stub_ext: Vec<ActivityStubExtConfigVerified> = activity_external_task_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
-                let mut activities_stub_inline: Vec<ActivityStubInlineConfigVerified> = Vec::new();
+                let external_results: Vec<ActivityExternalConfigVerified> = activity_external_task_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
+                let mut activities_stub_ext: Vec<ActivityStubExtConfigVerified> = Vec::new();
+                let mut activities_stub_ext_inline: Vec<ActivityStubExtInlineConfigVerified> = Vec::new();
                 for result in stub_results {
                     match result {
                         ActivityStubConfigVerified::File(ext) => activities_stub_ext.push(ext),
-                        ActivityStubConfigVerified::Inline(inline) => activities_stub_inline.push(inline),
+                        ActivityStubConfigVerified::Inline(inline) => activities_stub_ext_inline.push(inline),
+                    }
+                }
+                for result in external_results {
+                    match result {
+                        ActivityExternalConfigVerified::File(ext) => activities_stub_ext.push(ext),
+                        ActivityExternalConfigVerified::Inline(inline) => activities_stub_ext_inline.push(inline),
                     }
                 }
                 let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
@@ -1902,7 +1910,7 @@ impl ConfigVerified {
                     activities_wasm,
                     activities_js: activities_js_verified,
                     activities_stub_ext,
-                    activities_stub_inline,
+                    activities_stub_ext_inline,
                     workflows,
                     workflows_js: workflows_js_verified,
                     webhooks_by_names,
@@ -1953,7 +1961,7 @@ async fn compile_and_link(
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
-    activities_stub_inline: Vec<ActivityStubInlineConfigVerified>,
+    activities_stub_inline: Vec<ActivityStubExtInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,

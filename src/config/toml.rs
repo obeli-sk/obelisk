@@ -1012,7 +1012,7 @@ pub(crate) enum ActivityStubComponentConfigToml {
 }
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ActivityExternalComponentConfigToml {
+pub(crate) struct ActivityExternalFileConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     /// Override the auto-computed component digest used for locking.
@@ -1021,6 +1021,13 @@ pub(crate) struct ActivityExternalComponentConfigToml {
     #[schemars(with = "Option<String>")]
     pub(crate) component_digest: Option<ComponentDigest>,
 }
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub(crate) enum ActivityExternalComponentConfigToml {
+    File(ActivityExternalFileConfigToml),
+    Inline(ActivityStubInlineConfigToml),
+}
 #[derive(Debug)]
 pub(crate) struct ActivityStubExtConfigVerified {
     pub(crate) wasm_path: PathBuf,
@@ -1028,7 +1035,7 @@ pub(crate) struct ActivityStubExtConfigVerified {
 }
 
 #[derive(Debug)]
-pub(crate) struct ActivityStubInlineConfigVerified {
+pub(crate) struct ActivityStubExtInlineConfigVerified {
     pub(crate) component_id: ComponentId,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
@@ -1038,7 +1045,7 @@ pub(crate) struct ActivityStubInlineConfigVerified {
 #[derive(Debug)]
 pub(crate) enum ActivityStubConfigVerified {
     File(ActivityStubExtConfigVerified),
-    Inline(ActivityStubInlineConfigVerified),
+    Inline(ActivityStubExtInlineConfigVerified),
 }
 
 impl ActivityStubComponentConfigToml {
@@ -1138,7 +1145,7 @@ impl ActivityStubComponentConfigToml {
                 )?;
 
                 Ok(ActivityStubConfigVerified::Inline(
-                    ActivityStubInlineConfigVerified {
+                    ActivityStubExtInlineConfigVerified {
                         component_id,
                         ffqn,
                         params: parsed_params,
@@ -1149,31 +1156,117 @@ impl ActivityStubComponentConfigToml {
         }
     }
 }
+#[derive(Debug)]
+pub(crate) enum ActivityExternalConfigVerified {
+    File(ActivityStubExtConfigVerified),
+    Inline(ActivityStubExtInlineConfigVerified),
+}
+
 impl ActivityExternalComponentConfigToml {
-    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref(), component_id))]
+    fn name_str(&self) -> &str {
+        match self {
+            Self::File(f) => f.common.name.0.as_ref(),
+            Self::Inline(i) => i.name.0.as_ref(),
+        }
+    }
+
+    #[instrument(skip_all, fields(component_name = self.name_str(), component_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         path_prefixes: Arc<PathPrefixes>,
-    ) -> Result<ActivityStubExtConfigVerified, anyhow::Error> {
-        let (common, wasm_path) = self
-            .common
-            .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
-            .await?;
-        let component_digest = self
-            .component_digest
-            .unwrap_or(ComponentDigest(common.content_digest.0));
-        let component_id = ComponentId::new(
-            ComponentType::ActivityExternal,
-            StrVariant::from(common.name),
-            component_digest,
-        )?;
+    ) -> Result<ActivityExternalConfigVerified, anyhow::Error> {
+        match self {
+            Self::File(file) => {
+                let component_digest_override = file.component_digest;
+                let (common, wasm_path) = file
+                    .common
+                    .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
+                    .await?;
+                let component_digest =
+                    component_digest_override.unwrap_or(ComponentDigest(common.content_digest.0));
+                let component_id = ComponentId::new(
+                    ComponentType::ActivityExternal,
+                    StrVariant::from(common.name),
+                    component_digest,
+                )?;
+                Ok(ActivityExternalConfigVerified::File(
+                    ActivityStubExtConfigVerified {
+                        wasm_path,
+                        component_id,
+                    },
+                ))
+            }
+            Self::Inline(inline) => {
+                let ffqn = inline.ffqn;
+                let parsed_params = match inline.params {
+                    None => {
+                        vec![concepts::ParameterType {
+                            type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
+                                val_json::type_wrapper::TypeWrapper::String,
+                            )),
+                            name: StrVariant::Static("params"),
+                            wit_type: StrVariant::Static("list<string>"),
+                        }]
+                    }
+                    Some(params) => params
+                        .iter()
+                        .map(|p| {
+                            let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
+                                .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
+                            Ok(concepts::ParameterType {
+                                type_wrapper: tw,
+                                name: StrVariant::from(p.name.clone()),
+                                wit_type: StrVariant::from(p.wit_type.clone()),
+                            })
+                        })
+                        .collect::<Result<Vec<_>, anyhow::Error>>()?,
+                };
 
-        Ok(ActivityStubExtConfigVerified {
-            wasm_path,
-            component_id,
-        })
+                const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
+                let return_type_str = inline.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
+                let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
+                    .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
+                let return_type = concepts::ReturnType::detect(
+                    return_type_tw,
+                    StrVariant::from(return_type_str.to_string()),
+                );
+                let return_type = match return_type {
+                    ReturnType::Extendable(rt) => rt,
+                    ReturnType::NonExtendable(_) => bail!(
+                        "return_type must be `result`, `result<T>`, `result<T, string>`, or \
+                         `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
+                    ),
+                };
+
+                // Compute component digest: SHA256 of prefix + ffqn + params + return_type
+                let mut hasher = Sha256::new();
+                hasher.update(b"activity_external_inline:");
+                hasher.update(ffqn.to_string().as_bytes());
+                for p in &parsed_params {
+                    hasher.update(p.wit_type.as_ref().as_bytes());
+                }
+                hasher.update(return_type.wit_type.as_bytes());
+                let hash: [u8; 32] = hasher.finalize().into();
+                let component_digest = ComponentDigest(Digest(hash));
+
+                let component_id = ComponentId::new(
+                    ComponentType::ActivityExternal,
+                    StrVariant::from(inline.name),
+                    component_digest,
+                )?;
+
+                Ok(ActivityExternalConfigVerified::Inline(
+                    ActivityStubExtInlineConfigVerified {
+                        component_id,
+                        ffqn,
+                        params: parsed_params,
+                        return_type,
+                    },
+                ))
+            }
+        }
     }
 }
 
