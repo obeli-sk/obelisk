@@ -90,6 +90,16 @@
       ]
     },
     "ActivityExternalComponentConfigToml": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActivityExternalFileConfigToml"
+        },
+        {
+          "$ref": "#/$defs/ActivityStubInlineConfigToml"
+        }
+      ]
+    },
+    "ActivityExternalFileConfigToml": {
       "type": "object",
       "properties": {
         "component_digest": {
