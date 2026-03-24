@@ -2,6 +2,7 @@ use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
 use crate::http_hooks::{HttpClientTracesContainer, HttpHooks};
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
+use crate::webhook::webhook_registry::WebhookStateWatcher;
 use crate::webhook::webhook_trigger::types::obelisk::types::join_set::JoinNextError;
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
@@ -310,7 +311,7 @@ impl WebhookEndpointCompiled {
         })?);
 
         Ok(WebhookEndpointInstanceLinked {
-            config: self.config,
+            config: Arc::new(self.config),
             proxy_pre,
         })
     }
@@ -320,12 +321,12 @@ impl WebhookEndpointCompiled {
 pub struct WebhookEndpointInstanceLinked {
     #[debug(skip)]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx>>,
-    config: WebhookEndpointConfig,
+    config: Arc<WebhookEndpointConfig>,
 }
 impl WebhookEndpointInstanceLinked {
     #[must_use]
     pub fn build(
-        self,
+        &self,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
     ) -> WebhookEndpointInstance {
         let stdout = StdOutputConfigWithSender::new(
@@ -339,7 +340,7 @@ impl WebhookEndpointInstanceLinked {
             LogStreamType::StdErr,
         );
         WebhookEndpointInstance {
-            proxy_pre: self.proxy_pre,
+            proxy_pre: self.proxy_pre.clone(),
             stdout,
             stderr,
             logs_storage_config: self.config.logs_store_min_level.map(|min_level| {
@@ -348,7 +349,7 @@ impl WebhookEndpointInstanceLinked {
                     log_sender: log_forwarder_sender.clone(),
                 }
             }),
-            config: self.config,
+            config: self.config.clone(),
         }
     }
 }
@@ -357,7 +358,7 @@ impl WebhookEndpointInstanceLinked {
 pub struct WebhookEndpointInstance {
     #[debug(skip)]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx>>,
-    pub config: WebhookEndpointConfig,
+    config: Arc<WebhookEndpointConfig>,
     #[debug(skip)]
     stdout: Option<StdOutputConfigWithSender>,
     #[debug(skip)]
@@ -412,22 +413,26 @@ impl<T> Default for MethodAwareRouter<T> {
     }
 }
 
+/// Swappable per-server state for hot-redeploy.
+pub struct WebhookServerState {
+    pub deployment_id: DeploymentId,
+    pub router: Arc<MethodAwareRouter<WebhookEndpointInstanceLinked>>,
+    pub fn_registry: Arc<dyn FunctionRegistry>,
+}
+
 #[expect(clippy::too_many_arguments)]
 pub async fn server(
-    deployment_id: DeploymentId,
-    http_server: StrVariant,
+    http_server: String,
     listener: TcpListener,
     engine: Arc<Engine>,
-    router: MethodAwareRouter<WebhookEndpointInstance>,
+    wh_server_state_watcher: WebhookStateWatcher,
+    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     db_pool: Arc<dyn DbPool>,
     clock_fn: Box<dyn ClockFn>,
     sleep: Arc<dyn Sleep>,
-    fn_registry: Arc<dyn FunctionRegistry>,
     max_inflight_requests: Option<Arc<tokio::sync::Semaphore>>,
     server_termination_watcher: watch::Receiver<()>,
 ) -> Result<(), WebhookServerError> {
-    let router = Arc::new(router);
-
     loop {
         let (stream, _) = listener
             .accept()
@@ -435,19 +440,21 @@ pub async fn server(
             .map_err(WebhookServerError::SocketError)?;
         let stream = TokioIo::new(stream);
 
+        // Snapshot state before spawning – cheap Arc clone, consistent view.
+        let state = wh_server_state_watcher.borrow().clone();
+
         // Spawn a tokio task for each TCP connection.
         tokio::task::spawn(
             {
-                let router = router.clone();
                 let engine = engine.clone();
                 let clock_fn = clock_fn.clone_box();
                 let sleep = sleep.clone();
                 let db_pool = db_pool.clone();
-                let fn_registry = fn_registry.clone();
                 let http_server = http_server.clone();
                 let connection_span = info_span!("connection", %http_server);
                 let max_inflight_requests = max_inflight_requests.clone();
                 let server_termination_watcher = server_termination_watcher.clone();
+                let log_forwarder_sender = log_forwarder_sender.clone();
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
 
@@ -459,16 +466,17 @@ pub async fn server(
                                     let execution_id = ExecutionId::generate().get_top_level();
                                     trace!(%execution_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                     RequestHandler {
-                                        deployment_id,
+                                        deployment_id: state.deployment_id,
                                         engine: engine.clone(),
                                         clock_fn: clock_fn.clone_box(),
                                         sleep: sleep.clone(),
                                         db_pool: db_pool.clone(),
-                                        fn_registry: fn_registry.clone(),
+                                        fn_registry: state.fn_registry.clone(),
                                         execution_id,
-                                        router: router.clone(),
+                                        router: state.router.clone(),
                                         connection_drop_watcher: connection_drop_watcher.clone(),
                                         server_termination_watcher: server_termination_watcher.clone(),
+                                        log_forwarder_sender: log_forwarder_sender.clone()
                                     }
                                     .handle_request(req, max_inflight_requests.clone())
                                 }.instrument(info_span!(parent: &connection_span, "request"))
@@ -1493,7 +1501,7 @@ impl WebhookEndpointCtx {
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
         deployment_id: DeploymentId,
-        config: WebhookEndpointConfig,
+        config: &Arc<WebhookEndpointConfig>,
         engine: &Engine,
         clock_fn: Box<dyn ClockFn>,
         sleep: Arc<dyn Sleep>,
@@ -1562,7 +1570,7 @@ impl WebhookEndpointCtx {
             wasi_ctx,
             http_ctx: WasiHttpCtx::new(),
             version: None,
-            component_id: config.component_id,
+            component_id: config.component_id.clone(),
             deployment_id,
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
@@ -1727,9 +1735,10 @@ struct RequestHandler {
     db_pool: Arc<dyn DbPool>,
     fn_registry: Arc<dyn FunctionRegistry>,
     execution_id: ExecutionIdTopLevel,
-    router: Arc<MethodAwareRouter<WebhookEndpointInstance>>,
+    router: Arc<MethodAwareRouter<WebhookEndpointInstanceLinked>>,
     connection_drop_watcher: watch::Receiver<()>,
     server_termination_watcher: watch::Receiver<()>,
+    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 }
 
 fn respond(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
@@ -1811,6 +1820,7 @@ impl RequestHandler {
 
         if let Some(instance_match) = self.router.find(req.method(), req.uri()) {
             let found_instance = instance_match.handler();
+            let found_instance = found_instance.build(&self.log_forwarder_sender);
             let run_id = RunId::generate();
             let stdout = found_instance.stdout.as_ref().map(|stdoutput| {
                 stdoutput.build(&ExecutionId::TopLevel(self.execution_id), run_id)
@@ -1821,7 +1831,7 @@ impl RequestHandler {
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let mut store = WebhookEndpointCtx::new(
                 self.deployment_id,
-                found_instance.config.clone(),
+                &found_instance.config,
                 &self.engine,
                 self.clock_fn,
                 self.sleep,
@@ -1958,6 +1968,7 @@ pub(crate) mod tests {
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, WebhookEndpointCompiled, WebhookEndpointConfig, WebhookServerError,
+            WebhookServerState,
         };
         use crate::workflow::workflow_worker::JoinNextBlockingStrategy;
         use crate::workflow::workflow_worker::test::compile_workflow;
@@ -2067,8 +2078,7 @@ pub(crate) mod tests {
                     )
                     .unwrap()
                     .link(&engine, fn_registry.as_ref())
-                    .unwrap()
-                    .build(&db_forwarder_sender);
+                    .unwrap();
                     let mut router = MethodAwareRouter::default();
                     router.add(Some(Method::GET), "/fibo/:N/:ITERATIONS", instance);
                     router
@@ -2077,17 +2087,22 @@ pub(crate) mod tests {
                 let server_addr = tcp_listener.local_addr().unwrap();
                 info!("Listening on port {}", server_addr.port());
                 let (server_termination_sender, server_termination_watcher) = watch::channel(());
+                let initial_state = Arc::new(webhook_trigger::WebhookServerState {
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    router: Arc::new(router),
+                    fn_registry,
+                });
+                let (_, wh_server_state_watcher) = watch::channel(initial_state);
                 let mut set = tokio::task::JoinSet::new();
                 set.spawn(webhook_trigger::server(
-                    DEPLOYMENT_ID_DUMMY,
-                    StrVariant::Static("test"),
+                    "test".to_string(),
                     tcp_listener,
                     engine,
-                    router,
+                    wh_server_state_watcher,
+                    db_forwarder_sender,
                     db_pool.clone(),
                     sim_clock.clone_box(),
                     Arc::new(TokioSleep),
-                    fn_registry,
                     None,
                     server_termination_watcher,
                 ));
@@ -2347,8 +2362,7 @@ pub(crate) mod tests {
                 )
                 .unwrap()
                 .link(&engine, fn_registry.as_ref())
-                .unwrap()
-                .build(&db_forwarder_sender);
+                .unwrap();
                 let mut router = MethodAwareRouter::default();
                 router.add(Some(Method::GET), "/http-get/:PORT", instance);
                 router
@@ -2358,17 +2372,21 @@ pub(crate) mod tests {
             let server_addr = tcp_listener.local_addr().unwrap();
             info!("Listening on port {}", server_addr.port());
             let (_server_termination_sender, server_termination_watcher) = watch::channel(());
+            let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                router: Arc::new(router),
+                fn_registry,
+            }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
-                DEPLOYMENT_ID_DUMMY,
-                StrVariant::Static("test"),
+                "test".to_string(),
                 tcp_listener,
                 engine,
-                router,
+                wh_server_state_watcher,
+                db_forwarder_sender,
                 db_pool.clone(),
                 sim_clock.clone_box(),
                 Arc::new(TokioSleep),
-                fn_registry,
                 None,
                 server_termination_watcher,
             ));
@@ -2516,8 +2534,7 @@ pub(crate) mod tests {
                 )
                 .unwrap()
                 .link(&engine, fn_registry.as_ref())
-                .unwrap()
-                .build(&db_forwarder_sender);
+                .unwrap();
                 let mut router = MethodAwareRouter::default();
                 router.add(Some(Method::GET), "/http-get/:PORT", instance);
                 router
@@ -2527,17 +2544,21 @@ pub(crate) mod tests {
             let server_addr = tcp_listener.local_addr().unwrap();
             info!("Listening on port {}", server_addr.port());
             let (_server_termination_sender, server_termination_watcher) = watch::channel(());
+            let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                router: Arc::new(router),
+                fn_registry,
+            }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
-                DEPLOYMENT_ID_DUMMY,
-                StrVariant::Static("test"),
+                "test".to_string(),
                 tcp_listener,
                 engine,
-                router,
+                wh_server_state_watcher,
+                db_forwarder_sender,
                 db_pool.clone(),
                 sim_clock.clone_box(),
                 Arc::new(TokioSleep),
-                fn_registry,
                 None,
                 server_termination_watcher,
             ));
@@ -2569,7 +2590,7 @@ pub(crate) mod tests {
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, MethodAwareRouter, WebhookEndpointCompiled, WebhookEndpointConfig,
-            WebhookEndpointJsConfig, WebhookServerError,
+            WebhookEndpointJsConfig, WebhookServerError, WebhookServerState,
         };
         use concepts::component_id::ComponentDigest;
         use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
@@ -2625,8 +2646,7 @@ pub(crate) mod tests {
                 )
                 .unwrap()
                 .link(&engine, fn_registry.as_ref())
-                .unwrap()
-                .build(&db_forwarder_sender);
+                .unwrap();
                 let mut router = MethodAwareRouter::default();
                 router.add(None, "", instance);
                 router
@@ -2637,17 +2657,21 @@ pub(crate) mod tests {
             let server_addr = tcp_listener.local_addr().unwrap();
             info!("JS webhook listening on port {}", server_addr.port());
             let (server_termination_sender, server_termination_watcher) = watch::channel(());
+            let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                router: Arc::new(router),
+                fn_registry,
+            }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
-                DEPLOYMENT_ID_DUMMY,
-                StrVariant::Static("test-js"),
+                "test-js".to_string(),
                 tcp_listener,
                 engine,
-                router,
+                wh_server_state_watcher,
+                db_forwarder_sender,
                 db_pool,
                 sim_clock.clone_box(),
                 Arc::new(TokioSleep),
-                fn_registry,
                 None,
                 server_termination_watcher,
             ));
@@ -2762,8 +2786,7 @@ pub(crate) mod tests {
                 )
                 .unwrap()
                 .link(&engine, fn_registry.as_ref())
-                .unwrap()
-                .build(&db_forwarder_sender);
+                .unwrap();
                 let mut router = MethodAwareRouter::default();
                 router.add(None, "", instance);
                 router
@@ -2777,17 +2800,21 @@ pub(crate) mod tests {
                 server_addr.port()
             );
             let (server_termination_sender, server_termination_watcher) = watch::channel(());
+            let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                router: Arc::new(router),
+                fn_registry,
+            }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
-                DEPLOYMENT_ID_DUMMY,
-                StrVariant::Static("test-js-http"),
+                "test-js-http".to_string(),
                 tcp_listener,
                 engine,
-                router,
+                wh_server_state_watcher,
+                db_forwarder_sender,
                 db_pool,
                 sim_clock.clone_box(),
                 Arc::new(TokioSleep),
-                fn_registry,
                 None,
                 server_termination_watcher,
             ));
@@ -3031,8 +3058,7 @@ pub(crate) mod tests {
                     )
                     .unwrap()
                     .link(&engine, fn_registry.as_ref())
-                    .unwrap()
-                    .build(&db_forwarder_sender);
+                    .unwrap();
                     let mut router = MethodAwareRouter::default();
                     router.add(None, "", instance);
                     router
@@ -3047,17 +3073,21 @@ pub(crate) mod tests {
                     server_addr.port()
                 );
                 let (server_termination_sender, server_termination_watcher) = watch::channel(());
+                let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    router: Arc::new(router),
+                    fn_registry,
+                }));
                 let mut server_set = tokio::task::JoinSet::new();
                 server_set.spawn(webhook_trigger::server(
-                    DEPLOYMENT_ID_DUMMY,
-                    StrVariant::Static("test-js-activities"),
+                    "test-js-activities".to_string(),
                     tcp_listener,
                     engine,
-                    router,
+                    wh_server_state_watcher,
+                    db_forwarder_sender,
                     db_pool.clone(),
                     sim_clock.clone_box(),
                     Arc::new(TokioSleep),
-                    fn_registry,
                     None,
                     server_termination_watcher,
                 ));

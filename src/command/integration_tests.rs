@@ -1365,3 +1365,171 @@ async fn hot_redeploy_registry() {
 
     server.shutdown().await;
 }
+
+/// After a hot redeploy, an existing JS webhook endpoint must pick up the new
+/// env-var value from the updated deployment — proving that `WebhookServerState`
+/// (including `fn_registry`, `deployment_id`, and the rebuilt router) is pushed
+/// through the `WebhookRegistry` watch channel.
+#[tokio::test]
+async fn hot_redeploy_webhook_js_env_var() {
+    let server = TestServer::start(test_addr!(32)).await;
+
+    // 1. Verify the initial env var value is served.
+    let resp = server
+        .client
+        .get(format!("{}/read-env", server.webhook_base_url))
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(resp.text().await.unwrap(), "hello_from_webhook_env");
+
+    // 2. Build a second deployment with the env var changed.
+    let second_id = DeploymentId::generate();
+    {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.external_api_conn().await.unwrap();
+        let active = conn.get_active_deployment().await.unwrap().unwrap();
+
+        let mut new_deployment: DeploymentCanonical =
+            serde_json::from_str(&active.config_json).unwrap();
+        let found = new_deployment
+            .webhooks_js
+            .iter_mut()
+            .find(|w| &**w.name == "test_read_env_webhook")
+            .unwrap();
+        found.env_vars = vec![EnvVarConfig::KeyValue {
+            key: "WEBHOOK_TEST_ENV_VAR".to_string(),
+            value: "updated_webhook_env".to_string(),
+        }];
+
+        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
+        conn.insert_deployment(DeploymentRecord {
+            deployment_id: second_id,
+            created_at: Utc::now(),
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
+            config_json: new_config_json,
+            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+            created_by: Some("test".to_string()),
+        })
+        .await
+        .unwrap();
+        pool.close().await;
+    }
+
+    // 3. Hot-redeploy to the second deployment.
+    let mut client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap();
+    let resp = client
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(GrpcDeploymentId {
+                id: second_id.to_string(),
+            }),
+            verify: false,
+            hot_redeploy: true,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
+
+    // 4. The webhook must now return the updated env var.
+    // Use a fresh client to ensure a new TCP connection is made (the per-connection
+    // state snapshot means a keep-alive connection would still see the old state).
+    let fresh_client = reqwest::Client::new();
+    let resp = fresh_client
+        .get(format!("{}/read-env", server.webhook_base_url))
+        .send()
+        .await
+        .expect("webhook request failed after hot redeploy");
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(resp.text().await.unwrap(), "updated_webhook_env");
+
+    server.shutdown().await;
+}
+
+/// After a hot redeploy that removes a JS webhook endpoint, the route must
+/// return 404 — proving that the router inside the running HTTP server is
+/// replaced, not just the env vars.
+#[tokio::test]
+async fn hot_redeploy_webhook_js_remove_endpoint() {
+    let server = TestServer::start(test_addr!(33)).await;
+
+    // 1. Verify /hello is served by the initial deployment.
+    let resp = server
+        .client
+        .get(format!("{}/hello", server.webhook_base_url))
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(resp.text().await.unwrap(), "Hello from JS webhook!");
+
+    // 2. Build a second deployment that removes test_hello_webhook.
+    let second_id = DeploymentId::generate();
+    {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.external_api_conn().await.unwrap();
+        let active = conn.get_active_deployment().await.unwrap().unwrap();
+
+        let mut new_deployment: DeploymentCanonical =
+            serde_json::from_str(&active.config_json).unwrap();
+        new_deployment
+            .webhooks_js
+            .retain(|w| &**w.name != "test_hello_webhook");
+
+        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
+        conn.insert_deployment(DeploymentRecord {
+            deployment_id: second_id,
+            created_at: Utc::now(),
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
+            config_json: new_config_json,
+            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+            created_by: Some("test".to_string()),
+        })
+        .await
+        .unwrap();
+        pool.close().await;
+    }
+
+    // 3. Hot-redeploy to the second deployment.
+    let mut client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap();
+    let resp = client
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(GrpcDeploymentId {
+                id: second_id.to_string(),
+            }),
+            verify: false,
+            hot_redeploy: true,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
+
+    // 4. /hello must now return 404 — the endpoint was removed from the router.
+    // Use a fresh client to ensure a new TCP connection is made (the per-connection
+    // state snapshot means a keep-alive connection would still see the old router).
+    let fresh_client = reqwest::Client::new();
+    let resp = fresh_client
+        .get(format!("{}/hello", server.webhook_base_url))
+        .send()
+        .await
+        .expect("request to removed webhook should still complete");
+    assert_eq!(
+        resp.status().as_u16(),
+        404,
+        "removed webhook endpoint must return 404 after hot redeploy"
+    );
+
+    server.shutdown().await;
+}
