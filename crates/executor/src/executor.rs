@@ -391,7 +391,12 @@ impl ExecTask {
                 let clock_fn = self.clock_fn.clone_box();
                 let worker_span = info_span!(parent: None, "worker",
                     "otel.name" = format!("worker {}", locked_execution.ffqn),
-                    %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.config.executor_id, component_id = %self.config.component_id);
+                    %execution_id, %run_id,
+                    ffqn = %locked_execution.ffqn,
+                    executor_id = %self.config.executor_id,
+                    component_id = %self.config.component_id,
+                    %deployment_id,
+                );
                 locked_execution.metadata.enrich(&worker_span);
                 let component_type = self.config.component_id.component_type;
                 let worker_count_tx = self.worker_count_tx.clone();
