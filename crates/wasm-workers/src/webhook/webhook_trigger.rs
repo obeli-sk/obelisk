@@ -442,7 +442,7 @@ pub async fn server(
 
         // Snapshot state before spawning – cheap Arc clone, consistent view.
         let state = wh_server_state_watcher.borrow().clone();
-
+        let deployment_id = state.deployment_id;
         // Spawn a tokio task for each TCP connection.
         tokio::task::spawn(
             {
@@ -457,14 +457,14 @@ pub async fn server(
                 let log_forwarder_sender = log_forwarder_sender.clone();
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
-
+                    let deployment_id = state.deployment_id;
                     let res = http1::Builder::new()
                         .serve_connection(
                             stream,
                             hyper::service::service_fn({
                                 move |req| {
                                     let execution_id = ExecutionId::generate().get_top_level();
-                                    trace!(%execution_id, method = %req.method(), uri = %req.uri(), "Processing request");
+                                    trace!(%execution_id, %deployment_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                     RequestHandler {
                                         deployment_id: state.deployment_id,
                                         engine: engine.clone(),
@@ -479,7 +479,7 @@ pub async fn server(
                                         log_forwarder_sender: log_forwarder_sender.clone()
                                     }
                                     .handle_request(req, max_inflight_requests.clone())
-                                }.instrument(info_span!(parent: &connection_span, "request"))
+                                }.instrument(info_span!(parent: &connection_span, "request", %deployment_id))
                             })
                         )
                         .await;
@@ -488,7 +488,7 @@ pub async fn server(
                         drop(connection_drop_sender);
                     }
                 }
-            }.instrument(debug_span!("tcp stream"))
+            }.instrument(debug_span!("tcp stream", %deployment_id))
         );
     }
 }
