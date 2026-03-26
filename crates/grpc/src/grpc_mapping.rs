@@ -273,9 +273,8 @@ impl<T: Borrow<FunctionFqn>> From<T> for grpc_gen::FunctionName {
 impl From<ComponentType> for grpc_gen::ComponentType {
     fn from(value: ComponentType) -> Self {
         match value {
-            ComponentType::ActivityWasm => grpc_gen::ComponentType::ActivityWasm,
+            ComponentType::Activity => grpc_gen::ComponentType::Activity,
             ComponentType::ActivityStub => grpc_gen::ComponentType::ActivityStub,
-            ComponentType::ActivityExternal => grpc_gen::ComponentType::ActivityExternal,
             ComponentType::Workflow => grpc_gen::ComponentType::Workflow,
             ComponentType::WebhookEndpoint => grpc_gen::ComponentType::WebhookEndpoint,
         }
@@ -288,9 +287,8 @@ impl TryFrom<grpc_gen::ComponentType> for ComponentType {
             grpc_gen::ComponentType::Unspecified => Err(tonic::Status::invalid_argument(
                 "`ComponentType` must be specified",
             )),
-            grpc_gen::ComponentType::ActivityWasm => Ok(ComponentType::ActivityWasm),
+            grpc_gen::ComponentType::Activity => Ok(ComponentType::Activity),
             grpc_gen::ComponentType::ActivityStub => Ok(ComponentType::ActivityStub),
-            grpc_gen::ComponentType::ActivityExternal => Ok(ComponentType::ActivityExternal),
             grpc_gen::ComponentType::Workflow => Ok(ComponentType::Workflow),
             grpc_gen::ComponentType::WebhookEndpoint => Ok(ComponentType::WebhookEndpoint),
         }

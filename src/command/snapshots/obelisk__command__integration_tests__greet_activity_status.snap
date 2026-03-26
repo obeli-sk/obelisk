@@ -4,7 +4,7 @@ expression: status
 ---
 {
   "component_digest": "sha256:<REDACTED>",
-  "component_type": "activity_wasm",
+  "component_type": "activity",
   "created_at": "<TIMESTAMP>",
   "deployment_id": "Dep_<REDACTED>",
   "execution_id": "E_<REDACTED>",

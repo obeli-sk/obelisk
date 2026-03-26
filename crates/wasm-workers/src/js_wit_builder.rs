@@ -271,7 +271,7 @@ mod tests {
             !wit.contains("record {"),
             "inline record must not appear:\n{wit}"
         );
-        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::ActivityWasm)
+        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::Activity)
             .expect("synthesized WIT must be valid");
     }
 
@@ -305,7 +305,7 @@ mod tests {
             wit.contains("func() -> result<t1, string>"),
             "outer named:\n{wit}"
         );
-        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::ActivityWasm)
+        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::Activity)
             .expect("synthesized WIT must be valid");
     }
 
@@ -335,7 +335,7 @@ mod tests {
         assert!(!wit.contains("t1"), "no second name:\n{wit}");
         assert!(wit.contains("input: t0"), "param uses t0:\n{wit}");
         assert!(wit.contains("result<t0, string>"), "return uses t0:\n{wit}");
-        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::ActivityWasm)
+        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::Activity)
             .expect("synthesized WIT must be valid");
     }
 
@@ -366,7 +366,7 @@ mod tests {
         assert!(wit.contains("enum t1 {"), "enum declaration:\n{wit}");
         assert!(wit.contains("perms: t0"), "param uses t0:\n{wit}");
         assert!(wit.contains("result<t1, string>"), "return uses t1:\n{wit}");
-        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::ActivityWasm)
+        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::Activity)
             .expect("synthesized WIT must be valid");
     }
 

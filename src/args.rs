@@ -168,7 +168,7 @@ pub(crate) enum Generate {
     WitExtensions {
         #[arg(long, short)]
         force: bool,
-        /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
+        /// One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`
         component_type: ComponentType,
         /// Path to the `wit` folder, containing the target world and possibly `deps` subfolder.
         input_wit_directory: PathBuf,
@@ -177,7 +177,7 @@ pub(crate) enum Generate {
     },
     /// Generate Obelisk WIT files for given component type.
     WitSupport {
-        /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
+        /// One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`
         component_type: ComponentType,
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
@@ -293,7 +293,7 @@ pub(crate) enum Component {
     },
     /// Add a component to the deployment TOML configuration file.
     Add {
-        /// One of `workflow`, `activity_wasm`, `activity_stub`, `webhook_endpoint`
+        /// One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`
         #[arg(required(true))]
         component_type: ComponentType,
         /// Path to the WASM file

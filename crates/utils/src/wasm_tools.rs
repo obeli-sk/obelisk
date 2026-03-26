@@ -1115,7 +1115,7 @@ pub(crate) mod tests {
     }
 
     #[rstest]
-    #[case("fibo/activity", ComponentType::ActivityWasm)]
+    #[case("fibo/activity", ComponentType::Activity)]
     #[case("fibo/workflow", ComponentType::Workflow)]
     #[case("fibo/webhook", ComponentType::WebhookEndpoint)]
     #[case("stub/activity", ComponentType::ActivityStub)]
@@ -1166,7 +1166,7 @@ pub(crate) mod tests {
             }
         ";
         let user_wasm_component =
-            WasmComponent::new_from_wit_string(wit, ComponentType::ActivityExternal).unwrap();
+            WasmComponent::new_from_wit_string(wit, ComponentType::Activity).unwrap();
         let exports = user_wasm_component.exported_functions(false).to_vec();
         insta::assert_debug_snapshot!(exports);
     }

@@ -46,7 +46,7 @@ impl ActivityJsWorkerCompiled {
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
         let wit = synthesize_wit(&user_ffqn, &user_params, &user_return_type);
         let user_wasm_component =
-            WasmComponent::new_from_wit_string(&wit, ComponentType::ActivityWasm)?;
+            WasmComponent::new_from_wit_string(&wit, ComponentType::Activity)?;
         Ok(Self {
             inner,
             js_source,
@@ -371,7 +371,7 @@ mod tests {
             let clock_fn: Box<dyn ClockFn> = Now.clone_box();
 
             let component_id = concepts::ComponentId::new(
-                ComponentType::ActivityWasm,
+                ComponentType::Activity,
                 StrVariant::Static("test_js"),
                 COMPONENT_DIGEST_DUMMY,
             )
@@ -380,7 +380,7 @@ mod tests {
             let (wasm_component, _boa_component_id) = compile_activity_with_engine(
                 activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
                 &engine,
-                ComponentType::ActivityWasm,
+                ComponentType::Activity,
             )
             .await;
 
@@ -440,7 +440,7 @@ mod tests {
         // So we wrap the params in a list
         let params_json: Vec<serde_json::Value> = vec![json!(params)];
         let component_id = concepts::ComponentId::new(
-            ComponentType::ActivityWasm,
+            ComponentType::Activity,
             StrVariant::Static("test_js"),
             COMPONENT_DIGEST_DUMMY,
         )
@@ -472,7 +472,7 @@ mod tests {
         params_json: Vec<serde_json::Value>,
     ) -> WorkerContext {
         let component_id = concepts::ComponentId::new(
-            ComponentType::ActivityWasm,
+            ComponentType::Activity,
             StrVariant::Static("test_js"),
             COMPONENT_DIGEST_DUMMY,
         )

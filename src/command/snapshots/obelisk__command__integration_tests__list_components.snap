@@ -6,63 +6,63 @@ expression: components
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
-      "component_type": "activity_wasm",
+      "component_type": "activity",
       "name": "test_add_activity"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
-      "component_type": "activity_wasm",
+      "component_type": "activity",
       "name": "test_greet_activity"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
-      "component_type": "activity_wasm",
+      "component_type": "activity",
       "name": "test_fetch_denied_activity"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
-      "component_type": "activity_wasm",
+      "component_type": "activity",
       "name": "test_fetch_allowed_activity"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
-      "component_type": "activity_wasm",
+      "component_type": "activity",
       "name": "test_read_env_activity"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
-      "component_type": "activity_wasm",
+      "component_type": "activity",
       "name": "test_make_record_activity"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
-      "component_type": "activity_wasm",
+      "component_type": "activity",
       "name": "test_throw_variant_activity"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
-      "component_type": "activity_wasm",
+      "component_type": "activity",
       "name": "test_throw_null_activity"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
-      "component_type": "activity_wasm",
+      "component_type": "activity",
       "name": "test_hmac_sign_verify_activity"
     }
   },
