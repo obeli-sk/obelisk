@@ -2363,7 +2363,7 @@ fn prespawn_activity(
     engines: &Engines,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = activity.component_id().clone();
-    assert!(component_id.component_type == ComponentType::ActivityWasm);
+    assert!(component_id.component_type == ComponentType::Activity);
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
     let engine = engines.activity_engine.clone();
@@ -2397,7 +2397,7 @@ fn prespawn_js_activity(
     runnable_component: RunnableComponent,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
-    assert!(component_id.component_type == ComponentType::ActivityWasm);
+    assert!(component_id.component_type == ComponentType::Activity);
 
     let inner = ActivityWorkerCompiled::new_with_config(
         runnable_component,
@@ -2602,7 +2602,7 @@ struct WorkflowJsWorkerCompiledWithConfig {
 enum CompiledWorkerKind {
     ActivityWasm(ActivityWorkerCompiled),
     ActivityJs(Box<ActivityJsWorkerCompiled>),
-    Workflow(WorkflowWorkerCompiledWithConfig),
+    WorkflowWasm(WorkflowWorkerCompiledWithConfig),
     WorkflowJs(Box<WorkflowJsWorkerCompiledWithConfig>),
 }
 
@@ -2697,7 +2697,7 @@ impl WorkerCompiled {
         };
         Ok((
             WorkerCompiled {
-                worker: CompiledWorkerKind::Workflow(WorkflowWorkerCompiledWithConfig {
+                worker: CompiledWorkerKind::WorkflowWasm(WorkflowWorkerCompiledWithConfig {
                     worker,
                     workflows_lock_extension_leeway,
                 }),
@@ -2764,8 +2764,8 @@ impl WorkerCompiled {
                 CompiledWorkerKind::ActivityJs(js_activity) => {
                     LinkedWorkerKind::ActivityJs(js_activity)
                 }
-                CompiledWorkerKind::Workflow(workflow_compiled) => {
-                    LinkedWorkerKind::Workflow(WorkflowWorkerLinkedWithConfig {
+                CompiledWorkerKind::WorkflowWasm(workflow_compiled) => {
+                    LinkedWorkerKind::WorkflowWasm(WorkflowWorkerLinkedWithConfig {
                         worker: workflow_compiled.worker.link(fn_registry.clone())?,
                         workflows_lock_extension_leeway: workflow_compiled
                             .workflows_lock_extension_leeway,
@@ -2798,7 +2798,7 @@ struct WorkflowJsWorkerLinkedWithConfig {
 enum LinkedWorkerKind {
     ActivityWasm(ActivityWorkerCompiled),
     ActivityJs(Box<ActivityJsWorkerCompiled>),
-    Workflow(WorkflowWorkerLinkedWithConfig),
+    WorkflowWasm(WorkflowWorkerLinkedWithConfig),
     WorkflowJs(WorkflowJsWorkerLinkedWithConfig),
 }
 
@@ -2834,7 +2834,7 @@ impl WorkerLinked {
                     logs_storage_config,
                 ))
             }
-            LinkedWorkerKind::Workflow(workflow_linked) => {
+            LinkedWorkerKind::WorkflowWasm(workflow_linked) => {
                 let factory = DeadlineTrackerFactoryTokio::new(
                     workflow_linked.workflows_lock_extension_leeway,
                     Now.clone_box(),

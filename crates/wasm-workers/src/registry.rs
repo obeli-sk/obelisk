@@ -222,7 +222,7 @@ impl ComponentConfigRegistry {
         component_type: ComponentType,
     ) -> bool {
         match component_type {
-            ComponentType::ActivityWasm => {
+            ComponentType::Activity => {
                 // wasi + log
                 match import.ffqn.ifc_fqn.namespace() {
                     "wasi" => true,
@@ -255,7 +255,7 @@ impl ComponentConfigRegistry {
                     _ => false,
                 }
             }
-            ComponentType::ActivityStub | ComponentType::ActivityExternal => false,
+            ComponentType::ActivityStub => false,
         }
     }
 

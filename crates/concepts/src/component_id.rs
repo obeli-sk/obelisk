@@ -23,21 +23,15 @@ use std::{
 #[schemars(with = "String")]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentType {
-    ActivityWasm,
+    Activity,
     ActivityStub,
-    ActivityExternal,
     Workflow,
     WebhookEndpoint,
 }
 impl ComponentType {
     #[must_use]
     pub fn is_activity(&self) -> bool {
-        matches!(
-            self,
-            ComponentType::ActivityWasm
-                | ComponentType::ActivityStub
-                | ComponentType::ActivityExternal
-        )
+        matches!(self, ComponentType::Activity | ComponentType::ActivityStub)
     }
 }
 
@@ -76,7 +70,7 @@ impl ComponentId {
     #[must_use]
     pub const fn dummy_activity() -> Self {
         Self {
-            component_type: ComponentType::ActivityWasm,
+            component_type: ComponentType::Activity,
             name: StrVariant::empty(),
             component_digest: COMPONENT_DIGEST_DUMMY,
         }

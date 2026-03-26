@@ -586,7 +586,7 @@ pub mod test {
 
     pub async fn compile_activity(wasm_path: &str) -> (RunnableComponent, ComponentId) {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm).await
+        compile_activity_with_engine(wasm_path, &engine, ComponentType::Activity).await
     }
 
     #[allow(dead_code)] // falsly positive
@@ -715,7 +715,7 @@ pub(crate) mod tests {
     ) -> (Arc<dyn Worker>, ComponentId) {
         let cancel_registry = CancelRegistry::new();
         let (wasm_component, component_id) =
-            compile_activity_with_engine(wasm_path, &engine, ComponentType::ActivityWasm).await;
+            compile_activity_with_engine(wasm_path, &engine, ComponentType::Activity).await;
         let (db_forwarder_sender, _) = mpsc::channel(1);
         (
             Arc::new(
@@ -2102,7 +2102,7 @@ pub(crate) mod tests {
         let (wasm_component, component_id) = compile_activity_with_engine(
             test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
             &engine,
-            ComponentType::ActivityWasm,
+            ComponentType::Activity,
         )
         .await;
 

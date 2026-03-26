@@ -737,7 +737,7 @@ mod tests {
     )]
     #[case(
         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-        ComponentType::ActivityWasm
+        ComponentType::Activity
     )]
     #[case(
         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
@@ -745,7 +745,7 @@ mod tests {
     )]
     #[case(
         test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-        ComponentType::ActivityWasm
+        ComponentType::Activity
     )]
     #[case(
         test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,

@@ -38,7 +38,7 @@ impl BuildConfig {
 /// the `--target` directory to the output of [`get_target_dir`].
 #[allow(clippy::must_use_candidate)]
 pub fn build_activity(conf: BuildConfig) -> PathBuf {
-    build_internal(WASI_P2, ComponentType::ActivityWasm, conf)
+    build_internal(WASI_P2, ComponentType::Activity, conf)
 }
 
 /// Build the parent webhook endpoint WASM component and place it into the `target` directory.
@@ -73,7 +73,7 @@ pub fn build_workflow_wasi_p2(conf: BuildConfig) -> PathBuf {
 }
 
 enum ComponentType {
-    ActivityWasm,
+    Activity,
     WebhookEndpoint,
     Workflow,
 }
@@ -160,7 +160,7 @@ fn generate_code(_wasm_path: &Path, _pkg_name: &str, _component_type: ComponentT
 impl From<ComponentType> for concepts::ComponentType {
     fn from(value: ComponentType) -> Self {
         match value {
-            ComponentType::ActivityWasm => Self::ActivityWasm,
+            ComponentType::Activity => Self::Activity,
             ComponentType::Workflow => Self::Workflow,
             ComponentType::WebhookEndpoint => Self::WebhookEndpoint,
         }

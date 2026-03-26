@@ -232,13 +232,13 @@ pub(crate) async fn generate_support_wits(
     overwrite: bool,
 ) -> Result<(), anyhow::Error> {
     let files = match component_type {
-        ComponentType::ActivityWasm => {
+        ComponentType::Activity => {
             vec![
                 wit::WIT_OBELISK_ACTIVITY_PACKAGE_PROCESS,
                 wit::WIT_OBELISK_LOG_PACKAGE,
             ]
         }
-        ComponentType::ActivityStub | ComponentType::ActivityExternal => vec![],
+        ComponentType::ActivityStub => vec![],
         ComponentType::Workflow => vec![
             wit::WIT_OBELISK_TYPES_PACKAGE,
             wit::WIT_OBELISK_WORKFLOW_PACKAGE,

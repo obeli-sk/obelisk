@@ -843,7 +843,7 @@ fn locking_strategy(
 ) -> executor::executor::LockingStrategy {
     locking_strategy_override.map(executor::executor::LockingStrategy::from).unwrap_or_else(||
     match component_type {
-        ComponentType::ActivityWasm => executor::executor::LockingStrategy::ByFfqns,
+        ComponentType::Activity => executor::executor::LockingStrategy::ByFfqns,
         ComponentType::Workflow => executor::executor::LockingStrategy::ByComponentDigest,
         other => unreachable!(
             "unexpected type {other}, only worklows and activities (wasm,js) expose locking strategy"
@@ -1187,7 +1187,7 @@ impl ActivityExternalComponentConfigToml {
                 let component_digest =
                     component_digest_override.unwrap_or(ComponentDigest(common.content_digest.0));
                 let component_id = ComponentId::new(
-                    ComponentType::ActivityExternal,
+                    ComponentType::Activity,
                     StrVariant::from(common.name),
                     component_digest,
                 )?;
@@ -1252,7 +1252,7 @@ impl ActivityExternalComponentConfigToml {
                 let component_digest = ComponentDigest(Digest(hash));
 
                 let component_id = ComponentId::new(
-                    ComponentType::ActivityExternal,
+                    ComponentType::Activity,
                     StrVariant::from(inline.name),
                     component_digest,
                 )?;
@@ -1354,7 +1354,7 @@ impl ActivityWasmComponentConfigToml {
             .component_digest
             .unwrap_or(ComponentDigest(common.content_digest.0));
         let component_id = ComponentId::new(
-            ComponentType::ActivityWasm,
+            ComponentType::Activity,
             StrVariant::from(common.name),
             component_digest,
         )?;
@@ -1805,7 +1805,7 @@ impl ActivityJsComponentConfigCanonical {
             ComponentDigest(Digest(hash))
         });
         let component_id = ComponentId::new(
-            ComponentType::ActivityWasm,
+            ComponentType::Activity,
             StrVariant::from(self.name),
             component_digest,
         )?;
