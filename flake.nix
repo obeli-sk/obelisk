@@ -175,6 +175,7 @@
               [
                 (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 cargo-audit
+                cargo-deny
                 cargo-edit
                 cargo-expand
                 cargo-insta
@@ -203,6 +204,7 @@
               claude-code
               bubblewrap
               # tools
+              cargo-deny
               git
               curl
               helix

@@ -251,7 +251,6 @@ config = { version = "0.15.22", default-features = false, features = [
     "toml",
     "preserve_order",
     "async",
-    "convert-case",
 ] }
 console-subscriber = "0.5.0"
 const_format = "0.2.35"
@@ -277,7 +276,7 @@ futures-lite = "2.6.1"
 futures-util = "0.3.32"
 getrandom = "0.4"
 hashbrown = { version = "0.16.1", features = ["serde"] }
-hdrhistogram = "7.5.4"
+hdrhistogram = { version = "7.5.4", default-features = false }
 http = "1.4.0"
 http-body-util = "0.1"
 hyper = "1.8.1"
@@ -388,10 +387,13 @@ wstd = "0.6.5"
 opentelemetry = "0.31.0"
 opentelemetry-http = "0.31.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.1", features = [
+opentelemetry-otlp = { version = "0.31.1", default-features = false, features = [
     "tls",
     "tls-roots",
     "grpc-tonic",
+    "trace",
+    "logs",
+    "metrics",
 ] }
 opentelemetry-semantic-conventions = "0.31.0"
 tracing-opentelemetry = "0.32"
