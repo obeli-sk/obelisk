@@ -35,7 +35,9 @@
 # forward_stdout="db" # Persist guest's stdout to the database.
 # forward_stderr="db" # Persist guest's stderr to the database.
 ## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
-# env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}]
+## Bash-style defaults are supported: ${VAR:-default} uses default when VAR is unset or empty, ${VAR-default} when unset only.
+## Defaults can themselves contain ${...} interpolations.
+# env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}, {key = "ENV5", value = "${OPTIONAL:-fallback}"}]
 
 ## Outgoing HTTP host allowlist.
 ## Each `[[activity_wasm.allowed_host]]` entry permits outbound requests to a host.
@@ -254,7 +256,9 @@
 # forward_stderr="stderr" # forwards stderr to host's stderr
 # logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 ## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
-# env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}]
+## Bash-style defaults are supported: ${VAR:-default} uses default when VAR is unset or empty, ${VAR-default} when unset only.
+## Defaults can themselves contain ${...} interpolations.
+# env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}, {key = "ENV5", value = "${OPTIONAL:-fallback}"}]
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
 ## Outgoing HTTP host allowlist - same syntax as activity_wasm.allowed_host.
 # [[webhook_endpoint_wasm.allowed_host]]
@@ -280,7 +284,9 @@
 # forward_stderr="stderr"
 # logs_store_min_level = "debug"             # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 ## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
-# env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}]
+## Bash-style defaults are supported: ${VAR:-default} uses default when VAR is unset or empty, ${VAR-default} when unset only.
+## Defaults can themselves contain ${...} interpolations.
+# env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}, {key = "ENV5", value = "${OPTIONAL:-fallback}"}]
 ## Outgoing HTTP host allowlist - same syntax as activity_wasm.allowed_host.
 # [[webhook_endpoint_js.allowed_host]]
 # pattern = "api.example.com"

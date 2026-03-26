@@ -3226,6 +3226,7 @@ dependencies = [
  "itertools",
  "jsonwebtoken",
  "obeli-sk-concepts",
+ "obeli-sk-db-mem",
  "obeli-sk-db-postgres",
  "obeli-sk-db-sqlite",
  "obeli-sk-executor",

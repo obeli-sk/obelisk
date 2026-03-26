@@ -104,6 +104,9 @@ console-subscriber = { workspace = true, optional = true }
 [dev-dependencies]
 test-utils.workspace = true
 concepts = { workspace = true, features = ["test"] }
+db-mem = { workspace = true, features = ["test"] }
+db-postgres = { workspace = true, features = ["test"] }
+db-sqlite = { workspace = true, features = ["test"] }
 wasm-workers = { workspace = true, features = ["test"] }
 
 hmac.workspace = true
