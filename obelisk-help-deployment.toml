@@ -1,5 +1,5 @@
 ### WASM Component Configuration
-## Each WASM component is configured separately in a `[[activity_wasm]]`,`[[activity_stub]]`, `[[activity_external]]`, `[[workflow]]` or `[[webhook_endpoint]]` table.
+## Each WASM component is configured separately in a `[[activity_wasm]]`,`[[activity_stub]]`, `[[activity_external]]`, `[[workflow]]` or `[[webhook_endpoint_wasm]]` table.
 ## Common settings for all components
 # name = "name" # Each component must be named.
 ## Location can be a file path or an OCI registry reference.
@@ -219,10 +219,9 @@
 ### Webhook Endpoint section
 ## The built-in "external" HTTP server (127.0.0.1:9090) is available by default.
 ## Additional named HTTP servers are defined in server.toml via `[[http_server]]`.
-# [[webhook_endpoint]]
+# [[webhook_endpoint_wasm]]
 ## Common settings for all components - see above.
 # http_server = "external" # link to a `http_server`'s name (built-in default, or one defined in server.toml)
-
 ### Routes section
 ## An array of routes that will be matched against incoming requests.
 ## Only the path portion of a URL is taken into consideration, the query part
@@ -236,15 +235,19 @@
 ## ""                                           # Matches every possible URL, same as `/*`
 ## For details about the matching engine please see https://docs.rs/route-recognizer/latest/route_recognizer/
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]
-
 ## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".
 # forward_stdout="stderr" # forwards stdout to host's stderr
 # forward_stderr="stderr" # forwards stderr to host's stderr
-
 ## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
 # env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}]
-
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
+## Outgoing HTTP host allowlist - same syntax as activity_wasm.allowed_host.
+# [[webhook_endpoint_wasm.allowed_host]]
+# pattern = "api.example.com"
+# methods = ["GET", "POST"]
+# [webhook_endpoint_wasm.allowed_host.secrets]
+# env_vars = ["API_KEY"]
+# replace_in = ["headers"]
 
 ### JavaScript Webhook Endpoint components configuration
 # [[webhook_endpoint_js]]

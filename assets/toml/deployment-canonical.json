@@ -31,7 +31,7 @@
     "webhooks": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/WebhookComponentConfigCanonical"
+        "$ref": "#/$defs/WebhookWasmComponentConfigCanonical"
       }
     },
     "webhooks_js": {
@@ -755,74 +755,6 @@
         "params"
       ]
     },
-    "WebhookComponentConfigCanonical": {
-      "description": "Canonical form of `WebhookComponentConfigToml`.",
-      "type": "object",
-      "properties": {
-        "allowed_host": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/AllowedHostToml"
-          }
-        },
-        "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfigCanonical",
-          "default": {
-            "frame_files_to_sources": {}
-          }
-        },
-        "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "env_vars": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/EnvVarConfig"
-          }
-        },
-        "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "http_server": {
-          "$ref": "#/$defs/ConfigName",
-          "default": "external"
-        },
-        "location": {
-          "type": "string"
-        },
-        "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
-        },
-        "routes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/WebhookRoute"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "location",
-        "routes"
-      ]
-    },
     "WebhookJsComponentConfigCanonical": {
       "description": "Canonical form of `WebhookJsComponentConfigToml`.",
       "type": "object",
@@ -911,6 +843,74 @@
       "additionalProperties": false,
       "required": [
         "route"
+      ]
+    },
+    "WebhookWasmComponentConfigCanonical": {
+      "description": "Canonical form of `WebhookWasmComponentConfigToml`.",
+      "type": "object",
+      "properties": {
+        "allowed_host": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          }
+        },
+        "backtrace": {
+          "$ref": "#/$defs/ComponentBacktraceConfigCanonical",
+          "default": {
+            "frame_files_to_sources": {}
+          }
+        },
+        "content_digest": {
+          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "env_vars": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "http_server": {
+          "$ref": "#/$defs/ConfigName",
+          "default": "external"
+        },
+        "location": {
+          "type": "string"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WebhookRoute"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location",
+        "routes"
       ]
     },
     "WorkflowComponentConfigCanonical": {

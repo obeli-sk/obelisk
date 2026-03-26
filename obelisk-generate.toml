@@ -14,7 +14,7 @@
 # env_vars = ["FLY_API_TOKEN"]
 
 # see https://github.com/obeli-sk/components/tree/main/fly/webhook-fly-secrets-updater
-# [[webhook_endpoint]]
+# [[webhook_endpoint_wasm]]
 # name = "webhook_fly_secrets_updater"
 # location = "oci://docker.io/getobelisk/components_fly_webhook_fly_secrets_updater:2026-02-08@sha256:e957a9734d13d88861f0abc2a9901367895441c8651bfb6e36e9409dcdd5a06a"
 # http_server = "webhook_server"

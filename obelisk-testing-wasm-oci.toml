@@ -9,7 +9,7 @@ location = "oci://docker.io/getobelisk/test_programs_fibo_workflow:2026-03-10@sh
 exec.lock_expiry.seconds = 2
 backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 
-[[webhook_endpoint]]
+[[webhook_endpoint_wasm]]
 name = "test_programs_fibo_webhook"
 location = "oci://docker.io/getobelisk/test_programs_fibo_webhook:2026-03-10@sha256:7c7cdd471bf652ffd39b8e30babed3ece1b28b94ce9b909e23ac9c00286544c1"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
