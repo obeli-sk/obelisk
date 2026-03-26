@@ -154,10 +154,17 @@ impl ComponentConfigRegistry {
                 );
                 assert!(old.is_none());
             }
-            // insert into `export_hierarchy`
-            self.inner
-                .export_hierarchy
-                .extend_from_slice(&workflow_or_activity_config.exports_hierarchy_ext);
+            // Insert into `export_hierarchy`, merging entries that share the same ifc_fqn.
+            // Multiple (JS) components may export different functions under the same interface.
+            for new_ifc_fns in &workflow_or_activity_config.exports_hierarchy_ext {
+                if let Some(existing) = self.inner.export_hierarchy.iter_mut().find(|e| {
+                    e.ifc_fqn == new_ifc_fns.ifc_fqn && e.extension == new_ifc_fns.extension
+                }) {
+                    existing.fns.extend(new_ifc_fns.fns.clone());
+                } else {
+                    self.inner.export_hierarchy.push(new_ifc_fns.clone());
+                }
+            }
 
             // Insert into `digests_to_wit`
             let old = self.inner.digests_to_wit.insert(
