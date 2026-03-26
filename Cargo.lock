@@ -385,7 +385,9 @@ dependencies = [
  "boa_runtime",
  "futures-concurrency",
  "futures-lite 2.6.1",
+ "hmac",
  "http",
+ "sha2",
  "wstd",
 ]
 
@@ -3217,6 +3219,7 @@ dependencies = [
  "docker_credential",
  "futures-util",
  "hashbrown 0.16.1",
+ "hmac",
  "http",
  "indexmap 2.13.0",
  "insta",

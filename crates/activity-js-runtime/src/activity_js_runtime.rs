@@ -28,6 +28,7 @@ use crate::generated::{
     obelisk::log::log::error as host_fn_error,
 };
 use boa_common::console::{ObeliskLogger, setup_console};
+use boa_common::crypto::setup_crypto;
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
@@ -77,6 +78,9 @@ pub fn execute(
 
     // Set up fetch
     setup_fetch(&mut context).expect("fetch setup must work");
+
+    // Set up crypto.subtle
+    setup_crypto(&mut context).expect("crypto setup must work");
 
     // Run the async execution inside a single wstd reactor
     wstd::runtime::block_on(execute_async(js_code, params_json, &mut context, &executor))
