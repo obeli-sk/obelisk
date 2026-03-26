@@ -1,18 +1,6 @@
-### WASM Component Configuration
-## Each WASM component is configured separately in a `[[activity_wasm]]`,`[[activity_stub]]`, `[[activity_external]]`, `[[workflow]]` or `[[webhook_endpoint_wasm]]` table.
-## Common settings for all components
-# name = "name" # Each component must be named.
-## Location can be a file path or an OCI registry reference.
-# location = "path/to/wasm"
-# location = "oci://docker.io/repo/image:tag"
-# location = "gh://user/repo@release/my-component.wasm"
-# location = "gh://user/repo@latest/my-component.wasm"
-# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
-
-## Database storage setting for logs emitted by the component
-# logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
-
 ## Common executor settings
+## Applies to `[[activity_wasm]]`, `[[activity_js]]`, `[[workflow_wasm]]`, and `[[workflow_js]]`.
+## Not applicable to webhook endpoints, stubs, or external activities.
 # exec.batch_size = 5 # Number of executions to lock for every event loop tick.
 # exec.lock_expiry.seconds = 1 # Each execution is locked for 1s by default.
 # exec.tick_sleep.milliseconds = 200 # Sleep between event loop ticks.
@@ -26,9 +14,17 @@
 
 ### WASM Activity components configuration
 # [[activity_wasm]]
-## Common settings for all components - see above.
-## Common executor settings - see above.
+# name = "name" # Required. Each component must be named.
+## Location can be a file path or an OCI registry reference.
+# location = "path/to/wasm"
+# location = "oci://docker.io/repo/image:tag"
+# location = "gh://user/repo@release/my-component.wasm"
+# location = "gh://user/repo@latest/my-component.wasm"
+# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 # component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
+## Common executor settings - see above.
+## Database storage setting for logs emitted by the component
+# logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 ## Specific settings for activity_wasm:
 ## Retry customization: All activities are retried on trap (panic) and timeouts until `max_retries` condition is met.
 # max_retries = 5
@@ -125,7 +121,11 @@
 
 ### External Activity components configuration - only WIT schema is loaded
 # [[activity_external]]
-## Common settings for all components - see above.
+# name = "name" # Required. Each component must be named.
+# location = "path/to/wasm"
+# location = "oci://docker.io/repo/image:tag"
+# location = "gh://user/repo@release/my-component.wasm"
+# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 # component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 
 ### Stub Activity components configuration
@@ -142,8 +142,11 @@
 ##
 ## File mode: load WIT schema from an existing WASM binary.
 # [[activity_stub]]
-## Common settings for all components - see above.
+# name = "name" # Required. Each component must be named.
 # location = "path/to/stub.wasm"
+# location = "oci://docker.io/repo/image:tag"
+# location = "gh://user/repo@release/my-component.wasm"
+# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 ## Note: component_digest override is not supported for stub activities, as the digest is not used for locking executions.
 ##
 ## Inline mode: define the function schema directly in TOML (no WASM file required).
@@ -158,10 +161,16 @@
 ## Note: `location` and `ffqn` are mutually exclusive; exactly one must be present.
 
 ### Workflow components configuration
-# [[workflow]]
-## Common settings for all components - see above.
-## Common executor settings - see above.
+# [[workflow_wasm]]
+# name = "name" # Required. Each component must be named.
+# location = "path/to/wasm"
+# location = "oci://docker.io/repo/image:tag"
+# location = "gh://user/repo@release/my-component.wasm"
+# location = "gh://user/repo@latest/my-component.wasm"
+# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 # component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
+## Common executor settings - see above.
+# logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 
 ## Retry customization: All workflows are retried on trap (panic) and timeouts forever. Therefore, `retry_exp_backoff` must not be zero.
 # retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
@@ -210,7 +219,7 @@
 ##   and an object for payload cases (e.g. `throw { "with-data": "hello" }`).
 # return_type = "result"
 ## Common executor settings - see above.
-## Retry customization: same as regular workflow.
+## Retry customization: same as workflow_wasm.
 # retry_exp_backoff.milliseconds = 100
 # lock_extension = true
 # blocking_strategy = "await"
@@ -220,7 +229,12 @@
 ## The built-in "external" HTTP server (127.0.0.1:9090) is available by default.
 ## Additional named HTTP servers are defined in server.toml via `[[http_server]]`.
 # [[webhook_endpoint_wasm]]
-## Common settings for all components - see above.
+# name = "name" # Required. Each component must be named.
+# location = "path/to/wasm"
+# location = "oci://docker.io/repo/image:tag"
+# location = "gh://user/repo@release/my-component.wasm"
+# location = "gh://user/repo@latest/my-component.wasm"
+# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 # http_server = "external" # link to a `http_server`'s name (built-in default, or one defined in server.toml)
 ### Routes section
 ## An array of routes that will be matched against incoming requests.
@@ -238,6 +252,7 @@
 ## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".
 # forward_stdout="stderr" # forwards stdout to host's stderr
 # forward_stderr="stderr" # forwards stderr to host's stderr
+# logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 ## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
 # env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}]
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}

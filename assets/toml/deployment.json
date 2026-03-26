@@ -45,18 +45,18 @@
         "$ref": "#/$defs/WebhookWasmComponentConfigToml"
       }
     },
-    "workflow": {
-      "type": "array",
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/WorkflowComponentConfigToml"
-      }
-    },
     "workflow_js": {
       "type": "array",
       "default": [],
       "items": {
         "$ref": "#/$defs/WorkflowJsComponentConfigToml"
+      }
+    },
+    "workflow_wasm": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/WorkflowWasmComponentConfigToml"
       }
     }
   },
@@ -875,79 +875,6 @@
         "routes"
       ]
     },
-    "WorkflowComponentConfigToml": {
-      "type": "object",
-      "properties": {
-        "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfig",
-          "default": {
-            "sources": {}
-          }
-        },
-        "blocking_strategy": {
-          "$ref": "#/$defs/BlockingStrategyConfigToml",
-          "default": "await"
-        },
-        "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "exec": {
-          "$ref": "#/$defs/ExecConfigToml",
-          "default": {
-            "batch_size": 5,
-            "lock_expiry": {
-              "seconds": 1
-            },
-            "locking_strategy": null,
-            "tick_sleep": {
-              "milliseconds": 200
-            }
-          }
-        },
-        "location": {
-          "type": "string"
-        },
-        "lock_extension": {
-          "type": "boolean",
-          "default": true
-        },
-        "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
-        },
-        "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
-        },
-        "stub_wasi": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "location"
-      ]
-    },
     "WorkflowJsComponentConfigToml": {
       "type": "object",
       "properties": {
@@ -1033,6 +960,79 @@
         "name",
         "location",
         "ffqn"
+      ]
+    },
+    "WorkflowWasmComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "backtrace": {
+          "$ref": "#/$defs/ComponentBacktraceConfig",
+          "default": {
+            "sources": {}
+          }
+        },
+        "blocking_strategy": {
+          "$ref": "#/$defs/BlockingStrategyConfigToml",
+          "default": "await"
+        },
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content_digest": {
+          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "locking_strategy": null,
+            "tick_sleep": {
+              "milliseconds": 200
+            }
+          }
+        },
+        "location": {
+          "type": "string"
+        },
+        "lock_extension": {
+          "type": "boolean",
+          "default": true
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
+        },
+        "stub_wasi": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
       ]
     }
   }

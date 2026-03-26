@@ -128,7 +128,7 @@ pub(crate) async fn add(
             doc.insert(&key, Item::ArrayOfTables(ArrayOfTables::new()));
         }
 
-        // Get or create the array-of-tables (e.g. [[workflow]] items)
+        // Get or create the array-of-tables (e.g. [[workflow_wasm]] items)
 
         // Get mutable reference to the array of tables
         let components = doc[&key]

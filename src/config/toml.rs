@@ -71,8 +71,8 @@ pub(crate) struct DeploymentToml {
     pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
     #[serde(default, rename = "activity_js")]
     pub(crate) activities_js: Vec<ActivityJsComponentConfigToml>,
-    #[serde(default, rename = "workflow")]
-    pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
+    #[serde(default, rename = "workflow_wasm")]
+    pub(crate) workflows: Vec<WorkflowWasmComponentConfigToml>,
     #[serde(default, rename = "workflow_js")]
     pub(crate) workflows_js: Vec<WorkflowJsComponentConfigToml>,
     #[serde(default, rename = "webhook_endpoint_wasm")]
@@ -1527,7 +1527,7 @@ impl WorkflowJsConfigVerified {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowComponentConfigToml {
+pub(crate) struct WorkflowWasmComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     /// Override the auto-computed component digest used for locking.
@@ -1842,10 +1842,10 @@ impl ActivityJsComponentConfigCanonical {
     }
 }
 
-/// Canonical form of `WorkflowComponentConfigToml`.
+/// Canonical form of `WorkflowWasmComponentConfigToml`.
 #[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowComponentConfigCanonical {
+pub(crate) struct WorkflowWasmComponentConfigCanonical {
     pub(crate) common: ComponentCommon,
     pub(crate) component_digest: Option<ComponentDigest>,
     pub(crate) exec: ExecConfigToml,
@@ -1857,7 +1857,7 @@ pub(crate) struct WorkflowComponentConfigCanonical {
     pub(crate) logs_store_min_level: LogLevelToml,
 }
 
-impl WorkflowComponentConfigCanonical {
+impl WorkflowWasmComponentConfigCanonical {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()))]
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn fetch_and_verify(
@@ -2041,7 +2041,7 @@ pub(crate) struct DeploymentCanonical {
     pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
     pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
     pub(crate) activities_js: Vec<ActivityJsComponentConfigCanonical>,
-    pub(crate) workflows: Vec<WorkflowComponentConfigCanonical>,
+    pub(crate) workflows: Vec<WorkflowWasmComponentConfigCanonical>,
     pub(crate) workflows_js: Vec<WorkflowJsComponentConfigCanonical>,
     pub(crate) webhooks: Vec<webhook::WebhookWasmComponentConfigCanonical>,
     pub(crate) webhooks_js: Vec<webhook::WebhookJsComponentConfigCanonical>,
@@ -2076,7 +2076,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
 
     let mut workflows = Vec::with_capacity(deployment.workflows.len());
     for w in &deployment.workflows {
-        workflows.push(WorkflowComponentConfigCanonical {
+        workflows.push(WorkflowWasmComponentConfigCanonical {
             common: w.common.clone(),
             component_digest: w.component_digest.clone(),
             exec: w.exec.clone(),
