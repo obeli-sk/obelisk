@@ -26,11 +26,11 @@
 ## Database storage setting for logs emitted by the component
 # logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 ## Specific settings for activity_wasm:
-## Retry customization: All activities are retried on trap (panic) and timeouts until `max_retries` condition is met.
+## Retry customization: All activities are retried on trap (panic), on error variants and timeouts until `max_retries` condition is met.
 # max_retries = 5
 # retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
-# Activities are also retried when a function returns the `err` variant,
-# unless the error is a variant whose name contains `permanent`, e.g. `permanent-failure` or `my-permanent-error`.
+# Activities are retried when a function returns the error variant,
+# unless the error is a variant whose name contains `permanent`, e.g. `permanent-failure` or `my-permanent-error(string)`.
 ## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "db".
 # forward_stdout="db" # Persist guest's stdout to the database.
 # forward_stderr="db" # Persist guest's stderr to the database.
@@ -172,7 +172,7 @@
 ## Common executor settings - see above.
 # logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 
-## Retry customization: All workflows are retried on trap (panic) and timeouts forever. Therefore, `retry_exp_backoff` must not be zero.
+## Retry customization: All workflows are retried on timeouts forever. Therefore, `retry_exp_backoff` must not be zero.
 # retry_exp_backoff.milliseconds = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
 
 ## Automatic lock extension, enabled by default
