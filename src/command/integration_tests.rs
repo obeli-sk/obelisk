@@ -28,7 +28,10 @@ use grpc::grpc_gen::{
     deployment_repository_client::DeploymentRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
 };
+use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
+use sha2::Sha256;
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::{path::PathBuf, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
@@ -246,6 +249,17 @@ params = [
   {{ name = "id", type = "u64" }},
 ]
 return_type = "result<string, string>"
+
+[[activity_js]]
+name = "test_hmac_sign_verify_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/hmac_sign_verify.js"
+ffqn = "testing:integration/activity-hmac.hmac-sign-verify"
+params = [
+  {{ name = "key", type = "string" }},
+  {{ name = "message", type = "string" }},
+]
+return_type = "result<string, string>"
+max_retries = 0
 
 [[activity_stub]]
 name = "test_inline_stub"
@@ -1531,5 +1545,37 @@ async fn hot_redeploy_webhook_js_remove_endpoint() {
         "removed webhook endpoint must return 404 after hot redeploy"
     );
 
+    server.shutdown().await;
+}
+
+// ---- crypto.subtle ----
+
+#[tokio::test]
+async fn activity_js_crypto_subtle_hmac_sign_verify() {
+    const KEY: &str = "super-secret-key";
+    const MSG: &str = "hello world";
+
+    let server = TestServer::start(test_addr!(34)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/activity-hmac.hmac-sign-verify",
+            vec![json!(KEY), json!(MSG)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+
+    // The JS activity returns the HMAC-SHA256 signature as a hex string.
+    let js_hex = body["ok"].as_str().expect("expected ok string");
+
+    // Compute the expected HMAC-SHA256 on the Rust side and compare.
+    let mut mac = Hmac::<Sha256>::new_from_slice(KEY.as_bytes()).unwrap();
+    mac.update(MSG.as_bytes());
+    let mut expected = String::with_capacity(64);
+    for b in mac.finalize().into_bytes() {
+        write!(expected, "{b:02x}").unwrap();
+    }
+
+    assert_eq!(js_hex, expected, "JS HMAC-SHA256 signature must match Rust");
     server.shutdown().await;
 }

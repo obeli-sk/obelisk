@@ -62,6 +62,13 @@ expression: components
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity_wasm",
+      "name": "test_hmac_sign_verify_activity"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity_stub",
       "name": "test_inline_stub"
     }

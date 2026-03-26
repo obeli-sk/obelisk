@@ -93,6 +93,7 @@ use crate::generated::obelisk::webhook::webhook_support::{
     self, ExecutionStatus, ExecutionStatusFinished,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
+use boa_common::crypto::setup_crypto;
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
 use boa_common::helpers::{new_object, parse_ffqn};
 use boa_common::wasi_fetcher::WasiFetcher;
@@ -210,6 +211,9 @@ async fn run_js_handler_inner(
 
     // Set up fetch
     setup_fetch(&mut context).expect("fetch setup must work");
+
+    // Set up crypto.subtle (HMAC-SHA-256/384/512)
+    setup_crypto(&mut context).expect("crypto setup must work");
 
     // Set up the obelisk global object with webhook support APIs
     setup_obelisk_api(&mut context).expect("obelisk API setup must work");

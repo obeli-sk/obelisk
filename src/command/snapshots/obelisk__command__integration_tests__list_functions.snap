@@ -28,6 +28,9 @@ expression: functions
     "ffqn": "testing:integration/activity-throw-null.throw-null"
   },
   {
+    "ffqn": "testing:integration/activity-hmac.hmac-sign-verify"
+  },
+  {
     "ffqn": "testing:integration/stubs.my-stub"
   },
   {
