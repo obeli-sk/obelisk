@@ -2974,7 +2974,22 @@ fn resolve_allowed_hosts(
                 }
             };
 
-            let pattern = match HostPattern::parse_with_methods(&entry.pattern, methods) {
+            let pattern_str = match interpolate_env_vars_plaintext(&entry.pattern) {
+                Ok(s) => s,
+                Err(EnvVarMissing(var)) => {
+                    if ignore_missing_env_vars {
+                        warn!(
+                            "allowed_host pattern `{}` references missing env var `{var}`, skipping",
+                            entry.pattern
+                        );
+                        return None;
+                    }
+                    return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
+                        EnvVarsMissing(vec![var]),
+                    )));
+                }
+            };
+            let pattern = match HostPattern::parse_with_methods(&pattern_str, methods) {
                 Ok(p) => p,
                 Err(e) => return Some(Err(e.into())),
             };

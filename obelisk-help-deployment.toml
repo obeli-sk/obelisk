@@ -37,6 +37,8 @@
 ## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
 ## Bash-style defaults are supported: ${VAR:-default} uses default when VAR is unset or empty, ${VAR-default} when unset only.
 ## Defaults can themselves contain ${...} interpolations.
+## Note: only `${VAR}` triggers interpolation; `$VAR` (no braces) is treated as a literal string.
+## Forwarded vars ("ENV1") fail startup if missing; value strings with unresolved `${VAR}` also fail.
 # env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}, {key = "ENV5", value = "${OPTIONAL:-fallback}"}]
 
 ## Outgoing HTTP host allowlist.
@@ -57,6 +59,7 @@
 ## - Omitting `methods` entirely allows nothing (config warning)
 ##
 ## Multiple entries can match the same request; they form a union (secrets are merged).
+## The `pattern` field supports `${VAR}` and `${VAR:-default}` env var interpolation.
 # [[activity_wasm.allowed_host]]
 # pattern = "api.github.com"
 # methods = "*"
@@ -258,6 +261,8 @@
 ## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
 ## Bash-style defaults are supported: ${VAR:-default} uses default when VAR is unset or empty, ${VAR-default} when unset only.
 ## Defaults can themselves contain ${...} interpolations.
+## Note: only `${VAR}` triggers interpolation; `$VAR` (no braces) is treated as a literal string.
+## Forwarded vars ("ENV1") fail startup if missing; value strings with unresolved `${VAR}` also fail.
 # env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}, {key = "ENV5", value = "${OPTIONAL:-fallback}"}]
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
 ## Outgoing HTTP host allowlist - same syntax as activity_wasm.allowed_host.
@@ -286,6 +291,8 @@
 ## Environment variables: Set to a specific value, use ${VAR} interpolation, or forward from the host. Default is empty.
 ## Bash-style defaults are supported: ${VAR:-default} uses default when VAR is unset or empty, ${VAR-default} when unset only.
 ## Defaults can themselves contain ${...} interpolations.
+## Note: only `${VAR}` triggers interpolation; `$VAR` (no braces) is treated as a literal string.
+## Forwarded vars ("ENV1") fail startup if missing; value strings with unresolved `${VAR}` also fail.
 # env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}, {key = "ENV5", value = "${OPTIONAL:-fallback}"}]
 ## Outgoing HTTP host allowlist - same syntax as activity_wasm.allowed_host.
 # [[webhook_endpoint_js.allowed_host]]
