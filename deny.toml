@@ -10,13 +10,14 @@ targets = [
 # https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
 [licenses]
 allow = [
+    "AGPL-3.0-only",
     "Apache-2.0 WITH LLVM-exception",
     "Apache-2.0",
     "BSD-3-Clause",
     "ISC",
     "MIT",
+    "CDLA-Permissive-2.0",
     "MPL-2.0",
-    "Unicode-DFS-2016",
     "Zlib",
     "Unicode-3.0",
 ]
@@ -78,4 +79,13 @@ skip = [
     { name = "base64", version = "0.21" },
     # tokio-postgres (via postgres-protocol) requires fallible-iterator 0.2
     { name = "fallible-iterator", version = "0.2" },
+]
+
+# https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+[advisories]
+ignore = [
+    # paste is unmaintained; also pulled in by utoipa-axum so unavoidable
+    { id = "RUSTSEC-2024-0436" },
+    # rustls-webpki 0.102.8 CVE locked inside wasmtime-wasi-http 43.x
+    { id = "RUSTSEC-2026-0049" },
 ]
