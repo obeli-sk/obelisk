@@ -9,7 +9,7 @@ CARGO_WORKSPACE_DIR=$(pwd)
 (
     cd crates/testing/test-programs/fibo/activity/wit
     if [ "${RECREATE:-}" = "true" ]; then rm -rf gen; fi
-    $CARGO_WORKSPACE_DIR/target/debug/obelisk generate wit-extensions "$@" activity_wasm . gen
+    $CARGO_WORKSPACE_DIR/target/debug/obelisk generate wit-extensions "$@" activity . gen
 )
 (
     cd crates/testing/test-programs/fibo/workflow/wit
@@ -19,12 +19,12 @@ CARGO_WORKSPACE_DIR=$(pwd)
 (
     cd crates/testing/test-programs/http/activity/wit
     if [ "${RECREATE:-}" = "true" ]; then rm -rf gen; fi
-    $CARGO_WORKSPACE_DIR/target/debug/obelisk generate wit-extensions "$@" activity_wasm . gen
+    $CARGO_WORKSPACE_DIR/target/debug/obelisk generate wit-extensions "$@" activity . gen
 )
 (
     cd crates/testing/test-programs/sleep/activity/wit
     if [ "${RECREATE:-}" = "true" ]; then rm -rf gen; fi
-    $CARGO_WORKSPACE_DIR/target/debug/obelisk generate wit-extensions "$@" activity_wasm . gen
+    $CARGO_WORKSPACE_DIR/target/debug/obelisk generate wit-extensions "$@" activity . gen
 )
 (
     cd crates/testing/test-programs/stub/activity/wit
