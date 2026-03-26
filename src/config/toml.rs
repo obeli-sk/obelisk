@@ -47,7 +47,7 @@ use wasm_workers::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
     },
 };
-use webhook::{HttpServer, WebhookComponentConfigToml, WebhookJsComponentConfigToml};
+use webhook::{HttpServer, WebhookJsComponentConfigToml, WebhookWasmComponentConfigToml};
 
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
@@ -75,8 +75,8 @@ pub(crate) struct DeploymentToml {
     pub(crate) workflows: Vec<WorkflowComponentConfigToml>,
     #[serde(default, rename = "workflow_js")]
     pub(crate) workflows_js: Vec<WorkflowJsComponentConfigToml>,
-    #[serde(default, rename = "webhook_endpoint")]
-    pub(crate) webhooks: Vec<WebhookComponentConfigToml>,
+    #[serde(default, rename = "webhook_endpoint_wasm")]
+    pub(crate) webhooks: Vec<WebhookWasmComponentConfigToml>,
     #[serde(default, rename = "webhook_endpoint_js")]
     pub(crate) webhooks_js: Vec<WebhookJsComponentConfigToml>,
 }
@@ -2043,7 +2043,7 @@ pub(crate) struct DeploymentCanonical {
     pub(crate) activities_js: Vec<ActivityJsComponentConfigCanonical>,
     pub(crate) workflows: Vec<WorkflowComponentConfigCanonical>,
     pub(crate) workflows_js: Vec<WorkflowJsComponentConfigCanonical>,
-    pub(crate) webhooks: Vec<webhook::WebhookComponentConfigCanonical>,
+    pub(crate) webhooks: Vec<webhook::WebhookWasmComponentConfigCanonical>,
     pub(crate) webhooks_js: Vec<webhook::WebhookJsComponentConfigCanonical>,
 }
 
@@ -2109,7 +2109,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
 
     let mut webhooks = Vec::with_capacity(deployment.webhooks.len());
     for w in &deployment.webhooks {
-        webhooks.push(webhook::WebhookComponentConfigCanonical {
+        webhooks.push(webhook::WebhookWasmComponentConfigCanonical {
             common: w.common.clone(),
             http_server: w.http_server.clone(),
             routes: w.routes.clone(),
@@ -2558,7 +2558,7 @@ pub(crate) mod webhook {
 
     #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
     #[serde(deny_unknown_fields)]
-    pub(crate) struct WebhookComponentConfigToml {
+    pub(crate) struct WebhookWasmComponentConfigToml {
         #[serde(flatten)]
         pub(crate) common: ComponentCommon,
         #[serde(default = "default_external_server_name")]
@@ -2602,7 +2602,7 @@ pub(crate) mod webhook {
     }
 
     #[derive(Debug)]
-    pub(crate) struct WebhookComponentConfigVerified {
+    pub(crate) struct WebhookWasmComponentConfigVerified {
         pub(crate) component_id: ComponentId,
         pub(crate) wasm_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,
@@ -2693,10 +2693,10 @@ pub(crate) mod webhook {
         }
     }
 
-    /// Canonical form of `WebhookComponentConfigToml`.
+    /// Canonical form of `WebhookWasmComponentConfigToml`.
     #[derive(Debug, Deserialize, Serialize, Clone, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub(crate) struct WebhookComponentConfigCanonical {
+    pub(crate) struct WebhookWasmComponentConfigCanonical {
         #[serde(flatten)]
         pub(crate) common: ComponentCommon,
         #[serde(default = "default_external_server_name")]
@@ -2716,7 +2716,7 @@ pub(crate) mod webhook {
         pub(crate) allowed_hosts: Vec<AllowedHostToml>,
     }
 
-    impl WebhookComponentConfigCanonical {
+    impl WebhookWasmComponentConfigCanonical {
         #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()), err)]
         pub(crate) async fn fetch_and_verify(
             self,
@@ -2725,7 +2725,7 @@ pub(crate) mod webhook {
             ignore_missing_env_vars: bool,
             path_prefixes: Arc<PathPrefixes>,
             subscription_interruption: Option<Duration>,
-        ) -> Result<(ConfigName, WebhookComponentConfigVerified), anyhow::Error> {
+        ) -> Result<(ConfigName, WebhookWasmComponentConfigVerified), anyhow::Error> {
             let (common, wasm_path) = self
                 .common
                 .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
@@ -2741,7 +2741,7 @@ pub(crate) mod webhook {
             validate_no_env_collision(&env_vars, &allowed_hosts)?;
             Ok((
                 common.name,
-                WebhookComponentConfigVerified {
+                WebhookWasmComponentConfigVerified {
                     component_id,
                     wasm_path,
                     routes: self

@@ -28,10 +28,10 @@ use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::WorkflowJsConfigVerified;
 use crate::config::toml::webhook;
-use crate::config::toml::webhook::WebhookComponentConfigVerified;
 use crate::config::toml::webhook::WebhookJsConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
+use crate::config::toml::webhook::WebhookWasmComponentConfigVerified;
 use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::init;
 use crate::init::Guard;
@@ -1073,7 +1073,7 @@ impl ServerVerified {
             let target_url = format!("http://{}", config.api.listening_addr);
             deployment
                 .webhooks
-                .push(webhook::WebhookComponentConfigCanonical {
+                .push(webhook::WebhookWasmComponentConfigCanonical {
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
                         location: WEBUI_LOCATION
@@ -1192,7 +1192,7 @@ impl ServerCompiledLinked {
             server_verified.config.activities_stub_ext_inline,
             server_verified.config.workflows,
             server_verified.config.workflows_js,
-            server_verified.config.webhooks_by_names,
+            server_verified.config.webhooks_wasm_by_names,
             server_verified.config.webhooks_js_by_names,
             server_verified.config.global_backtrace_persist,
             server_verified.config.fuel,
@@ -1207,7 +1207,7 @@ impl ServerCompiledLinked {
         let http_server_len = server_verified.config.http_servers_to_webhook_names.len();
         let http_servers_to_webhooks = Self::connect_http_servers_to_webhooks(
             &server_verified.config.http_servers_to_webhook_names,
-            linked.webhooks_by_names,
+            linked.webhooks_wasm_by_names,
         );
         assert_eq!(
             http_server_len,
@@ -1248,7 +1248,7 @@ impl ServerCompiledLinked {
 
     fn connect_http_servers_to_webhooks(
         http_servers_to_webhook_names: &[(webhook::HttpServer, Vec<ConfigName>)],
-        mut webhooks_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
+        mut webhooks_wasm_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
     ) -> Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)> {
         http_servers_to_webhook_names
             .iter()
@@ -1256,7 +1256,7 @@ impl ServerCompiledLinked {
                 let instances = webhook_names
                     .iter()
                     .map(|name| {
-                        webhooks_by_names
+                        webhooks_wasm_by_names
                             .shift_remove(name)
                             .expect("all webhooks must be verified")
                     })
@@ -1590,7 +1590,7 @@ struct ConfigVerified {
     activities_stub_ext_inline: Vec<ActivityStubExtInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
-    webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,
+    webhooks_wasm_by_names: IndexMap<ConfigName, WebhookWasmComponentConfigVerified>,
     webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     global_backtrace_persist: bool,
@@ -1632,7 +1632,9 @@ impl ConfigVerified {
                 .chain(deployment.webhooks_js.iter().map(|it| &it.name))
                 .collect();
             if deployment.webhooks.len() + deployment.webhooks_js.len() > all_webhook_names.len() {
-                bail!("Each `webhook_endpoint` and `webhook_endpoint_js` must have a unique name");
+                bail!(
+                    "Each `webhook_endpoint_wasm` and `webhook_endpoint_js` must have a unique name"
+                );
             }
         }
         let http_servers_to_webhook_names = {
@@ -1750,7 +1752,7 @@ impl ConfigVerified {
                 )
             })
             .collect::<Vec<_>>();
-        let webhooks_by_names = deployment
+        let webhooks_wasm_by_names = deployment
             .webhooks
             .into_iter()
             .map(|webhook| {
@@ -1819,7 +1821,7 @@ impl ConfigVerified {
                     futures_util::future::join_all(activities_external_tasks),
                 ),
                 futures_util::future::join_all(workflows),
-                futures_util::future::join_all(webhooks_by_names),
+                futures_util::future::join_all(webhooks_wasm_by_names),
                 activity_js_runtime_fetch,
             ),
             workflow_js_runtime_fetch,
@@ -1845,10 +1847,10 @@ impl ConfigVerified {
                     }
                 }
                 let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
-                let mut webhooks_by_names = IndexMap::new();
+                let mut webhooks_wasm_by_names = IndexMap::new();
                 for webhook in webhook_results {
                     let (k, v) = webhook??;
-                    webhooks_by_names.insert(k, v);
+                    webhooks_wasm_by_names.insert(k, v);
                 }
 
                 let activities_js_verified = if !deployment.activities_js.is_empty() {
@@ -1913,7 +1915,7 @@ impl ConfigVerified {
                     activities_stub_ext_inline,
                     workflows,
                     workflows_js: workflows_js_verified,
-                    webhooks_by_names,
+                    webhooks_wasm_by_names,
                     webhooks_js_by_names,
                     http_servers_to_webhook_names,
                     global_backtrace_persist,
@@ -1930,7 +1932,7 @@ impl ConfigVerified {
 
 struct Linked {
     workers: Vec<WorkerLinked>,
-    webhooks_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
+    webhooks_wasm_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
     component_registry_ro: ComponentConfigRegistryRO,
     supressed_errors: Option<String>,
     all_frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)>,
@@ -1964,7 +1966,7 @@ async fn compile_and_link(
     activities_stub_inline: Vec<ActivityStubExtInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
-    webhooks_by_names: IndexMap<ConfigName, WebhookComponentConfigVerified>,
+    webhooks_wasm_by_names: IndexMap<ConfigName, WebhookWasmComponentConfigVerified>,
     webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
@@ -2166,7 +2168,7 @@ async fn compile_and_link(
             })
         }))
         .chain(
-            webhooks_by_names
+            webhooks_wasm_by_names
                 .into_iter()
                 .map(|(webhook_name, webhook)| {
                     let engines = engines.clone();
@@ -2290,7 +2292,7 @@ async fn compile_and_link(
             let (component_registry_ro, supressed_errors) = component_registry.verify_registry();
             let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
             let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
-            let webhooks_by_names = webhooks_compiled_by_names
+            let webhooks_wasm_by_names = webhooks_compiled_by_names
                 .into_iter()
                 .map(|(name, (compiled, routes))|{
                     let component_id = compiled.config.component_id.clone();
@@ -2301,7 +2303,7 @@ async fn compile_and_link(
                 .collect::<Result<IndexMap<_,_>,_>>()?;
             Ok(Linked {
                 workers: workers_linked,
-                webhooks_by_names,
+                webhooks_wasm_by_names,
              component_registry_ro,
               supressed_errors,
                all_frame_files})
