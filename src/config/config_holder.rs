@@ -181,19 +181,17 @@ impl ConfigHolder {
     }
 
     pub(crate) async fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {
+        let mut builder = ConfigBuilder::<AsyncState>::default();
         if let Some(path) = &self.config_source {
-            let builder = ConfigBuilder::<AsyncState>::default()
-                .add_source(
-                    File::from(path.as_path())
-                        .required(true)
-                        .format(FileFormat::Toml),
-                )
-                .add_source(Environment::with_prefix("obelisk").separator("__"));
-            let settings = builder.build().await?;
-            Ok(settings.try_deserialize()?)
-        } else {
-            Ok(ServerConfigToml::default())
+            builder = builder.add_source(
+                File::from(path.as_path())
+                    .required(true)
+                    .format(FileFormat::Toml),
+            );
         }
+        builder = builder.add_source(Environment::with_prefix("obelisk").separator("__"));
+        let settings = builder.build().await?;
+        Ok(settings.try_deserialize()?)
     }
 }
 
