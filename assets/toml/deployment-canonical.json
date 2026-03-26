@@ -43,7 +43,7 @@
     "workflows": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/WorkflowComponentConfigCanonical"
+        "$ref": "#/$defs/WorkflowWasmComponentConfigCanonical"
       }
     },
     "workflows_js": {
@@ -913,53 +913,6 @@
         "routes"
       ]
     },
-    "WorkflowComponentConfigCanonical": {
-      "description": "Canonical form of `WorkflowComponentConfigToml`.",
-      "type": "object",
-      "properties": {
-        "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfigCanonical"
-        },
-        "blocking_strategy": {
-          "$ref": "#/$defs/BlockingStrategyConfigToml"
-        },
-        "common": {
-          "$ref": "#/$defs/ComponentCommon"
-        },
-        "component_digest": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "exec": {
-          "$ref": "#/$defs/ExecConfigToml"
-        },
-        "lock_extension": {
-          "type": "boolean"
-        },
-        "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml"
-        },
-        "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig"
-        },
-        "stub_wasi": {
-          "type": "boolean"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "common",
-        "exec",
-        "retry_exp_backoff",
-        "blocking_strategy",
-        "backtrace",
-        "stub_wasi",
-        "lock_extension",
-        "logs_store_min_level"
-      ]
-    },
     "WorkflowJsComponentConfigCanonical": {
       "description": "Canonical form of `WorkflowJsComponentConfigToml`.",
       "type": "object",
@@ -1026,6 +979,53 @@
         "blocking_strategy",
         "logs_store_min_level",
         "lock_extension"
+      ]
+    },
+    "WorkflowWasmComponentConfigCanonical": {
+      "description": "Canonical form of `WorkflowWasmComponentConfigToml`.",
+      "type": "object",
+      "properties": {
+        "backtrace": {
+          "$ref": "#/$defs/ComponentBacktraceConfigCanonical"
+        },
+        "blocking_strategy": {
+          "$ref": "#/$defs/BlockingStrategyConfigToml"
+        },
+        "common": {
+          "$ref": "#/$defs/ComponentCommon"
+        },
+        "component_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml"
+        },
+        "lock_extension": {
+          "type": "boolean"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml"
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig"
+        },
+        "stub_wasi": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "common",
+        "exec",
+        "retry_exp_backoff",
+        "blocking_strategy",
+        "backtrace",
+        "stub_wasi",
+        "lock_extension",
+        "logs_store_min_level"
       ]
     }
   }
