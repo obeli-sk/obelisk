@@ -287,7 +287,7 @@ hyper = "1.8.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.3.0"
 indexmap = { version = "2.13", features = ["serde"] }
-insta = { version = "1.46.3", features = ["json"] }
+insta = { version = "1.47.0", features = ["json"] }
 itertools = "0.14"
 jsonwebtoken = { version = "10", default-features = false }
 lazy_static = "1.5"
@@ -298,7 +298,7 @@ paste = "1.0"
 prost = "0.14.3"
 prost-wkt-types = "0.7"
 quote = "1"
-rand = "0.9"
+rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls-no-provider",
@@ -323,7 +323,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_with = "3.18.0"
 hmac = "0.12.1"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3.27"
@@ -342,8 +342,8 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.18"
-toml = { version = "1.0.7", features = ["preserve_order"] }
-toml_edit = "0.25.5"
+toml = { version = "1.1.0", features = ["preserve_order"] }
+toml_edit = "0.25.8"
 tonic = { version = "0.14.5", default-features = false }
 tonic-prost = "0.14.5"
 tonic-prost-build = "0.14.5"
