@@ -167,7 +167,7 @@ impl WasiJobExecutor {
             let now = context.borrow().clock().now();
             let mut timeouts_borrow = self.timeout_jobs.borrow_mut();
             let mut jobs_to_keep = timeouts_borrow.split_off(&now);
-            jobs_to_keep.retain(|_, job| !job.is_cancelled());
+            jobs_to_keep.retain(|_, job| !job.cancelled());
             let jobs_to_run = mem::replace(&mut *timeouts_borrow, jobs_to_keep);
             drop(timeouts_borrow);
 
