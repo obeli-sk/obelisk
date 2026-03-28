@@ -8,11 +8,11 @@ version = "0.35.4"
 dependencies = [
  "anyhow",
  "boa-common",
- "boa_engine",
- "boa_runtime",
  "futures-concurrency",
  "futures-lite 2.6.1",
  "http",
+ "obeli-sk-boa-engine",
+ "obeli-sk-boa-runtime",
  "serde_json",
  "tracing",
  "wit-bindgen 0.54.0",
@@ -117,7 +117,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -128,7 +128,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -176,6 +176,18 @@ name = "assert_matches"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b34d609dfbaf33d6889b2b7106d3ca345eacad44200913df5ba02bfd31d2ba9"
+
+[[package]]
+name = "async-channel"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2"
+dependencies = [
+ "concurrent-queue",
+ "event-listener-strategy",
+ "futures-core",
+ "pin-project-lite",
+]
 
 [[package]]
 name = "async-task"
@@ -380,169 +392,15 @@ dependencies = [
 name = "boa-common"
 version = "0.35.4"
 dependencies = [
- "boa_engine",
- "boa_gc",
- "boa_runtime",
  "futures-concurrency",
  "futures-lite 2.6.1",
  "hmac",
  "http",
+ "obeli-sk-boa-engine",
+ "obeli-sk-boa-gc",
+ "obeli-sk-boa-runtime",
  "sha2",
  "wstd",
-]
-
-[[package]]
-name = "boa_ast"
-version = "1.0.0-dev"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-dependencies = [
- "bitflags",
- "boa_interner",
- "boa_macros",
- "boa_string",
- "indexmap 2.13.0",
- "num-bigint",
- "rustc-hash",
- "strum 0.28.0",
-]
-
-[[package]]
-name = "boa_engine"
-version = "1.0.0-dev"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-dependencies = [
- "aligned-vec",
- "arrayvec",
- "bitflags",
- "boa_ast",
- "boa_gc",
- "boa_interner",
- "boa_macros",
- "boa_parser",
- "boa_string",
- "bytemuck",
- "cfg-if",
- "cow-utils",
- "dashmap",
- "dynify",
- "either",
- "fast-float2",
- "futures-concurrency",
- "futures-lite 2.6.1",
- "hashbrown 0.16.1",
- "icu_normalizer",
- "indexmap 2.13.0",
- "intrusive-collections",
- "itertools",
- "num-bigint",
- "num-integer",
- "num-traits",
- "num_enum",
- "oneshot",
- "paste",
- "portable-atomic",
- "rand 0.10.0",
- "regress",
- "rustc-hash",
- "ryu-js",
- "serde",
- "serde_json",
- "small_btree",
- "static_assertions",
- "tag_ptr",
- "tap",
- "thin-vec",
- "thiserror 2.0.18",
- "time",
-]
-
-[[package]]
-name = "boa_gc"
-version = "1.0.0-dev"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-dependencies = [
- "arrayvec",
- "boa_macros",
- "boa_string",
- "either",
- "hashbrown 0.16.1",
- "thin-vec",
-]
-
-[[package]]
-name = "boa_interner"
-version = "1.0.0-dev"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-dependencies = [
- "boa_gc",
- "boa_macros",
- "hashbrown 0.16.1",
- "indexmap 2.13.0",
- "once_cell",
- "phf",
- "rustc-hash",
- "static_assertions",
-]
-
-[[package]]
-name = "boa_macros"
-version = "1.0.0-dev"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-dependencies = [
- "cfg-if",
- "cow-utils",
- "proc-macro2",
- "quote",
- "syn",
- "synstructure",
-]
-
-[[package]]
-name = "boa_parser"
-version = "1.0.0-dev"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-dependencies = [
- "bitflags",
- "boa_ast",
- "boa_interner",
- "boa_macros",
- "fast-float2",
- "icu_properties",
- "num-bigint",
- "num-traits",
- "regress",
- "rustc-hash",
-]
-
-[[package]]
-name = "boa_runtime"
-version = "1.0.0-dev"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-dependencies = [
- "base64 0.22.1",
- "boa_engine",
- "boa_gc",
- "bytemuck",
- "either",
- "futures",
- "futures-lite 2.6.1",
- "http",
- "rustc-hash",
- "serde_json",
- "url",
-]
-
-[[package]]
-name = "boa_string"
-version = "1.0.0-dev"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-dependencies = [
- "fast-float2",
- "itoa",
- "paste",
- "rustc-hash",
- "ryu-js",
- "static_assertions",
 ]
 
 [[package]]
@@ -887,6 +745,15 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "concurrent-queue"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
+dependencies = [
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -1487,7 +1354,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1637,7 +1504,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "event-listener"
+version = "5.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
+dependencies = [
+ "concurrent-queue",
+ "parking",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "event-listener-strategy"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
+dependencies = [
+ "event-listener",
+ "pin-project-lite",
 ]
 
 [[package]]
@@ -2487,9 +2375,9 @@ dependencies = [
 
 [[package]]
 name = "itoa"
-version = "1.0.17"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "ittapi"
@@ -2787,7 +2675,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2889,6 +2777,169 @@ dependencies = [
  "test-utils",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "obeli-sk-boa-ast"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "938af8fd579db9aa013b7963993221e9559057253dcb6553438ae53373c54ca2"
+dependencies = [
+ "bitflags",
+ "indexmap 2.13.0",
+ "num-bigint",
+ "obeli-sk-boa-interner",
+ "obeli-sk-boa-macros",
+ "obeli-sk-boa-string",
+ "rustc-hash",
+ "strum 0.28.0",
+]
+
+[[package]]
+name = "obeli-sk-boa-engine"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "239278cfe2a8a7cea76b76fa6f8cf7a17c95874074b0f9787bd44f95ed997da2"
+dependencies = [
+ "aligned-vec",
+ "arrayvec",
+ "async-channel",
+ "bitflags",
+ "bytemuck",
+ "cfg-if",
+ "cow-utils",
+ "dashmap",
+ "dynify",
+ "either",
+ "fast-float2",
+ "futures-concurrency",
+ "futures-lite 2.6.1",
+ "hashbrown 0.16.1",
+ "icu_normalizer",
+ "indexmap 2.13.0",
+ "intrusive-collections",
+ "itertools",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "num_enum",
+ "obeli-sk-boa-ast",
+ "obeli-sk-boa-gc",
+ "obeli-sk-boa-interner",
+ "obeli-sk-boa-macros",
+ "obeli-sk-boa-parser",
+ "obeli-sk-boa-string",
+ "obeli-sk-small-btree",
+ "obeli-sk-tag-ptr",
+ "oneshot",
+ "paste",
+ "portable-atomic",
+ "rand 0.10.0",
+ "regress",
+ "rustc-hash",
+ "ryu-js",
+ "serde",
+ "serde_json",
+ "static_assertions",
+ "tap",
+ "thin-vec",
+ "thiserror 2.0.18",
+ "time",
+]
+
+[[package]]
+name = "obeli-sk-boa-gc"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6b53cb914335f385552acb1e5d48433f1cd0348e38fb5e58fab9153b8668c9d"
+dependencies = [
+ "arrayvec",
+ "either",
+ "hashbrown 0.16.1",
+ "obeli-sk-boa-macros",
+ "obeli-sk-boa-string",
+ "thin-vec",
+]
+
+[[package]]
+name = "obeli-sk-boa-interner"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "246e0a76b64e5b83ec91f20462fc2c7a69923db1a7f7a6d89129a9848a1e085f"
+dependencies = [
+ "hashbrown 0.16.1",
+ "indexmap 2.13.0",
+ "obeli-sk-boa-gc",
+ "obeli-sk-boa-macros",
+ "once_cell",
+ "phf",
+ "rustc-hash",
+ "static_assertions",
+]
+
+[[package]]
+name = "obeli-sk-boa-macros"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b66d9db46c51e77cf67a97128ef2dc7b5dd5f267425dae87b3193a8a63a4168"
+dependencies = [
+ "cfg-if",
+ "cow-utils",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "synstructure",
+]
+
+[[package]]
+name = "obeli-sk-boa-parser"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da7176e28bf80667d4c67ae00740c349d40ab52fb6922b97461ceacf429488cd"
+dependencies = [
+ "bitflags",
+ "fast-float2",
+ "icu_properties",
+ "num-bigint",
+ "num-traits",
+ "obeli-sk-boa-ast",
+ "obeli-sk-boa-interner",
+ "obeli-sk-boa-macros",
+ "regress",
+ "rustc-hash",
+]
+
+[[package]]
+name = "obeli-sk-boa-runtime"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11342a9938560be245313919c65c6f77a665a055cb281a9caa2d01704859abad"
+dependencies = [
+ "base64 0.22.1",
+ "bytemuck",
+ "either",
+ "futures",
+ "futures-lite 2.6.1",
+ "http",
+ "obeli-sk-boa-engine",
+ "obeli-sk-boa-gc",
+ "rustc-hash",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "obeli-sk-boa-string"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6245ba88d9234055edab7a0369e16791ea987c31f3a6333acd8c7ade28845a2c"
+dependencies = [
+ "fast-float2",
+ "itoa",
+ "paste",
+ "rustc-hash",
+ "ryu-js",
+ "static_assertions",
 ]
 
 [[package]]
@@ -3066,6 +3117,21 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
 ]
+
+[[package]]
+name = "obeli-sk-small-btree"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66c9ca357b2cfd537f7ac1adaf7be01e3df836711bfab7a22276f914ab8695b8"
+dependencies = [
+ "arrayvec",
+]
+
+[[package]]
+name = "obeli-sk-tag-ptr"
+version = "1.0.0-obeli-sk.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fec68150c4e0cc616010c97e9e838bc7a98a0f878674be761739e6bf2029008f"
 
 [[package]]
 name = "obeli-sk-utils"
@@ -4332,7 +4398,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4413,7 +4479,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4791,14 +4857,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
-name = "small_btree"
-version = "0.1.0"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4814,7 +4872,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4961,11 +5019,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tag_ptr"
-version = "0.1.0"
-source = "git+https://github.com/boa-dev/boa.git?rev=e7e2f24c02d92cd7d720c96ee088d1e673a98bc7#e7e2f24c02d92cd7d720c96ee088d1e673a98bc7"
-
-[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4987,7 +5040,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6685,8 +6738,8 @@ version = "0.35.4"
 dependencies = [
  "anyhow",
  "boa-common",
- "boa_engine",
- "boa_runtime",
+ "obeli-sk-boa-engine",
+ "obeli-sk-boa-runtime",
  "serde",
  "serde_json",
  "wit-bindgen 0.54.0",
@@ -6803,7 +6856,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7366,9 +7419,9 @@ version = "0.35.4"
 dependencies = [
  "anyhow",
  "boa-common",
- "boa_engine",
  "futures-concurrency",
  "futures-lite 2.6.1",
+ "obeli-sk-boa-engine",
  "serde_json",
  "wit-bindgen 0.54.0",
  "wit-bindgen-rust 0.54.0",
