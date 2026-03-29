@@ -68,9 +68,6 @@ jobs:
         env:
           TAG: ${{ steps.git-info.outputs.tag }}
 
-      - name: Generate default config
-        run: tmp/obelisk generate config tmp/obelisk.toml
-
       - name: Build and push docker image
         run: |
           docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
@@ -84,7 +81,6 @@ jobs:
           fi
           PUSH=true scripts/build-docker-image.sh \
             tmp/obelisk \
-            tmp/obelisk.toml \
             .github/workflows/release/docker-image/${{ matrix.dockerfile }} \
             "${TAGS[@]}"
         env:

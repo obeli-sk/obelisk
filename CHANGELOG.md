@@ -6,17 +6,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0](https://github.com/obeli-sk/obelisk/compare/v0.35.4...v0.36.0)
+
+This is a large release introducing JavaScript support for activities, workflows, and webhooks, alongside a new deployment management system, outbound HTTP security controls, and numerous configuration improvements. It contains several breaking changes to config file structure, database schema, and internal APIs.
+
 ### Added
 
-- Add outbound HTTP host allowlists for activities and webhooks via `[[allowed_host]]` table entry — requests to non-allowed hosts return `HttpRequestDenied` ([#254](https://github.com/obeli-sk/obelisk/pull/254)), ([#267](https://github.com/obeli-sk/obelisk/pull/267)
+- Add JavaScript support for activities (`[[activity_js]]`), workflows (`[[workflow_js]]`), and webhooks — write components in JavaScript using the embedded Boa engine; supports custom parameters, rich return types, `fetch()`, `crypto.subtle`, `process.env`, and ESM default exports
 
-- Add secret placeholder injection via `secrets` config — WASM components receive opaque placeholders instead of real secret values; the runtime replaces placeholders with real values only in requests to approved hosts ([#254](https://github.com/obeli-sk/obelisk/pull/254)), ([#267](https://github.com/obeli-sk/obelisk/pull/267)
+- Add outbound HTTP host allowlists via `[[allowed_host]]` config — requests to non-listed hosts return `HttpRequestDenied`; supports env var interpolation and wildcards for HTTP methods and ports
 
-- Add JavaScript support for activities (`[[activity_js]]`) and workflows (`[[workflow_js]]`) — write activities and workflows in JavaScript using the embedded Boa engine compiled to WASM
+- Add secret placeholder injection via `secrets` config — components receive opaque placeholders; the runtime substitutes real values only in requests to approved hosts
 
-### Removed
+- Add deployment management: deployments are now persisted in the database; `obelisk.toml` is split into `server.toml` and `deployment.toml`; new `deployment apply` CLI command for hot-redeploying immediately
 
-- `retry_on_err` option in activities has been removed and is always on, which was the default already. To skip retrying, return variant containing `permanent`.
+- Add hot redeploy support for activities, workflows, and webhooks — running executions are gracefully unlocked on shutdown or redeploy
+
+- Add `stub-json` and `schedule-json` to the workflow WIT API
+
+- Add inline stub and external activity definitions in `deployment.toml`
+
+- Add bash-style default values in env var interpolation (`${VAR:-default}`) and `${VAR}` interpolation in `env_vars` values
+
+### Changed
+
+- [**breaking**] Rename TOML section `workflow` to `workflow_wasm` and `webhook_endpoint` to `webhook_endpoint_wasm`
+
+- [**breaking**] Remove `ignore_component_digest` config option
+
+- [**breaking**] Remove `retry_on_err` setting — retry on error is always enabled; return a variant containing `permanent` to skip retrying
 
 ## [0.35.4](https://github.com/obeli-sk/obelisk/compare/v0.35.3...v0.35.4)
 

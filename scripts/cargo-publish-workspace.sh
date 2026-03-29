@@ -5,6 +5,7 @@ set -exuo pipefail
 cd "$(dirname "$0")/.."
 
 scripts/unpublishable-packages.sh
+scripts/strip-js-local-deps.sh
 
 EXCLUDE_PACKAGES=$(awk '{printf " --exclude %s", $1}' "assets/unpublishable-packages.txt")
 
