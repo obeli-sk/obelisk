@@ -4,6 +4,20 @@ use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
     prefixed_ulid::{DeploymentId, ExecutionIdDerived},
 };
+
+/// Deployment TOML section names, used as the key in the deployment TOML file.
+#[derive(Debug, Clone, Copy, strum::Display, strum::EnumString)]
+#[strum(serialize_all = "snake_case")]
+pub(crate) enum DeploymentTomlSection {
+    ActivityWasm,
+    ActivityStub,
+    ActivityExternal,
+    ActivityJs,
+    WorkflowWasm,
+    WorkflowJs,
+    WebhookEndpointWasm,
+    WebhookEndpointJs,
+}
 use std::{path::PathBuf, str::FromStr};
 
 /// A deployment source: either a path to a TOML file or an existing deployment ID.
@@ -293,9 +307,9 @@ pub(crate) enum Component {
     },
     /// Add a component to the deployment TOML configuration file.
     Add {
-        /// One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`
+        /// Deployment TOML section, one of: `activity_wasm`, `activity_stub`, `activity_external`, `activity_js`, `workflow_wasm`, `workflow_js`, `webhook_endpoint_wasm`, `webhook_endpoint_js`
         #[arg(required(true))]
-        component_type: ComponentType,
+        component_type: DeploymentTomlSection,
         /// Path to the WASM file
         #[arg(required(true))]
         location: ComponentLocationToml,

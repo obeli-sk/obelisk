@@ -206,6 +206,7 @@
               # tools
               cargo-deny
               git
+              gh
               curl
               helix
               wget
