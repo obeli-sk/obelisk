@@ -13,11 +13,6 @@ on:
         required: false
         type: string
         default: "latest"
-      update-main:
-        description: "Should the branch `main` be updated?"
-        required: false
-        type: boolean
-        default: true
       extra-args:
         description: "Extra args to be used with cargo publish e.g. --no-verify"
         type: string
@@ -57,11 +52,6 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: |
           nix develop --command ./scripts/cargo-publish-workspace.sh --locked ${{ github.event.inputs.extra-args }}
-
-      - name: Update `main` branch
-        if: ${{ github.event.inputs.update-main }}
-        run: |
-          git push origin HEAD:main
 
   call_child:
     needs: cargo-publish
