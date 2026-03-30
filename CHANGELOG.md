@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.1](https://github.com/obeli-sk/obelisk/compare/v0.36.0...v0.36.1)
+
+### Fixed
+
+- *(cli)* Use actual section names in `component add` - ([30673be](https://github.com/obeli-sk/obelisk/commit/30673be465829f006a69faf2b201da16cd5b22ff))
+
+
 ## [0.36.0](https://github.com/obeli-sk/obelisk/compare/v0.35.4...v0.36.0)
 
 This is a large release introducing JavaScript support for activities, workflows, and webhooks, alongside a new deployment management system, outbound HTTP security controls, and numerous configuration improvements. It contains several breaking changes to config file structure, database schema, and internal APIs.
