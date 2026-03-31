@@ -81,6 +81,7 @@ jobs:
           fi
           PUSH=true scripts/build-docker-image.sh \
             tmp/obelisk \
+            .github/workflows/release/docker-image/server.toml \
             .github/workflows/release/docker-image/${{ matrix.dockerfile }} \
             "${TAGS[@]}"
         env:
