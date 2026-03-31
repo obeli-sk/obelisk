@@ -46,7 +46,7 @@ pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
 #[derive(
     thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[error("execution error: {kind}")]
+#[error("{kind}")]
 pub struct FinishedExecutionError {
     pub kind: ExecutionFailureKind,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -661,7 +661,7 @@ pub enum SupportedFunctionReturnValue {
 impl Display for SupportedFunctionReturnValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.as_pending_state_finished_result() {
-            PendingStateFinishedResultKind::Ok => write!(f, "execution completed successfully"),
+            PendingStateFinishedResultKind::Ok => write!(f, "completed successfully"),
             PendingStateFinishedResultKind::Err(err) => write!(f, "{err}"),
         }
     }

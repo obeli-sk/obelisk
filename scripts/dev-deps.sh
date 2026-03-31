@@ -12,7 +12,7 @@ get_litestream_version() {
   TMP_DIR=$(mktemp -d)
   (
     cd "$TMP_DIR" || exit 1
-    touch obelisk obelisk.toml
+    touch obelisk obelisk.toml server.toml
 
     docker build -f "$WORKSPACE_DIR/.github/workflows/release/docker-image/ubuntu-24.04-litestream.Dockerfile" . --tag temp >/dev/null
     docker run --rm --entrypoint litestream temp version

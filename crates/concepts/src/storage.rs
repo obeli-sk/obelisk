@@ -2207,9 +2207,9 @@ impl From<&SupportedFunctionReturnValue> for PendingStateFinishedResultKind {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PendingStateFinishedError {
-    #[display("execution terminated: {_0}")]
+    #[display("{_0}")]
     ExecutionFailure(ExecutionFailureKind),
-    #[display("execution completed with an error")]
+    #[display("completed with an error")]
     Error,
 }
 

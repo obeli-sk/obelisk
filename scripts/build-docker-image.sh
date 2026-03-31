@@ -4,28 +4,30 @@ set -euo pipefail
 # Build a Docker image from an Obelisk binary.
 #
 # Usage:
-#   build.sh <obelisk-binary> <dockerfile> [tag ...]
+#   build.sh <obelisk-binary> <server-toml> <dockerfile> [tag ...]
 #
 # Arguments:
 #   obelisk-binary  Path to the obelisk binary
+#   server-toml     Path to the server.toml configuration file
 #   dockerfile      Path to the Dockerfile
 #   tag ...         One or more image tags (e.g. getobelisk/obelisk:ubuntu)
 #
 # Environment:
 #   PUSH  If set to "true" value, push all tags after building.
 
-if [ $# -lt 2 ]; then
-  echo "Usage: $0 <obelisk-binary> <dockerfile> [tag ...]" >&2
+if [ $# -lt 3 ]; then
+  echo "Usage: $0 <obelisk-binary> <server-toml> <dockerfile> [tag ...]" >&2
   exit 1
 fi
 
 OBELISK_BINARY="$1"
-DOCKERFILE="$2"
-shift 2
+SERVER_TOML="$2"
+DOCKERFILE="$3"
+shift 3
 TAGS=("$@")
 
 # Validate inputs
-for f in "$OBELISK_BINARY" "$DOCKERFILE"; do
+for f in "$OBELISK_BINARY" "$SERVER_TOML" "$DOCKERFILE"; do
   if [ ! -f "$f" ]; then
     echo "Error: file not found: $f" >&2
     exit 1
@@ -38,6 +40,7 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 
 cp "$OBELISK_BINARY" "$BUILD_DIR/obelisk"
 chmod +x "$BUILD_DIR/obelisk"
+cp "$SERVER_TOML" "$BUILD_DIR/server.toml"
 
 # Build tag arguments
 TAG_ARGS=()

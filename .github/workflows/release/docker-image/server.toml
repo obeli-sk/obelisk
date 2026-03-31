@@ -1,0 +1,3 @@
+api.listening_addr = "[::]:5005"
+webui.listening_addr = "[::]:8080"
+external.listening_addr = "[::]:9090"

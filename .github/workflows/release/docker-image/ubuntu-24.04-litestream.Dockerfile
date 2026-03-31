@@ -6,13 +6,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY obelisk /obelisk/obelisk
+COPY server.toml /obelisk/server.toml
 
 # Install Litestream
 COPY --from=litestream/litestream:0.5.10 /usr/local/bin/litestream /usr/local/bin/litestream
 
 ENV PATH="/obelisk:${PATH}"
-ENV OBELISK__API__LISTENING_ADDR=0.0.0.0:5005
-ENV OBELISK__WEBUI__LISTENING_ADDR=0.0.0.0:8080
-ENV OBELISK__EXTERNAL__LISTENING_ADDR=0.0.0.0:9090
 
 ENTRYPOINT ["obelisk"]
+CMD ["server", "run", "--server-config", "/obelisk/server.toml"]

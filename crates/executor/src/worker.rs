@@ -26,10 +26,12 @@ pub trait Worker: Send + Sync + 'static {
 
 pub type WorkerResult = Result<WorkerResultOk, WorkerError>;
 
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 pub enum WorkerResultOk {
+    #[display("db updated by worker or watcher")]
     DbUpdatedByWorkerOrWatcher,
     /// The execution run has returned a valid `retval`. Activity with retry budget returning `err` will be retried by the executor.
+    #[display("{retval}")]
     RunFinished {
         retval: SupportedFunctionReturnValue,
         version: Version,
