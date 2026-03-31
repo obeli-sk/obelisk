@@ -254,8 +254,8 @@ impl Worker for ActivityWorker {
                 let res = self.process_res(res, &version, activity_ctx);
                 worker_span.in_scope(|| {
                     match &res {
-                        Ok(_) => {
-                            info!(duration = ?stopwatch_for_reporting.elapsed(), "Run finished successfully");
+                        Ok(worker_res_ok) => {
+                            info!(duration = ?stopwatch_for_reporting.elapsed(), "Run finished: {worker_res_ok}");
                         }
                         Err(WorkerError::ExecutorClosing(_)) => {
                             info!("Executor closing");
