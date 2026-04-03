@@ -2190,6 +2190,7 @@ async fn compile_and_link(
                                 logs_store_min_level: webhook.logs_store_min_level,
                                 allowed_hosts: webhook.allowed_hosts,
                                 js_config: None,
+                                config_section_hint: webhook.config_section_hint,
                             };
                              let runnable_component =
                                 RunnableComponent::new(webhook.wasm_path, &engines.webhook_engine, ComponentType::WebhookEndpoint)?;
@@ -2233,6 +2234,7 @@ async fn compile_and_link(
                                     source: webhook_js.js_source,
                                     file_name: webhook_js.js_file_name.clone(),
                                 }),
+                                config_section_hint: webhook_js.config_section_hint,
                             };
 
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(

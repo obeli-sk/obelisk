@@ -4,6 +4,7 @@ use crate::activity::activity_ctx::ActivityPreopenIoError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
+use crate::http_hooks::ConfigSectionHint;
 use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
@@ -38,6 +39,8 @@ pub struct ActivityConfig {
     pub directories_config: Option<ActivityDirectoriesConfig>,
     pub fuel: Option<u64>,
     pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
+    /// The TOML config section type for error messages
+    pub config_section_hint: ConfigSectionHint,
 }
 
 #[derive(Clone, Debug)]
@@ -621,6 +624,7 @@ pub(crate) mod tests {
     use crate::activity::activity_worker::test::compile_activity_with_engine;
     use crate::engines::PoolingOptions;
     use crate::engines::{EngineConfig, Engines};
+    use crate::http_hooks::ConfigSectionHint;
     use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
     use assert_matches::assert_matches;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
@@ -674,6 +678,7 @@ pub(crate) mod tests {
             directories_config: None,
             fuel: None,
             allowed_hosts: Arc::from([]),
+            config_section_hint: ConfigSectionHint::ActivityWasm,
         }
     }
 
@@ -694,6 +699,7 @@ pub(crate) mod tests {
                 secret_env_mappings: Vec::new(),
                 replace_in: hashbrown::HashSet::new(),
             }]),
+            config_section_hint: ConfigSectionHint::ActivityWasm,
         }
     }
 
@@ -1829,6 +1835,7 @@ pub(crate) mod tests {
                             ReplacementLocation::Body,
                         ]),
                     }]),
+                    config_section_hint: ConfigSectionHint::ActivityWasm,
                 }
             },
         )
@@ -1950,6 +1957,7 @@ pub(crate) mod tests {
                 }),
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             retry_config,
             locking_strategy,
@@ -2052,6 +2060,7 @@ pub(crate) mod tests {
                 }),
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -2116,6 +2125,7 @@ pub(crate) mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             engine,
             sim_clock.clone_box(),
@@ -2177,6 +2187,7 @@ pub(crate) mod tests {
                 }),
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -2260,6 +2271,7 @@ pub(crate) mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -2327,6 +2339,7 @@ pub(crate) mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -2399,6 +2412,7 @@ pub(crate) mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             retry_config,
             locking_strategy,

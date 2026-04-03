@@ -505,6 +505,8 @@ pub struct WebhookEndpointConfig {
     pub logs_store_min_level: Option<LogLevel>,
     pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
     pub js_config: Option<WebhookEndpointJsConfig>,
+    /// The TOML config section type for error messages
+    pub config_section_hint: crate::http_hooks::ConfigSectionHint,
 }
 
 #[derive(Debug, Clone)]
@@ -1583,6 +1585,7 @@ impl WebhookEndpointCtx {
                 http_client_traces: HttpClientTracesContainer::default(),
                 http_policy,
                 component_logger,
+                config_section_hint: config.config_section_hint,
             },
         };
         let mut store = Store::new(engine, ctx);
@@ -1963,6 +1966,7 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::new_activity_fibo;
         use crate::activity::cancel_registry::CancelRegistry;
         use crate::engines::{EngineConfig, Engines};
+        use crate::http_hooks::ConfigSectionHint;
         use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
         use crate::std_output_stream::StdOutputConfig;
         use crate::testing_fn_registry::TestingFnRegistry;
@@ -2073,6 +2077,7 @@ pub(crate) mod tests {
                             logs_store_min_level: None,
                             allowed_hosts: Arc::from([]),
                             js_config: None,
+                            config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
                         },
                         runnable_component,
                     )
@@ -2357,6 +2362,7 @@ pub(crate) mod tests {
                             replace_in: hashbrown::HashSet::new(),
                         }]),
                         js_config: None,
+                        config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
                     },
                     runnable_component,
                 )
@@ -2529,6 +2535,7 @@ pub(crate) mod tests {
                         logs_store_min_level: None,
                         allowed_hosts: Arc::from([]), // NO allowed hosts - request should be denied
                         js_config: None,
+                        config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
                     },
                     runnable_component,
                 )
@@ -2641,6 +2648,8 @@ pub(crate) mod tests {
                             source: source.to_string(),
                             file_name: String::new(),
                         }),
+                        config_section_hint:
+                            crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,
                     },
                     runnable_component,
                 )
@@ -2781,6 +2790,8 @@ pub(crate) mod tests {
                             source: source.to_string(),
                             file_name: String::new(),
                         }),
+                        config_section_hint:
+                            crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,
                     },
                     runnable_component,
                 )
@@ -3054,6 +3065,8 @@ pub(crate) mod tests {
                                 source: js_source.to_string(),
                                 file_name: String::new(),
                             }),
+                            config_section_hint:
+                                crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,
                         },
                         runnable_component,
                     )

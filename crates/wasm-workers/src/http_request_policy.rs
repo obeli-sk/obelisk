@@ -27,24 +27,16 @@ pub struct PlaceholderSecret {
 }
 
 /// Scheme pattern for matching requests.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, derive_more::Display)]
 pub enum SchemePattern {
+    #[display("http")]
     Http,
+    #[display("https")]
     Https,
     /// Matches both http and https (used with `*://` prefix).
+    #[display("*")]
     Any,
 }
-
-impl fmt::Display for SchemePattern {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SchemePattern::Http => write!(f, "http"),
-            SchemePattern::Https => write!(f, "https"),
-            SchemePattern::Any => write!(f, "*"),
-        }
-    }
-}
-
 impl SchemePattern {
     /// Returns true if this pattern allows unencrypted HTTP traffic.
     #[must_use]
