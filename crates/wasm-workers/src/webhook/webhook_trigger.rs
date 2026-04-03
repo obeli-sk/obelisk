@@ -29,6 +29,7 @@ use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::{Method, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
+use log_activities::obelisk::log::log::Host;
 use route_recognizer::{Match, Router};
 use std::ops::Deref;
 use std::str::FromStr;
@@ -655,10 +656,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         let execution_id = match concepts::ExecutionId::from_str(&execution_id.id) {
             Ok(id) => id,
             Err(err) => {
-                return Err(ScheduleJsonError::FfqnParsingError(format!(
-                    "invalid execution ID: {err}"
-                ))
-                .into());
+                let msg = format!("schedule-json: invalid execution ID: {err}");
+                self.error(msg.clone());
+                return Err(ScheduleJsonError::FfqnParsingError(msg).into());
             }
         };
 
@@ -667,13 +667,16 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             match FunctionFqn::try_from_tuple(&function.interface_name, &function.function_name) {
                 Ok(ffqn) => ffqn,
                 Err(err) => {
-                    return Err(ScheduleJsonError::FfqnParsingError(err.to_string()).into());
+                    let msg = format!("schedule-json: invalid function name: {err}");
+                    self.error(msg.clone());
+                    return Err(ScheduleJsonError::FfqnParsingError(msg).into());
                 }
             };
 
         // Look up function in registry
         let Some((fn_metadata, component_id)) = self.fn_registry.get_by_exported_function(&ffqn)
         else {
+            self.error("schedule-json: function not found".to_string());
             return Err(ScheduleJsonError::FunctionNotFound.into());
         };
 
@@ -681,16 +684,14 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         let params_json: Vec<serde_json::Value> = match serde_json::from_str(&params) {
             Ok(serde_json::Value::Array(arr)) => arr,
             Ok(_) => {
-                return Err(ScheduleJsonError::TypeCheckError(
-                    "params must be a JSON array".to_string(),
-                )
-                .into());
+                let msg = "schedule-json: params must be a JSON array".to_string();
+                self.error(msg.clone());
+                return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
             Err(err) => {
-                return Err(ScheduleJsonError::TypeCheckError(format!(
-                    "cannot parse params as JSON: {err}"
-                ))
-                .into());
+                let msg = format!("schedule-json: cannot parse params as JSON: {err}");
+                self.error(msg.clone());
+                return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
 
@@ -704,10 +705,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         ) {
             Ok(params) => params,
             Err(err) => {
-                return Err(ScheduleJsonError::TypeCheckError(format!(
-                    "params type checking failed: {err}"
-                ))
-                .into());
+                let msg = format!("schedule-json: params type checking failed: {err}");
+                self.error(msg.clone());
+                return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
 
@@ -717,10 +717,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         let schedule_at = match history_event_schedule_at.as_date_time(created_at) {
             Ok(dt) => dt,
             Err(err) => {
-                return Err(ScheduleJsonError::TypeCheckError(format!(
-                    "invalid schedule-at: {err:?}"
-                ))
-                .into());
+                let msg = format!("schedule-json: invalid schedule-at: {err}");
+                self.error(msg.clone());
+                return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
 
@@ -807,13 +806,16 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             match FunctionFqn::try_from_tuple(&function.interface_name, &function.function_name) {
                 Ok(ffqn) => ffqn,
                 Err(err) => {
-                    return Err(ScheduleJsonError::FfqnParsingError(err.to_string()).into());
+                    let msg = format!("call-json: invalid function name: {err}");
+                    self.error(msg.clone());
+                    return Err(ScheduleJsonError::FfqnParsingError(msg).into());
                 }
             };
 
         // Look up function in registry
         let Some((fn_metadata, component_id)) = self.fn_registry.get_by_exported_function(&ffqn)
         else {
+            self.error("call-json: function not found".to_string());
             return Err(ScheduleJsonError::FunctionNotFound.into());
         };
 
@@ -821,16 +823,14 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         let params_json: Vec<serde_json::Value> = match serde_json::from_str(&params) {
             Ok(serde_json::Value::Array(arr)) => arr,
             Ok(_) => {
-                return Err(ScheduleJsonError::TypeCheckError(
-                    "params must be a JSON array".to_string(),
-                )
-                .into());
+                let msg = "call-json: params must be a JSON array".to_string();
+                self.error(msg.clone());
+                return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
             Err(err) => {
-                return Err(ScheduleJsonError::TypeCheckError(format!(
-                    "cannot parse params as JSON: {err}"
-                ))
-                .into());
+                let msg = format!("call-json: cannot parse params as JSON: {err}");
+                self.error(msg.clone());
+                return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
 
@@ -844,10 +844,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         ) {
             Ok(params) => params,
             Err(err) => {
-                return Err(ScheduleJsonError::TypeCheckError(format!(
-                    "params type checking failed: {err}"
-                ))
-                .into());
+                let msg = format!("call-json: params type checking failed: {err}");
+                self.error(msg.clone());
+                return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
 
@@ -989,7 +988,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         let execution_id = match concepts::ExecutionId::from_str(&execution_id.id) {
             Ok(id) => id,
             Err(err) => {
-                return Err(GetStatusError::ExecutionIdParsingError(err.to_string()).into());
+                let msg = format!("get-status: cannot parse execution ID: {err}");
+                self.error(msg.clone());
+                return Err(GetStatusError::ExecutionIdParsingError(msg).into());
             }
         };
 
@@ -1054,7 +1055,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             match concepts::ExecutionId::from_str(&execution_id.id) {
                 Ok(id) => id,
                 Err(err) => {
-                    return Err(GetError::ExecutionIdParsingError(err.to_string()).into());
+                    let msg = format!("get: cannot parse execution ID: {err}");
+                    self.error(msg.clone());
+                    return Err(GetError::ExecutionIdParsingError(msg).into());
                 }
             };
 
@@ -1103,7 +1106,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             match concepts::ExecutionId::from_str(&execution_id.id) {
                 Ok(id) => id,
                 Err(err) => {
-                    return Err(TryGetError::ExecutionIdParsingError(err.to_string()).into());
+                    let msg = format!("try-get: cannot parse execution ID: {err}");
+                    self.error(msg.clone());
+                    return Err(TryGetError::ExecutionIdParsingError(msg).into());
                 }
             };
 
@@ -1122,6 +1127,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         {
             Ok(state) => state,
             Err(DbErrorRead::NotFound) => {
+                self.error(format!("try-get: execution not found: {}", execution_id.id));
                 return Err(TryGetError::NotFound.into());
             }
             Err(err) => {
