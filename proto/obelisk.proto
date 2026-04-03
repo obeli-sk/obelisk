@@ -696,6 +696,7 @@ message ListLogsRequest {
     bool show_streams = 5;
     repeated LogLevel levels = 6; // Only applied if show_logs = true, empty means return all levels.
     repeated LogStreamType stream_types = 7; // Only applied if show_streams = true, empty means return all stream types.
+    bool show_derived = 8;
 }
 
 message ListLogsResponse {
@@ -719,6 +720,7 @@ message ListLogsResponse {
         }
 
         RunId run_id = 4;
+        ExecutionId execution_id = 5;
     }
 
     repeated LogEntry logs = 1;

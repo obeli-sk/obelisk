@@ -5,7 +5,8 @@ expression: logs
 [
   {
     "created_at": "<TIMESTAMP>",
-    "cursor": 1,
+    "cursor": "<TIMESTAMP>",
+    "execution_id": "E_<REDACTED>",
     "level": "info",
     "message": "Greeting World",
     "run_id": "Run_<REDACTED>",

@@ -49,7 +49,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use std::{fmt::Write as _, pin::Pin};
+use std::{fmt::Write as _, pin::Pin, str::FromStr as _};
 use strum::IntoEnumIterator as _;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{Level, Span, debug, error, info, instrument, trace, warn};
@@ -3216,19 +3216,27 @@ impl SqlitePool {
     fn list_logs_tx(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        show_derived: bool,
         filter: &LogFilter,
-        pagination: &Pagination<u32>,
+        pagination: &Pagination<DateTime<Utc>>,
     ) -> Result<ListLogsResponse, DbErrorRead> {
-        let mut query = String::from(
-            "SELECT id, run_id, created_at, level, message, stream_type, payload
-         FROM t_log
-         WHERE execution_id = :execution_id",
+        let length = pagination.length();
+        let exec_id_str = execution_id.to_string();
+        let exec_id_filter = if show_derived {
+            "LIKE :execution_id || '%'"
+        } else {
+            "= :execution_id"
+        };
+        let mut query = format!(
+            "SELECT id, run_id, created_at, level, message, stream_type, payload, execution_id
+             FROM t_log
+             WHERE execution_id {exec_id_filter}",
         );
 
-        let length = pagination.length();
+        let cursor_val = pagination.cursor();
         let params = vec![
-            (":execution_id", &execution_id as &dyn rusqlite::ToSql),
-            (":cursor", pagination.cursor() as &dyn rusqlite::ToSql),
+            (":execution_id", &exec_id_str as &dyn rusqlite::ToSql),
+            (":cursor", cursor_val as &dyn rusqlite::ToSql),
             (":length", &length as &dyn rusqlite::ToSql),
         ];
 
@@ -3284,10 +3292,13 @@ impl SqlitePool {
         }
 
         // Pagination
-        write!(&mut query, " AND id {} :cursor", pagination.rel()).expect("writing to string");
+        write!(&mut query, " AND created_at {} :cursor", pagination.rel())
+            .expect("writing to string");
 
         // Ordering
-        query.push_str(" ORDER BY id ");
+        query.push_str(" ORDER BY created_at ");
+        query.push_str(pagination.asc_or_desc());
+        query.push_str(", id ");
         query.push_str(pagination.asc_or_desc());
 
         // Limit
@@ -3297,43 +3308,41 @@ impl SqlitePool {
 
         let items = stmt
             .query_map(params.as_slice(), |row| {
-                let cursor = row.get("id")?;
                 let created_at: DateTime<Utc> = row.get("created_at")?;
                 let run_id = row.get("run_id")?;
                 let level: Option<u8> = row.get("level")?;
                 let message: Option<String> = row.get("message")?;
                 let stream_type: Option<u8> = row.get("stream_type")?;
                 let payload: Option<Vec<u8>> = row.get("payload")?;
+                let execution_id_str: String = row.get("execution_id")?;
+                let execution_id = ExecutionId::from_str(&execution_id_str).map_err(|_| {
+                    consistency_rusqlite(format!("cannot convert ExecutionId {execution_id_str}"))
+                })?;
 
                 let log_entry = match (level, message, stream_type, payload) {
                     (Some(lvl), Some(msg), None, None) => LogEntry::Log {
                         created_at,
                         level: LogLevel::try_from(lvl).map_err(|_| {
-                            consistency_rusqlite(format!(
-                                "cannot convert {lvl} to LogLevel , id: {cursor}"
-                            ))
+                            consistency_rusqlite(format!("cannot convert {lvl} to LogLevel"))
                         })?,
                         message: msg,
                     },
                     (None, None, Some(stype), Some(pl)) => LogEntry::Stream {
                         created_at,
                         stream_type: LogStreamType::try_from(stype).map_err(|_| {
-                            consistency_rusqlite(format!(
-                                "cannot convert {stype} to LogStreamType , id: {cursor}"
-                            ))
+                            consistency_rusqlite(format!("cannot convert {stype} to LogStreamType"))
                         })?,
                         payload: pl,
                     },
                     _ => {
-                        return Err(consistency_rusqlite(format!(
-                            "invalid t_log row id:{cursor}"
-                        )));
+                        return Err(consistency_rusqlite("invalid t_log row".to_string()));
                     }
                 };
                 Ok(LogEntryRow {
-                    cursor,
+                    cursor: created_at,
                     run_id,
                     log_entry,
+                    execution_id,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -3353,8 +3362,8 @@ impl SqlitePool {
                         // no prev results, let's start from beginning
                         Pagination::NewerThan {
                             length: pagination.length(),
-                            cursor: 0,
-                            including_cursor: false, // does not matter, no row has id = 0
+                            cursor: DateTime::<Utc>::UNIX_EPOCH,
+                            including_cursor: true,
                         }
                     }
                 }),
@@ -3364,7 +3373,9 @@ impl SqlitePool {
                     cursor: item.cursor,
                     including_cursor: false,
                 }),
-                None if pagination.is_asc() && *pagination.cursor() > 0 => {
+                None if pagination.is_asc()
+                    && pagination.cursor() > &DateTime::<Utc>::UNIX_EPOCH =>
+                {
                     // asked for a next page that does not exists (yet).
                     Some(pagination.invert())
                 }
@@ -4352,12 +4363,13 @@ impl DbExternalApi for SqlitePool {
     async fn list_logs(
         &self,
         execution_id: &ExecutionId,
+        show_derived: bool,
         filter: LogFilter,
-        pagination: Pagination<u32>,
+        pagination: Pagination<DateTime<Utc>>,
     ) -> Result<ListLogsResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
         self.transaction(
-            move |tx| Self::list_logs_tx(tx, &execution_id, &filter, &pagination),
+            move |tx| Self::list_logs_tx(tx, &execution_id, show_derived, &filter, &pagination),
             TxType::Other, // read only
             "list_logs",
         )

@@ -695,10 +695,12 @@ async fn execution_events(
 mod logs {
     use super::*;
     use base64::{Engine as _, prelude::BASE64_STANDARD};
+    use chrono::{DateTime, Utc};
     use concepts::{
         prefixed_ulid::RunId,
         storage::{LogEntry, LogEntryRow, LogFilter, LogLevel, LogStreamType},
     };
+    use std::fmt::Display;
 
     #[derive(Deserialize, Debug, IntoParams)]
     #[into_params(parameter_in = Query)]
@@ -717,10 +719,13 @@ mod logs {
         /// Include stream entries (stdout/stderr)
         #[serde(default = "default_true")]
         show_streams: bool,
+        /// Include logs from all derived executions
+        #[serde(default)]
+        show_derived: bool,
 
         // pagination
-        /// Cursor for pagination
-        cursor: Option<u32>,
+        /// Cursor for pagination (`DateTime`, opaque)
+        cursor: Option<DateTime<Utc>>,
         /// Number of entries to return
         length: Option<u16>,
         /// Include the cursor item in results
@@ -776,11 +781,13 @@ mod logs {
     /// Log entry row with cursor
     #[derive(Serialize, ToSchema)]
     pub(crate) struct LogEntryRowSer {
-        /// Cursor position
-        pub cursor: u32,
+        /// Cursor position (`DateTime`, opaque)
+        pub cursor: String,
         /// Run ID that produced this log
         #[schema(value_type = String)]
         pub run_id: RunId,
+        /// Execution ID that produced this log
+        pub execution_id: String,
         /// Log entry details
         #[serde(flatten)]
         pub info: LogEntrySer,
@@ -808,8 +815,9 @@ mod logs {
     impl From<LogEntryRow> for LogEntryRowSer {
         fn from(row: LogEntryRow) -> Self {
             Self {
-                cursor: row.cursor,
+                cursor: row.cursor.to_rfc3339(),
                 run_id: row.run_id,
+                execution_id: row.execution_id.to_string(),
                 info: match row.log_entry {
                     LogEntry::Log {
                         created_at,
@@ -927,12 +935,12 @@ mod logs {
         let pagination = match params.direction {
             PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
                 length,
-                cursor: params.cursor.unwrap_or(0),
+                cursor: params.cursor.unwrap_or_else(Utc::now),
                 including_cursor: params.including_cursor,
             },
             PaginationDirectionSortedFromOldest::Newer => Pagination::NewerThan {
                 length,
-                cursor: params.cursor.unwrap_or(0),
+                cursor: params.cursor.unwrap_or(DateTime::<Utc>::UNIX_EPOCH),
                 including_cursor: params.including_cursor,
             },
         };
@@ -944,7 +952,7 @@ mod logs {
             .map_err(|e| ErrorWrapper(e, accept))?;
 
         let result = conn
-            .list_logs(&execution_id, filter, pagination)
+            .list_logs(&execution_id, params.show_derived, filter, pagination)
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 
@@ -956,6 +964,16 @@ mod logs {
             }
             AcceptHeader::Text => {
                 let mut output = String::new();
+                struct ExecId<'a>(bool, &'a ExecutionId);
+                impl Display for ExecId<'_> {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        if self.0 {
+                            write!(f, "{} ", self.1)
+                        } else {
+                            Ok(())
+                        }
+                    }
+                }
                 for log in result.items {
                     match log.log_entry {
                         LogEntry::Log {
@@ -966,9 +984,10 @@ mod logs {
                             let level = LogLevelSer::from(level);
                             writeln!(
                                 &mut output,
-                                "{cursor} {run_id} `{created_at}` [{level}] {message}",
-                                cursor = log.cursor,
+                                "{exec_id}{run_id} `{created_at}` [{level}] {message}",
+                                exec_id = ExecId(params.show_derived, &log.execution_id),
                                 run_id = log.run_id,
+                                created_at = created_at.to_rfc3339(),
                             )
                             .expect("writing to string");
                         }
@@ -981,9 +1000,10 @@ mod logs {
                             let payload_utf8 = String::from_utf8_lossy(&payload);
                             writeln!(
                                 &mut output,
-                                "{cursor} {run_id} `{created_at}` [{stream_type}] {payload_utf8}",
-                                cursor = log.cursor,
+                                "{exec_id}{run_id} `{created_at}` [{stream_type}] {payload_utf8}",
+                                exec_id = ExecId(params.show_derived, &log.execution_id),
                                 run_id = log.run_id,
+                                created_at = created_at.to_rfc3339(),
                             )
                             .expect("writing to string");
                         }

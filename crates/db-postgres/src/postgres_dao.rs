@@ -1594,19 +1594,24 @@ async fn list_responses(
 async fn list_logs_tx(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    show_derived: bool,
     filter: &LogFilter,
-    pagination: &Pagination<u32>,
+    pagination: &Pagination<DateTime<Utc>>,
 ) -> Result<ListLogsResponse, DbErrorRead> {
     let mut param_index = 1;
+    let exec_id_str = execution_id.to_string();
+    let exec_id_filter = if show_derived {
+        format!("execution_id LIKE ${param_index} || '%'")
+    } else {
+        format!("execution_id = ${param_index}")
+    };
     let mut query = format!(
-        "SELECT id, run_id, created_at, level, message, stream_type, payload
+        "SELECT id, run_id, created_at, level, message, stream_type, payload, execution_id
          FROM t_log
-         WHERE execution_id = ${param_index}",
+         WHERE {exec_id_filter}"
     );
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&exec_id_str];
     param_index += 1;
-
-    let execution_id = execution_id.to_string();
-    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&execution_id];
 
     // Logs and streams filter
     let level_filter = if filter.should_show_logs() {
@@ -1660,17 +1665,21 @@ async fn list_logs_tx(
     }
 
     // Pagination
-    write!(&mut query, " AND id {} ${param_index}", pagination.rel()).expect("writing to string");
-    let cursor_val: i64 = (*pagination.cursor()).into();
-    params.push(&cursor_val);
+    write!(
+        &mut query,
+        " AND created_at {} ${param_index}",
+        pagination.rel()
+    )
+    .expect("writing to string");
+    let cursor_val = pagination.cursor();
+    params.push(cursor_val);
     param_index += 1;
 
     // Ordering and limit
+    let dir = if pagination.is_desc() { "DESC" } else { "ASC" };
     write!(
         &mut query,
-        " ORDER BY id {} LIMIT ${}",
-        if pagination.is_desc() { "DESC" } else { "ASC" },
-        param_index
+        " ORDER BY created_at {dir}, id {dir} LIMIT ${param_index}",
     )
     .expect("writing to string");
     let length_val: i64 = i64::from(pagination.length());
@@ -1681,13 +1690,18 @@ async fn list_logs_tx(
     let mut items = Vec::with_capacity(rows.len());
 
     for row in rows {
-        let cursor = u32::try_from(get::<i64, _>(&row, "id")?)
-            .map_err(|_| consistency_db_err("t_join_set_response.id must not be negative"))?;
         let created_at: chrono::DateTime<chrono::Utc> = get(&row, "created_at")?;
         let run_id: String = get(&row, "run_id")?;
         let run_id = RunId::from_str(&run_id).map_err(|parse_err| {
             consistency_db_err_src(
-                format!("cannot convert RunId {run_id}, id: {cursor}"),
+                format!("cannot convert RunId {run_id}"),
+                Arc::from(parse_err),
+            )
+        })?;
+        let execution_id_str: String = get(&row, "execution_id")?;
+        let execution_id = ExecutionId::from_str(&execution_id_str).map_err(|parse_err| {
+            consistency_db_err_src(
+                format!("cannot convert ExecutionId {execution_id_str}"),
                 Arc::from(parse_err),
             )
         })?;
@@ -1699,12 +1713,8 @@ async fn list_logs_tx(
 
         let log_entry = match (level, message, stream_type, payload) {
             (Some(lvl), Some(msg), None, None) => {
-                let map_err = |err| {
-                    consistency_db_err_src(
-                        format!("cannot convert {lvl} to LogLevel , id: {cursor}"),
-                        err,
-                    )
-                };
+                let map_err =
+                    |err| consistency_db_err_src(format!("cannot convert {lvl} to LogLevel"), err);
                 LogEntry::Log {
                     created_at,
                     level: u8::try_from(lvl)
@@ -1715,10 +1725,7 @@ async fn list_logs_tx(
             }
             (None, None, Some(stype), Some(pl)) => {
                 let map_err = |err| {
-                    consistency_db_err_src(
-                        format!("cannot convert {stype} to LogStreamType , id: {cursor}"),
-                        err,
-                    )
+                    consistency_db_err_src(format!("cannot convert {stype} to LogStreamType"), err)
                 };
                 LogEntry::Stream {
                     created_at,
@@ -1731,14 +1738,15 @@ async fn list_logs_tx(
                 }
             }
             _ => {
-                return Err(consistency_db_err(format!("invalid t_log row id:{cursor}")).into());
+                return Err(consistency_db_err("invalid t_log row".to_string()).into());
             }
         };
 
         items.push(LogEntryRow {
-            cursor,
+            cursor: created_at,
             run_id,
             log_entry,
+            execution_id,
         });
     }
 
@@ -1756,8 +1764,8 @@ async fn list_logs_tx(
                 // no prev results, let's start from beginning
                 Pagination::NewerThan {
                     length: pagination.length(),
-                    cursor: 0,
-                    including_cursor: false, // does not matter, no row has id = 0
+                    cursor: DateTime::<Utc>::UNIX_EPOCH,
+                    including_cursor: false,
                 }
             }),
         prev_page: match items.first() {
@@ -1766,7 +1774,7 @@ async fn list_logs_tx(
                 cursor: item.cursor,
                 including_cursor: false,
             }),
-            None if pagination.is_asc() && *pagination.cursor() > 0 => {
+            None if pagination.is_asc() && pagination.cursor() > &DateTime::<Utc>::UNIX_EPOCH => {
                 // asked for a next page that does not exists (yet).
                 Some(pagination.invert())
             }
@@ -4338,12 +4346,13 @@ impl DbExternalApi for PostgresConnection {
     async fn list_logs(
         &self,
         execution_id: &ExecutionId,
+        show_derived: bool,
         filter: LogFilter,
-        pagination: Pagination<u32>,
+        pagination: Pagination<DateTime<Utc>>,
     ) -> Result<ListLogsResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        let responses = list_logs_tx(&tx, execution_id, &filter, &pagination).await?;
+        let responses = list_logs_tx(&tx, execution_id, show_derived, &filter, &pagination).await?;
         tx.commit().await?;
         Ok(responses)
     }

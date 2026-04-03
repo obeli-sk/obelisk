@@ -1248,8 +1248,9 @@ pub trait DbExternalApi: DbConnection {
     async fn list_logs(
         &self,
         execution_id: &ExecutionId,
+        show_derived: bool,
         filter: LogFilter,
-        pagination: Pagination<u32>,
+        pagination: Pagination<DateTime<Utc>>,
     ) -> Result<ListLogsResponse, DbErrorRead>;
 
     async fn list_deployment_states(
@@ -1379,8 +1380,8 @@ pub struct DeploymentRecord {
 #[derive(Debug)]
 pub struct ListLogsResponse {
     pub items: Vec<LogEntryRow>,
-    pub next_page: Pagination<u32>, // Newer logs can always arrive e.g. via replay
-    pub prev_page: Option<Pagination<u32>>, // None if we are already at the beginning
+    pub next_page: Pagination<DateTime<Utc>>, // Newer logs can always arrive e.g. via replay
+    pub prev_page: Option<Pagination<DateTime<Utc>>>, // None if we are already at the beginning
 }
 
 #[derive(Debug)]
@@ -1603,9 +1604,10 @@ pub struct LogInfoAppendRow {
 
 #[derive(Debug, Clone)]
 pub struct LogEntryRow {
-    pub cursor: u32,
+    pub cursor: DateTime<Utc>,
     pub run_id: RunId,
     pub log_entry: LogEntry,
+    pub execution_id: ExecutionId,
 }
 
 #[derive(Debug, Clone)]
