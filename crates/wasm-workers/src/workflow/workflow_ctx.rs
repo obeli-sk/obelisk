@@ -38,6 +38,7 @@ use concepts::{
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
+use log_activities::obelisk::log::log::Host;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
@@ -1382,10 +1383,9 @@ impl WorkflowCtx {
                         let execution_id = match ExecutionId::try_from(execution_id) {
                             Ok(id) => id,
                             Err(err) => {
-                                let wit_result = Err(ScheduleJsonError::FfqnParsingError(format!(
-                                    "invalid execution ID: {err}"
-                                )));
-                                return Ok((wit_result,));
+                                let msg = format!("schedule-json: invalid execution ID: {err}");
+                                host.error(msg.clone());
+                                return Ok((Err(ScheduleJsonError::FfqnParsingError(msg)),));
                             }
                         };
                         let ffqn = match FunctionFqn::try_from_tuple(
@@ -1394,9 +1394,9 @@ impl WorkflowCtx {
                         ) {
                             Ok(ffqn) => ffqn,
                             Err(err) => {
-                                let wit_result =
-                                    Err(ScheduleJsonError::FfqnParsingError(err.to_string()));
-                                return Ok((wit_result,));
+                                let msg = format!("schedule-json: invalid function name: {err}");
+                                host.error(msg.clone());
+                                return Ok((Err(ScheduleJsonError::FfqnParsingError(msg)),));
                             }
                         };
                         let wit_result = host
@@ -1429,9 +1429,9 @@ impl WorkflowCtx {
                             Ok(ffqn) => ffqn,
                             Err(err) => {
                                 use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
-                                return Ok((Err(ScheduleJsonError::FfqnParsingError(
-                                    err.to_string(),
-                                )),));
+                                let msg = format!("call-json: invalid function name: {err}");
+                                host.error(msg.clone());
+                                return Ok((Err(ScheduleJsonError::FfqnParsingError(msg)),));
                             }
                         };
                         let wit_result = host.call_json(ffqn, params, backtrace).await?;
@@ -1870,6 +1870,7 @@ pub(crate) mod workflow_support {
     use super::{
         Schedule, Stub, SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, typesTypes,
     };
+    use crate::component_logger::log_activities::obelisk::log::log::Host as LogHost;
     use crate::workflow::event_history::{
         JoinNext, JoinNextTry, Persist, ScheduleIntent, StubIntent, StubIntentErr, StubParams,
         SubmitDelay,
@@ -2313,14 +2314,14 @@ pub(crate) mod workflow_support {
             let params_json = match serde_json::from_str(&params_json) {
                 Ok(serde_json::Value::Array(params)) => params,
                 Ok(_other) => {
-                    return Ok(Err(ScheduleJsonError::TypeCheckError(
-                        "params must be a json array".to_string(),
-                    )));
+                    let msg = "schedule-json: params must be a json array".to_string();
+                    self.error(msg.clone());
+                    return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
                 Err(err) => {
-                    return Ok(Err(ScheduleJsonError::TypeCheckError(format!(
-                        "cannot parse params as JSON array: {err}"
-                    ))));
+                    let msg = format!("schedule-json: cannot parse params as JSON array: {err}");
+                    self.error(msg.clone());
+                    return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
             };
 
@@ -2342,9 +2343,11 @@ pub(crate) mod workflow_support {
             match result {
                 Ok(()) => Ok(Ok(())),
                 Err(ScheduleRequestError::FunctionNotFound) => {
+                    self.error("schedule-json: function not found".to_string());
                     Ok(Err(ScheduleJsonError::FunctionNotFound))
                 }
                 Err(ScheduleRequestError::TypeCheckError(msg)) => {
+                    self.error(format!("schedule-json: type check error: {msg}"));
                     Ok(Err(ScheduleJsonError::TypeCheckError(msg)))
                 }
             }
@@ -2528,15 +2531,15 @@ pub(crate) mod workflow_support {
             let target_execution_id = match ExecutionId::try_from(target_execution_id) {
                 Ok(ExecutionId::Derived(derived)) => derived,
                 Ok(ExecutionId::TopLevel(_)) => {
-                    return Ok(Err(StubJsonError::ExecutionIdParsingError(
-                        "execution-id must be a derived (child) execution ID, not a top-level one"
-                            .to_string(),
-                    )));
+                    let msg = "stub-json: execution-id must be a derived (child) execution ID, not a top-level one"
+                        .to_string();
+                    self.error(msg.clone());
+                    return Ok(Err(StubJsonError::ExecutionIdParsingError(msg)));
                 }
                 Err(err) => {
-                    return Ok(Err(StubJsonError::ExecutionIdParsingError(format!(
-                        "cannot parse execution-id: {err}"
-                    ))));
+                    let msg = format!("stub-json: cannot parse execution-id: {err}");
+                    self.error(msg.clone());
+                    return Ok(Err(StubJsonError::ExecutionIdParsingError(msg)));
                 }
             };
 
@@ -2583,14 +2586,14 @@ pub(crate) mod workflow_support {
             let params_json_arr = match serde_json::from_str(&params_json) {
                 Ok(serde_json::Value::Array(params)) => params,
                 Ok(_other) => {
-                    return Ok(Err(ScheduleJsonError::TypeCheckError(
-                        "params must be a json array".to_string(),
-                    )));
+                    let msg = "call-json: params must be a json array".to_string();
+                    self.error(msg.clone());
+                    return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
                 Err(err) => {
-                    return Ok(Err(ScheduleJsonError::TypeCheckError(format!(
-                        "cannot parse params as JSON array: {err}"
-                    ))));
+                    let msg = format!("call-json: cannot parse params as JSON array: {err}");
+                    self.error(msg.clone());
+                    return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
             };
 
@@ -2602,9 +2605,11 @@ pub(crate) mod workflow_support {
                     params,
                 } => (fn_component_id, params),
                 SubmitChildIntent::Err(ChildExecutionRequestError::FunctionNotFound) => {
+                    self.error(format!("call-json: function not found: {target_ffqn}"));
                     return Ok(Err(ScheduleJsonError::FunctionNotFound));
                 }
                 SubmitChildIntent::Err(ChildExecutionRequestError::TypeCheckError(msg)) => {
+                    self.error(format!("call-json: type check error: {msg}"));
                     return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
             };
