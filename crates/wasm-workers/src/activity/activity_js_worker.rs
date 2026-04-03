@@ -286,6 +286,7 @@ mod tests {
     use crate::activity::activity_worker::test::compile_activity_with_engine;
     use crate::activity::activity_worker::tests::TestRetryBehavior;
     use crate::engines::{EngineConfig, Engines};
+    use crate::http_hooks::ConfigSectionHint;
     use assert_matches::assert_matches;
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
@@ -392,6 +393,7 @@ mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from(self.allowed_hosts),
+                config_section_hint: ConfigSectionHint::ActivityJs,
             };
 
             let compiled = super::super::activity_worker::ActivityWorkerCompiled::new_with_config(

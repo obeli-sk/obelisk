@@ -37,6 +37,7 @@ use std::{
 };
 use tracing::{debug, info, instrument, trace, warn};
 use utils::wasm_tools::WasmComponent;
+use wasm_workers::http_hooks::ConfigSectionHint;
 use wasm_workers::http_request_policy::HostPatternError;
 use wasm_workers::{
     activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
@@ -1366,6 +1367,7 @@ impl ActivityWasmComponentConfigToml {
             directories_config,
             fuel,
             allowed_hosts,
+            config_section_hint: ConfigSectionHint::ActivityWasm,
         };
         let retry_config = ComponentRetryConfig {
             max_retries: Some(self.max_retries),
@@ -1820,6 +1822,7 @@ impl ActivityJsComponentConfigCanonical {
             directories_config: None,
             fuel,
             allowed_hosts,
+            config_section_hint: ConfigSectionHint::ActivityJs,
         };
         let retry_config = ComponentRetryConfig {
             max_retries: Some(self.max_retries),
@@ -2542,7 +2545,8 @@ pub(crate) mod webhook {
     };
     use tracing::instrument;
     use wasm_workers::{
-        envvar::EnvVar, http_request_policy::AllowedHostConfig, std_output_stream::StdOutputConfig,
+        envvar::EnvVar, http_hooks::ConfigSectionHint, http_request_policy::AllowedHostConfig,
+        std_output_stream::StdOutputConfig,
     };
 
     #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -2613,6 +2617,8 @@ pub(crate) mod webhook {
         pub(crate) subscription_interruption: Option<Duration>,
         pub(crate) logs_store_min_level: Option<LogLevel>,
         pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
+        /// The TOML config section type for error messages
+        pub(crate) config_section_hint: ConfigSectionHint,
     }
 
     #[derive(Debug)]
@@ -2685,6 +2691,8 @@ pub(crate) mod webhook {
         pub(crate) env_vars: Arc<[EnvVar]>,
         pub(crate) logs_store_min_level: Option<LogLevel>,
         pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
+        /// The TOML config section type for error messages
+        pub(crate) config_section_hint: ConfigSectionHint,
     }
 
     impl WebhookJsConfigVerified {
@@ -2756,6 +2764,7 @@ pub(crate) mod webhook {
                     subscription_interruption,
                     logs_store_min_level: self.logs_store_min_level.into(),
                     allowed_hosts,
+                    config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
                 },
             ))
         }
@@ -2825,6 +2834,7 @@ pub(crate) mod webhook {
                     env_vars,
                     logs_store_min_level: self.logs_store_min_level.into(),
                     allowed_hosts,
+                    config_section_hint: ConfigSectionHint::WebhookEndpointJs,
                 },
             ))
         }

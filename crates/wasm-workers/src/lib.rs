@@ -8,7 +8,7 @@ pub mod activity;
 pub mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
-pub(crate) mod http_hooks;
+pub mod http_hooks;
 pub mod http_request_policy;
 pub(crate) mod js_wit_builder;
 pub(crate) mod js_worker_utils;

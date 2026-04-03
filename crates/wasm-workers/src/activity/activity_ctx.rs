@@ -124,6 +124,7 @@ pub(crate) fn store(
             http_client_traces: HttpClientTracesContainer::default(),
             http_policy,
             component_logger: component_logger.clone(),
+            config_section_hint: config.config_section_hint,
         },
         component_logger,
         preopened_dir: preopened_dir.map(Arc::from),
