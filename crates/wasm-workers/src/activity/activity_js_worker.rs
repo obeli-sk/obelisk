@@ -1462,7 +1462,7 @@ mod tests {
         );
         assert_eq!(
             reason,
-            "thrown value type check failed: return type is `result<T>` (no error type), expected `throw null`, got `\"oops\"`"
+            "thrown value type check failed: return type is `result<u32>` (no error type), expected `throw null`, got `\"oops\"`"
         );
     }
 
