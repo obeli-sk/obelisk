@@ -1583,6 +1583,11 @@ impl WebhookEndpointCtx {
                 http_client_traces: HttpClientTracesContainer::default(),
                 http_policy,
                 component_logger,
+                allowed_host_toml_section: if config.js_config.is_some() {
+                    crate::http_request_policy::AllowedHostTomlSection::WebhookEndpointJs
+                } else {
+                    crate::http_request_policy::AllowedHostTomlSection::WebhookEndpointWasm
+                },
             },
         };
         let mut store = Store::new(engine, ctx);

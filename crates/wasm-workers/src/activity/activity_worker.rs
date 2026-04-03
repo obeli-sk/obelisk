@@ -38,6 +38,7 @@ pub struct ActivityConfig {
     pub directories_config: Option<ActivityDirectoriesConfig>,
     pub fuel: Option<u64>,
     pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
+    pub allowed_host_toml_section: crate::http_request_policy::AllowedHostTomlSection,
 }
 
 #[derive(Clone, Debug)]
@@ -621,7 +622,9 @@ pub(crate) mod tests {
     use crate::activity::activity_worker::test::compile_activity_with_engine;
     use crate::engines::PoolingOptions;
     use crate::engines::{EngineConfig, Engines};
-    use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
+    use crate::http_request_policy::{
+        AllowedHostConfig, AllowedHostTomlSection, HostPattern, MethodsPattern,
+    };
     use assert_matches::assert_matches;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
     use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
@@ -674,6 +677,7 @@ pub(crate) mod tests {
             directories_config: None,
             fuel: None,
             allowed_hosts: Arc::from([]),
+            allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
         }
     }
 
@@ -694,6 +698,7 @@ pub(crate) mod tests {
                 secret_env_mappings: Vec::new(),
                 replace_in: hashbrown::HashSet::new(),
             }]),
+            allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
         }
     }
 
@@ -1829,6 +1834,7 @@ pub(crate) mod tests {
                             ReplacementLocation::Body,
                         ]),
                     }]),
+                    allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
                 }
             },
         )
@@ -1950,6 +1956,7 @@ pub(crate) mod tests {
                 }),
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
             },
             retry_config,
             locking_strategy,
@@ -2052,6 +2059,7 @@ pub(crate) mod tests {
                 }),
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -2116,6 +2124,7 @@ pub(crate) mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
             },
             engine,
             sim_clock.clone_box(),
@@ -2177,6 +2186,7 @@ pub(crate) mod tests {
                 }),
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -2260,6 +2270,7 @@ pub(crate) mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -2327,6 +2338,7 @@ pub(crate) mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -2399,6 +2411,7 @@ pub(crate) mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
             },
             retry_config,
             locking_strategy,

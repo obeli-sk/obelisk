@@ -74,10 +74,11 @@ pub(crate) fn map_js_throw_to_user_err(
             if thrown_val == serde_json::Value::Null {
                 Ok(SupportedFunctionReturnValue::Err(None))
             } else {
+                let declared_return_type = user_return_type.to_string();
                 Err(WorkerError::FatalError(
                     FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
                         ResultParsingErrorFromVal::TypeCheckError(format!(
-                            "thrown value type check failed: return type is `result<T>` (no error \
+                            "thrown value type check failed: return type is `{declared_return_type}` (no error \
                              type), expected `throw null`, got `{thrown}`"
                         )),
                     )),

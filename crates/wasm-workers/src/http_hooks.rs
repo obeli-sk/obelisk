@@ -1,5 +1,5 @@
 use crate::component_logger::ComponentLogger;
-use crate::http_request_policy::HttpRequestPolicy;
+use crate::http_request_policy::{AllowedHostTomlSection, HttpRequestPolicy, PolicyError};
 use concepts::storage::LogLevel;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
@@ -16,6 +16,7 @@ pub(crate) struct HttpHooks {
     pub(crate) http_client_traces: HttpClientTracesContainer,
     pub(crate) http_policy: HttpRequestPolicy,
     pub(crate) component_logger: ComponentLogger,
+    pub(crate) allowed_host_toml_section: AllowedHostTomlSection,
 }
 
 impl WasiHttpHooks for HttpHooks {
@@ -36,7 +37,12 @@ impl WasiHttpHooks for HttpHooks {
         // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
         let http_policy_res = self.http_policy.apply(&mut request);
         if let Err(err) = http_policy_res {
-            self.component_logger.log(LogLevel::Warn, format!("{err}")); // Append to execution's logs table
+            let msg = format!(
+                "{err}\n\nTo allow this request, add to your config:\n\n[[{section}.allowed_host]]\n{snippet}",
+                section = self.allowed_host_toml_section,
+                snippet = toml_snippet_for_denied_request(&err),
+            );
+            self.component_logger.log(LogLevel::Warn, msg); // Append to execution's logs table
             let _ = resp_trace_tx.send(ResponseTrace {
                 finished_at: self.clock_fn.now(),
                 status: Err(err.to_string()),
@@ -74,4 +80,26 @@ impl WasiHttpHooks for HttpHooks {
         );
         Ok(HostFutureIncomingResponse::pending(handle))
     }
+}
+
+/// Build a TOML snippet (`pattern` + `methods` lines) for a denied request.
+fn toml_snippet_for_denied_request(err: &PolicyError) -> String {
+    let PolicyError::RequestDenied {
+        method,
+        scheme,
+        host,
+        port,
+    } = err
+    else {
+        return String::new();
+    };
+    // Reconstruct a concise pattern string.
+    let pattern = if scheme == "https" && *port == 443 {
+        host.clone()
+    } else if scheme == "http" && *port == 80 {
+        format!("http://{host}")
+    } else {
+        format!("{scheme}://{host}:{port}")
+    };
+    format!("pattern = \"{pattern}\"\nmethods = [\"{method}\"]")
 }

@@ -35,6 +35,7 @@ params = [
     {name = "url", type = "string"},
     {name = "headers", type = "list<tuple<string,string>>"},
 ]
+return_type = "result<string, string>"
 max_retries = 0
 [[activity_js.allowed_host]]
 pattern = "http://localhost:5005"

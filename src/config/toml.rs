@@ -41,7 +41,9 @@ use wasm_workers::http_request_policy::HostPatternError;
 use wasm_workers::{
     activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
     envvar::EnvVar,
-    http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern, ReplacementLocation},
+    http_request_policy::{
+        AllowedHostConfig, AllowedHostTomlSection, HostPattern, MethodsPattern, ReplacementLocation,
+    },
     std_output_stream::StdOutputConfig,
     workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
@@ -1366,6 +1368,7 @@ impl ActivityWasmComponentConfigToml {
             directories_config,
             fuel,
             allowed_hosts,
+            allowed_host_toml_section: AllowedHostTomlSection::ActivityWasm,
         };
         let retry_config = ComponentRetryConfig {
             max_retries: Some(self.max_retries),
@@ -1820,6 +1823,7 @@ impl ActivityJsComponentConfigCanonical {
             directories_config: None,
             fuel,
             allowed_hosts,
+            allowed_host_toml_section: AllowedHostTomlSection::ActivityJs,
         };
         let retry_config = ComponentRetryConfig {
             max_retries: Some(self.max_retries),

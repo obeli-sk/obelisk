@@ -392,6 +392,8 @@ mod tests {
                 directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from(self.allowed_hosts),
+                allowed_host_toml_section:
+                    crate::http_request_policy::AllowedHostTomlSection::ActivityJs,
             };
 
             let compiled = super::super::activity_worker::ActivityWorkerCompiled::new_with_config(

@@ -6,6 +6,19 @@ use std::fmt;
 use tracing::{debug, trace};
 use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 
+/// TOML config section for `allowed_host` entries. Used for error reporting on blocked access.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, derive_more::Display)]
+pub enum AllowedHostTomlSection {
+    #[display("activity_wasm")]
+    ActivityWasm,
+    #[display("activity_js")]
+    ActivityJs,
+    #[display("webhook_endpoint_wasm")]
+    WebhookEndpointWasm,
+    #[display("webhook_endpoint_js")]
+    WebhookEndpointJs,
+}
+
 /// Where in the outgoing request placeholders are replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ReplacementLocation {

@@ -58,6 +58,8 @@ mod bench {
             directories_config: None,
             fuel: None,
             allowed_hosts: Arc::from([]),
+            allowed_host_toml_section:
+                wasm_workers::http_request_policy::AllowedHostTomlSection::ActivityWasm,
         }
     }
 
