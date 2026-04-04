@@ -247,6 +247,7 @@ pub(crate) async fn generate_support_wits(
         ComponentType::WebhookEndpoint => {
             vec![
                 wit::WIT_OBELISK_TYPES_PACKAGE, // Needed for -schedule ext functions.
+                wit::WIT_OBELISK_WEBHOOK_PACKAGE,
                 wit::WIT_OBELISK_LOG_PACKAGE,
             ]
         }

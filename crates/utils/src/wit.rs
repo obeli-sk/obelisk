@@ -55,6 +55,15 @@ pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
     )),
 ];
 
+pub const WIT_OBELISK_WEBHOOK_PACKAGE: [&str; 3] = [
+    "obelisk_webhook@5.1.0",
+    "obelisk_webhook@5.1.0.wit",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/wit/obelisk_webhook@5.1.0/obelisk_webhook@5.1.0.wit"
+    )),
+];
+
 pub(crate) fn wit(resolve: &Resolve, main_package: PackageId) -> Result<String, anyhow::Error> {
     // print all packages, with the main package as root, others as nested.
     let ids = packages_except_main(resolve, main_package, false);
