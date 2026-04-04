@@ -995,6 +995,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         } else {
             20
         };
+        let show_derived = request.show_derived;
         let pagination = if let Ok(decoded) = BASE64_STANDARD.decode(&request.page_token)
             && let Ok(decoded) = serde_json::from_slice::<ListLogsPagination>(&decoded)
         {
@@ -1013,7 +1014,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         } else {
             Pagination::NewerThan {
                 length,
-                cursor: 0,
+                cursor: DateTime::<Utc>::UNIX_EPOCH,
                 including_cursor: false,
             }
         };
@@ -1023,7 +1024,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?
-            .list_logs(&execution_id, filter, pagination)
+            .list_logs(&execution_id, show_derived, filter, pagination)
             .await
             .to_status()?;
 
@@ -1093,11 +1094,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum ListLogsPagination {
-    NewerThan { cursor: u32 },
-    OlderThan { cursor: u32 },
+    NewerThan { cursor: DateTime<Utc> },
+    OlderThan { cursor: DateTime<Utc> },
 }
-impl From<Pagination<u32>> for ListLogsPagination {
-    fn from(value: Pagination<u32>) -> Self {
+impl From<Pagination<DateTime<Utc>>> for ListLogsPagination {
+    fn from(value: Pagination<DateTime<Utc>>) -> Self {
         match value {
             Pagination::NewerThan { cursor, .. } => ListLogsPagination::NewerThan { cursor },
             Pagination::OlderThan { cursor, .. } => ListLogsPagination::OlderThan { cursor },

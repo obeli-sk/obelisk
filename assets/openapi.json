@@ -689,14 +689,22 @@
             }
           },
           {
-            "name": "cursor",
+            "name": "show_derived",
             "in": "query",
-            "description": "Cursor for pagination",
+            "description": "Include logs from all derived executions",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor for pagination (`DateTime`, opaque)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
             }
           },
           {
@@ -1404,14 +1412,17 @@
             "type": "object",
             "required": [
               "cursor",
-              "run_id"
+              "run_id",
+              "execution_id"
             ],
             "properties": {
               "cursor": {
-                "type": "integer",
-                "format": "int32",
-                "description": "Cursor position",
-                "minimum": 0
+                "type": "string",
+                "description": "Cursor position (`DateTime`, opaque)"
+              },
+              "execution_id": {
+                "type": "string",
+                "description": "Execution ID that produced this log"
               },
               "run_id": {
                 "type": "string",

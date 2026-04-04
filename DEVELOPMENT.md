@@ -47,7 +47,20 @@ scripts/check.sh
 
 ## Running Tests
 
-Postgres must be running. See `.envrc-example` for environment variables.
+Postgres must be running. Start a container:
+```sh
+docker run -it --rm --name obelisk-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:18
+```
+Then configure your environment (see `.envrc-example`):
+```sh
+export TEST_POSTGRES_HOST="localhost"
+export TEST_POSTGRES_USER="postgres"
+export TEST_POSTGRES_PASSWORD="postgres"
+export TEST_POSTGRES_DATABASE_PREFIX="obelisk_test"
+```
+
+> Without `direnv` or these env vars exported, Postgres tests will fail with `connection refused` or `TEST_POSTGRES_HOST` not set.
+
 ```sh
 # All tests
 scripts/test.sh

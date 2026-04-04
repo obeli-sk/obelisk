@@ -934,6 +934,7 @@ impl From<LogEntryRow> for grpc_gen::list_logs_response::LogEntry {
             created_at,
             entry,
             run_id: Some(value.run_id.into()),
+            execution_id: Some(value.execution_id.into()),
         }
     }
 }

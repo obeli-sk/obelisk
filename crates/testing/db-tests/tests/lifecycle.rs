@@ -11,7 +11,8 @@ use concepts::storage::{
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
-use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent};
+use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent, LogFilter};
+use concepts::storage::{LogEntry, LogInfoAppendRow};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::{ComponentId, Params, StrVariant, SupportedFunctionReturnValue};
@@ -3530,6 +3531,216 @@ async fn deployment_list(database: Database) {
         .unwrap();
     assert_eq!(2, all.len());
 
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn list_logs_with_show_derived(database: Database) {
+    if database == Database::Memory {
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let parent_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: parent_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    sim_clock.move_time_forward(Duration::from_secs(1));
+    db_connection
+        .append_log(LogInfoAppendRow {
+            execution_id: parent_id.clone(),
+            run_id: RunId::generate(),
+            log_entry: LogEntry::Log {
+                created_at: sim_clock.now(),
+                level: concepts::storage::LogLevel::Info,
+                message: "parent log".to_string(),
+            },
+        })
+        .await
+        .unwrap();
+
+    sim_clock.move_time_forward(Duration::from_secs(1));
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    let child_id = parent_id.next_level(&join_set_id);
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: ExecutionId::Derived(child_id.clone()),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    db_connection
+        .append_log(LogInfoAppendRow {
+            execution_id: ExecutionId::Derived(child_id.clone()),
+            run_id: RunId::generate(),
+            log_entry: LogEntry::Log {
+                created_at: sim_clock.now(),
+                level: concepts::storage::LogLevel::Error,
+                message: "child log".to_string(),
+            },
+        })
+        .await
+        .unwrap();
+
+    sim_clock.move_time_forward(Duration::from_secs(1));
+    let join_set_id_2 = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    let grandchild_id = child_id.next_level(&join_set_id_2);
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: ExecutionId::Derived(grandchild_id.clone()),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+        })
+        .await
+        .unwrap();
+
+    db_connection
+        .append_log(LogInfoAppendRow {
+            execution_id: ExecutionId::Derived(grandchild_id.clone()),
+            run_id: RunId::generate(),
+            log_entry: LogEntry::Log {
+                created_at: sim_clock.now(),
+                level: concepts::storage::LogLevel::Warn,
+                message: "grandchild log".to_string(),
+            },
+        })
+        .await
+        .unwrap();
+
+    sim_clock.move_time_forward(Duration::from_secs(1));
+
+    let result = api_conn
+        .list_logs(
+            &parent_id,
+            false,
+            LogFilter::show_logs(Vec::new()),
+            Pagination::OlderThan {
+                length: 10,
+                cursor: sim_clock.now(),
+                including_cursor: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].execution_id, parent_id);
+    assert_matches!(
+        &result.items[0].log_entry,
+        LogEntry::Log { message, .. } if message == "parent log"
+    );
+
+    let result = api_conn
+        .list_logs(
+            &parent_id,
+            true,
+            LogFilter::show_logs(Vec::new()),
+            Pagination::OlderThan {
+                length: 10,
+                cursor: sim_clock.now(),
+                including_cursor: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.items.len(), 3);
+    assert_eq!(
+        result.items[0].execution_id,
+        ExecutionId::Derived(grandchild_id.clone())
+    );
+    assert_matches!(
+        &result.items[0].log_entry,
+        LogEntry::Log { message, .. } if message == "grandchild log"
+    );
+    assert_eq!(
+        result.items[1].execution_id,
+        ExecutionId::Derived(child_id.clone())
+    );
+    assert_matches!(
+        &result.items[1].log_entry,
+        LogEntry::Log { message, .. } if message == "child log"
+    );
+    assert_eq!(result.items[2].execution_id, parent_id);
+    assert_matches!(
+        &result.items[2].log_entry,
+        LogEntry::Log { message, .. } if message == "parent log"
+    );
+
+    let result = api_conn
+        .list_logs(
+            &parent_id,
+            true,
+            LogFilter::show_logs(Vec::new()),
+            Pagination::OlderThan {
+                length: 1,
+                cursor: sim_clock.now(),
+                including_cursor: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.items.len(), 1);
+    let first_cursor = result.items[0].cursor;
+
+    let result = api_conn
+        .list_logs(
+            &parent_id,
+            true,
+            LogFilter::show_logs(Vec::new()),
+            Pagination::OlderThan {
+                length: 1,
+                cursor: first_cursor,
+                including_cursor: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.items.len(), 1);
+    assert_matches!(
+        &result.items[0].log_entry,
+        LogEntry::Log { message, .. } if message == "child log"
+    );
+
+    drop(db_connection);
     drop(api_conn);
     db_close.close().await;
 }
