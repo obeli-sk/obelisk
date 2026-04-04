@@ -1434,14 +1434,44 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) return_type: Option<String>,
 }
 /// A parameter declaration for a JS activity function.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[derive(Debug, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct JsParamToml {
     /// Parameter name (used in WIT metadata).
+    /// Stored in kebab-case for WIT compatibility.
     pub(crate) name: String,
     /// WIT type string, e.g. `string`, `u32`, `list<string>`, `option<u64>`.
     #[serde(rename = "type")]
     pub(crate) wit_type: String,
+}
+impl<'de> Deserialize<'de> for JsParamToml {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Raw {
+            name: String,
+            #[serde(rename = "type")]
+            wit_type: String,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let name = if raw.name.contains('_') {
+            let kebab = raw.name.replace('_', "-");
+            warn!(
+                "param name `{}` contains '_', converting to kebab-case: `{kebab}`",
+                raw.name
+            );
+            kebab
+        } else {
+            raw.name
+        };
+        Ok(JsParamToml {
+            name,
+            wit_type: raw.wit_type,
+        })
+    }
 }
 
 #[derive(Debug)]
