@@ -700,7 +700,7 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "Cursor for pagination (DateTime, opaque)",
+            "description": "Cursor for pagination (`DateTime`, opaque)",
             "required": false,
             "schema": {
               "type": "string",
@@ -1418,7 +1418,7 @@
             "properties": {
               "cursor": {
                 "type": "string",
-                "description": "Cursor position (DateTime, opaque)"
+                "description": "Cursor position (`DateTime`, opaque)"
               },
               "execution_id": {
                 "type": "string",
