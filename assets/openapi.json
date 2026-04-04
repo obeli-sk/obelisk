@@ -519,6 +519,103 @@
         }
       }
     },
+    "/v1/executions/{execution_id}/backtrace": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Get execution backtrace",
+        "operationId": "execution_backtrace",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "description": "Which backtrace version to retrieve: \"first\", \"last\" (default), or a version number",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution backtrace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktraceInfoSer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/executions/{execution_id}/backtrace/source": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Get source file for a backtrace frame",
+        "operationId": "execution_backtrace_source",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "description": "File path to retrieve (supports suffix matching if not exact)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "description": "Which backtrace version to use for component lookup: \"first\", \"last\" (default), or a version number",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Source file content",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/v1/executions/{execution_id}/cancel": {
       "put": {
         "tags": [
@@ -1091,6 +1188,34 @@
   },
   "components": {
     "schemas": {
+      "BacktraceInfoSer": {
+        "type": "object",
+        "description": "Serializable version of `BacktraceInfo`",
+        "required": [
+          "execution_id",
+          "component_id",
+          "version_min_including",
+          "version_max_excluding",
+          "wasm_backtrace"
+        ],
+        "properties": {
+          "component_id": {
+            "type": "string"
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "version_max_excluding": {
+            "type": "string"
+          },
+          "version_min_including": {
+            "type": "string"
+          },
+          "wasm_backtrace": {
+            "type": "object"
+          }
+        }
+      },
       "ComponentConfig": {
         "type": "object",
         "description": "Component configuration with optional imports/exports",

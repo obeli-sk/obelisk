@@ -2,6 +2,7 @@
 use crate::{
     command::server::{self, SubmitError, SubmitOutcome},
     server::web_api_server::{
+        backtrace::{execution_backtrace, execution_backtrace_source},
         components::{component_wit, components_list},
         deployment::{get_current_deployment_id, list_deployments},
         functions::{function_wit, functions_list},
@@ -22,8 +23,8 @@ use concepts::{
     component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
     storage::{
-        self, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
-        DbErrorWriteNonRetriable, DbPool, ExecutionEvent, ExecutionListPagination,
+        self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
+        DbErrorWrite, DbErrorWriteNonRetriable, DbPool, ExecutionEvent, ExecutionListPagination,
         ExecutionRequest, ExecutionWithState, ListExecutionsFilter, LogInfoAppendRow, Pagination,
         PendingState, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version, VersionType,
     },
@@ -90,6 +91,8 @@ pub(crate) struct WebApiState {
         execution_submit_post,
         execution_replay,
         execution_upgrade,
+        backtrace::execution_backtrace,
+        backtrace::execution_backtrace_source,
         components::component_wit,
         components::components_list,
         functions::functions_list,
@@ -118,6 +121,7 @@ pub(crate) struct WebApiState {
         components::ParameterTypeLite,
         functions::FunctionOutput,
         deployment::DeploymentStateSer,
+        backtrace::BacktraceInfoSer,
     ))
 )]
 pub(crate) struct ApiDoc;
@@ -201,6 +205,14 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         )
         .route("/deployments", routing::get(list_deployments))
         .route("/deployment-id", routing::get(get_current_deployment_id))
+        .route(
+            "/executions/{execution-id}/backtrace",
+            routing::get(execution_backtrace),
+        )
+        .route(
+            "/executions/{execution-id}/backtrace/source",
+            routing::get(execution_backtrace_source),
+        )
 }
 
 /// Generate a new execution ID
@@ -2275,6 +2287,226 @@ mod deployment {
         Ok(match accept {
             AcceptHeader::Json => Json(deployment_id).into_response(),
             AcceptHeader::Text => deployment_id.to_string().into_response(),
+        })
+    }
+}
+
+mod backtrace {
+    use super::*;
+
+    /// Filter for which backtrace version to retrieve: "first", "last" (default), or a version number
+    #[derive(Debug, Clone)]
+    #[allow(clippy::enum_variant_names)]
+    pub(crate) enum BacktraceFilterQuery {
+        First,
+        Last,
+        Specific(Version),
+    }
+
+    impl TryFrom<String> for BacktraceFilterQuery {
+        type Error = String;
+        fn try_from(s: String) -> Result<Self, String> {
+            match s.as_str() {
+                "first" => Ok(BacktraceFilterQuery::First),
+                "last" => Ok(BacktraceFilterQuery::Last),
+                v => {
+                    let n: VersionType = v
+                        .parse()
+                        .map_err(|_| format!("invalid filter value `{v}`"))?;
+                    Ok(BacktraceFilterQuery::Specific(Version(n)))
+                }
+            }
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for BacktraceFilterQuery {
+        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            let s = String::deserialize(d)?;
+            BacktraceFilterQuery::try_from(s).map_err(serde::de::Error::custom)
+        }
+    }
+
+    fn parse_filter(
+        filter: Option<String>,
+        accept: AcceptHeader,
+    ) -> Result<BacktraceFilter, HttpResponse> {
+        match filter {
+            None => Ok(BacktraceFilter::Last),
+            Some(s) => match BacktraceFilterQuery::try_from(s) {
+                Ok(BacktraceFilterQuery::First) => Ok(BacktraceFilter::First),
+                Ok(BacktraceFilterQuery::Last) => Ok(BacktraceFilter::Last),
+                Ok(BacktraceFilterQuery::Specific(v)) => Ok(BacktraceFilter::Specific(v)),
+                Err(msg) => Err(HttpResponse {
+                    status: StatusCode::BAD_REQUEST,
+                    message: msg,
+                    accept,
+                }),
+            },
+        }
+    }
+
+    #[derive(Deserialize, Debug, IntoParams)]
+    #[into_params(parameter_in = Query)]
+    pub(crate) struct BacktraceParams {
+        /// Which backtrace version to retrieve: "first", "last" (default), or a version number
+        filter: Option<String>,
+    }
+
+    /// Serializable version of `BacktraceInfo`
+    #[derive(Serialize, ToSchema)]
+    pub(crate) struct BacktraceInfoSer {
+        #[schema(value_type = String)]
+        pub execution_id: ExecutionId,
+        pub component_id: String,
+        #[schema(value_type = String)]
+        pub version_min_including: VersionType,
+        #[schema(value_type = String)]
+        pub version_max_excluding: VersionType,
+        #[schema(value_type = Object)]
+        pub wasm_backtrace: concepts::storage::WasmBacktrace,
+    }
+
+    impl From<concepts::storage::BacktraceInfo> for BacktraceInfoSer {
+        fn from(value: concepts::storage::BacktraceInfo) -> Self {
+            BacktraceInfoSer {
+                execution_id: value.execution_id,
+                component_id: value.component_id.to_string(),
+                version_min_including: value.version_min_including.0,
+                version_max_excluding: value.version_max_excluding.0,
+                wasm_backtrace: value.wasm_backtrace,
+            }
+        }
+    }
+
+    /// Get execution backtrace
+    #[utoipa::path(
+        get,
+        path = "/v1/executions/{execution_id}/backtrace",
+        tag = "executions",
+        params(
+            ("execution_id" = String, Path, description = "Execution ID"),
+            BacktraceParams
+        ),
+        responses(
+            (status = 200, description = "Execution backtrace", body = BacktraceInfoSer),
+            (status = 404, description = "Not found")
+        )
+    )]
+    #[instrument(skip_all, fields(execution_id))]
+    pub(crate) async fn execution_backtrace(
+        Path(execution_id): Path<ExecutionId>,
+        state: State<Arc<WebApiState>>,
+        Query(params): Query<BacktraceParams>,
+        accept: AcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        let filter = parse_filter(params.filter, accept)?;
+
+        let conn = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        let info = conn
+            .get_backtrace(&execution_id, filter)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        let info_ser = BacktraceInfoSer::from(info);
+        Ok(match accept {
+            AcceptHeader::Json => Json(info_ser).into_response(),
+            AcceptHeader::Text => {
+                let mut output = String::new();
+                writeln!(&mut output, "execution_id: {}", info_ser.execution_id)
+                    .expect("writing to string");
+                writeln!(&mut output, "component_id: {}", info_ser.component_id)
+                    .expect("writing to string");
+                writeln!(
+                    &mut output,
+                    "version: {}..{}",
+                    info_ser.version_min_including, info_ser.version_max_excluding
+                )
+                .expect("writing to string");
+                for frame in &info_ser.wasm_backtrace.frames {
+                    writeln!(&mut output, "  {}:{}", frame.module, frame.func_name)
+                        .expect("writing to string");
+                    for sym in &frame.symbols {
+                        if let (Some(file), Some(line), Some(col)) = (&sym.file, sym.line, sym.col)
+                        {
+                            writeln!(
+                                &mut output,
+                                "    {} ({}:{}:{})",
+                                sym.func_name.as_deref().unwrap_or("??"),
+                                file,
+                                line,
+                                col
+                            )
+                            .expect("writing to string");
+                        } else if let Some(func) = &sym.func_name {
+                            writeln!(&mut output, "    {func}").expect("writing to string");
+                        }
+                    }
+                }
+                output.into_response()
+            }
+        })
+    }
+
+    #[derive(Deserialize, Debug, IntoParams)]
+    #[into_params(parameter_in = Query)]
+    pub(crate) struct BacktraceSourceParams {
+        /// File path to retrieve (supports suffix matching if not exact)
+        file: String,
+        /// Which backtrace version to use for component lookup: "first", "last" (default), or a version number
+        filter: Option<String>,
+    }
+
+    /// Get source file for a backtrace frame
+    #[utoipa::path(
+        get,
+        path = "/v1/executions/{execution_id}/backtrace/source",
+        tag = "executions",
+        params(
+            ("execution_id" = String, Path, description = "Execution ID"),
+            BacktraceSourceParams
+        ),
+        responses(
+            (status = 200, description = "Source file content", body = String),
+            (status = 404, description = "Not found")
+        )
+    )]
+    #[instrument(skip_all, fields(execution_id))]
+    pub(crate) async fn execution_backtrace_source(
+        Path(execution_id): Path<ExecutionId>,
+        state: State<Arc<WebApiState>>,
+        Query(params): Query<BacktraceSourceParams>,
+        accept: AcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        let filter = parse_filter(params.filter, accept)?;
+
+        let conn = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        let backtrace_info = conn
+            .get_backtrace(&execution_id, filter)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        let content = conn
+            .get_source_file(&backtrace_info.component_id.component_digest, &params.file)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        let Some(content) = content else {
+            return Err(HttpResponse::not_found(accept, "source file"));
+        };
+
+        Ok(match accept {
+            AcceptHeader::Json => Json(content).into_response(),
+            AcceptHeader::Text => content.into_response(),
         })
     }
 }
