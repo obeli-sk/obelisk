@@ -549,6 +549,43 @@ impl TestServer {
             .await
             .unwrap()
     }
+
+    async fn get_backtrace_source(
+        &self,
+        execution_id: &str,
+        file: &str,
+        filter: Option<&str>,
+    ) -> reqwest::Response {
+        let filter_part = match filter {
+            Some(f) => format!("&filter={f}"),
+            None => String::new(),
+        };
+        self.client
+            .get(format!(
+                "{}/v1/executions/{execution_id}/backtrace/source?file={file}{filter_part}",
+                self.base_url
+            ))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .expect("backtrace/source request failed")
+    }
+
+    async fn get_backtrace(&self, execution_id: &str, filter: Option<&str>) -> reqwest::Response {
+        let url = match filter {
+            Some(f) => format!(
+                "{}/v1/executions/{execution_id}/backtrace?filter={f}",
+                self.base_url
+            ),
+            None => format!("{}/v1/executions/{execution_id}/backtrace", self.base_url),
+        };
+        self.client
+            .get(url)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .expect("backtrace request failed")
+    }
 }
 
 /// Sanitize dynamic fields in a JSON value for snapshot testing.
@@ -1577,5 +1614,142 @@ async fn activity_js_crypto_subtle_hmac_sign_verify() {
     }
 
     assert_eq!(js_hex, expected, "JS HMAC-SHA256 signature must match Rust");
+    server.shutdown().await;
+}
+
+// ---- Backtrace API ----
+
+#[tokio::test]
+async fn backtrace_workflow_calling_activity() {
+    let server = TestServer::start(test_addr!(35)).await;
+    let exec_id = server.generate_execution_id().await;
+
+    // Run a workflow that calls a child activity — backtrace is captured at the join-set call site.
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/workflow-add-via-activity.add-via-activity",
+            vec![json!(3), json!(4)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let _: Value = resp.json().await.unwrap(); // consume body
+
+    // Default (last) filter.
+    let resp = server.get_backtrace(&exec_id, None).await;
+    assert_eq!(resp.status().as_u16(), 200, "backtrace should exist");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["execution_id"], json!(exec_id));
+    assert!(
+        body["component_id"].as_str().is_some_and(|s| !s.is_empty()),
+        "component_id must be a non-empty string"
+    );
+    assert!(
+        body["version_min_including"].is_number(),
+        "version_min_including must be a number"
+    );
+    assert!(
+        body["version_max_excluding"].is_number(),
+        "version_max_excluding must be a number"
+    );
+    assert!(
+        body["wasm_backtrace"]["frames"].is_array(),
+        "wasm_backtrace.frames must be an array"
+    );
+
+    // ?filter=first should also succeed and return a consistent structure.
+    let resp_first = server.get_backtrace(&exec_id, Some("first")).await;
+    assert_eq!(
+        resp_first.status().as_u16(),
+        200,
+        "filter=first should work"
+    );
+    let body_first: Value = resp_first.json().await.unwrap();
+    assert_eq!(body_first["execution_id"], json!(exec_id));
+
+    // ?filter=<version_min_including> (numeric) should return the same record.
+    let version_num = body["version_min_including"].as_u64().unwrap();
+    let resp_num = server
+        .get_backtrace(&exec_id, Some(&version_num.to_string()))
+        .await;
+    assert_eq!(
+        resp_num.status().as_u16(),
+        200,
+        "numeric filter matching stored version should work"
+    );
+
+    // Invalid filter string must return 400.
+    let resp_bad = server.get_backtrace(&exec_id, Some("bogus")).await;
+    assert_eq!(
+        resp_bad.status().as_u16(),
+        400,
+        "invalid filter must be 400"
+    );
+
+    // Non-existent (but well-formed) execution ID must return 404.
+    let resp_missing = server
+        .get_backtrace("E_01AAAAAAAAAAAAAAAAAAAAAAAA", None)
+        .await;
+    assert_eq!(
+        resp_missing.status().as_u16(),
+        404,
+        "unknown execution must be 404"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn backtrace_source_workflow_calling_activity() {
+    let server = TestServer::start(test_addr!(36)).await;
+    let exec_id = server.generate_execution_id().await;
+
+    // Run the workflow to ensure it has an associated component digest in the backtrace table.
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/workflow-add-via-activity.add-via-activity",
+            vec![json!(2), json!(3)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let _: Value = resp.json().await.unwrap();
+
+    // The deployment config registers "add_via_activity.js" as an exact-key source for this
+    // workflow component.  The endpoint resolves source by component digest (from the backtrace)
+    // plus the file query param.
+    let resp = server
+        .get_backtrace_source(&exec_id, "add_via_activity.js", None)
+        .await;
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "registered source file must be retrievable"
+    );
+    let body: Value = resp.json().await.unwrap();
+    let source = body.as_str().expect("source content must be a JSON string");
+    assert!(
+        source.contains("createJoinSet"),
+        "source must contain JS workflow content"
+    );
+
+    // ?filter=first should resolve the same component and return the same source.
+    let resp_first = server
+        .get_backtrace_source(&exec_id, "add_via_activity.js", Some("first"))
+        .await;
+    assert_eq!(resp_first.status().as_u16(), 200);
+    let body_first: Value = resp_first.json().await.unwrap();
+    assert_eq!(body_first, body, "filter=first must return the same source");
+
+    // A file name not registered must return 404.
+    let resp_missing = server
+        .get_backtrace_source(&exec_id, "nonexistent_file.js", None)
+        .await;
+    assert_eq!(
+        resp_missing.status().as_u16(),
+        404,
+        "unregistered source file must be 404"
+    );
+
     server.shutdown().await;
 }
