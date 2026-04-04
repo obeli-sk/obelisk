@@ -69,7 +69,7 @@ pub(crate) mod types {
                     import obelisk:types/execution@4.2.0;
                     import obelisk:types/backtrace@4.2.0;
                     import obelisk:types/join-set@4.2.0;
-                    import obelisk:webhook/webhook-support@5.0.0;
+                    import obelisk:webhook/webhook-support@5.1.0;
                 }",
         world: "any:any/bindings",
         imports: {
@@ -608,6 +608,14 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         let execution_id = ExecutionId::generate();
         Ok(types::obelisk::webhook::webhook_support::ExecutionId {
             id: execution_id.to_string(),
+        })
+    }
+
+    async fn current_execution_id(
+        &mut self,
+    ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::ExecutionId> {
+        Ok(types::obelisk::webhook::webhook_support::ExecutionId {
+            id: self.execution_id.to_string(),
         })
     }
 
