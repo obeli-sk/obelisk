@@ -1088,6 +1088,17 @@ async fn webhook_js_hello() {
         .await
         .expect("webhook request failed");
     assert_eq!(resp.status().as_u16(), 200);
+    // Verify currentExecutionId is returned via x-execution-id header
+    let exec_id = resp
+        .headers()
+        .get("x-execution-id")
+        .expect("x-execution-id header must be present")
+        .to_str()
+        .unwrap();
+    assert!(
+        exec_id.starts_with("E_"),
+        "execution ID must have E_ prefix, got: {exec_id}"
+    );
     let body = resp.text().await.unwrap();
     assert_eq!(body, "Hello from JS webhook!");
     server.shutdown().await;
