@@ -611,6 +611,14 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         })
     }
 
+    async fn current_execution_id(
+        &mut self,
+    ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::ExecutionId> {
+        Ok(types::obelisk::webhook::webhook_support::ExecutionId {
+            id: self.execution_id.to_string(),
+        })
+    }
+
     fn convert_get_status_error(
         &mut self,
         err: GetStatusErrorTrappable,
