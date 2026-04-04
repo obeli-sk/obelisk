@@ -250,6 +250,13 @@ params = [
 ]
 return_type = "result<string, string>"
 
+[[workflow_js]]
+name = "test_math_random_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/math_random.js"
+ffqn = "testing:integration/workflow-math-random.math-random"
+params = []
+return_type = "result<string, string>"
+
 [[activity_js]]
 name = "test_hmac_sign_verify_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/hmac_sign_verify.js"
@@ -1750,6 +1757,32 @@ async fn backtrace_source_workflow_calling_activity() {
         404,
         "unregistered source file must be 404"
     );
+
+    server.shutdown().await;
+}
+
+// ---- Workflow: Math.random() sanity check ----
+
+#[tokio::test]
+async fn workflow_math_random() {
+    let server = TestServer::start(test_addr!(37)).await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/workflow-math-random.math-random",
+            vec![],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    let result: Value = serde_json::from_str(body["ok"].as_str().unwrap()).unwrap();
+    assert_eq!(json!(true), result["inRange"], "all random values must be in [0, 1): {result}");
+
+    // Replay must return the same result — random values are deterministic
+    let replay_resp = server.replay(&exec_id).await;
+    assert_eq!(replay_resp.status().as_u16(), 200);
 
     server.shutdown().await;
 }

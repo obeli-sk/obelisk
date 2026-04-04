@@ -1779,4 +1779,37 @@ mod tests {
 
         db_close.close().await;
     }
+
+    /// Test: `Math.random()` returns a value in [0, 1) and is deterministic (replay
+    /// produces identical output because random values are replayed from the event log).
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_math_random(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_math_random(params) {
+            const r1 = Math.random();
+            const r2 = Math.random();
+            const r3 = Math.random();
+            return JSON.stringify({
+                r1, r2, r3,
+                allInRange: r1 >= 0 && r1 < 1 && r2 >= 0 && r2 < 1 && r3 >= 0 && r3 < 1,
+                notAllZero: r1 !== 0 || r2 !== 0 || r3 !== 0
+            });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_no_activities(db_pool, js_source, "test-math-random")
+                .await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!(true), result["allInRange"], "all values must be in [0, 1): {result}");
+        assert_eq!(json!(true), result["notAllZero"], "values should not all be zero: {result}");
+
+        db_close.close().await;
+    }
 }

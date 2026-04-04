@@ -125,6 +125,13 @@ expression: components
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
+      "component_type": "workflow",
+      "name": "test_math_random_workflow"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
       "name": "test_hello_webhook"
     }
