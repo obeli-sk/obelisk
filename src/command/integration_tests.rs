@@ -554,15 +554,15 @@ impl TestServer {
         &self,
         execution_id: &str,
         file: &str,
-        filter: Option<&str>,
+        version: Option<&str>,
     ) -> reqwest::Response {
-        let filter_part = match filter {
-            Some(f) => format!("&filter={f}"),
+        let version_part = match version {
+            Some(v) => format!("&version={v}"),
             None => String::new(),
         };
         self.client
             .get(format!(
-                "{}/v1/executions/{execution_id}/backtrace/source?file={file}{filter_part}",
+                "{}/v1/executions/{execution_id}/backtrace/source?file={file}{version_part}",
                 self.base_url
             ))
             .header("Accept", "application/json")
@@ -571,10 +571,10 @@ impl TestServer {
             .expect("backtrace/source request failed")
     }
 
-    async fn get_backtrace(&self, execution_id: &str, filter: Option<&str>) -> reqwest::Response {
-        let url = match filter {
-            Some(f) => format!(
-                "{}/v1/executions/{execution_id}/backtrace?filter={f}",
+    async fn get_backtrace(&self, execution_id: &str, version: Option<&str>) -> reqwest::Response {
+        let url = match version {
+            Some(v) => format!(
+                "{}/v1/executions/{execution_id}/backtrace?version={v}",
                 self.base_url
             ),
             None => format!("{}/v1/executions/{execution_id}/backtrace", self.base_url),
@@ -1657,17 +1657,17 @@ async fn backtrace_workflow_calling_activity() {
         "wasm_backtrace.frames must be an array"
     );
 
-    // ?filter=first should also succeed and return a consistent structure.
+    // ?version=first should also succeed and return a consistent structure.
     let resp_first = server.get_backtrace(&exec_id, Some("first")).await;
     assert_eq!(
         resp_first.status().as_u16(),
         200,
-        "filter=first should work"
+        "version=first should work"
     );
     let body_first: Value = resp_first.json().await.unwrap();
     assert_eq!(body_first["execution_id"], json!(exec_id));
 
-    // ?filter=<version_min_including> (numeric) should return the same record.
+    // ?version=<version_min_including> (numeric) should return the same record.
     let version_num = body["version_min_including"].as_u64().unwrap();
     let resp_num = server
         .get_backtrace(&exec_id, Some(&version_num.to_string()))
@@ -1675,15 +1675,15 @@ async fn backtrace_workflow_calling_activity() {
     assert_eq!(
         resp_num.status().as_u16(),
         200,
-        "numeric filter matching stored version should work"
+        "numeric version matching stored version should work"
     );
 
-    // Invalid filter string must return 400.
+    // Invalid version string must return 400.
     let resp_bad = server.get_backtrace(&exec_id, Some("bogus")).await;
     assert_eq!(
         resp_bad.status().as_u16(),
         400,
-        "invalid filter must be 400"
+        "invalid version must be 400"
     );
 
     // Non-existent (but well-formed) execution ID must return 404.
@@ -1733,7 +1733,7 @@ async fn backtrace_source_workflow_calling_activity() {
         "source must contain JS workflow content"
     );
 
-    // ?filter=first should resolve the same component and return the same source.
+    // ?version=first should resolve the same component and return the same source.
     let resp_first = server
         .get_backtrace_source(&exec_id, "add_via_activity.js", Some("first"))
         .await;

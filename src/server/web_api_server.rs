@@ -2294,48 +2294,48 @@ mod deployment {
 mod backtrace {
     use super::*;
 
-    /// Filter for which backtrace version to retrieve: "first", "last" (default), or a version number
+    /// Selector for which backtrace version to retrieve: "first", "last" (default), or a version number
     #[derive(Debug, Clone)]
     #[allow(clippy::enum_variant_names)]
-    pub(crate) enum BacktraceFilterQuery {
+    pub(crate) enum BacktraceVersionQuery {
         First,
         Last,
         Specific(Version),
     }
 
-    impl TryFrom<String> for BacktraceFilterQuery {
+    impl TryFrom<String> for BacktraceVersionQuery {
         type Error = String;
         fn try_from(s: String) -> Result<Self, String> {
             match s.as_str() {
-                "first" => Ok(BacktraceFilterQuery::First),
-                "last" => Ok(BacktraceFilterQuery::Last),
+                "first" => Ok(BacktraceVersionQuery::First),
+                "last" => Ok(BacktraceVersionQuery::Last),
                 v => {
                     let n: VersionType = v
                         .parse()
-                        .map_err(|_| format!("invalid filter value `{v}`"))?;
-                    Ok(BacktraceFilterQuery::Specific(Version(n)))
+                        .map_err(|_| format!("invalid version value `{v}`"))?;
+                    Ok(BacktraceVersionQuery::Specific(Version(n)))
                 }
             }
         }
     }
 
-    impl<'de> serde::Deserialize<'de> for BacktraceFilterQuery {
+    impl<'de> serde::Deserialize<'de> for BacktraceVersionQuery {
         fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
             let s = String::deserialize(d)?;
-            BacktraceFilterQuery::try_from(s).map_err(serde::de::Error::custom)
+            BacktraceVersionQuery::try_from(s).map_err(serde::de::Error::custom)
         }
     }
 
-    fn parse_filter(
-        filter: Option<String>,
+    fn parse_version(
+        version: Option<String>,
         accept: AcceptHeader,
     ) -> Result<BacktraceFilter, HttpResponse> {
-        match filter {
+        match version {
             None => Ok(BacktraceFilter::Last),
-            Some(s) => match BacktraceFilterQuery::try_from(s) {
-                Ok(BacktraceFilterQuery::First) => Ok(BacktraceFilter::First),
-                Ok(BacktraceFilterQuery::Last) => Ok(BacktraceFilter::Last),
-                Ok(BacktraceFilterQuery::Specific(v)) => Ok(BacktraceFilter::Specific(v)),
+            Some(s) => match BacktraceVersionQuery::try_from(s) {
+                Ok(BacktraceVersionQuery::First) => Ok(BacktraceFilter::First),
+                Ok(BacktraceVersionQuery::Last) => Ok(BacktraceFilter::Last),
+                Ok(BacktraceVersionQuery::Specific(v)) => Ok(BacktraceFilter::Specific(v)),
                 Err(msg) => Err(HttpResponse {
                     status: StatusCode::BAD_REQUEST,
                     message: msg,
@@ -2349,7 +2349,7 @@ mod backtrace {
     #[into_params(parameter_in = Query)]
     pub(crate) struct BacktraceParams {
         /// Which backtrace version to retrieve: "first", "last" (default), or a version number
-        filter: Option<String>,
+        version: Option<String>,
     }
 
     /// Serializable version of `BacktraceInfo`
@@ -2399,7 +2399,7 @@ mod backtrace {
         Query(params): Query<BacktraceParams>,
         accept: AcceptHeader,
     ) -> Result<Response, HttpResponse> {
-        let filter = parse_filter(params.filter, accept)?;
+        let filter = parse_version(params.version, accept)?;
 
         let conn = state
             .db_pool
@@ -2458,7 +2458,7 @@ mod backtrace {
         /// File path to retrieve (supports suffix matching if not exact)
         file: String,
         /// Which backtrace version to use for component lookup: "first", "last" (default), or a version number
-        filter: Option<String>,
+        version: Option<String>,
     }
 
     /// Get source file for a backtrace frame
@@ -2482,7 +2482,7 @@ mod backtrace {
         Query(params): Query<BacktraceSourceParams>,
         accept: AcceptHeader,
     ) -> Result<Response, HttpResponse> {
-        let filter = parse_filter(params.filter, accept)?;
+        let filter = parse_version(params.version, accept)?;
 
         let conn = state
             .db_pool
