@@ -695,7 +695,7 @@
       "type": "object",
       "properties": {
         "name": {
-          "description": "Parameter name (used in WIT metadata).",
+          "description": "Parameter name (used in WIT metadata).\nStored in kebab-case for WIT compatibility.",
           "type": "string"
         },
         "type": {
