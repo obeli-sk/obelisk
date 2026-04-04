@@ -470,9 +470,9 @@ mod tests {
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutorId, RunId};
     use concepts::storage::{
-        CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest,
-        JoinSetResponse, Locked, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, Version,
+        CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest, HistoryEvent,
+        JoinSetRequest, JoinSetResponse, Locked, PendingState, PendingStateFinished,
+        PendingStateFinishedError, PendingStateFinishedResultKind, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
@@ -1801,8 +1801,12 @@ mod tests {
             });
         }";
 
-        let harness =
-            JsWorkflowTestHarness::with_no_activities(db_pool, js_source, "test-math-random").await;
+        let harness = JsWorkflowTestHarness::with_no_activities(
+            db_pool.clone(),
+            js_source,
+            "test-math-random",
+        )
+        .await;
         harness.tick().await;
 
         let result = harness.get_result_json().await;
@@ -1815,6 +1819,24 @@ mod tests {
             json!(true),
             result["notAllZero"],
             "values should not all be zero: {result}"
+        );
+
+        // Execution log must contain Persist events — one per Math.random() call
+        let log = db_pool
+            .connection_test()
+            .await
+            .unwrap()
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        assert!(
+            log.events.iter().any(|e| matches!(
+                e.event,
+                ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::Persist { .. }
+                }
+            )),
+            "expected at least one Persist event for Math.random()"
         );
 
         db_close.close().await;
@@ -1839,7 +1861,8 @@ mod tests {
         }";
 
         let harness =
-            JsWorkflowTestHarness::with_no_activities(db_pool, js_source, "test-date-now").await;
+            JsWorkflowTestHarness::with_no_activities(db_pool.clone(), js_source, "test-date-now")
+                .await;
         // Put the clock at 42 ms before the workflow first runs so that the
         // sleep_bt(Now) call schedules its wakeup at t=42 ms.
         harness.advance_time(Duration::from_millis(42)).await;
@@ -1852,6 +1875,23 @@ mod tests {
             json!(42),
             result["now"],
             "Date.now() should return the simulated clock time (42ms): {result}"
+        );
+
+        // Execution log must contain a DelayRequest event — Date.now() uses
+        // the internal sleep_bt(Now) which creates a JoinSetRequest::DelayRequest
+        let db_conn = db_pool.connection_test().await.unwrap();
+        let log = db_conn.get(&harness.execution_id).await.unwrap();
+        assert!(
+            log.events.iter().any(|e| matches!(
+                e.event,
+                ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        request: JoinSetRequest::DelayRequest { .. },
+                        ..
+                    }
+                }
+            )),
+            "expected a JoinSetRequest::DelayRequest event for Date.now()"
         );
 
         db_close.close().await;

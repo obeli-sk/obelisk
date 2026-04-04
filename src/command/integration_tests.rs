@@ -1791,6 +1791,19 @@ async fn workflow_math_random() {
         "all random values must be in [0, 1): {result}"
     );
 
+    // Execution log must contain Persist events for Math.random() calls.
+    // API response shape: { "events": [{ "event": { "history_event": { "event": { "type": "persist", ... } } } }], ... }
+    let events_resp = server.get_events(&exec_id).await;
+    let has_persist = events_resp["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["event"]["history_event"]["event"]["type"].as_str() == Some("persist"));
+    assert!(
+        has_persist,
+        "expected at least one Persist event for Math.random(), got: {events_resp}"
+    );
+
     // Replay must return the same result — random values are deterministic
     let replay_resp = server.replay(&exec_id).await;
     assert_eq!(replay_resp.status().as_u16(), 200);
@@ -1819,6 +1832,19 @@ async fn workflow_date_now() {
         json!(true),
         result["isNumber"],
         "Date.now() must return a number: {result}"
+    );
+
+    // Execution log must contain a JoinSetRequest::DelayRequest event from the
+    // internal sleep call that Date.now() uses via sleep_bt(Now).
+    // API response shape: { "events": [{ "event": { "history_event": { "event": { "type": "join_set_request", ... } } } }], ... }
+    let events_resp = server.get_events(&exec_id).await;
+    let has_delay_request =
+        events_resp["events"].as_array().unwrap().iter().any(|e| {
+            e["event"]["history_event"]["event"]["type"].as_str() == Some("join_set_request")
+        });
+    assert!(
+        has_delay_request,
+        "expected at least one JoinSetRequest::DelayRequest event for Date.now(), got: {events_resp}"
     );
 
     // Replay must produce the same result — Date.now() uses the persisted clock
