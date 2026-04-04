@@ -283,22 +283,22 @@ hashbrown = { version = "0.16.1", features = ["serde"] }
 hdrhistogram = { version = "7.5.4", default-features = false }
 http = "1.4.0"
 http-body-util = "0.1"
-hyper = "1.8.1"
+hyper = "1.9.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.3.0"
 indexmap = { version = "2.13", features = ["serde"] }
-insta = { version = "1.47.0", features = ["json"] }
+insta = { version = "1.47.2", features = ["json"] }
 itertools = "0.14"
 jsonwebtoken = { version = "10", default-features = false }
 lazy_static = "1.5"
-libc = "0.2.183"
+libc = "0.2.184"
 oci-client = { version = "0.16.1", default-features = false }
 oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
 prost = "0.14.3"
 prost-wkt-types = "0.7"
 quote = "1"
-rand = "0.9"
+rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls-no-provider",
@@ -318,17 +318,17 @@ rusqlite = { version = "0.39.0", features = [
 ] }
 schemars = { version = "1.2.1", features = ["indexmap2", "chrono04"] }
 secrecy = "0.10.3"
-semver = "1.0.27"
+semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_with = "3.18.0"
-hmac = "0.12.1"
-sha2 = "0.10.9"
+hmac = "0.13.0"
+sha2 = "0.11.0"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3.27"
 thiserror = "2.0"
-tokio-postgres = { version = "0.7.16", features = ["with-chrono-0_4", "with-serde_json-1"] }
+tokio-postgres = { version = "0.7.17", features = ["with-chrono-0_4", "with-serde_json-1"] }
 tokio = { version = "1", features = [
     "fs",
     "io-util",
@@ -342,8 +342,8 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.18"
-toml = { version = "1.1.0", features = ["preserve_order"] }
-toml_edit = "0.25.8"
+toml = { version = "1.1.2", features = ["preserve_order"] }
+toml_edit = "0.25.10"
 tonic = { version = "0.14.5", default-features = false }
 tonic-prost = "0.14.5"
 tonic-prost-build = "0.14.5"
@@ -368,10 +368,10 @@ wasmtime-wasi-io = "43.0.0"
 wasmtime-wasi-http = "43.0.0"
 wasmtime-environ = "43.0.0"
 # wasm-tools
-wast = "245.0.1"
-wit-parser = "0.245.1"
-wasmparser = "0.245.1"
-wit-component = "0.245.1"
+wast = "246.0.2"
+wit-parser = "0.246.2"
+wasmparser = "0.246.2"
+wit-component = "0.246.2"
 
 # boa
 boa_engine = { package="obeli-sk-boa-engine", version="1.0.0-obeli-sk.6", default-features = false }
@@ -384,8 +384,8 @@ boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.6", def
 
 # testing components
 wasip2 = "1.0.2"
-wit-bindgen = "0.54.0"
-wit-bindgen-rust = "0.54.0"
+wit-bindgen = "0.55.0"
+wit-bindgen-rust = "0.55.0"
 wstd = "0.6.5"
 
 # otlp
