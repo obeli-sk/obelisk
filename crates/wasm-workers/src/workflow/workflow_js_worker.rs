@@ -1802,13 +1802,57 @@ mod tests {
         }";
 
         let harness =
-            JsWorkflowTestHarness::with_no_activities(db_pool, js_source, "test-math-random")
-                .await;
+            JsWorkflowTestHarness::with_no_activities(db_pool, js_source, "test-math-random").await;
         harness.tick().await;
 
         let result = harness.get_result_json().await;
-        assert_eq!(json!(true), result["allInRange"], "all values must be in [0, 1): {result}");
-        assert_eq!(json!(true), result["notAllZero"], "values should not all be zero: {result}");
+        assert_eq!(
+            json!(true),
+            result["allInRange"],
+            "all values must be in [0, 1): {result}"
+        );
+        assert_eq!(
+            json!(true),
+            result["notAllZero"],
+            "values should not all be zero: {result}"
+        );
+
+        db_close.close().await;
+    }
+
+    /// Test: `Date.now()` returns the current simulated clock time.
+    /// - `advance_time(42ms)` → clock=42ms (no timers yet)
+    /// - `tick()` → workflow creates `sleep_bt(Now)` with `expires_at=42ms`, yields
+    /// - `advance_time(ZERO)` → fires the timer (42ms ≤ 42ms)
+    /// - `tick()` → workflow resumes, `sleep_bt` returns 42ms, `Date.now()` = 42ms
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_date_now(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_date_now(params) {
+            const now = Date.now();
+            return JSON.stringify({ now });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_no_activities(db_pool, js_source, "test-date-now").await;
+        // Put the clock at 42 ms before the workflow first runs so that the
+        // sleep_bt(Now) call schedules its wakeup at t=42 ms.
+        harness.advance_time(Duration::from_millis(42)).await;
+        harness.tick().await; // workflow yields at sleep_bt(Now), expires_at=42ms
+        harness.advance_time(Duration::ZERO).await; // fire the timer (42ms ≤ 42ms)
+        harness.tick().await; // workflow resumes, sleep returns 42ms
+
+        let result = harness.get_result_json().await;
+        assert_eq!(
+            json!(42),
+            result["now"],
+            "Date.now() should return the simulated clock time (42ms): {result}"
+        );
 
         db_close.close().await;
     }

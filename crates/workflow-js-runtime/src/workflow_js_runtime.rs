@@ -256,6 +256,9 @@ pub fn execute(
     // Override Math.random() to use deterministic random source
     setup_math_random(&mut context).expect("Math.random setup must work");
 
+    // Override Date.now() to use the Obelisk clock via sleep(0)
+    setup_date_now(&mut context).expect("Date.now setup must work");
+
     // Get the default export function from the ES module
     let default_fn = match get_default_export_workflow(js_code, &mut context) {
         Ok(func) => func,
@@ -757,6 +760,32 @@ fn setup_math_random(context: &mut Context) -> JsResult<()> {
     math_obj.set(
         js_string!("random"),
         math_rand_fn.to_js_function(context.realm()),
+        false,
+        context,
+    )?;
+    Ok(())
+}
+
+/// Override `Date.now()` to return the current Obelisk clock time via `sleep_bt(0)`.
+///
+/// Returns milliseconds since Unix epoch as f64 (matching the JS spec).
+fn setup_date_now(context: &mut Context) -> JsResult<()> {
+    let date_now_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
+        let backtrace = capture_backtrace(ctx);
+        let dt = sleep_bt(ScheduleAt::Now, Some(&backtrace))
+            .map_err(|()| JsNativeError::error().with_message("sleep failed"))?;
+        let ms = (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
+        Ok(JsValue::from(ms))
+    });
+
+    let global = context.global_object();
+    let date = global
+        .get(js_string!("Date"), context)
+        .expect("global Date object must be found");
+    let date_obj = date.as_object().expect("global Date must be an object");
+    date_obj.set(
+        js_string!("now"),
+        date_now_fn.to_js_function(context.realm()),
         false,
         context,
     )?;
