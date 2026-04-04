@@ -704,6 +704,7 @@ mod logs {
 
     #[derive(Deserialize, Debug, IntoParams)]
     #[into_params(parameter_in = Query)]
+    #[expect(clippy::struct_excessive_bools)]
     pub(crate) struct ExecutionLogsParams {
         /// Filter by log levels
         #[serde(default)]
