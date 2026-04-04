@@ -537,7 +537,7 @@
             }
           },
           {
-            "name": "filter",
+            "name": "version",
             "in": "query",
             "description": "Which backtrace version to retrieve: \"first\", \"last\" (default), or a version number",
             "required": false,
@@ -590,7 +590,7 @@
             }
           },
           {
-            "name": "filter",
+            "name": "version",
             "in": "query",
             "description": "Which backtrace version to use for component lookup: \"first\", \"last\" (default), or a version number",
             "required": false,
