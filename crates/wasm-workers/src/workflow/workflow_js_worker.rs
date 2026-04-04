@@ -470,9 +470,9 @@ mod tests {
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutorId, RunId};
     use concepts::storage::{
-        CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest,
-        JoinSetResponse, Locked, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, Version,
+        CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest, HistoryEvent,
+        JoinSetRequest, JoinSetResponse, Locked, PendingState, PendingStateFinished,
+        PendingStateFinishedError, PendingStateFinishedResultKind, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
@@ -1775,6 +1775,123 @@ mod tests {
             has_unlocked,
             "expected Unlocked event in execution log, got: {:?}",
             log.events
+        );
+
+        db_close.close().await;
+    }
+
+    /// Test: `Math.random()` returns a value in [0, 1) and is deterministic (replay
+    /// produces identical output because random values are replayed from the event log).
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_math_random(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_math_random(params) {
+            const r1 = Math.random();
+            const r2 = Math.random();
+            const r3 = Math.random();
+            return JSON.stringify({
+                r1, r2, r3,
+                allInRange: r1 >= 0 && r1 < 1 && r2 >= 0 && r2 < 1 && r3 >= 0 && r3 < 1,
+                notAllZero: r1 !== 0 || r2 !== 0 || r3 !== 0
+            });
+        }";
+
+        let harness = JsWorkflowTestHarness::with_no_activities(
+            db_pool.clone(),
+            js_source,
+            "test-math-random",
+        )
+        .await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(
+            json!(true),
+            result["allInRange"],
+            "all values must be in [0, 1): {result}"
+        );
+        assert_eq!(
+            json!(true),
+            result["notAllZero"],
+            "values should not all be zero: {result}"
+        );
+
+        // Execution log must contain Persist events — one per Math.random() call
+        let log = db_pool
+            .connection_test()
+            .await
+            .unwrap()
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        assert!(
+            log.events.iter().any(|e| matches!(
+                e.event,
+                ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::Persist { .. }
+                }
+            )),
+            "expected at least one Persist event for Math.random()"
+        );
+
+        db_close.close().await;
+    }
+
+    /// Test: `Date.now()` returns the current simulated clock time.
+    /// - `advance_time(42ms)` → clock=42ms (no timers yet)
+    /// - `tick()` → workflow creates `sleep_bt(Now)` with `expires_at=42ms`, yields
+    /// - `advance_time(ZERO)` → fires the timer (42ms ≤ 42ms)
+    /// - `tick()` → workflow resumes, `sleep_bt` returns 42ms, `Date.now()` = 42ms
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_date_now(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_date_now(params) {
+            const now = Date.now();
+            return JSON.stringify({ now });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_no_activities(db_pool.clone(), js_source, "test-date-now")
+                .await;
+        // Put the clock at 42 ms before the workflow first runs so that the
+        // sleep_bt(Now) call schedules its wakeup at t=42 ms.
+        harness.advance_time(Duration::from_millis(42)).await;
+        harness.tick().await; // workflow yields at sleep_bt(Now), expires_at=42ms
+        harness.advance_time(Duration::ZERO).await; // fire the timer (42ms ≤ 42ms)
+        harness.tick().await; // workflow resumes, sleep returns 42ms
+
+        let result = harness.get_result_json().await;
+        assert_eq!(
+            json!(42),
+            result["now"],
+            "Date.now() should return the simulated clock time (42ms): {result}"
+        );
+
+        // Execution log must contain a DelayRequest event — Date.now() uses
+        // the internal sleep_bt(Now) which creates a JoinSetRequest::DelayRequest
+        let db_conn = db_pool.connection_test().await.unwrap();
+        let log = db_conn.get(&harness.execution_id).await.unwrap();
+        assert!(
+            log.events.iter().any(|e| matches!(
+                e.event,
+                ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        request: JoinSetRequest::DelayRequest { .. },
+                        ..
+                    }
+                }
+            )),
+            "expected a JoinSetRequest::DelayRequest event for Date.now()"
         );
 
         db_close.close().await;

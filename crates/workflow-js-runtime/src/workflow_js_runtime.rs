@@ -73,6 +73,9 @@
 //!
 //! ## Random (Deterministic)
 //! ```js
+//! // Standard JS Math.random() — deterministic, backed by obelisk.randomU64
+//! const r = Math.random(); // [0, 1)
+//!
 //! // Random integers (deterministic replay)
 //! const n = obelisk.randomU64(0, 100);        // [0, 100)
 //! const m = obelisk.randomU64Inclusive(1, 6); // [1, 6] (dice roll)
@@ -249,6 +252,12 @@ pub fn execute(
 
     // Set up console
     setup_console(&mut context, Logger).expect("console setup must work");
+
+    // Override Math.random() to use deterministic random source
+    setup_math_random(&mut context).expect("Math.random setup must work");
+
+    // Override Date.now() to use the Obelisk clock via sleep(0)
+    setup_date_now(&mut context).expect("Date.now setup must work");
 
     // Get the default export function from the ES module
     let default_fn = match get_default_export_workflow(js_code, &mut context) {
@@ -724,6 +733,62 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     // Set obelisk as global
     context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
 
+    Ok(())
+}
+
+/// Override `Math.random()` to use the deterministic Obelisk random source.
+///
+/// Standard `Math.random()` returns a value in `[0, 1)`. We emulate this by
+/// generating a random u64 in `[0, 2^53)` and dividing by `2^53`.
+fn setup_math_random(context: &mut Context) -> JsResult<()> {
+    let math_rand_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
+        let backtrace = capture_backtrace(ctx);
+        // Generate a random value in [0, 2^53) and divide to get [0, 1).
+        // 2^53 = 9007199254740992
+        let max = 9007199254740992u64;
+        let val = random_u64_bt(0, max, Some(&backtrace));
+        // f64 is precise for all integers up to 2^53.
+        let result = val as f64 / max as f64;
+        Ok(JsValue::from(result))
+    });
+
+    let global = context.global_object();
+    let math = global
+        .get(js_string!("Math"), context)
+        .expect("global Math object must be found");
+    let math_obj = math.as_object().expect("global Math must be an object");
+    math_obj.set(
+        js_string!("random"),
+        math_rand_fn.to_js_function(context.realm()),
+        false,
+        context,
+    )?;
+    Ok(())
+}
+
+/// Override `Date.now()` to return the current Obelisk clock time via `sleep_bt(0)`.
+///
+/// Returns milliseconds since Unix epoch as f64 (matching the JS spec).
+fn setup_date_now(context: &mut Context) -> JsResult<()> {
+    let date_now_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
+        let backtrace = capture_backtrace(ctx);
+        let dt = sleep_bt(ScheduleAt::Now, Some(&backtrace))
+            .map_err(|()| JsNativeError::error().with_message("sleep failed"))?;
+        let ms = (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
+        Ok(JsValue::from(ms))
+    });
+
+    let global = context.global_object();
+    let date = global
+        .get(js_string!("Date"), context)
+        .expect("global Date object must be found");
+    let date_obj = date.as_object().expect("global Date must be an object");
+    date_obj.set(
+        js_string!("now"),
+        date_now_fn.to_js_function(context.realm()),
+        false,
+        context,
+    )?;
     Ok(())
 }
 

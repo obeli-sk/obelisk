@@ -53,5 +53,11 @@ expression: functions
   },
   {
     "ffqn": "testing:integration/workflow-call-stub.call-stub"
+  },
+  {
+    "ffqn": "testing:integration/workflow-math-random.math-random"
+  },
+  {
+    "ffqn": "testing:integration/workflow-date-now.date-now"
   }
 ]
