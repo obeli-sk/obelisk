@@ -1,40 +1,5 @@
 //! Component registry for a single deployment.
 //!
-//! # Indexing: name vs. digest
-//!
-//! [`ComponentId`] carries two independent identifiers that serve different purposes:
-//!
-//! - **`name`** — operator-assigned, mutable label. Unique within a deployment.
-//!   Used as the primary key in [`ComponentConfigRegistryInner::names_to_components`].
-//!   Good for current-deployment queries (list, import/export resolution) but meaningless
-//!   for historical queries: a component can be renamed between deployments without
-//!   changing its code.
-//!
-//! - **`input_digest`** — SHA-256 of the component's content (WASM binary or JS source).
-//!   Content-addressed: same code → same digest, regardless of the operator-assigned name.
-//!   Used as the key in three purpose-specific secondary indexes:
-//!
-//!   | Index | Consumer | Notes |
-//!   |---|---|---|
-//!   | [`digests_to_wit`] | `GetWit` RPC, `GetFunctionWit` web API | Supports both current and historical deployments |
-//!   | [`digests_to_replay_info`] | Workflow/activity replay and mid-execution upgrade | Executor stores the digest in execution records; must resolve back to the compiled component |
-//!
-//! # Digest uniqueness
-//!
-//! For non-webhook components (`workflow_or_activity_config.is_some()`) digest uniqueness is
-//! enforced on insert: two components with identical content would export the same functions
-//! and replay against the same binary, making a second registration redundant and confusing.
-//!
-//! [`WebhookEndpoint`]s are exempt: multiple webhooks may intentionally share the same JS or
-//! WASM source (e.g. `hook-prod` and `hook-staging`) while differing only in their runtime
-//! configuration (routes, env vars). The digest maps use `entry().or_insert()` semantics —
-//! the first registered webhook wins — because all instances of the same code have identical
-//! WIT and source maps.
-//!
-//! [`digests_to_wit`]: ComponentConfigRegistryInner::digests_to_wit
-//! [`digests_to_replay_info`]: ComponentConfigRegistryInner::digests_to_replay_info
-//! [`WebhookEndpoint`]: concepts::ComponentType::WebhookEndpoint
-
 use crate::RunnableComponent;
 use concepts::ComponentId;
 use concepts::ComponentType;
@@ -113,7 +78,7 @@ impl ComponentConfigRegistry {
         }
 
         // component.workflow_or_activity_config == None implies webhook.
-        // Webhooks do not have to have a unique component digest.
+        // Webhooks do not have to have a unique component digest - all share the same ffqn.
         // The same webhook source can be configured differently.
         // Webhooks need just to provide source and WIT, so duplication is OK.
 
@@ -253,7 +218,8 @@ impl ComponentConfigRegistry {
                     "wasi" => true,
                     "obelisk" => matches!(
                         import.ffqn.ifc_fqn.pkg_fqn_name().to_string().as_str(),
-                        "obelisk:webhook@5.0.0"
+                        "obelisk:webhook@5.1.0"
+                            | "obelisk:webhook@5.0.0"
                             | "obelisk:log@1.0.0"
                             | "obelisk:types@4.0.0"
                             | "obelisk:types@4.1.0"

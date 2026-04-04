@@ -1,4 +1,4 @@
-package obelisk:webhook@5.0.0;
+package obelisk:webhook@5.1.0;
 
 @since(version = 5.0.0)
 interface webhook-support {
@@ -67,7 +67,7 @@ interface webhook-support {
 
     /// Get the execution ID of the current webhook handler invocation.
     /// Returns the ID assigned to this webhook execution by the engine.
-    @since(version = 5.0.0)
+    @since(version = 5.1.0)
     current-execution-id: func() -> execution-id;
     /// Call a function and wait for the result.
     /// Creates a child execution, waits for it to complete, and returns the result.
