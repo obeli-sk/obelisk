@@ -3,9 +3,9 @@ use anyhow::Context;
 use concepts::{
     ComponentType, ContentDigest, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
     IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType,
-    ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE,
-    SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB,
-    StrVariant,
+    ReturnTypeExtendable, ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET,
+    SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
+    SUFFIX_PKG_STUB, StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -172,6 +172,50 @@ impl WasmComponent {
                     "cannot rebuild resolve from synthesized WIT".to_string(),
                     err,
                 )
+            })?;
+        Ok(Self {
+            exim,
+            resolve,
+            main_pkg_id,
+        })
+    }
+
+    /// Create a `WasmComponent` directly from a function signature, bypassing WIT text synthesis
+    /// and re-parsing. Used for JS activities/workflows/stubs where we already have all the type
+    /// information and don't need the WIT text roundtrip that `new_from_wit_string` performs.
+    pub fn new_from_fn_signature(
+        ffqn: &FunctionFqn,
+        params: &[ParameterType],
+        return_type: &ReturnTypeExtendable,
+        component_type: ComponentType,
+        world_name: &str,
+    ) -> Result<Self, DecodeError> {
+        let fn_metadata = FunctionMetadata {
+            ffqn: ffqn.clone(),
+            parameter_types: ParameterTypes(params.to_vec()),
+            return_type: ReturnType::Extendable(return_type.clone()),
+            extension: None,
+            submittable: has_submittable_exports(component_type),
+        };
+        let pkg_ifc_fns = PackageIfcFns {
+            ifc_fqn: ffqn.ifc_fqn.clone(),
+            extension: false,
+            fns: IndexMap::from_iter([(ffqn.function_name.clone(), fn_metadata)]),
+        };
+        let exim_lite = ExImLite {
+            exports: vec![pkg_ifc_fns.clone()],
+            imports: vec![],
+        };
+        let exim = ExIm::decode(exim_lite, component_type)?;
+        let pkg_fqn = ffqn.ifc_fqn.pkg_fqn_name();
+        let (resolve, main_pkg_id) =
+            crate::wit::build_primary_resolve(&pkg_fqn, &[&pkg_ifc_fns], Some(world_name))
+                .map_err(|e| {
+                    DecodeError::new_with_source("cannot build resolve for JS function", e)
+                })?;
+        let (resolve, main_pkg_id) = crate::wit::rebuild_resolve(&exim, resolve, main_pkg_id)
+            .map_err(|e| {
+                DecodeError::new_with_source("cannot rebuild resolve for JS function", e)
             })?;
         Ok(Self {
             exim,

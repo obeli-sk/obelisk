@@ -13,8 +13,8 @@ use tracing::{error, warn};
 use wit_component::WitPrinter;
 use wit_parser::{
     Function, FunctionKind, Handle, Interface, InterfaceId, PackageId, PackageName, Param, Resolve,
-    Span, Stability, Type, TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup, WorldItem,
-    WorldKey,
+    Span, Stability, Type, TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup, World,
+    WorldItem, WorldKey,
 };
 
 const OBELISK_TYPES_VERSION_MAJOR: u64 = 4;
@@ -750,7 +750,7 @@ pub fn build_wit_deps_map(
 
     for (pkg_fqn, ifc_fns_list) in &primary_pkgs {
         // Build primary Resolve and print it.
-        let (primary_resolve, primary_pkg_id) = build_primary_resolve(pkg_fqn, ifc_fns_list)?;
+        let (primary_resolve, primary_pkg_id) = build_primary_resolve(pkg_fqn, ifc_fns_list, None)?;
         let primary_wit = {
             let mut printer = WitPrinter::default();
             printer.print(&primary_resolve, primary_pkg_id, &[])?;
@@ -812,9 +812,10 @@ pub fn build_wit_deps_map(
 /// Each [`PackageIfcFns`] entry contributes one interface; functions are allocated using
 /// [`crate::wit_builder::allocate_type`] so that named types (record, variant, enum, flags) get
 /// proper `TypeDef` entries.
-fn build_primary_resolve(
+pub(crate) fn build_primary_resolve(
     pkg_fqn: &PkgFqn,
     ifc_fns_list: &[&PackageIfcFns],
+    world_name: Option<&str>,
 ) -> Result<(Resolve, PackageId), anyhow::Error> {
     use crate::wit_builder::allocate_type;
 
@@ -897,6 +898,40 @@ fn build_primary_resolve(
             }
         }
         resolve.interfaces.get_mut(ifc_id).unwrap().types = types;
+    }
+
+    if let Some(world_name) = world_name {
+        let world_exports: IndexMap<WorldKey, WorldItem> = resolve.packages[pkg_id]
+            .interfaces
+            .values()
+            .map(|&ifc_id| {
+                (
+                    WorldKey::Interface(ifc_id),
+                    WorldItem::Interface {
+                        id: ifc_id,
+                        stability: Stability::Unknown,
+                        span: Span::default(),
+                    },
+                )
+            })
+            .collect();
+        let world = World {
+            name: world_name.to_string(),
+            docs: wit_parser::Docs::default(),
+            imports: IndexMap::default(),
+            exports: world_exports,
+            package: Some(pkg_id),
+            span: Span::default(),
+            includes: vec![],
+            stability: Stability::Unknown,
+        };
+        let world_id = resolve.worlds.alloc(world);
+        resolve
+            .packages
+            .get_mut(pkg_id)
+            .unwrap()
+            .worlds
+            .insert(world_name.to_string(), world_id);
     }
 
     Ok((resolve, pkg_id))

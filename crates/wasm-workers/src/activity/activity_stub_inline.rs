@@ -20,8 +20,13 @@ pub fn compile_activity_stub_inline(
     params: &[ParameterType],
     return_type: &ReturnTypeExtendable,
 ) -> Result<ComponentConfig, utils::wasm_tools::DecodeError> {
-    let wit = crate::js_wit_builder::synthesize_wit(ffqn, params, return_type, "stub-activity");
-    let wasm_component = WasmComponent::new_from_wit_string(&wit, ComponentType::ActivityStub)?;
+    let wasm_component = WasmComponent::new_from_fn_signature(
+        ffqn,
+        params,
+        return_type,
+        ComponentType::ActivityStub,
+        "stub-activity",
+    )?;
     let wit_text_with_extensions = wasm_component.wit();
     let exports_ext = wasm_component.exim.get_exports(true).to_vec();
     let exports_hierarchy_ext = wasm_component.exim.get_exports_hierarchy_ext().to_vec();

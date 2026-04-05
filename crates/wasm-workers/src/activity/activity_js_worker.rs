@@ -44,9 +44,13 @@ impl ActivityJsWorkerCompiled {
         user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
-        let wit = synthesize_wit(&user_ffqn, &user_params, &user_return_type);
-        let user_wasm_component =
-            WasmComponent::new_from_wit_string(&wit, ComponentType::Activity)?;
+        let user_wasm_component = WasmComponent::new_from_fn_signature(
+            &user_ffqn,
+            &user_params,
+            &user_return_type,
+            ComponentType::Activity,
+            "js-activity",
+        )?;
         Ok(Self {
             inner,
             js_source,
@@ -272,13 +276,6 @@ impl Worker for ActivityJsWorker {
     }
 }
 
-fn synthesize_wit(
-    ffqn: &FunctionFqn,
-    params: &[ParameterType],
-    return_type: &ReturnTypeExtendable,
-) -> String {
-    crate::js_wit_builder::synthesize_wit(ffqn, params, return_type, "js-activity")
-}
 
 #[cfg(test)]
 mod tests {
