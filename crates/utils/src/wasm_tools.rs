@@ -471,7 +471,6 @@ pub struct ExImInner {
     exports_flat_noext: Vec<FunctionMetadata>,
     exports_flat_ext: Vec<FunctionMetadata>,
     pub imports_flat: Vec<FunctionMetadata>,
-    pub(crate) imports_hierarchy: Vec<PackageIfcFns>,
 }
 
 impl ExIm {
@@ -521,7 +520,6 @@ impl ExIm {
                 exports_flat_noext,
                 exports_flat_ext,
                 imports_flat,
-                imports_hierarchy,
             }),
         })
     }

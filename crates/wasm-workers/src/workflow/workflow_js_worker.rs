@@ -452,7 +452,6 @@ impl WorkflowJsWorker {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

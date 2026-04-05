@@ -276,7 +276,6 @@ impl Worker for ActivityJsWorker {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
