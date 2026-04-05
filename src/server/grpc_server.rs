@@ -1,12 +1,9 @@
 use crate::command::server;
 use crate::command::server::DeploymentContextHandle;
-use crate::command::server::PrepareDirsParams;
 use crate::command::server::PreparedDirs;
 use crate::command::server::SubmitError;
-use crate::command::server::VerifyParams;
-use crate::command::server::upsert_backtrace_sources;
+use crate::command::server::SwitchDeploymentAction;
 use crate::config::config_holder::PathPrefixes;
-use crate::config::toml::DeploymentCanonical;
 use crate::config::toml::ServerConfigToml;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
@@ -44,7 +41,6 @@ use concepts::storage::Version;
 use concepts::storage::VersionType;
 use concepts::time::ClockFn;
 use concepts::time::Now;
-use executor::executor::ExecutorTaskHandle;
 use grpc::TonicRespResult;
 use grpc::TonicResult;
 use grpc::grpc_gen;
@@ -1431,6 +1427,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         &self,
         request: tonic::Request<grpc_gen::SwitchDeploymentRequest>,
     ) -> TonicRespResult<grpc_gen::SwitchDeploymentResponse> {
+        use grpc_gen::switch_deployment_response::Outcome;
         let request = request.into_inner();
         let new_deployment_id: DeploymentId = request
             .deployment_id
@@ -1438,141 +1435,34 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .try_into()?;
         tracing::Span::current()
             .record("deployment_id", tracing::field::display(&new_deployment_id));
+        let mut termination_watcher = self.termination_watcher.clone();
+        let outcome = server::switch_deployment(
+            new_deployment_id,
+            SwitchDeploymentAction::new(request.hot_redeploy, request.verify),
+            self.config.clone(),
+            self.engines.clone(),
+            &self.prepared_dirs,
+            self.path_prefixes.clone(),
+            self.db_pool.clone(),
+            &mut termination_watcher,
+            &self.deployment_ctx,
+            &self.webhook_registry,
+            self.cancel_registry.clone(),
+            self.log_forwarder_sender.clone(),
+        )
+        .await
+        .map_err(|err| match err {
+            server::SwitchError::NotFound => tonic::Status::not_found("deployment not found"),
+            server::SwitchError::Other(e) => tonic::Status::failed_precondition(format!("{e:#}")),
+        })?;
 
-        let conn = self
-            .db_pool
-            .external_api_conn()
-            .await
-            .map_err(map_to_status)?;
-
-        // Load and check the deployment record.
-        let deployment_record = conn
-            .get_deployment(new_deployment_id)
-            .await
-            .to_status()?
-            .must_exist("deployment")?;
-
-        let target_deployment: DeploymentCanonical =
-            serde_json::from_str(&deployment_record.config_json).map_err(|err| {
-                tonic::Status::internal(format!("cannot parse stored deployment config: {err}"))
-            })?;
-
-        if request.hot_redeploy {
-            // Hot redeploy path: activities, workflows, and webhooks are all hot-redeployable.
-            let config = self.config.clone();
-            let verify_deployment_id = DeploymentId::generate();
-            let mut termination_watcher = self.termination_watcher.clone();
-            let linked = server::verify_config_compile_link(
-                config,
-                self.engines.clone(),
-                &self.prepared_dirs,
-                target_deployment,
-                self.path_prefixes.clone(),
-                verify_deployment_id,
-                VerifyParams {
-                    dir_params: PrepareDirsParams {
-                        clean_cache: false,
-                        clean_codegen_cache: false,
-                    },
-                    ignore_missing_env_vars: false,
-                    suppress_type_checking_errors: false,
-                },
-                &mut termination_watcher,
-            )
-            .await
-            .map_err(|err| {
-                tonic::Status::failed_precondition(format!("verification failed: {err:#}"))
-            })?;
-
-            // Hold the write lock for the entire swap: drain old executors,
-            // activate in DB, write new context (registry + new handles).
-            // This prevents ServerInit::close from racing between drain and spawn.
-            let mut ctx = self.deployment_ctx.write().await;
-            if ctx.closed {
-                return Err(tonic::Status::failed_precondition(
-                    "server is being shut down",
-                ));
-            }
-
-            // Activate deployment in DB.
-            conn.activate_deployment(new_deployment_id, chrono::Utc::now())
-                .await
-                .to_status()?;
-
-            // Stop old executors.
-            let old = std::mem::take(&mut ctx.exec_task_handles);
-            futures_util::future::join_all(old.iter().map(ExecutorTaskHandle::close)).await;
-
-            self.webhook_registry
-                .swap(linked.http_servers_to_webhooks_and_state.iter().map(
-                    |(http_server, (_instance, state))| {
-                        (http_server.name.to_string(), state.clone())
-                    },
-                ));
-
-            // Spawn new executors.
-            let new_handles: Vec<ExecutorTaskHandle> = linked
-                .workers_linked
-                .into_iter()
-                .map(|pre_spawn| {
-                    pre_spawn.spawn(
-                        new_deployment_id,
-                        &self.db_pool,
-                        self.cancel_registry.clone(),
-                        &self.log_forwarder_sender,
-                    )
-                })
-                .collect();
-
-            *ctx = server::DeploymentContext {
-                deployment_id: new_deployment_id,
-                component_registry_ro: linked.component_registry_ro.clone(),
-                exec_task_handles: new_handles,
-                closed: false,
-            };
-
-            let outcome = grpc_gen::switch_deployment_response::Outcome::SwitchOutcomeSwitched;
-            info!(%new_deployment_id, ?outcome, "Deployment hot-redeployed");
-            return Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
-                outcome: outcome.into(),
-            }));
-        }
-
-        if request.verify {
-            let config = self.config.clone();
-            let verify_deployment_id = DeploymentId::generate();
-            let mut termination_watcher = self.termination_watcher.clone();
-            server::verify_config_compile_link(
-                config,
-                self.engines.clone(),
-                &self.prepared_dirs,
-                target_deployment,
-                self.path_prefixes.clone(),
-                verify_deployment_id,
-                VerifyParams {
-                    dir_params: PrepareDirsParams {
-                        clean_cache: false,
-                        clean_codegen_cache: false,
-                    },
-                    ignore_missing_env_vars: false,
-                    suppress_type_checking_errors: false,
-                },
-                &mut termination_watcher,
-            )
-            .await
-            .map_err(|err| {
-                tonic::Status::failed_precondition(format!("verification failed: {err:#}"))
-            })?;
-        }
-
-        conn.enqueue_deployment(new_deployment_id)
-            .await
-            .to_status()?;
-
-        let outcome = grpc_gen::switch_deployment_response::Outcome::SwitchOutcomeRestartRequired;
-        info!(%new_deployment_id, ?outcome, "Deployment enqueued for next restart");
+        let grpc_outcome = match outcome {
+            server::SwitchOutcome::Switched => Outcome::SwitchOutcomeSwitched,
+            server::SwitchOutcome::RestartRequired => Outcome::SwitchOutcomeRestartRequired,
+        };
+        info!(%new_deployment_id, ?grpc_outcome, "Deployment switch requested");
         Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
-            outcome: outcome.into(),
+            outcome: grpc_outcome.into(),
         }))
     }
 
@@ -1581,70 +1471,24 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         &self,
         request: tonic::Request<grpc_gen::SubmitDeploymentRequest>,
     ) -> TonicRespResult<grpc_gen::SubmitDeploymentResponse> {
-        use concepts::storage::{DeploymentRecord, DeploymentStatus};
         let request = request.into_inner();
-
-        let deployment: DeploymentCanonical =
-            serde_json::from_str(&request.config_json).map_err(|err| {
-                tonic::Status::invalid_argument(format!("cannot parse config_json: {err}"))
-            })?;
-
-        let config_json = crate::config::toml::compute_config_json(&deployment);
-
-        // Submit will fail if structural verification (ignoring env vars) fails.
-        // When `verify` is set, env vars must be present.
-        let config = self.config.clone();
-        let verify_deployment_id = DeploymentId::generate();
         let mut termination_watcher = self.termination_watcher.clone();
-        let server_compiled = server::verify_config_compile_link(
-            config,
+        let result = server::submit_deployment(
+            &request.config_json,
+            request.verify,
+            request.created_by.clone(),
+            self.config.clone(),
             self.engines.clone(),
             &self.prepared_dirs,
-            deployment,
             self.path_prefixes.clone(),
-            verify_deployment_id,
-            server::VerifyParams {
-                dir_params: PrepareDirsParams {
-                    clean_cache: false,
-                    clean_codegen_cache: false,
-                },
-                ignore_missing_env_vars: !request.verify,
-                suppress_type_checking_errors: false,
-            },
+            self.db_pool.clone(),
             &mut termination_watcher,
         )
         .await
-        .map_err(|err| {
-            tonic::Status::failed_precondition(format!("verification failed: {err:#}"))
-        })?;
-
-        let deployment_id = DeploymentId::generate();
-        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
-
-        let conn = self
-            .db_pool
-            .external_api_conn()
-            .await
-            .map_err(map_to_status)?;
-        let now = Utc::now();
-        conn.insert_deployment(DeploymentRecord {
-            deployment_id,
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
-            created_by: request.created_by,
-            config_json,
-        })
-        .await
-        .to_status()?;
-
-        // Save sources for backtrace display.
-        upsert_backtrace_sources(conn.as_ref(), &server_compiled).await;
-
-        info!(%deployment_id, "Deployment submitted");
+        .map_err(|err| tonic::Status::failed_precondition(format!("{err:#}")))?;
+        tracing::Span::current().record("deployment_id", tracing::field::display(&result));
         Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {
-            deployment_id: Some(deployment_id.into()),
+            deployment_id: Some(result.into()),
         }))
     }
 

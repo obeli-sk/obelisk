@@ -18,14 +18,13 @@ use crate::{
         toml::DeploymentCanonical,
     },
 };
-use chrono::Utc;
 use concepts::prefixed_ulid::DeploymentId;
-use concepts::storage::{DbPool as _, DbPoolCloseable as _, DeploymentRecord, DeploymentStatus};
+use concepts::storage::DbPool as _;
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
-    DeploymentId as GrpcDeploymentId, ListComponentsRequest, SwitchDeploymentRequest,
-    deployment_repository_client::DeploymentRepositoryClient,
+    DeploymentId as GrpcDeploymentId, ListComponentsRequest, SubmitDeploymentRequest,
+    SwitchDeploymentRequest, deployment_repository_client::DeploymentRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
 };
 use hmac::{Hmac, Mac};
@@ -599,6 +598,114 @@ impl TestServer {
             .send()
             .await
             .expect("backtrace request failed")
+    }
+
+    /// Submit a new deployment via the Web API and return its deployment ID.
+    async fn webapi_submit_deployment(&self, config_json: &str) -> DeploymentId {
+        let resp = self
+            .client
+            .post(format!("{}/v1/deployments", self.base_url))
+            .header("Accept", "application/json")
+            .json(&json!({ "config_json": config_json, "verify": false }))
+            .send()
+            .await
+            .expect("webapi submit deployment request failed");
+        assert!(
+            resp.status().is_success(),
+            "webapi submit deployment failed: {}",
+            resp.status()
+        );
+        let body: Value = resp.json().await.unwrap();
+        body["ok"]
+            .as_str()
+            .expect("webapi submit deployment: missing ok field")
+            .parse()
+            .expect("webapi submit deployment: invalid deployment id")
+    }
+
+    /// Hot-redeploy to the given deployment via the Web API.
+    async fn webapi_switch_hot_redeploy(&self, deployment_id: DeploymentId) {
+        let resp = self
+            .client
+            .put(format!(
+                "{}/v1/deployments/{deployment_id}/switch",
+                self.base_url
+            ))
+            .header("Accept", "application/json")
+            .json(&json!({ "verify": false, "hot_redeploy": true }))
+            .send()
+            .await
+            .expect("webapi switch deployment request failed");
+        assert!(
+            resp.status().is_success(),
+            "webapi switch deployment failed: {}",
+            resp.status()
+        );
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["ok"], "switched", "unexpected switch outcome");
+    }
+}
+
+/// Selects which protocol to use for submit + hot-redeploy in parametrized tests.
+enum TestDeployClient {
+    /// Submit and switch via gRPC.
+    Grpc,
+    /// Submit and switch via the Web API.
+    WebApi,
+}
+
+impl TestDeployClient {
+    /// Read the active deployment config from SQLite, apply `mutate` to it,
+    /// then submit the modified deployment and hot-redeploy to it using
+    /// whichever protocol this client represents.
+    async fn submit_and_hot_redeploy(
+        &self,
+        server: &TestServer,
+        mutate: impl FnOnce(&mut DeploymentCanonical),
+    ) {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.external_api_conn().await.unwrap();
+        let active = conn.get_active_deployment().await.unwrap().unwrap();
+        pool.close().await;
+        let mut new_deployment: DeploymentCanonical =
+            serde_json::from_str(&active.config_json).unwrap();
+        mutate(&mut new_deployment);
+        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
+
+        match self {
+            TestDeployClient::Grpc => {
+                let mut grpc_client =
+                    DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+                        .await
+                        .unwrap();
+                let submit_resp = grpc_client
+                    .submit_deployment(SubmitDeploymentRequest {
+                        config_json: new_config_json,
+                        created_by: Some("test".to_string()),
+                        verify: false,
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner();
+                let second_id = submit_resp.deployment_id.unwrap().id;
+                let switch_resp = grpc_client
+                    .switch_deployment(SwitchDeploymentRequest {
+                        deployment_id: Some(GrpcDeploymentId { id: second_id }),
+                        verify: false,
+                        hot_redeploy: true,
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner();
+                assert_eq!(switch_resp.outcome(), Outcome::SwitchOutcomeSwitched);
+            }
+            TestDeployClient::WebApi => {
+                let id = server.webapi_submit_deployment(&new_config_json).await;
+                server.webapi_switch_hot_redeploy(id).await;
+            }
+        }
     }
 }
 
@@ -1213,22 +1320,7 @@ async fn inline_stub_self_stubbing() {
 /// its value.  The initial deployment sets `TEST_ENV_VAR=hello_from_env`.  A
 /// second deployment changes that value to `updated_value`.  After a hot redeploy
 /// the activity must return the new value without a server restart.
-#[tokio::test]
-async fn hot_redeploy_activity() {
-    use chrono::Utc;
-    use concepts::prefixed_ulid::DeploymentId;
-    use concepts::storage::{
-        DbPool as _, DbPoolCloseable as _, DeploymentRecord, DeploymentStatus,
-    };
-    use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
-    use grpc::grpc_gen::{
-        DeploymentId as GrpcDeploymentId, SwitchDeploymentRequest,
-        deployment_repository_client::DeploymentRepositoryClient,
-        switch_deployment_response::Outcome,
-    };
-
-    let server = TestServer::start(test_addr!(30)).await;
-
+async fn hot_redeploy_activity_impl(server: &TestServer, deploy_client: &TestDeployClient) {
     // 1. Run the activity with the initial deployment — must return the configured value.
     let resp = server
         .submit_follow(
@@ -1241,61 +1333,21 @@ async fn hot_redeploy_activity() {
     assert_eq!(body, json!({"ok": "hello_from_env"}));
 
     // 2. Build a second deployment with the env var changed to "updated_value".
-    let second_id = DeploymentId::generate();
-    {
-        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
-            .await
-            .unwrap();
-        let conn = pool.external_api_conn().await.unwrap();
-        let active = conn.get_active_deployment().await.unwrap().unwrap();
-
-        let config: serde_json::Value = serde_json::from_str(&active.config_json).unwrap();
-        let mut new_deployment: DeploymentCanonical = serde_json::from_value(config).unwrap();
-        let found = new_deployment
-            .activities_js
-            .iter_mut()
-            .find(|activity| &**activity.name == "test_read_env_activity")
-            .unwrap();
-        found.env_vars = vec![EnvVarConfig::KeyValue {
-            key: "TEST_ENV_VAR".to_string(),
-            value: "updated_value".to_string(),
-        }];
-
-        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
-
-        let now = Utc::now();
-        conn.insert_deployment(DeploymentRecord {
-            deployment_id: second_id,
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            config_json: new_config_json,
-            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
-            created_by: Some("test".to_string()),
+    deploy_client
+        .submit_and_hot_redeploy(server, |new_deployment| {
+            let found = new_deployment
+                .activities_js
+                .iter_mut()
+                .find(|activity| &**activity.name == "test_read_env_activity")
+                .unwrap();
+            found.env_vars = vec![EnvVarConfig::KeyValue {
+                key: "TEST_ENV_VAR".to_string(),
+                value: "updated_value".to_string(),
+            }];
         })
-        .await
-        .unwrap();
-        pool.close().await;
-    }
+        .await;
 
-    // 3. Hot-redeploy to the second deployment.
-    let mut client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap();
-    let resp = client
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(GrpcDeploymentId {
-                id: second_id.to_string(),
-            }),
-            verify: false,
-            hot_redeploy: true,
-        })
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
-
-    // 4. Run the activity again — must return the updated value.
+    // 3. Run the activity again — must return the updated value.
     let resp = server
         .submit_follow(
             "testing:integration/activity-env.read-env",
@@ -1305,7 +1357,19 @@ async fn hot_redeploy_activity() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({"ok": "updated_value"}));
+}
 
+#[tokio::test]
+async fn hot_redeploy_activity_grpc() {
+    let server = TestServer::start(test_addr!(30)).await;
+    hot_redeploy_activity_impl(&server, &TestDeployClient::Grpc).await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn hot_redeploy_activity_webapi() {
+    let server = TestServer::start(test_addr!(39)).await;
+    hot_redeploy_activity_impl(&server, &TestDeployClient::WebApi).await;
     server.shutdown().await;
 }
 
@@ -1316,11 +1380,9 @@ async fn hot_redeploy_activity() {
 /// the second deployment.  The test asserts that before the hot redeploy the stub
 /// is absent from both REST `/v1/functions` and gRPC `ListComponents`, and present
 /// in both after it.
-#[tokio::test]
-async fn hot_redeploy_registry() {
+async fn hot_redeploy_registry_impl(server: &TestServer, deploy_client: &TestDeployClient) {
     const NEW_STUB_FFQN: &str = "testing:integration/stubs.new-hot-stub";
 
-    let server = TestServer::start(test_addr!(31)).await;
     let grpc_endpoint = format!("http://{}", server.api_addr());
 
     // Helper: check whether the new stub ffqn appears in REST /v1/functions.
@@ -1373,61 +1435,22 @@ async fn hot_redeploy_registry() {
         "stub must be absent before hot redeploy (gRPC)"
     );
 
-    // Build a second deployment that adds the new inline stub.
-    let second_id = DeploymentId::generate();
-    {
-        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
-            .await
-            .unwrap();
-        let conn = pool.external_api_conn().await.unwrap();
-        let active = conn.get_active_deployment().await.unwrap().unwrap();
-
-        let config: serde_json::Value = serde_json::from_str(&active.config_json).unwrap();
-        let mut new_deployment: DeploymentCanonical = serde_json::from_value(config).unwrap();
-        new_deployment
-            .activities_stub
-            .push(ActivityStubComponentConfigToml::Inline(
-                ActivityStubInlineConfigToml {
-                    name: ConfigName::new(concepts::StrVariant::Static("new_hot_stub")).unwrap(),
-                    ffqn: NEW_STUB_FFQN.parse().unwrap(),
-                    params: Some(vec![]),
-                    return_type: Some("result<string, string>".to_string()),
-                },
-            ));
-
-        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
-
-        let now = Utc::now();
-        conn.insert_deployment(DeploymentRecord {
-            deployment_id: second_id,
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            config_json: new_config_json,
-            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
-            created_by: Some("test".to_string()),
+    // Build a second deployment that adds the new inline stub and hot-redeploy.
+    deploy_client
+        .submit_and_hot_redeploy(server, |new_deployment| {
+            new_deployment
+                .activities_stub
+                .push(ActivityStubComponentConfigToml::Inline(
+                    ActivityStubInlineConfigToml {
+                        name: ConfigName::new(concepts::StrVariant::Static("new_hot_stub"))
+                            .unwrap(),
+                        ffqn: NEW_STUB_FFQN.parse().unwrap(),
+                        params: Some(vec![]),
+                        return_type: Some("result<string, string>".to_string()),
+                    },
+                ));
         })
-        .await
-        .unwrap();
-        pool.close().await;
-    }
-
-    // Hot-redeploy to the second deployment.
-    let mut deploy_client = DeploymentRepositoryClient::connect(grpc_endpoint.clone())
-        .await
-        .unwrap();
-    let resp = deploy_client
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(GrpcDeploymentId {
-                id: second_id.to_string(),
-            }),
-            verify: false,
-            hot_redeploy: true,
-        })
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
+        .await;
 
     // Both servers must now expose the updated registry.
     assert!(
@@ -1438,7 +1461,19 @@ async fn hot_redeploy_registry() {
         grpc_has_new_stub(grpc_endpoint).await,
         "stub must be present after hot redeploy (gRPC)"
     );
+}
 
+#[tokio::test]
+async fn hot_redeploy_registry_grpc() {
+    let server = TestServer::start(test_addr!(31)).await;
+    hot_redeploy_registry_impl(&server, &TestDeployClient::Grpc).await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn hot_redeploy_registry_webapi() {
+    let server = TestServer::start(test_addr!(40)).await;
+    hot_redeploy_registry_impl(&server, &TestDeployClient::WebApi).await;
     server.shutdown().await;
 }
 
@@ -1446,10 +1481,10 @@ async fn hot_redeploy_registry() {
 /// env-var value from the updated deployment — proving that `WebhookServerState`
 /// (including `fn_registry`, `deployment_id`, and the rebuilt router) is pushed
 /// through the `WebhookRegistry` watch channel.
-#[tokio::test]
-async fn hot_redeploy_webhook_js_env_var() {
-    let server = TestServer::start(test_addr!(32)).await;
-
+async fn hot_redeploy_webhook_js_env_var_impl(
+    server: &TestServer,
+    deploy_client: &TestDeployClient,
+) {
     // 1. Verify the initial env var value is served.
     let resp = server
         .client
@@ -1460,60 +1495,22 @@ async fn hot_redeploy_webhook_js_env_var() {
     assert_eq!(resp.status().as_u16(), 200);
     assert_eq!(resp.text().await.unwrap(), "hello_from_webhook_env");
 
-    // 2. Build a second deployment with the env var changed.
-    let second_id = DeploymentId::generate();
-    {
-        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
-            .await
-            .unwrap();
-        let conn = pool.external_api_conn().await.unwrap();
-        let active = conn.get_active_deployment().await.unwrap().unwrap();
-
-        let mut new_deployment: DeploymentCanonical =
-            serde_json::from_str(&active.config_json).unwrap();
-        let found = new_deployment
-            .webhooks_js
-            .iter_mut()
-            .find(|w| &**w.name == "test_read_env_webhook")
-            .unwrap();
-        found.env_vars = vec![EnvVarConfig::KeyValue {
-            key: "WEBHOOK_TEST_ENV_VAR".to_string(),
-            value: "updated_webhook_env".to_string(),
-        }];
-
-        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
-        conn.insert_deployment(DeploymentRecord {
-            deployment_id: second_id,
-            created_at: Utc::now(),
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            config_json: new_config_json,
-            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
-            created_by: Some("test".to_string()),
+    // 2. Build a second deployment with the env var changed and hot-redeploy.
+    deploy_client
+        .submit_and_hot_redeploy(server, |new_deployment| {
+            let found = new_deployment
+                .webhooks_js
+                .iter_mut()
+                .find(|w| &**w.name == "test_read_env_webhook")
+                .unwrap();
+            found.env_vars = vec![EnvVarConfig::KeyValue {
+                key: "WEBHOOK_TEST_ENV_VAR".to_string(),
+                value: "updated_webhook_env".to_string(),
+            }];
         })
-        .await
-        .unwrap();
-        pool.close().await;
-    }
+        .await;
 
-    // 3. Hot-redeploy to the second deployment.
-    let mut client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap();
-    let resp = client
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(GrpcDeploymentId {
-                id: second_id.to_string(),
-            }),
-            verify: false,
-            hot_redeploy: true,
-        })
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
-
-    // 4. The webhook must now return the updated env var.
+    // 3. The webhook must now return the updated env var.
     // Use a fresh client to ensure a new TCP connection is made (the per-connection
     // state snapshot means a keep-alive connection would still see the old state).
     let fresh_client = reqwest::Client::new();
@@ -1524,17 +1521,29 @@ async fn hot_redeploy_webhook_js_env_var() {
         .expect("webhook request failed after hot redeploy");
     assert_eq!(resp.status().as_u16(), 200);
     assert_eq!(resp.text().await.unwrap(), "updated_webhook_env");
+}
 
+#[tokio::test]
+async fn hot_redeploy_webhook_js_env_var_grpc() {
+    let server = TestServer::start(test_addr!(32)).await;
+    hot_redeploy_webhook_js_env_var_impl(&server, &TestDeployClient::Grpc).await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn hot_redeploy_webhook_js_env_var_webapi() {
+    let server = TestServer::start(test_addr!(41)).await;
+    hot_redeploy_webhook_js_env_var_impl(&server, &TestDeployClient::WebApi).await;
     server.shutdown().await;
 }
 
 /// After a hot redeploy that removes a JS webhook endpoint, the route must
 /// return 404 — proving that the router inside the running HTTP server is
 /// replaced, not just the env vars.
-#[tokio::test]
-async fn hot_redeploy_webhook_js_remove_endpoint() {
-    let server = TestServer::start(test_addr!(33)).await;
-
+async fn hot_redeploy_webhook_js_remove_endpoint_impl(
+    server: &TestServer,
+    deploy_client: &TestDeployClient,
+) {
     // 1. Verify /hello is served by the initial deployment.
     let resp = server
         .client
@@ -1545,54 +1554,16 @@ async fn hot_redeploy_webhook_js_remove_endpoint() {
     assert_eq!(resp.status().as_u16(), 200);
     assert_eq!(resp.text().await.unwrap(), "Hello from JS webhook!");
 
-    // 2. Build a second deployment that removes test_hello_webhook.
-    let second_id = DeploymentId::generate();
-    {
-        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
-            .await
-            .unwrap();
-        let conn = pool.external_api_conn().await.unwrap();
-        let active = conn.get_active_deployment().await.unwrap().unwrap();
-
-        let mut new_deployment: DeploymentCanonical =
-            serde_json::from_str(&active.config_json).unwrap();
-        new_deployment
-            .webhooks_js
-            .retain(|w| &**w.name != "test_hello_webhook");
-
-        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
-        conn.insert_deployment(DeploymentRecord {
-            deployment_id: second_id,
-            created_at: Utc::now(),
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            config_json: new_config_json,
-            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
-            created_by: Some("test".to_string()),
+    // 2. Build a second deployment that removes test_hello_webhook and hot-redeploy.
+    deploy_client
+        .submit_and_hot_redeploy(server, |new_deployment| {
+            new_deployment
+                .webhooks_js
+                .retain(|w| &**w.name != "test_hello_webhook");
         })
-        .await
-        .unwrap();
-        pool.close().await;
-    }
+        .await;
 
-    // 3. Hot-redeploy to the second deployment.
-    let mut client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap();
-    let resp = client
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(GrpcDeploymentId {
-                id: second_id.to_string(),
-            }),
-            verify: false,
-            hot_redeploy: true,
-        })
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
-
-    // 4. /hello must now return 404 — the endpoint was removed from the router.
+    // 3. /hello must now return 404 — the endpoint was removed from the router.
     // Use a fresh client to ensure a new TCP connection is made (the per-connection
     // state snapshot means a keep-alive connection would still see the old router).
     let fresh_client = reqwest::Client::new();
@@ -1606,7 +1577,19 @@ async fn hot_redeploy_webhook_js_remove_endpoint() {
         404,
         "removed webhook endpoint must return 404 after hot redeploy"
     );
+}
 
+#[tokio::test]
+async fn hot_redeploy_webhook_js_remove_endpoint_grpc() {
+    let server = TestServer::start(test_addr!(33)).await;
+    hot_redeploy_webhook_js_remove_endpoint_impl(&server, &TestDeployClient::Grpc).await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn hot_redeploy_webhook_js_remove_endpoint_webapi() {
+    let server = TestServer::start(test_addr!(42)).await;
+    hot_redeploy_webhook_js_remove_endpoint_impl(&server, &TestDeployClient::WebApi).await;
     server.shutdown().await;
 }
 

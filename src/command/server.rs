@@ -62,6 +62,7 @@ use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
+use concepts::storage::{DeploymentRecord, DeploymentStatus};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
@@ -926,6 +927,9 @@ pub(crate) async fn run_internal(
         cancel_watcher,
         &cancel_registry,
         &termination_watcher,
+        config.clone(),
+        prepared_dirs.clone(),
+        path_prefixes.clone(),
     )
     .instrument(span)
     .await?;
@@ -996,6 +1000,10 @@ pub(crate) async fn run_internal(
         subscription_interruption,
         engines: server_init.engines.clone(),
         log_forwarder_sender: server_init.log_forwarder_sender.clone(),
+        config: server_init.config.clone(),
+        prepared_dirs: server_init.prepared_dirs.clone(),
+        path_prefixes: server_init.path_prefixes.clone(),
+        webhook_registry: server_init.webhook_registry.clone(),
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
@@ -1293,6 +1301,233 @@ pub(crate) async fn upsert_backtrace_sources(
     }
 }
 
+/// Shared logic for submitting a deployment (used by both gRPC and web API).
+/// Parses, verifies, and inserts the deployment record.
+#[expect(clippy::too_many_arguments)]
+#[instrument(skip_all)]
+pub(crate) async fn submit_deployment(
+    config_json: &str,
+    verify: bool,
+    created_by: Option<String>,
+    config: ServerConfigToml,
+    engines: Engines,
+    prepared_dirs: &PreparedDirs,
+    path_prefixes: Arc<PathPrefixes>,
+    db_pool: Arc<dyn DbPool>,
+    termination_watcher: &mut watch::Receiver<()>,
+) -> anyhow::Result<DeploymentId> {
+    let deployment: DeploymentCanonical =
+        serde_json::from_str(config_json).with_context(|| "cannot parse config_json")?;
+
+    let canonical_config = crate::config::toml::compute_config_json(&deployment);
+
+    let verify_deployment_id = DeploymentId::generate();
+    let server_compiled = verify_config_compile_link(
+        config,
+        engines,
+        prepared_dirs,
+        deployment,
+        path_prefixes,
+        verify_deployment_id,
+        VerifyParams {
+            dir_params: PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
+            ignore_missing_env_vars: !verify,
+            suppress_type_checking_errors: false,
+        },
+        termination_watcher,
+    )
+    .await?;
+
+    let deployment_id = DeploymentId::generate();
+    let conn = db_pool.external_api_conn().await?;
+    let now = chrono::Utc::now();
+
+    conn.insert_deployment(DeploymentRecord {
+        deployment_id,
+        created_at: now,
+        last_active_at: None,
+        status: DeploymentStatus::Inactive,
+        obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+        created_by,
+        config_json: canonical_config,
+    })
+    .await?;
+
+    upsert_backtrace_sources(conn.as_ref(), &server_compiled).await;
+
+    info!(%deployment_id, "Deployment submitted");
+    Ok(deployment_id)
+}
+
+/// Outcome of switching a deployment.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SwitchOutcome {
+    Switched,
+    RestartRequired,
+}
+
+/// Error returned by [`switch_deployment`].
+pub(crate) enum SwitchError {
+    /// The requested deployment ID does not exist.
+    NotFound,
+    /// Any other failure (verification, compilation, DB write, etc.).
+    Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for SwitchError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Other(err)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SwitchDeploymentAction {
+    HotRedeploy,
+    VerifyAndStore,
+    Store,
+}
+impl SwitchDeploymentAction {
+    pub(crate) fn new(hot_redeploy: bool, verify: bool) -> SwitchDeploymentAction {
+        if hot_redeploy {
+            SwitchDeploymentAction::HotRedeploy
+        } else if verify {
+            SwitchDeploymentAction::VerifyAndStore
+        } else {
+            SwitchDeploymentAction::Store
+        }
+    }
+}
+
+/// Shared logic for switching deployments (used by both gRPC and web API).
+#[expect(clippy::too_many_arguments)]
+#[instrument(skip_all, fields(%deployment_id))]
+pub(crate) async fn switch_deployment(
+    deployment_id: DeploymentId,
+    action: SwitchDeploymentAction,
+    config: ServerConfigToml,
+    engines: Engines,
+    prepared_dirs: &PreparedDirs,
+    path_prefixes: Arc<PathPrefixes>,
+    db_pool: Arc<dyn DbPool>,
+    termination_watcher: &mut watch::Receiver<()>,
+    deployment_ctx: &DeploymentContextHandle,
+    webhook_registry: &WebhookRegistry,
+    cancel_registry: CancelRegistry,
+    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+) -> Result<SwitchOutcome, SwitchError> {
+    let conn = db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?;
+
+    let deployment_record = conn
+        .get_deployment(deployment_id)
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?
+        .ok_or(SwitchError::NotFound)?;
+
+    let target_deployment: DeploymentCanonical =
+        serde_json::from_str(&deployment_record.config_json)
+            .with_context(|| "cannot parse stored deployment config")?;
+
+    if action == SwitchDeploymentAction::HotRedeploy {
+        let linked = verify_config_compile_link(
+            config,
+            engines,
+            prepared_dirs,
+            target_deployment,
+            path_prefixes,
+            DeploymentId::generate(),
+            VerifyParams {
+                dir_params: PrepareDirsParams {
+                    clean_cache: false,
+                    clean_codegen_cache: false,
+                },
+                ignore_missing_env_vars: false,
+                suppress_type_checking_errors: false,
+            },
+            termination_watcher,
+        )
+        .await?;
+
+        let mut ctx = deployment_ctx.write().await;
+        if ctx.closed {
+            return Err(SwitchError::Other(anyhow::anyhow!(
+                "server is being shut down"
+            )));
+        }
+
+        conn.activate_deployment(deployment_id, chrono::Utc::now())
+            .await
+            .map_err(|e| SwitchError::Other(e.into()))?;
+
+        let old = std::mem::take(&mut ctx.exec_task_handles);
+        futures_util::future::join_all(
+            old.iter()
+                .map(executor::executor::ExecutorTaskHandle::close),
+        )
+        .await;
+
+        webhook_registry.swap(linked.http_servers_to_webhooks_and_state.iter().map(
+            |(http_server, (_instance, state))| (http_server.name.to_string(), state.clone()),
+        ));
+
+        let new_handles: Vec<ExecutorTaskHandle> = linked
+            .workers_linked
+            .into_iter()
+            .map(|pre_spawn| {
+                pre_spawn.spawn(
+                    deployment_id,
+                    &db_pool,
+                    cancel_registry.clone(),
+                    &log_forwarder_sender,
+                )
+            })
+            .collect();
+
+        *ctx = DeploymentContext {
+            deployment_id,
+            component_registry_ro: linked.component_registry_ro.clone(),
+            exec_task_handles: new_handles,
+            closed: false,
+        };
+
+        info!(%deployment_id, "Deployment hot-redeployed");
+        Ok(SwitchOutcome::Switched)
+    } else {
+        if action == SwitchDeploymentAction::VerifyAndStore {
+            verify_config_compile_link(
+                config,
+                engines,
+                prepared_dirs,
+                target_deployment,
+                path_prefixes,
+                DeploymentId::generate(),
+                VerifyParams {
+                    dir_params: PrepareDirsParams {
+                        clean_cache: false,
+                        clean_codegen_cache: false,
+                    },
+                    ignore_missing_env_vars: false,
+                    suppress_type_checking_errors: false,
+                },
+                termination_watcher,
+            )
+            .await?;
+        }
+
+        conn.enqueue_deployment(deployment_id)
+            .await
+            .map_err(|e| SwitchError::Other(e.into()))?;
+
+        info!(%deployment_id, "Deployment enqueued for next restart");
+        Ok(SwitchOutcome::RestartRequired)
+    }
+}
+
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
@@ -1305,6 +1540,9 @@ async fn spawn_tasks_and_threads(
     cancel_watcher: CancelWatcherTomlConfig,
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
+    config: ServerConfigToml,
+    prepared_dirs: PreparedDirs,
+    path_prefixes: Arc<PathPrefixes>,
 ) -> Result<ServerInit, anyhow::Error> {
     upsert_backtrace_sources(
         db_pool.external_api_conn().await?.as_ref(),
@@ -1440,6 +1678,9 @@ async fn spawn_tasks_and_threads(
         engines: server_compiled_linked.engines,
         log_forwarder_sender,
         webhook_registry: Arc::new(webhook_registry),
+        config,
+        prepared_dirs,
+        path_prefixes,
     };
     Ok(server_init)
 }
@@ -1459,6 +1700,9 @@ struct ServerInit {
     log_db_forarder: AbortOnDropHandle,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     webhook_registry: Arc<WebhookRegistry>,
+    config: ServerConfigToml,
+    prepared_dirs: PreparedDirs,
+    path_prefixes: Arc<PathPrefixes>,
 }
 impl ServerInit {
     async fn close(self) {
@@ -1477,6 +1721,9 @@ impl ServerInit {
             log_db_forarder,
             log_forwarder_sender,
             webhook_registry,
+            config: _,
+            prepared_dirs: _,
+            path_prefixes: _,
         } = self;
 
         debug!("Closing executors");
