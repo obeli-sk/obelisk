@@ -1,10 +1,15 @@
 #![expect(clippy::needless_for_each)] // for #[openapi] annotation
 use crate::{
-    command::server::{self, SubmitError, SubmitOutcome},
+    command::server::{self, PreparedDirs, SubmitError, SubmitOutcome},
+    config::config_holder::PathPrefixes,
+    config::toml::ServerConfigToml,
     server::web_api_server::{
         backtrace::{execution_backtrace, execution_backtrace_source},
         components::{component_wit, components_list},
-        deployment::{get_current_deployment_id, list_deployments},
+        deployment::{
+            get_current_deployment_id, get_deployment, list_deployments, submit_deployment,
+            switch_deployment,
+        },
         functions::{function_wit, functions_list},
     },
 };
@@ -45,7 +50,8 @@ use utoipa::{IntoParams, OpenApi, ToSchema};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
     activity::cancel_registry::CancelRegistry, component_logger::LogStrageConfig, engines::Engines,
-    workflow::workflow_js_worker::WorkflowJsWorker, workflow::workflow_worker::WorkflowWorker,
+    webhook::webhook_registry::WebhookRegistry, workflow::workflow_js_worker::WorkflowJsWorker,
+    workflow::workflow_worker::WorkflowWorker,
 };
 
 #[derive(Clone)]
@@ -57,6 +63,10 @@ pub(crate) struct WebApiState {
     pub(crate) subscription_interruption: Option<Duration>,
     pub(crate) engines: Engines,
     pub(crate) log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+    pub(crate) config: ServerConfigToml,
+    pub(crate) prepared_dirs: PreparedDirs,
+    pub(crate) path_prefixes: Arc<PathPrefixes>,
+    pub(crate) webhook_registry: Arc<WebhookRegistry>,
 }
 
 /// `OpenAPI` documentation for the Obelisk REST API
@@ -99,6 +109,9 @@ pub(crate) struct WebApiState {
         functions::function_wit,
         deployment::list_deployments,
         deployment::get_current_deployment_id,
+        deployment::get_deployment,
+        deployment::submit_deployment,
+        deployment::switch_deployment,
     ),
     components(schemas(
         PaginationDirectionSortedFromLatest,
@@ -204,6 +217,12 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::put(execution_upgrade),
         )
         .route("/deployments", routing::get(list_deployments))
+        .route("/deployments", routing::post(submit_deployment))
+        .route("/deployments/{deployment-id}", routing::get(get_deployment))
+        .route(
+            "/deployments/{deployment-id}/switch",
+            routing::put(switch_deployment),
+        )
         .route("/deployment-id", routing::get(get_current_deployment_id))
         .route(
             "/executions/{execution-id}/backtrace",
@@ -2126,19 +2145,27 @@ mod functions {
 }
 
 mod deployment {
-    use crate::server::web_api_server::{AcceptHeader, ErrorWrapper, HttpResponse, WebApiState};
+    use crate::{
+        command::server::SwitchDeploymentAction,
+        server::web_api_server::{AcceptHeader, ErrorWrapper, HttpResponse, WebApiState},
+    };
     use axum::{
         Json,
-        extract::{Query, State},
+        extract::{Path, Query, State},
         response::{IntoResponse, Response},
     };
     use chrono::{DateTime, Utc};
-    use concepts::{
-        prefixed_ulid::DeploymentId,
-        storage::{
-            DeploymentState, DeploymentStatus, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH, Pagination,
-        },
+    use concepts::prefixed_ulid::DeploymentId;
+    use concepts::storage::Pagination;
+    use concepts::storage::{
+        DeploymentRecord, DeploymentState, DeploymentStatus, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
     };
+    use http::StatusCode;
+    use serde::{Deserialize, Serialize};
+    use std::fmt::Write as _;
+    use std::sync::Arc;
+    use tracing::instrument;
+    use utoipa::{IntoParams, ToSchema};
 
     #[derive(Debug, Serialize, ToSchema)]
     #[serde(rename_all = "snake_case")]
@@ -2157,11 +2184,6 @@ mod deployment {
             }
         }
     }
-    use serde::{Deserialize, Serialize};
-    use std::{fmt::Write as _, sync::Arc};
-    use tracing::instrument;
-    use utoipa::{IntoParams, ToSchema};
-
     /// Deployment state with execution counts
     #[derive(Debug, Serialize, ToSchema)]
     pub struct DeploymentStateSer {
@@ -2288,6 +2310,210 @@ mod deployment {
             AcceptHeader::Json => Json(deployment_id).into_response(),
             AcceptHeader::Text => deployment_id.to_string().into_response(),
         })
+    }
+
+    /// Deployment details with config
+    #[derive(Debug, Serialize, ToSchema)]
+    pub struct DeploymentRecordSer {
+        #[schema(value_type = String)]
+        pub deployment_id: DeploymentId,
+        pub status: DeploymentStatusSer,
+        pub created_at: DateTime<Utc>,
+        pub last_active_at: Option<DateTime<Utc>>,
+        pub config_json: String,
+    }
+
+    impl From<&DeploymentRecord> for DeploymentRecordSer {
+        fn from(r: &DeploymentRecord) -> Self {
+            Self {
+                deployment_id: r.deployment_id,
+                status: DeploymentStatusSer::from(&r.status),
+                created_at: r.created_at,
+                last_active_at: r.last_active_at,
+                config_json: r.config_json.clone(),
+            }
+        }
+    }
+
+    /// Get a specific deployment by ID
+    #[utoipa::path(
+        get,
+        path = "/v1/deployments/{deployment_id}",
+        tag = "deployments",
+        params(
+            ("deployment_id" = String, Path, description = "Deployment ID")
+        ),
+        responses(
+            (status = 200, description = "Deployment details", body = DeploymentRecordSer),
+            (status = 404, description = "Deployment not found")
+        )
+    )]
+    #[instrument(skip_all, fields(deployment_id))]
+    pub(crate) async fn get_deployment(
+        Path(deployment_id): Path<DeploymentId>,
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        let conn = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        let record = conn
+            .get_deployment(deployment_id)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?
+            .ok_or_else(|| HttpResponse::not_found(accept, Some("deployment")))?;
+
+        let ser = DeploymentRecordSer::from(&record);
+        Ok(match accept {
+            AcceptHeader::Json => Json(ser).into_response(),
+            AcceptHeader::Text => {
+                let mut output = String::new();
+                writeln!(
+                    &mut output,
+                    "{} status={} created={} last_active={} config={}",
+                    ser.deployment_id,
+                    match ser.status {
+                        DeploymentStatusSer::Inactive => "inactive",
+                        DeploymentStatusSer::Enqueued => "enqueued",
+                        DeploymentStatusSer::Active => "active",
+                    },
+                    ser.created_at.to_rfc3339(),
+                    ser.last_active_at
+                        .map(|t| t.to_rfc3339())
+                        .unwrap_or_default(),
+                    ser.config_json,
+                )
+                .expect("writing to string");
+                output.into_response()
+            }
+        })
+    }
+
+    /// Request payload for submitting a new deployment
+    #[derive(Deserialize, ToSchema)]
+    pub struct DeploymentSubmitPayload {
+        /// Deployment config as JSON string
+        pub config_json: String,
+        /// Verify all environment variables before persisting
+        #[serde(default)]
+        pub verify: bool,
+    }
+
+    /// Submit a new deployment
+    #[utoipa::path(
+        post,
+        path = "/v1/deployments",
+        tag = "deployments",
+        request_body = DeploymentSubmitPayload,
+        responses(
+            (status = 200, description = "Deployment submitted", body = String),
+            (status = 400, description = "Invalid config"),
+            (status = 409, description = "Validation failed")
+        )
+    )]
+    #[instrument(skip_all)]
+    pub(crate) async fn submit_deployment(
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+        Json(payload): Json<DeploymentSubmitPayload>,
+    ) -> Result<Response, HttpResponse> {
+        let mut termination_watcher = state.termination_watcher.clone();
+        let result = Box::pin(crate::command::server::submit_deployment(
+            &payload.config_json,
+            payload.verify,
+            Some("web-api".to_string()),
+            state.config.clone(),
+            state.engines.clone(),
+            &state.prepared_dirs,
+            state.path_prefixes.clone(),
+            state.db_pool.clone(),
+            &mut termination_watcher,
+        ))
+        .await
+        .map_err(|err| HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message: format!("{err:#}"),
+            accept,
+        })?;
+        Ok(HttpResponse {
+            status: StatusCode::OK,
+            message: result.to_string(),
+            accept,
+        }
+        .into_response())
+    }
+
+    /// Request payload for switching deployment
+    #[derive(Deserialize, ToSchema)]
+    pub struct DeploymentSwitchPayload {
+        /// Verify config before switching
+        #[serde(default)]
+        pub verify: bool,
+        /// Hot redeploy without restart
+        #[serde(default)]
+        pub hot_redeploy: bool,
+    }
+
+    /// Switch the active deployment
+    #[utoipa::path(
+        put,
+        path = "/v1/deployments/{deployment_id}/switch",
+        tag = "deployments",
+        params(
+            ("deployment_id" = String, Path, description = "Deployment ID to switch to")
+        ),
+        request_body = DeploymentSwitchPayload,
+        responses(
+            (status = 200, description = "Deployment switched or enqueued", body = String),
+            (status = 404, description = "Deployment not found"),
+            (status = 409, description = "Validation or switch failed")
+        )
+    )]
+    #[instrument(skip_all, fields(deployment_id))]
+    pub(crate) async fn switch_deployment(
+        Path(deployment_id): Path<DeploymentId>,
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+        Json(payload): Json<DeploymentSwitchPayload>,
+    ) -> Result<Response, HttpResponse> {
+        let mut termination_watcher = state.termination_watcher.clone();
+        let outcome = Box::pin(crate::command::server::switch_deployment(
+            deployment_id,
+            SwitchDeploymentAction::new(payload.hot_redeploy, payload.verify),
+            state.config.clone(),
+            state.engines.clone(),
+            &state.prepared_dirs,
+            state.path_prefixes.clone(),
+            state.db_pool.clone(),
+            &mut termination_watcher,
+            &state.deployment_ctx,
+            &state.webhook_registry,
+            state.cancel_registry.clone(),
+            state.log_forwarder_sender.clone(),
+        ))
+        .await
+        .map_err(|err| match err {
+            crate::command::server::SwitchError::NotFound => {
+                HttpResponse::not_found(accept, Some("deployment"))
+            }
+            crate::command::server::SwitchError::Other(e) => HttpResponse {
+                status: StatusCode::BAD_REQUEST,
+                message: format!("{e:#}"),
+                accept,
+            },
+        })?;
+        let message = match outcome {
+            crate::command::server::SwitchOutcome::Switched => "switched",
+            crate::command::server::SwitchOutcome::RestartRequired => "restart_required",
+        };
+        Ok(HttpResponse {
+            status: StatusCode::OK,
+            message: message.to_string(),
+            accept,
+        }
+        .into_response())
     }
 }
 

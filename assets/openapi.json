@@ -242,6 +242,124 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Submit a new deployment",
+        "operationId": "submit_deployment",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeploymentSubmitPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Deployment submitted",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid config"
+          },
+          "409": {
+            "description": "Validation failed"
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}": {
+      "get": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Get a specific deployment by ID",
+        "operationId": "get_deployment",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "description": "Deployment ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentRecordSer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment not found"
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}/switch": {
+      "put": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Switch the active deployment",
+        "operationId": "switch_deployment",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "description": "Deployment ID to switch to",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeploymentSwitchPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Deployment switched or enqueued",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment not found"
+          },
+          "409": {
+            "description": "Validation or switch failed"
+          }
+        }
       }
     },
     "/v1/execution-id": {
@@ -1249,6 +1367,38 @@
           }
         }
       },
+      "DeploymentRecordSer": {
+        "type": "object",
+        "description": "Deployment details with config",
+        "required": [
+          "deployment_id",
+          "status",
+          "created_at",
+          "config_json"
+        ],
+        "properties": {
+          "config_json": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deployment_id": {
+            "type": "string"
+          },
+          "last_active_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeploymentStatusSer"
+          }
+        }
+      },
       "DeploymentStateSer": {
         "type": "object",
         "description": "Deployment state with execution counts",
@@ -1324,6 +1474,37 @@
           "enqueued",
           "active"
         ]
+      },
+      "DeploymentSubmitPayload": {
+        "type": "object",
+        "description": "Request payload for submitting a new deployment",
+        "required": [
+          "config_json"
+        ],
+        "properties": {
+          "config_json": {
+            "type": "string",
+            "description": "Deployment config as JSON string"
+          },
+          "verify": {
+            "type": "boolean",
+            "description": "Verify all environment variables before persisting"
+          }
+        }
+      },
+      "DeploymentSwitchPayload": {
+        "type": "object",
+        "description": "Request payload for switching deployment",
+        "properties": {
+          "hot_redeploy": {
+            "type": "boolean",
+            "description": "Hot redeploy without restart"
+          },
+          "verify": {
+            "type": "boolean",
+            "description": "Verify config before switching"
+          }
+        }
       },
       "ExecutionEventsResponse": {
         "type": "object",
