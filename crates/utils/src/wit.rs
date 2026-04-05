@@ -1,6 +1,10 @@
-use crate::wasm_tools::{ExIm, ExOrIm};
-use concepts::{FnName, FunctionExtension, FunctionMetadata, IfcFqnName, PackageExtension, PkgFqn};
+use crate::wasm_tools::ExIm;
+use concepts::{
+    FnName, FunctionExtension, FunctionMetadata, IfcFqnName, PackageExtension, PackageIfcFns,
+    PkgFqn,
+};
 use const_format::formatcp;
+use hashbrown::HashMap;
 use id_arena::Arena;
 use indexmap::IndexMap;
 use semver::{BuildMetadata, Prerelease, Version};
@@ -9,8 +13,8 @@ use tracing::{error, warn};
 use wit_component::WitPrinter;
 use wit_parser::{
     Function, FunctionKind, Handle, Interface, InterfaceId, PackageId, PackageName, Param, Resolve,
-    Span, Stability, Type, TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup, WorldItem,
-    WorldKey,
+    Span, Stability, Type, TypeDef, TypeDefKind, TypeOwner, UnresolvedPackageGroup, World,
+    WorldItem, WorldKey,
 };
 
 const OBELISK_TYPES_VERSION_MAJOR: u64 = 4;
@@ -97,7 +101,7 @@ pub(crate) fn rebuild_resolve(
     let world_id = resolve
         .select_world(&[main_pkg_id], None)
         .expect("default world must be found");
-    let added_interfaces = add_extended_interfaces(exim, &mut resolve)?;
+    let added_interfaces = add_extended_interfaces(exim.get_exports_hierarchy_ext(), &mut resolve)?;
     resolve
         .worlds
         .get_mut(world_id)
@@ -118,7 +122,7 @@ pub(crate) fn rebuild_resolve(
 }
 
 fn add_extended_interfaces(
-    exim: &ExIm,
+    exports_hierarchy_ext: &[PackageIfcFns],
     resolve: &mut Resolve,
 ) -> Result<Vec<InterfaceId>, semver::Error> {
     let mut added_interfaces = Vec::new();
@@ -283,7 +287,7 @@ fn add_extended_interfaces(
         })
     };
 
-    for (pkg_fqn, ifc_to_fns) in get_ext_pkg_to_ifc_to_details_map(exim, ExOrIm::Exports) {
+    for (pkg_fqn, ifc_to_fns) in get_ext_pkg_to_ifc_to_details_map(exports_hierarchy_ext) {
         let (orig_pkg_fqn, pkg_ext) = pkg_fqn
             .split_ext()
             .expect("`get_pkg_to_ifc_to_details_map` filtered by ext packages");
@@ -616,17 +620,13 @@ fn get_or_create_package(
 }
 
 fn get_ext_pkg_to_ifc_to_details_map(
-    exim: &ExIm,
-    exorim: ExOrIm,
+    exports: &[PackageIfcFns],
 ) -> IndexMap<PkgFqn, IndexMap<IfcFqnName, IndexMap<FnName, FunctionMetadata>>> {
     // Consistent iteration order so that the WIT output is deterministic.
     // Interfaces are sorted already.
     let mut pkg_to_ifc_to_details_map: IndexMap<PkgFqn, IndexMap<IfcFqnName, IndexMap<FnName, _>>> =
         IndexMap::new();
-    for pkg_ifc_fns in match exorim {
-        ExOrIm::Exports => &exim.exports_hierarchy_ext,
-        ExOrIm::Imports => &exim.imports_hierarchy,
-    } {
+    for pkg_ifc_fns in exports {
         if pkg_ifc_fns.ifc_fqn.pkg_fqn_name().is_extension() {
             let inner_map = pkg_to_ifc_to_details_map
                 .entry(pkg_ifc_fns.ifc_fqn.pkg_fqn_name())
@@ -728,6 +728,213 @@ fn from_pkg_fqn_to_wit_package_name(pkg_fqn: PkgFqn) -> Result<PackageName, semv
             .transpose()
             .inspect_err(|err| error!("Cannot convert version {:?} - {err:?}", pkg_fqn.version))?,
     })
+}
+
+/// Build a WIT text map for all exported packages (primary + extension + `obelisk:types`
+/// dependency) from the registry's already-merged export hierarchy.
+pub fn build_wit_deps_map(
+    all_exports: &[PackageIfcFns],
+) -> Result<HashMap<PkgFqn, String /* WIT */>, anyhow::Error> {
+    let mut result = HashMap::new();
+
+    // Group non-extension entries by primary package.
+    let mut primary_pkgs: IndexMap<PkgFqn, Vec<&PackageIfcFns>> = IndexMap::new();
+    for pkg_ifc_fns in all_exports.iter().filter(|e| !e.extension) {
+        primary_pkgs
+            .entry(pkg_ifc_fns.ifc_fqn.pkg_fqn_name())
+            .or_default()
+            .push(pkg_ifc_fns);
+    }
+
+    let has_any_extension = all_exports.iter().any(|e| e.extension);
+
+    for (pkg_fqn, ifc_fns_list) in &primary_pkgs {
+        // Build primary Resolve and print it.
+        let (primary_resolve, primary_pkg_id) = build_primary_resolve(pkg_fqn, ifc_fns_list, None)?;
+        let primary_wit = {
+            let mut printer = WitPrinter::default();
+            printer.print(&primary_resolve, primary_pkg_id, &[])?;
+            printer.output.to_string()
+        };
+        result.insert(pkg_fqn.clone(), primary_wit.clone());
+
+        // Collect extension entries whose primary package is pkg_fqn.
+        let ext_for_pkg: Vec<PackageIfcFns> = all_exports
+            .iter()
+            .filter(|e| {
+                e.extension
+                    && e.ifc_fqn
+                        .pkg_fqn_name()
+                        .split_ext()
+                        .map(|(orig, _)| orig == *pkg_fqn)
+                        .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        if !ext_for_pkg.is_empty() {
+            // Roundtrip through WIT text so that obelisk:types is available in the resolve
+            // (required by add_extended_interfaces to build borrow<join-set> handles etc.).
+            let wit_with_types = replace_obelisk_types(&primary_wit);
+            let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit_with_types)?;
+            let mut resolve_with_types = Resolve::new();
+            resolve_with_types.push_group(group)?;
+
+            add_extended_interfaces(&ext_for_pkg, &mut resolve_with_types)?;
+
+            // Print each extension package that was just added.
+            for (ext_pkg_id, ext_pkg) in &resolve_with_types.packages {
+                let ext_pkg_fqn = from_wit_package_name_to_pkg_fqn(&ext_pkg.name);
+                if ext_pkg_fqn.is_extension() {
+                    let mut printer = WitPrinter::default();
+                    printer.print(&resolve_with_types, ext_pkg_id, &[])?;
+                    result.insert(ext_pkg_fqn, printer.output.to_string());
+                }
+            }
+        }
+    }
+
+    // Always include obelisk:types when extension packages are present.
+    if has_any_extension {
+        let types_pkg_fqn = PkgFqn {
+            namespace: "obelisk".to_string(),
+            package_name: "types".to_string(),
+            version: Some(OBELISK_TYPES_VERSION.to_string()),
+        };
+        result.insert(types_pkg_fqn, WIT_OBELISK_TYPES_PACKAGE_CONTENT.to_string());
+    }
+
+    Ok(result)
+}
+
+/// Build a [`Resolve`] that contains a single primary package with all its interfaces.
+///
+/// Each [`PackageIfcFns`] entry contributes one interface; functions are allocated using
+/// [`crate::wit_builder::allocate_type`] so that named types (record, variant, enum, flags) get
+/// proper `TypeDef` entries.
+pub(crate) fn build_primary_resolve(
+    pkg_fqn: &PkgFqn,
+    ifc_fns_list: &[&PackageIfcFns],
+    world_name: Option<&str>,
+) -> Result<(Resolve, PackageId), anyhow::Error> {
+    use crate::wit_builder::allocate_type;
+
+    let mut resolve = Resolve::new();
+
+    let pkg = wit_parser::Package {
+        name: from_pkg_fqn_to_wit_package_name(pkg_fqn.clone())?,
+        docs: wit_parser::Docs::default(),
+        interfaces: IndexMap::default(),
+        worlds: IndexMap::default(),
+    };
+    let pkg_id = resolve.packages.alloc(pkg);
+    resolve
+        .package_names
+        .insert(resolve.packages[pkg_id].name.clone(), pkg_id);
+
+    for &pkg_ifc_fns in ifc_fns_list {
+        let ifc_name = pkg_ifc_fns.ifc_fqn.ifc_name().to_string();
+        let iface = Interface {
+            name: Some(ifc_name.clone()),
+            types: IndexMap::new(),
+            functions: IndexMap::new(),
+            docs: wit_parser::Docs::default(),
+            stability: Stability::default(),
+            package: Some(pkg_id),
+            span: Span::default(),
+            clone_of: None,
+        };
+        let ifc_id = resolve.interfaces.alloc(iface);
+        resolve
+            .packages
+            .get_mut(pkg_id)
+            .unwrap()
+            .interfaces
+            .insert(ifc_name.clone(), ifc_id);
+
+        let mut dedup = HashMap::new();
+
+        for (fn_name, fn_metadata) in &pkg_ifc_fns.fns {
+            let wit_params: Vec<Param> = fn_metadata
+                .parameter_types
+                .iter()
+                .map(|p| {
+                    let ty = allocate_type(&mut resolve, ifc_id, &p.type_wrapper, &mut dedup);
+                    Param {
+                        name: p.name.as_ref().to_string(),
+                        ty,
+                        span: Span::default(),
+                    }
+                })
+                .collect();
+
+            let return_tw = fn_metadata.return_type.type_wrapper();
+            let result_type = allocate_type(&mut resolve, ifc_id, &return_tw, &mut dedup);
+
+            let wit_fn = Function {
+                name: fn_name.to_string(),
+                kind: FunctionKind::Freestanding,
+                params: wit_params,
+                result: Some(result_type),
+                docs: wit_parser::Docs::default(),
+                stability: Stability::default(),
+                span: Span::default(),
+            };
+            resolve
+                .interfaces
+                .get_mut(ifc_id)
+                .unwrap()
+                .functions
+                .insert(fn_name.to_string(), wit_fn);
+        }
+
+        // Collect named TypeDefs into the interface's types map.
+        let mut types = IndexMap::new();
+        for (type_id, type_def) in &resolve.types {
+            if type_def.owner == TypeOwner::Interface(ifc_id)
+                && let Some(name) = &type_def.name
+            {
+                types.insert(name.clone(), type_id);
+            }
+        }
+        resolve.interfaces.get_mut(ifc_id).unwrap().types = types;
+    }
+
+    if let Some(world_name) = world_name {
+        let world_exports: IndexMap<WorldKey, WorldItem> = resolve.packages[pkg_id]
+            .interfaces
+            .values()
+            .map(|&ifc_id| {
+                (
+                    WorldKey::Interface(ifc_id),
+                    WorldItem::Interface {
+                        id: ifc_id,
+                        stability: Stability::Unknown,
+                        span: Span::default(),
+                    },
+                )
+            })
+            .collect();
+        let world = World {
+            name: world_name.to_string(),
+            docs: wit_parser::Docs::default(),
+            imports: IndexMap::default(),
+            exports: world_exports,
+            package: Some(pkg_id),
+            span: Span::default(),
+            includes: vec![],
+            stability: Stability::Unknown,
+        };
+        let world_id = resolve.worlds.alloc(world);
+        resolve
+            .packages
+            .get_mut(pkg_id)
+            .unwrap()
+            .worlds
+            .insert(world_name.to_string(), world_id);
+    }
+
+    Ok((resolve, pkg_id))
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 [[activity_js]]
 name = "test_add_activity"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/add.js"
-ffqn = "testing:integration/activities.add"
+ffqn = "testing:integration/activity.add"
 params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
@@ -20,7 +20,7 @@ params = [
 [[activity_js]]
 name = "test_read_env_activity"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/read_env.js"
-ffqn = "testing:integration/activity-env.read-env"
+ffqn = "testing:integration/activity.read-env"
 params = [
   { name = "key", type = "string" },
 ]

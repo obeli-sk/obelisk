@@ -7,11 +7,10 @@ use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{ConfigHolder, load_deployment_toml};
 use crate::init::{self};
 use crate::project_dirs;
-use crate::wit_printer::{OutputToFile, process_pkg_with_deps};
 use anyhow::Context;
-use concepts::{ComponentType, ExecutionId, prefixed_ulid::DeploymentId};
+use concepts::{ComponentType, ExecutionId, FunctionRegistry, PkgFqn, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
-use hashbrown::HashSet;
+use hashbrown::HashMap;
 use std::sync::Arc;
 use std::{borrow::Cow, path::PathBuf};
 use tokio::fs::OpenOptions;
@@ -333,32 +332,48 @@ pub(crate) async fn generate_wit_deps(
     tokio::fs::create_dir_all(&output_directory)
         .await
         .with_context(|| format!("cannot create the output directory {output_directory:?}"))?;
-    let include_exports = true;
-    let mut output = OutputToFile::default();
-    for component in &compiled_and_linked
-        .component_registry_ro
-        .list(include_exports)
-    {
-        if let Some(importable) = &component.workflow_or_activity_config {
-            let wit = &component.wit;
-            assert!(
-                component.component_id.component_type.is_activity()
-                    || component.component_id.component_type == ComponentType::Workflow
-            );
-            let mut already_processed_packages = HashSet::new();
 
-            let packages: HashSet<_> = importable
-                .exports_hierarchy_ext
-                .iter()
-                .map(|ifc_fqns| ifc_fqns.ifc_fqn.pkg_fqn_name())
-                .collect();
+    // Build WIT from the registry's already-merged export hierarchy.
+    let all_exports = compiled_and_linked.component_registry_ro.all_exports();
+    let pkg_to_wit = wit::build_wit_deps_map(all_exports)?;
+    write_wit_deps(&pkg_to_wit, &output_directory, overwrite).await?;
+    Ok(())
+}
 
-            for pkg in packages {
-                output = process_pkg_with_deps(wit, &pkg, &mut already_processed_packages, output)
-                    .await?;
-            }
-        }
+async fn write_wit_deps(
+    pkg_to_wit: &HashMap<PkgFqn, String>,
+    output_directory: &std::path::Path,
+    overwrite: bool,
+) -> Result<(), anyhow::Error> {
+    for (pkg_fqn, content) in pkg_to_wit {
+        let pkg_file_name = pkg_fqn.as_file_name();
+        let directory = output_directory.join(&pkg_file_name);
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .with_context(|| format!("cannot create directory {directory:?}"))?;
+        let target_wit = directory.join(format!("{pkg_file_name}.wit"));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .create_new(!overwrite)
+            .open(&target_wit)
+            .await
+            .with_context(|| {
+                format!(
+                    "cannot open {target_wit:?} for writing{}",
+                    if !overwrite {
+                        ", try using `--overwrite`"
+                    } else {
+                        ""
+                    }
+                )
+            })?;
+        let content = format!("{OBELISK_WIT_HEADER} {PKG_VERSION}\n{content}");
+        file.write_all(content.as_bytes())
+            .await
+            .with_context(|| format!("cannot write to {target_wit:?}"))?;
+        println!("{target_wit:?} written");
     }
-    output.write(&output_directory, overwrite).await?;
     Ok(())
 }
