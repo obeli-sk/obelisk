@@ -3226,6 +3226,7 @@ dependencies = [
  "route-recognizer",
  "rstest",
  "secrecy",
+ "semver",
  "serde",
  "serde_json",
  "strum 0.28.0",
@@ -3257,6 +3258,8 @@ dependencies = [
  "wasmtime-wasi-io",
  "webhook-js-runtime-builder",
  "wiremock",
+ "wit-component 0.245.1",
+ "wit-parser 0.245.1",
  "workflow-js-runtime-builder",
 ]
 

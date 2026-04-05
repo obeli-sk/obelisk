@@ -1,0 +1,17 @@
+---
+source: crates/wasm-workers/src/js_wit_builder.rs
+expression: wit
+---
+package test:pkg;
+
+interface ifc {
+  record t0 {
+    v: u32,
+  }
+
+  deduplicated: func(input: t0) -> result<t0, string>;
+}
+
+world js-activity {
+  export ifc;
+}

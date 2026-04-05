@@ -45,6 +45,9 @@ wasmtime-wasi-http.workspace = true
 wasmtime-wasi-io.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
+semver.workspace = true
+wit-component.workspace = true
+wit-parser.workspace = true
 
 [features]
 test = []

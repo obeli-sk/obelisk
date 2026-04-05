@@ -1,0 +1,18 @@
+---
+source: crates/wasm-workers/src/js_wit_builder.rs
+expression: wit
+---
+package test:pkg;
+
+interface ifc {
+  variant t0 {
+    just(string),
+    none,
+  }
+
+  opt-variant: func() -> result<t0, string>;
+}
+
+world js-activity {
+  export ifc;
+}

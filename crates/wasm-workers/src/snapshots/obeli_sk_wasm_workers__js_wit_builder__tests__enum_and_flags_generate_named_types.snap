@@ -1,0 +1,24 @@
+---
+source: crates/wasm-workers/src/js_wit_builder.rs
+expression: wit
+---
+package test:pkg;
+
+interface ifc {
+  flags t0 {
+    read,
+    write,
+  }
+
+  enum t1 {
+    a,
+    b,
+    c,
+  }
+
+  multi: func(perms: t0) -> result<t1, string>;
+}
+
+world js-activity {
+  export ifc;
+}

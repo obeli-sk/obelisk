@@ -1,172 +1,150 @@
 //! WIT synthesis for JS workers (activity and workflow).
 //!
-//! Named types (`record`, `variant`, `enum`, `flags`) cannot appear inline in WIT
-//! function signatures; they must be declared at interface level with a name.
-//! [`TypeDeclCollector`] traverses a [`TypeWrapper`] tree depth-first, assigns
-//! sequential generated names (`t0`, `t1`, …), and accumulates the declarations.
-//! [`synthesize_wit`] uses it to produce a complete, valid WIT string.
-
-use std::fmt::Write;
+//! Builds a `wit_parser::Resolve` from a JS function's signature metadata, then
+//! uses `WitPrinter` to generate valid WIT text. Delegates generic
+//! `TypeWrapper`-to-`TypeDef` allocation to [`utils::wit_builder::allocate_type`].
 
 use concepts::{FunctionFqn, ParameterType, ReturnTypeExtendable};
+use hashbrown::HashMap;
+use indexmap::IndexMap;
+use semver::Version;
+use utils::wit_builder::allocate_type;
 use val_json::type_wrapper::TypeWrapper;
+use wit_component::WitPrinter;
+use wit_parser::{
+    Function, FunctionKind, Interface, Package, PackageName, Param, Resolve, World, WorldItem,
+    WorldKey,
+};
 
-/// Collects named type declarations (record, variant, enum, flags) that cannot be
-/// used inline in WIT function signatures and must be declared at interface level.
-/// Assigns sequential generated names `t0`, `t1`, etc. in depth-first post-order.
-pub(crate) struct TypeDeclCollector {
-    counter: usize,
-    /// Maps `TypeWrapper` Display string → generated name (for deduplication).
-    seen: std::collections::HashMap<String, String>,
-    /// WIT declarations ready to be inserted into the interface body, in order.
-    declarations: Vec<String>,
-}
+/// Build a complete `Resolve` from a JS function's signature.
+///
+/// Returns `(resolve, main_package_id)` ready for `WitPrinter::print`.
+pub fn build_resolve(
+    ffqn: &FunctionFqn,
+    params: &[ParameterType],
+    return_type: &ReturnTypeExtendable,
+    world_name: &str,
+) -> (Resolve, wit_parser::PackageId) {
+    let ifc_fqn = &ffqn.ifc_fqn;
+    let namespace = ifc_fqn.namespace();
+    let ifc_name = ifc_fqn.ifc_name();
+    let fn_name = &ffqn.function_name;
 
-impl TypeDeclCollector {
-    pub(crate) fn new() -> Self {
-        Self {
-            counter: 0,
-            seen: std::collections::HashMap::new(),
-            declarations: Vec::new(),
+    let version = ifc_fqn.version().and_then(|v| Version::parse(v).ok());
+    let pkg = Package {
+        name: PackageName {
+            namespace: namespace.to_string(),
+            name: ifc_fqn.package_name().to_string(),
+            version,
+        },
+        docs: wit_parser::Docs::default(),
+        interfaces: IndexMap::default(),
+        worlds: IndexMap::default(),
+    };
+
+    let mut resolve = Resolve::new();
+    let pkg_id = resolve.packages.alloc(pkg);
+    resolve
+        .package_names
+        .insert(resolve.packages[pkg_id].name.clone(), pkg_id);
+
+    // Create the interface.
+    let iface = Interface {
+        name: Some(ifc_name.to_string()),
+        types: IndexMap::new(),
+        functions: IndexMap::new(),
+        docs: wit_parser::Docs::default(),
+        stability: wit_parser::Stability::default(),
+        package: Some(pkg_id),
+        span: wit_parser::Span::default(),
+        clone_of: None,
+    };
+    let ifc_id = resolve.interfaces.alloc(iface);
+    resolve
+        .packages
+        .get_mut(pkg_id)
+        .unwrap()
+        .interfaces
+        .insert(ifc_name.to_string(), ifc_id);
+
+    // Convert all params + return type, which allocates TypeDefs (named + anonymous).
+    let mut dedup = HashMap::new();
+    let wit_params: Vec<Param> = params
+        .iter()
+        .map(|p| {
+            let ty = allocate_type(&mut resolve, ifc_id, &p.type_wrapper, &mut dedup);
+            Param {
+                name: String::from(p.name.as_ref()),
+                ty,
+                span: wit_parser::Span::default(),
+            }
+        })
+        .collect();
+
+    let return_tw = TypeWrapper::from(return_type.type_wrapper_tl.clone());
+    let result_type = allocate_type(&mut resolve, ifc_id, &return_tw, &mut dedup);
+
+    // Collect named types into interface's types map.
+    let mut types = IndexMap::new();
+    for (type_id, type_def) in resolve.types.iter() {
+        if type_def.owner == wit_parser::TypeOwner::Interface(ifc_id) {
+            if let Some(name) = &type_def.name {
+                types.insert(name.clone(), type_id);
+            }
         }
     }
+    resolve.interfaces.get_mut(ifc_id).unwrap().types = types;
 
-    /// Returns the WIT reference string for `ty`.
-    ///
-    /// Primitive and container types (`list`, `option`, `result`, `tuple`) are returned
-    /// as inline strings. Named types (`record`, `variant`, `enum`, `flags`) are declared
-    /// at interface level and referenced by their generated name.
-    pub(crate) fn wit_ref(&mut self, ty: &TypeWrapper) -> String {
-        match ty {
-            TypeWrapper::Record(fields) => {
-                let key = format!("{ty}");
-                if let Some(name) = self.seen.get(&key) {
-                    return name.clone();
-                }
-                // Process fields depth-first so inner named types are declared first.
-                let n = fields.len();
-                let fields_str =
-                    fields
-                        .iter()
-                        .enumerate()
-                        .fold(String::new(), |mut s, (i, (k, v))| {
-                            let comma = if i + 1 < n { "," } else { "" };
-                            writeln!(
-                                s,
-                                "        {}: {}{}",
-                                k.as_kebab_str(),
-                                self.wit_ref(v),
-                                comma
-                            )
-                            .unwrap();
-                            s
-                        });
-                let name = format!("t{}", self.counter);
-                self.counter += 1;
-                self.seen.insert(key, name.clone());
-                self.declarations
-                    .push(format!("    record {name} {{\n{fields_str}    }}"));
-                name
-            }
-            TypeWrapper::Variant(cases) => {
-                let key = format!("{ty}");
-                if let Some(name) = self.seen.get(&key) {
-                    return name.clone();
-                }
-                let n = cases.len();
-                let cases_str: String = cases
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (k, payload))| {
-                        let comma = if i + 1 < n { "," } else { "" };
-                        match payload {
-                            Some(p) => format!(
-                                "        {}({}){}\n",
-                                k.as_kebab_str(),
-                                self.wit_ref(p),
-                                comma
-                            ),
-                            None => format!("        {}{}\n", k.as_kebab_str(), comma),
-                        }
-                    })
-                    .collect();
-                let name = format!("t{}", self.counter);
-                self.counter += 1;
-                self.seen.insert(key, name.clone());
-                self.declarations
-                    .push(format!("    variant {name} {{\n{cases_str}    }}"));
-                name
-            }
-            TypeWrapper::Enum(cases) => {
-                let key = format!("{ty}");
-                if let Some(name) = self.seen.get(&key) {
-                    return name.clone();
-                }
-                let n = cases.len();
-                let cases_str = cases
-                    .iter()
-                    .enumerate()
-                    .fold(String::new(), |mut s, (i, k)| {
-                        let comma = if i + 1 < n { "," } else { "" };
-                        writeln!(s, "        {}{}", k.as_kebab_str(), comma).unwrap();
-                        s
-                    });
-                let name = format!("t{}", self.counter);
-                self.counter += 1;
-                self.seen.insert(key, name.clone());
-                self.declarations
-                    .push(format!("    enum {name} {{\n{cases_str}    }}"));
-                name
-            }
-            TypeWrapper::Flags(flags) => {
-                let key = format!("{ty}");
-                if let Some(name) = self.seen.get(&key) {
-                    return name.clone();
-                }
-                let n = flags.len();
-                let flags_str = flags
-                    .iter()
-                    .enumerate()
-                    .fold(String::new(), |mut s, (i, k)| {
-                        let comma = if i + 1 < n { "," } else { "" };
-                        writeln!(s, "        {}{}", k.as_kebab_str(), comma).unwrap();
-                        s
-                    });
-                let name = format!("t{}", self.counter);
-                self.counter += 1;
-                self.seen.insert(key, name.clone());
-                self.declarations
-                    .push(format!("    flags {name} {{\n{flags_str}    }}"));
-                name
-            }
-            // Container types: recurse but stay inline.
-            TypeWrapper::List(inner) => format!("list<{}>", self.wit_ref(inner)),
-            TypeWrapper::Option(inner) => format!("option<{}>", self.wit_ref(inner)),
-            TypeWrapper::Tuple(items) => {
-                let refs: Vec<String> = items.iter().map(|t| self.wit_ref(t)).collect();
-                format!("tuple<{}>", refs.join(", "))
-            }
-            TypeWrapper::Result { ok, err } => match (ok, err) {
-                (None, None) => "result".to_string(),
-                (Some(ok), None) => format!("result<{}>", self.wit_ref(ok)),
-                (None, Some(err)) => format!("result<_, {}>", self.wit_ref(err)),
-                (Some(ok), Some(err)) => {
-                    let ok_ref = self.wit_ref(ok);
-                    let err_ref = self.wit_ref(err);
-                    format!("result<{ok_ref}, {err_ref}>")
-                }
+    // Add the function.
+    let wit_fn = Function {
+        name: fn_name.to_string(),
+        kind: FunctionKind::Freestanding,
+        params: wit_params,
+        result: Some(result_type),
+        docs: wit_parser::Docs::default(),
+        stability: wit_parser::Stability::default(),
+        span: wit_parser::Span::default(),
+    };
+    resolve
+        .interfaces
+        .get_mut(ifc_id)
+        .unwrap()
+        .functions
+        .insert(fn_name.to_string(), wit_fn);
+
+    // Create the world exporting the interface.
+    let world = World {
+        name: world_name.to_string(),
+        docs: wit_parser::Docs::default(),
+        imports: IndexMap::default(),
+        exports: IndexMap::from_iter([(
+            WorldKey::Interface(ifc_id),
+            WorldItem::Interface {
+                id: ifc_id,
+                stability: wit_parser::Stability::Unknown,
+                span: wit_parser::Span::default(),
             },
-            // Primitive types.
-            _ => format!("{ty}"),
-        }
-    }
+        )]),
+        package: Some(pkg_id),
+        span: wit_parser::Span::default(),
+        includes: vec![],
+        stability: wit_parser::Stability::Unknown,
+    };
+    let world_id = resolve.worlds.alloc(world);
+    resolve
+        .packages
+        .get_mut(pkg_id)
+        .unwrap()
+        .worlds
+        .insert(world_name.to_string(), world_id);
+
+    (resolve, pkg_id)
 }
 
 /// Synthesize a WIT string for a JS worker's user-facing interface.
 ///
-/// Named types (`record`, `variant`, `enum`, `flags`) that appear in params or the return
-/// type cannot be used inline in WIT function signatures; they are extracted and declared
-/// at interface level with generated names `t0`, `t1`, etc. in depth-first post-order.
+/// Named types (`record`, `variant`, `enum`, `flags`) that appear in params or the
+/// return type are declared at interface level with generated names `t0`, `t1`, etc.
 ///
 /// `world_name` is the WIT world exported by the component (e.g. `"js-activity"` or
 /// `"js-workflow"`).
@@ -174,59 +152,27 @@ impl TypeDeclCollector {
 /// The generated WIT is parsed by `WasmComponent::new_from_wit_string` which runs
 /// `ExIm::decode` and `rebuild_resolve`, producing the same extension metadata
 /// and printable WIT that standard WASM components get.
-pub(crate) fn synthesize_wit(
+pub fn synthesize_wit(
     ffqn: &FunctionFqn,
     params: &[ParameterType],
     return_type: &ReturnTypeExtendable,
     world_name: &str,
 ) -> String {
-    let ifc_fqn = &ffqn.ifc_fqn;
-    let namespace = ifc_fqn.namespace();
-    let package_name = ifc_fqn.package_name();
-    let ifc_name = ifc_fqn.ifc_name();
-    let fn_name = &ffqn.function_name;
-    let version_suffix = ifc_fqn.version().map_or(String::new(), |v| format!("@{v}"));
-
-    let mut collector = TypeDeclCollector::new();
-
-    let wit_params: Vec<String> = params
-        .iter()
-        .map(|p| format!("{}: {}", p.name, collector.wit_ref(&p.type_wrapper)))
-        .collect();
-
-    // Convert TypeWrapperTopLevel → TypeWrapper::Result for uniform traversal.
-    let return_tw = TypeWrapper::from(return_type.type_wrapper_tl.clone());
-    let return_wit_type = collector.wit_ref(&return_tw);
-
-    let type_decls: String = collector
-        .declarations
-        .iter()
-        .fold(String::new(), |mut s, d| {
-            write!(s, "{d}\n\n").unwrap();
-            s
-        });
-
-    format!(
-        "package {namespace}:{package_name}{version_suffix};\n\
-         \n\
-         interface {ifc_name} {{\n\
-         {type_decls}\
-         \x20   {fn_name}: func({params}) -> {return_wit_type};\n\
-         }}\n\
-         \n\
-         world {world_name} {{\n\
-         \x20   export {ifc_name};\n\
-         }}\n",
-        params = wit_params.join(", "),
-    )
+    let (resolve, pkg_id) = build_resolve(ffqn, params, return_type, world_name);
+    let mut printer = WitPrinter::default();
+    printer
+        .print(&resolve, pkg_id, &[])
+        .expect("WIT printing must succeed");
+    printer.output.to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use concepts::{ReturnTypeExtendable, StrVariant, TypeWrapperTopLevel};
-    use utils::wasm_tools::WasmComponent;
-    use val_json::type_wrapper::{TypeKey, TypeWrapper, indexmap::IndexMap};
+    use val_json::type_wrapper::indexmap::IndexMap as TWIndexMap;
+    use val_json::type_wrapper::indexmap::IndexSet;
+    use val_json::type_wrapper::{TypeKey, TypeWrapper};
 
     fn make_return_type(ok: TypeWrapper) -> ReturnTypeExtendable {
         ReturnTypeExtendable {
@@ -240,14 +186,13 @@ mod tests {
 
     #[test]
     fn record_generates_named_type_before_function() {
-        use concepts::ParameterType;
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "make-point");
         let params = vec![ParameterType {
             type_wrapper: TypeWrapper::String,
             name: StrVariant::Static("label"),
             wit_type: StrVariant::Static("string"),
         }];
-        let fields: IndexMap<TypeKey, TypeWrapper> = [
+        let fields: TWIndexMap<TypeKey, TypeWrapper> = [
             (TypeKey::new_kebab("x"), TypeWrapper::U32),
             (TypeKey::new_kebab("y"), TypeWrapper::U32),
         ]
@@ -256,32 +201,16 @@ mod tests {
         let return_type = make_return_type(TypeWrapper::Record(fields));
 
         let wit = synthesize_wit(&ffqn, &params, &return_type, "js-activity");
-
-        assert!(
-            wit.contains("record t0 {"),
-            "expected record declaration:\n{wit}"
-        );
-        assert!(wit.contains("x: u32"), "expected field x: u32:\n{wit}");
-        assert!(wit.contains("y: u32"), "expected field y: u32:\n{wit}");
-        assert!(
-            wit.contains("func(label: string) -> result<t0, string>"),
-            "expected named type reference in function:\n{wit}"
-        );
-        assert!(
-            !wit.contains("record {"),
-            "inline record must not appear:\n{wit}"
-        );
-        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::Activity)
-            .expect("synthesized WIT must be valid");
+        insta::assert_snapshot!(wit);
     }
 
     #[test]
     fn nested_record_declares_inner_first() {
-        let inner_fields: IndexMap<TypeKey, TypeWrapper> =
+        let inner_fields: TWIndexMap<TypeKey, TypeWrapper> =
             [(TypeKey::new_kebab("z"), TypeWrapper::F32)]
                 .into_iter()
                 .collect();
-        let outer_fields: IndexMap<TypeKey, TypeWrapper> = [
+        let outer_fields: TWIndexMap<TypeKey, TypeWrapper> = [
             (
                 TypeKey::new_kebab("inner"),
                 TypeWrapper::Record(inner_fields),
@@ -294,27 +223,15 @@ mod tests {
         let return_type = make_return_type(TypeWrapper::Record(outer_fields));
 
         let wit = synthesize_wit(&ffqn, &[], &return_type, "js-activity");
-
-        let pos_t0 = wit.find("record t0").expect("t0 declaration");
-        let pos_t1 = wit.find("record t1").expect("t1 declaration");
-        assert!(
-            pos_t0 < pos_t1,
-            "inner record t0 must be declared before outer t1"
-        );
-        assert!(
-            wit.contains("func() -> result<t1, string>"),
-            "outer named:\n{wit}"
-        );
-        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::Activity)
-            .expect("synthesized WIT must be valid");
+        insta::assert_snapshot!(wit);
     }
 
     #[test]
     fn duplicate_type_uses_same_name() {
-        use concepts::ParameterType;
-        let fields: IndexMap<TypeKey, TypeWrapper> = [(TypeKey::new_kebab("v"), TypeWrapper::U32)]
-            .into_iter()
-            .collect();
+        let fields: TWIndexMap<TypeKey, TypeWrapper> =
+            [(TypeKey::new_kebab("v"), TypeWrapper::U32)]
+                .into_iter()
+                .collect();
         let rec = TypeWrapper::Record(fields);
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "deduplicated");
         let params = vec![ParameterType {
@@ -325,23 +242,12 @@ mod tests {
         let return_type = make_return_type(rec);
 
         let wit = synthesize_wit(&ffqn, &params, &return_type, "js-activity");
-
-        // Only one declaration: t0
-        assert_eq!(
-            wit.matches("record t0").count(),
-            1,
-            "single declaration:\n{wit}"
-        );
-        assert!(!wit.contains("t1"), "no second name:\n{wit}");
-        assert!(wit.contains("input: t0"), "param uses t0:\n{wit}");
-        assert!(wit.contains("result<t0, string>"), "return uses t0:\n{wit}");
-        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::Activity)
-            .expect("synthesized WIT must be valid");
+        insta::assert_snapshot!(wit);
     }
 
     #[test]
     fn enum_and_flags_generate_named_types() {
-        use val_json::type_wrapper::indexmap::IndexSet;
+        use concepts::ParameterType;
         let cases: IndexSet<TypeKey> = ["a", "b", "c"]
             .iter()
             .map(|s| TypeKey::new_kebab(*s))
@@ -350,8 +256,6 @@ mod tests {
             .iter()
             .map(|s| TypeKey::new_kebab(*s))
             .collect();
-        // Use enum as ok type; flags in a list param
-        use concepts::ParameterType;
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "multi");
         let params = vec![ParameterType {
             type_wrapper: TypeWrapper::Flags(flags),
@@ -361,13 +265,22 @@ mod tests {
         let return_type = make_return_type(TypeWrapper::Enum(cases));
 
         let wit = synthesize_wit(&ffqn, &params, &return_type, "js-activity");
+        insta::assert_snapshot!(wit);
+    }
 
-        assert!(wit.contains("flags t0 {"), "flags declaration:\n{wit}");
-        assert!(wit.contains("enum t1 {"), "enum declaration:\n{wit}");
-        assert!(wit.contains("perms: t0"), "param uses t0:\n{wit}");
-        assert!(wit.contains("result<t1, string>"), "return uses t1:\n{wit}");
-        WasmComponent::new_from_wit_string(&wit, concepts::ComponentType::Activity)
-            .expect("synthesized WIT must be valid");
+    #[test]
+    fn variant_with_optional_none() {
+        let cases: TWIndexMap<TypeKey, Option<TypeWrapper>> = [
+            (TypeKey::new_kebab("just"), Some(TypeWrapper::String)),
+            (TypeKey::new_kebab("none"), None),
+        ]
+        .into_iter()
+        .collect();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "opt-variant");
+        let return_type = make_return_type(TypeWrapper::Variant(cases));
+
+        let wit = synthesize_wit(&ffqn, &[], &return_type, "js-activity");
+        insta::assert_snapshot!(wit);
     }
 
     #[test]
