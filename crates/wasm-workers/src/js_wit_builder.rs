@@ -86,11 +86,11 @@ pub fn build_resolve(
 
     // Collect named types into interface's types map.
     let mut types = IndexMap::new();
-    for (type_id, type_def) in resolve.types.iter() {
-        if type_def.owner == wit_parser::TypeOwner::Interface(ifc_id) {
-            if let Some(name) = &type_def.name {
-                types.insert(name.clone(), type_id);
-            }
+    for (type_id, type_def) in &resolve.types {
+        if type_def.owner == wit_parser::TypeOwner::Interface(ifc_id)
+            && let Some(name) = &type_def.name
+        {
+            types.insert(name.clone(), type_id);
         }
     }
     resolve.interfaces.get_mut(ifc_id).unwrap().types = types;
