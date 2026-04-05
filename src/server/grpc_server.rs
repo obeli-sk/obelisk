@@ -1436,7 +1436,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         tracing::Span::current()
             .record("deployment_id", tracing::field::display(&new_deployment_id));
         let mut termination_watcher = self.termination_watcher.clone();
-        let outcome = server::switch_deployment(
+        let outcome = Box::pin(server::switch_deployment(
             new_deployment_id,
             SwitchDeploymentAction::new(request.hot_redeploy, request.verify),
             self.config.clone(),
@@ -1449,7 +1449,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             &self.webhook_registry,
             self.cancel_registry.clone(),
             self.log_forwarder_sender.clone(),
-        )
+        ))
         .await
         .map_err(|err| match err {
             server::SwitchError::NotFound => tonic::Status::not_found("deployment not found"),
@@ -1473,7 +1473,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     ) -> TonicRespResult<grpc_gen::SubmitDeploymentResponse> {
         let request = request.into_inner();
         let mut termination_watcher = self.termination_watcher.clone();
-        let result = server::submit_deployment(
+        let result = Box::pin(server::submit_deployment(
             &request.config_json,
             request.verify,
             request.created_by.clone(),
@@ -1483,7 +1483,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             self.path_prefixes.clone(),
             self.db_pool.clone(),
             &mut termination_watcher,
-        )
+        ))
         .await
         .map_err(|err| tonic::Status::failed_precondition(format!("{err:#}")))?;
         tracing::Span::current().record("deployment_id", tracing::field::display(&result));

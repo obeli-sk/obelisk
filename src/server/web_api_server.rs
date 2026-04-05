@@ -2420,7 +2420,7 @@ mod deployment {
         Json(payload): Json<DeploymentSubmitPayload>,
     ) -> Result<Response, HttpResponse> {
         let mut termination_watcher = state.termination_watcher.clone();
-        let result = crate::command::server::submit_deployment(
+        let result = Box::pin(crate::command::server::submit_deployment(
             &payload.config_json,
             payload.verify,
             Some("web-api".to_string()),
@@ -2430,7 +2430,7 @@ mod deployment {
             state.path_prefixes.clone(),
             state.db_pool.clone(),
             &mut termination_watcher,
-        )
+        ))
         .await
         .map_err(|err| HttpResponse {
             status: StatusCode::BAD_REQUEST,
@@ -2479,7 +2479,7 @@ mod deployment {
         Json(payload): Json<DeploymentSwitchPayload>,
     ) -> Result<Response, HttpResponse> {
         let mut termination_watcher = state.termination_watcher.clone();
-        let outcome = crate::command::server::switch_deployment(
+        let outcome = Box::pin(crate::command::server::switch_deployment(
             deployment_id,
             SwitchDeploymentAction::new(payload.hot_redeploy, payload.verify),
             state.config.clone(),
@@ -2492,7 +2492,7 @@ mod deployment {
             &state.webhook_registry,
             state.cancel_registry.clone(),
             state.log_forwarder_sender.clone(),
-        )
+        ))
         .await
         .map_err(|err| match err {
             crate::command::server::SwitchError::NotFound => {

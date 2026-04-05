@@ -20,6 +20,7 @@ use crate::{
 };
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::DbPool as _;
+use concepts::storage::DbPoolCloseable;
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
@@ -655,7 +656,7 @@ enum TestDeployClient {
 }
 
 impl TestDeployClient {
-    /// Read the active deployment config from SQLite, apply `mutate` to it,
+    /// Read the active deployment config from `SQLite`, apply `mutate` to it,
     /// then submit the modified deployment and hot-redeploy to it using
     /// whichever protocol this client represents.
     async fn submit_and_hot_redeploy(
