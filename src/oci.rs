@@ -1,4 +1,6 @@
-use crate::{config::toml::OCI_SCHEMA_PREFIX, github::content_digest_to_wasm_file};
+use crate::args::TomlComponentType;
+use crate::config::toml::{AllowedHostToml, DurationConfig, OCI_SCHEMA_PREFIX};
+use crate::github::content_digest_to_wasm_file;
 use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, component_id::Digest};
 use futures_util::TryFutureExt;
@@ -8,7 +10,9 @@ use oci_client::{
     manifest::{OciDescriptor, OciImageManifest},
 };
 use oci_wasm::{ToConfig, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig};
+use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     future::Future,
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -18,6 +22,23 @@ use std::{
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, warn};
 use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
+
+pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:1.0.0";
+
+type ManifestConfigResult = (
+    ContentDigest,
+    OciDescriptor,                    /* layer */
+    String,                           /* metadata_digest */
+    Option<BTreeMap<String, String>>, /* manifest_annotations */
+);
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ComponentMetadata {
+    pub component_type: TomlComponentType,
+    pub env_vars: Vec<String>,
+    pub allowed_hosts: Vec<AllowedHostToml>,
+    pub lock_duration: Option<DurationConfig>,
+}
 
 const OCI_CLIENT_RETRIES: u64 = 10;
 
@@ -50,7 +71,7 @@ pub(crate) async fn pull_to_cache_dir(
     image: &Reference,
     wasm_cache_dir: &Path,
     metadata_dir: &Path,
-) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
+) -> Result<(ContentDigest, PathBuf, Option<ComponentMetadata>), anyhow::Error> {
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let auth = get_oci_auth(image)?;
     // Happy path: image's metadata digest mapping.txt -> content digest -> file -> verify hash
@@ -63,14 +84,14 @@ pub(crate) async fn pull_to_cache_dir(
         && let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &content_digest)
         && let Ok(()) = verify_wasm_file(&wasm_path, &content_digest).await
     {
-        return Ok((content_digest, wasm_path));
+        return Ok((content_digest, wasm_path, None));
     }
     // The mapping file will be recreated. We need to fetch metadata anyway for `layer`
     // and use that as the source of truth.
 
     info!("Fetching metadata");
-    let (layer, content_digest) = {
-        let (layer_content_digest, layer, metadata_digest) = client
+    let (layer, content_digest, component_metadata) = {
+        let (layer_content_digest, layer, metadata_digest, annotations) = client
             .pull_manifest_and_config_with_retry(image, &auth)
             .await?;
         debug!("Fetched metadata digest {metadata_digest}");
@@ -90,11 +111,13 @@ pub(crate) async fn pull_to_cache_dir(
             digest_to_metadata_file(metadata_dir, &Digest::from_str(&metadata_digest)?);
         debug!("Writing WASM digest {layer_content_digest} to metadata file {metadata_file:?}");
         tokio::fs::write(&metadata_file, layer_content_digest.to_string()).await?;
-        (layer, layer_content_digest)
+
+        let comp_metadata = extract_component_metadata(annotations.as_ref());
+        (layer, layer_content_digest, comp_metadata)
     };
     let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &content_digest);
     if let Ok(()) = verify_wasm_file(&wasm_path, &content_digest).await {
-        return Ok((content_digest, wasm_path));
+        return Ok((content_digest, wasm_path, component_metadata));
     }
     info!("Pulling image to {wasm_path:?}");
     client
@@ -102,7 +125,28 @@ pub(crate) async fn pull_to_cache_dir(
         .await
         .with_context(|| format!("Unable to pull image {image}"))?;
 
-    Ok((content_digest, wasm_path))
+    Ok((content_digest, wasm_path, component_metadata))
+}
+
+/// Pull only the manifest/config to extract metadata, without downloading the WASM blob.
+pub(crate) async fn pull_metadata(
+    image: &Reference,
+) -> Result<Option<ComponentMetadata>, anyhow::Error> {
+    let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
+    let auth = get_oci_auth(image)?;
+    info!("Fetching metadata");
+    let (_layer_content_digest, _layer, _metadata_digest, annotations) = client
+        .pull_manifest_and_config_with_retry(image, &auth)
+        .await?;
+    Ok(extract_component_metadata(annotations.as_ref()))
+}
+
+fn extract_component_metadata(
+    annotations: Option<&BTreeMap<String, String>>,
+) -> Option<ComponentMetadata> {
+    annotations
+        .and_then(|m| m.get(METADATA_ANNOTATION_KEY))
+        .and_then(|json| serde_json::from_str(json).ok())
 }
 
 fn get_oci_auth(reference: &Reference) -> Result<oci_client::secrets::RegistryAuth, anyhow::Error> {
@@ -128,7 +172,11 @@ fn get_oci_auth(reference: &Reference) -> Result<oci_client::secrets::RegistryAu
     Ok(oci_client::secrets::RegistryAuth::Anonymous)
 }
 
-pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<(), anyhow::Error> {
+pub(crate) async fn push(
+    wasm_path: PathBuf,
+    reference: &Reference,
+    metadata: &ComponentMetadata,
+) -> Result<(), anyhow::Error> {
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
     }
@@ -151,8 +199,13 @@ pub(crate) async fn push(wasm_path: PathBuf, reference: &Reference) -> Result<()
         .await
         .context("Unable to parse component")?;
     let auth = get_oci_auth(reference)?;
+
+    let annotations = BTreeMap::from([(
+        METADATA_ANNOTATION_KEY.to_string(),
+        serde_json::to_string(metadata)?,
+    )]);
     let resp = client
-        .push(reference, &auth, layer, conf, None)
+        .push(reference, &auth, layer, conf, Some(annotations))
         .await
         .context("Unable to push image")?;
 
@@ -203,11 +256,7 @@ impl WasmClientWithRetry {
         &self,
         image: &Reference,
         auth: &oci_client::secrets::RegistryAuth,
-    ) -> anyhow::Result<(
-        ContentDigest,
-        OciDescriptor, /* layer */
-        String,        /* metadata_digest */
-    )> {
+    ) -> anyhow::Result<ManifestConfigResult> {
         self.retry(
             || async {
                 let (mut manifest, wasm_config, metadata_digest) =
@@ -230,7 +279,12 @@ impl WasmClientWithRetry {
                 wasm_config
                     .component
                     .context("image must contain a wasi component")?;
-                Ok((layer_content_digest, layer, metadata_digest))
+                Ok((
+                    layer_content_digest,
+                    layer,
+                    metadata_digest,
+                    manifest.annotations,
+                ))
             },
             "calling pull_manifest_and_config",
         )

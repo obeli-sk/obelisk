@@ -19,7 +19,7 @@ use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::DatabaseConfigToml;
 use crate::config::toml::DeploymentCanonical;
-use crate::config::toml::DeploymentToml;
+use crate::config::toml::DeploymentTomlValidated;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::ServerConfigToml;
@@ -390,12 +390,13 @@ pub(crate) async fn run(
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
     let (deployment_toml, path_prefixes) = if let Some(deployment_path) = deployment {
-        let (toml, deployment_dir) = load_deployment_toml(deployment_path).await?;
-        let mut path_prefixes = config_holder.path_prefixes;
-        path_prefixes.deployment_dir = Some(deployment_dir);
-        (Some(toml), path_prefixes)
+        let toml = load_deployment_toml(deployment_path).await?;
+        (Some(toml), config_holder.path_prefixes)
     } else if deployment_empty {
-        (Some(DeploymentToml::default()), config_holder.path_prefixes)
+        (
+            Some(DeploymentTomlValidated::default()),
+            config_holder.path_prefixes,
+        )
     } else {
         (None, config_holder.path_prefixes)
     };
@@ -434,11 +435,9 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
-    let mut path_prefixes = config_holder.path_prefixes;
+    let path_prefixes = config_holder.path_prefixes;
     let deployment_toml_opt = if let Some(deployment_path) = deployment {
-        let (toml, deployment_dir) = load_deployment_toml(deployment_path).await?;
-        path_prefixes.deployment_dir = Some(deployment_dir);
-        Some(toml)
+        Some(load_deployment_toml(deployment_path).await?)
     } else {
         None
     };
@@ -777,7 +776,7 @@ pub(crate) fn create_engines(
 #[instrument(skip_all, name = "init", fields(deployment_id))]
 pub(crate) async fn run_internal(
     config: ServerConfigToml,
-    deployment: Option<DeploymentToml>,
+    deployment: Option<DeploymentTomlValidated>,
     path_prefixes: Arc<PathPrefixes>,
     params: RunParams,
     prepared_dirs: PreparedDirs,
@@ -1861,28 +1860,15 @@ impl ConfigVerified {
         termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
     ) -> Result<ConfigVerified, anyhow::Error> {
-        // Check uniqueness of server and webhook names (across both WASM and JS webhooks).
-        {
-            if http_servers.len()
-                > http_servers
-                    .iter()
-                    .map(|it| &it.name)
-                    .collect::<hashbrown::HashSet<_>>()
-                    .len()
-            {
-                bail!("Each `http_server` must have a unique name");
-            }
-            let all_webhook_names: hashbrown::HashSet<_> = deployment
-                .webhooks
+        // Check uniqueness of http_server names.
+        if http_servers.len()
+            > http_servers
                 .iter()
-                .map(|it| &it.common.name)
-                .chain(deployment.webhooks_js.iter().map(|it| &it.name))
-                .collect();
-            if deployment.webhooks.len() + deployment.webhooks_js.len() > all_webhook_names.len() {
-                bail!(
-                    "Each `webhook_endpoint_wasm` and `webhook_endpoint_js` must have a unique name"
-                );
-            }
+                .map(|it| &it.name)
+                .collect::<hashbrown::HashSet<_>>()
+                .len()
+        {
+            bail!("Each `http_server` must have a unique name");
         }
         let http_servers_to_webhook_names = {
             let mut remaining_server_names_to_webhook_names = {
@@ -3164,11 +3150,8 @@ mod tests {
             ConfigHolder::new(project_dirs, base_dirs, Some(workspace.join(server_toml)))?;
         let config = config_holder.load_config().await?;
 
-        let (deployment_toml, deployment_dir) =
-            load_deployment_toml(workspace.join(deployment_toml)).await?;
-        let mut path_prefixes = config_holder.path_prefixes;
-        path_prefixes.deployment_dir = Some(deployment_dir);
-        let path_prefixes = Arc::new(path_prefixes);
+        let deployment_toml = load_deployment_toml(workspace.join(deployment_toml)).await?;
+        let path_prefixes = Arc::new(config_holder.path_prefixes);
 
         let deployment_canonical =
             crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)

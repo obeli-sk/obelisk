@@ -347,10 +347,8 @@ impl TestServer {
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path)).unwrap();
         let config = config_holder.load_config().await.unwrap();
 
-        let (deployment_toml, deployment_dir) =
-            load_deployment_toml(deployment_path).await.unwrap();
-        let mut path_prefixes = config_holder.path_prefixes;
-        path_prefixes.deployment_dir = Some(deployment_dir);
+        let deployment_toml = load_deployment_toml(deployment_path).await.unwrap();
+        let path_prefixes = config_holder.path_prefixes;
 
         let (termination_sender, termination_watcher) = watch::channel(());
 

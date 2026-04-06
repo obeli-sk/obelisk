@@ -1,4 +1,4 @@
-use super::toml::{DeploymentToml, ServerConfigToml};
+use super::toml::{DeploymentToml, DeploymentTomlValidated, ServerConfigToml};
 use anyhow::{Context as _, bail};
 use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
@@ -18,15 +18,12 @@ pub(crate) const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
 pub(crate) const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
 const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
 const SERVER_CONFIG_DIR_PREFIX: &str = "${SERVER_CONFIG_DIR}/";
-const DEPLOYMENT_DIR_PREFIX: &str = "${DEPLOYMENT_DIR}/";
 const TEMP_DIR_PREFIX: &str = "${TEMP_DIR}/";
 
 #[derive(Clone)]
 pub(crate) struct PathPrefixes {
     /// Directory containing server.toml; None when no --server-config was provided.
     pub(crate) server_config_dir: Option<PathBuf>,
-    /// Directory containing deployment.toml; None when no --deployment was provided.
-    pub(crate) deployment_dir: Option<PathBuf>,
     pub(crate) project_dirs: Option<ProjectDirs>,
     pub(crate) base_dirs: Option<BaseDirs>,
 }
@@ -46,13 +43,6 @@ impl PathPrefixes {
                     project_dirs.cache_dir().join(suffix)
                 } else if let Some(suffix) = input_path.strip_prefix(CONFIG_DIR_PREFIX) {
                     project_dirs.config_dir().join(suffix)
-                } else if let Some(suffix) = input_path.strip_prefix(DEPLOYMENT_DIR_PREFIX) {
-                    if let Some(dir) = &self.deployment_dir {
-                        dir.join(suffix)
-                    } else {
-                        warn!("Not expanding prefix of `{input_path}`: no deployment file");
-                        PathBuf::from(input_path)
-                    }
                 } else {
                     PathBuf::from(input_path)
                 }
@@ -61,7 +51,6 @@ impl PathPrefixes {
                     || input_path.starts_with(DATA_DIR_PREFIX)
                     || input_path.starts_with(CACHE_DIR_PREFIX)
                     || input_path.starts_with(CONFIG_DIR_PREFIX)
-                    || input_path.starts_with(DEPLOYMENT_DIR_PREFIX)
                 {
                     warn!("Not expanding prefix of `{input_path}`");
                 }
@@ -173,7 +162,6 @@ impl ConfigHolder {
             config_source: server_config,
             path_prefixes: PathPrefixes {
                 server_config_dir,
-                deployment_dir: None,
                 project_dirs,
                 base_dirs,
             },
@@ -195,10 +183,11 @@ impl ConfigHolder {
     }
 }
 
-/// Load a deployment TOML file. Returns `(deployment_toml, deployment_dir)`.
+/// Load and validate a deployment TOML file.
+/// `${DEPLOYMENT_DIR}/` prefixes in WASM component paths are expanded to absolute paths.
 pub(crate) async fn load_deployment_toml(
     path: PathBuf,
-) -> Result<(DeploymentToml, PathBuf), anyhow::Error> {
+) -> Result<DeploymentTomlValidated, anyhow::Error> {
     let exists = path.try_exists().unwrap_or_default();
     if !exists {
         bail!("cannot find deployment file {path:?}");
@@ -212,10 +201,12 @@ pub(crate) async fn load_deployment_toml(
             .format(FileFormat::Toml),
     );
     let settings = builder.build().await?;
-    let deployment = settings
+    let deployment: DeploymentToml = settings
         .try_deserialize()
         .with_context(|| format!("cannot parse deployment file {path:?}"))?;
-    Ok((deployment, deployment_dir))
+    deployment
+        .validate(&deployment_dir)
+        .with_context(|| format!("invalid deployment file {path:?}"))
 }
 
 fn canonicalize_parent(path: &Path) -> Result<PathBuf, anyhow::Error> {

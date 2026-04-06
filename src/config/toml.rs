@@ -50,6 +50,7 @@ use wasm_workers::{
 };
 use webhook::{HttpServer, WebhookJsComponentConfigToml, WebhookWasmComponentConfigToml};
 
+const DEPLOYMENT_DIR_PREFIX: &str = "${DEPLOYMENT_DIR}/";
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
 const DEFAULT_SQLITE_DIR: &str = "obelisk-sqlite";
@@ -80,6 +81,136 @@ pub(crate) struct DeploymentToml {
     pub(crate) webhooks: Vec<WebhookWasmComponentConfigToml>,
     #[serde(default, rename = "webhook_endpoint_js")]
     pub(crate) webhooks_js: Vec<WebhookJsComponentConfigToml>,
+}
+
+/// A `DeploymentToml` that has passed name-uniqueness validation.
+/// The `component_type_by_name` map is built during validation and can be
+/// used for O(1) component-type lookup by name.
+#[derive(Debug, Default)]
+pub(crate) struct DeploymentTomlValidated {
+    pub(crate) inner: DeploymentToml,
+    pub(crate) component_type_by_name: hashbrown::HashMap<String, crate::args::TomlComponentType>,
+}
+
+impl DeploymentToml {
+    /// Consume `self`, expand `${DEPLOYMENT_DIR}/` prefixes in WASM component paths,
+    /// verify that every component name is unique, and return a `DeploymentTomlValidated`
+    /// that also carries the name→type index and the deployment directory.
+    pub(crate) fn validate(
+        mut self,
+        deployment_dir: &std::path::Path,
+    ) -> Result<DeploymentTomlValidated, anyhow::Error> {
+        self.expand_deployment_dir_prefix(deployment_dir);
+        let mut component_type_by_name = hashbrown::HashMap::new();
+        for (name, component_type) in self.all_component_names_with_types() {
+            if component_type_by_name
+                .insert(name.to_string(), component_type)
+                .is_some()
+            {
+                bail!("duplicate component name `{name}` in deployment");
+            }
+        }
+        Ok(DeploymentTomlValidated {
+            inner: self,
+            component_type_by_name,
+        })
+    }
+
+    /// Expand `${DEPLOYMENT_DIR}/` prefixes in all local file paths.
+    fn expand_deployment_dir_prefix(&mut self, dir: &std::path::Path) {
+        let expand_str = |s: &mut String| {
+            if let Some(suffix) = s.strip_prefix(DEPLOYMENT_DIR_PREFIX) {
+                *s = dir.join(suffix).to_string_lossy().into_owned();
+            }
+        };
+        let expand_loc = |loc: &mut ComponentLocationToml| {
+            if let ComponentLocationToml::Path(p) = loc {
+                expand_str(p);
+            }
+        };
+        let expand_backtrace = |bt: &mut ComponentBacktraceConfig| {
+            for loc in bt.frame_files_to_sources.values_mut() {
+                let BacktraceSourceLocation::Path(p) = loc;
+                expand_str(p);
+            }
+        };
+        for c in &mut self.activities_wasm {
+            expand_loc(&mut c.common.location);
+        }
+        for c in &mut self.activities_stub {
+            if let ActivityStubComponentConfigToml::File(c) = c {
+                expand_loc(&mut c.common.location);
+            }
+        }
+        for c in &mut self.activities_external {
+            if let ActivityExternalComponentConfigToml::File(c) = c {
+                expand_loc(&mut c.common.location);
+            }
+        }
+        for c in &mut self.activities_js {
+            if let JsLocationToml::Path(p) = &mut c.location {
+                expand_str(p);
+            }
+        }
+        for c in &mut self.workflows {
+            expand_loc(&mut c.common.location);
+            expand_backtrace(&mut c.backtrace);
+        }
+        for c in &mut self.workflows_js {
+            if let JsLocationToml::Path(p) = &mut c.location {
+                expand_str(p);
+            }
+        }
+        for c in &mut self.webhooks {
+            expand_loc(&mut c.common.location);
+            expand_backtrace(&mut c.backtrace);
+        }
+    }
+
+    fn all_component_names_with_types(
+        &self,
+    ) -> impl Iterator<Item = (&str, crate::args::TomlComponentType)> {
+        use crate::args::TomlComponentType;
+        self.activities_wasm
+            .iter()
+            .map(|c| (c.common.name.0.as_ref(), TomlComponentType::ActivityWasm))
+            .chain(
+                self.activities_stub
+                    .iter()
+                    .map(|c| (c.name_str(), TomlComponentType::ActivityStub)),
+            )
+            .chain(
+                self.activities_external
+                    .iter()
+                    .map(|c| (c.name_str(), TomlComponentType::ActivityExternal)),
+            )
+            .chain(
+                self.activities_js
+                    .iter()
+                    .map(|c| (c.name.0.as_ref(), TomlComponentType::ActivityJs)),
+            )
+            .chain(
+                self.workflows
+                    .iter()
+                    .map(|c| (c.common.name.0.as_ref(), TomlComponentType::WorkflowWasm)),
+            )
+            .chain(
+                self.workflows_js
+                    .iter()
+                    .map(|c| (c.name.0.as_ref(), TomlComponentType::WorkflowJs)),
+            )
+            .chain(self.webhooks.iter().map(|c| {
+                (
+                    c.common.name.0.as_ref(),
+                    TomlComponentType::WebhookEndpointWasm,
+                )
+            }))
+            .chain(
+                self.webhooks_js
+                    .iter()
+                    .map(|c| (c.name.0.as_ref(), TomlComponentType::WebhookEndpointJs)),
+            )
+    }
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
@@ -597,9 +728,10 @@ impl ComponentLocationToml {
                 (actual_digest, wasm_path)
             }
             ComponentLocationToml::Oci(image) => {
-                oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
+                let (digest, path, _) = oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
                     .await
-                    .context("try cleaning the cache directory with `--clean-cache`")?
+                    .context("try cleaning the cache directory with `--clean-cache`")?;
+                (digest, path)
             }
             ComponentLocationToml::GitHub(github_ref) => {
                 let (actual_digest, wasm_path) =
@@ -801,7 +933,7 @@ pub(crate) struct ExecConfigToml {
     #[serde(default = "default_batch_size")]
     batch_size: u32,
     #[serde(default = "default_lock_expiry")]
-    lock_expiry: DurationConfig,
+    pub(crate) lock_expiry: DurationConfig,
     #[serde(default = "default_tick_sleep")]
     tick_sleep: DurationConfig,
     #[serde(default)]
@@ -986,11 +1118,8 @@ pub(crate) struct AllowedHostSecretsToml {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityStubFileConfigToml {
-    pub(crate) name: ConfigName,
-    pub(crate) location: ComponentLocationToml,
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub(crate) content_digest: Option<ContentDigest>,
+    #[serde(flatten)]
+    pub(crate) common: ComponentCommon,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -1052,7 +1181,7 @@ pub(crate) enum ActivityStubConfigVerified {
 impl ActivityStubComponentConfigToml {
     fn name_str(&self) -> &str {
         match self {
-            Self::File(f) => f.name.0.as_ref(),
+            Self::File(f) => f.common.name.0.as_ref(),
             Self::Inline(i) => i.name.0.as_ref(),
         }
     }
@@ -1066,12 +1195,8 @@ impl ActivityStubComponentConfigToml {
     ) -> Result<ActivityStubConfigVerified, anyhow::Error> {
         match self {
             Self::File(file) => {
-                let common = ComponentCommon {
-                    name: file.name,
-                    location: file.location,
-                    content_digest: file.content_digest,
-                };
-                let (common, wasm_path) = common
+                let (common, wasm_path) = file
+                    .common
                     .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
                     .await?;
                 let component_id = ComponentId::new(
@@ -2083,9 +2208,10 @@ pub(crate) struct DeploymentCanonical {
 /// Resolve a `DeploymentToml` to `DeploymentCanonical` by reading all local JS and backtrace
 /// source files. GitHub JS locations are left as references (downloaded lazily at verify time).
 pub(crate) async fn resolve_local_refs_to_canonical(
-    deployment: &DeploymentToml,
+    deployment: &DeploymentTomlValidated,
     path_prefixes: &PathPrefixes,
 ) -> anyhow::Result<DeploymentCanonical> {
+    let deployment = &deployment.inner;
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
     for a in &deployment.activities_js {
         activities_js.push(ActivityJsComponentConfigCanonical {
