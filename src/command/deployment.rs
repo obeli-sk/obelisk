@@ -2,11 +2,9 @@ use crate::args::{self, DeploymentSource};
 use crate::config::config_holder::load_deployment_toml;
 use crate::config::toml::DeploymentTomlValidated;
 use crate::get_deployment_repository_client;
-use crate::project_dirs;
 use anyhow::{Context as _, bail};
 use chrono::DateTime;
 use concepts::prefixed_ulid::DeploymentId;
-use directories::BaseDirs;
 use grpc::grpc_gen;
 use grpc::grpc_gen::switch_deployment_response::Outcome;
 use grpc::injector::TracingInjector;
@@ -222,14 +220,8 @@ async fn load_config_json_from_file_or_empty(
     if let Some(path) = file {
         load_config_json(path).await
     } else {
-        let path_prefixes = crate::config::config_holder::PathPrefixes {
-            server_config_dir: None,
-            project_dirs: project_dirs(),
-            base_dirs: BaseDirs::new(),
-        };
         let deployment = crate::config::toml::resolve_local_refs_to_canonical(
             &DeploymentTomlValidated::default(),
-            &path_prefixes,
         )
         .await?;
         Ok(crate::config::toml::compute_config_json(&deployment))
@@ -238,14 +230,7 @@ async fn load_config_json_from_file_or_empty(
 
 async fn load_config_json(path: std::path::PathBuf) -> anyhow::Result<String> {
     let deployment_toml = load_deployment_toml(path).await?;
-    let path_prefixes = crate::config::config_holder::PathPrefixes {
-        server_config_dir: None,
-        project_dirs: project_dirs(),
-        base_dirs: BaseDirs::new(),
-    };
-    let deployment =
-        crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)
-            .await?;
+    let deployment = crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml).await?;
     Ok(crate::config::toml::compute_config_json(&deployment))
 }
 
