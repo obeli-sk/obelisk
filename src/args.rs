@@ -8,7 +8,7 @@ use concepts::{
 /// Deployment TOML section names, used as the key in the deployment TOML file.
 #[derive(Debug, Clone, Copy, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "snake_case")]
-pub(crate) enum DeploymentTomlSection {
+pub(crate) enum TomlComponentType {
     ActivityWasm,
     ActivityStub,
     ActivityExternal,
@@ -309,7 +309,7 @@ pub(crate) enum Component {
     Add {
         /// Deployment TOML section, one of: `activity_wasm`, `activity_stub`, `activity_external`, `activity_js`, `workflow_wasm`, `workflow_js`, `webhook_endpoint_wasm`, `webhook_endpoint_js`
         #[arg(required(true))]
-        component_type: DeploymentTomlSection,
+        component_type: TomlComponentType,
         /// Path to the WASM file
         #[arg(required(true))]
         location: ComponentLocationToml,

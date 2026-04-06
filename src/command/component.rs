@@ -1,7 +1,7 @@
 use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
 use crate::args;
-use crate::args::DeploymentTomlSection;
+use crate::args::TomlComponentType;
 use crate::config::config_holder::{ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML};
 use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ConfigName;
@@ -56,7 +56,7 @@ impl args::Component {
 }
 
 pub(crate) async fn add(
-    component_type: DeploymentTomlSection,
+    component_type: TomlComponentType,
     name: String,
     location: ComponentLocationToml,
     deployment_path: PathBuf,
