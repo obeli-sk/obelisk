@@ -89,9 +89,7 @@ fn find_component_for_push(
                 .find(|c| c.common.name.to_string() == name)
                 .expect("name is in map so it must be in the list");
             let ComponentLocationToml::Path(ref path) = cfg.common.location else {
-                bail!(
-                    "component '{name}' uses OCI/GitHub location, only local paths are supported for push"
-                );
+                bail!("component '{name}' uses OCI, only local paths are supported for push");
             };
             Ok(ComponentPushData {
                 component_type,
@@ -108,9 +106,7 @@ fn find_component_for_push(
                 .find(|c| c.common.name.to_string() == name)
                 .expect("name is in map so it must be in the list");
             let ComponentLocationToml::Path(ref path) = cfg.common.location else {
-                bail!(
-                    "component '{name}' uses OCI/GitHub location, only local paths are supported for push"
-                );
+                bail!("component '{name}' uses OCI, only local paths are supported for push");
             };
             Ok(ComponentPushData {
                 component_type,
@@ -127,9 +123,7 @@ fn find_component_for_push(
                 .find(|c| c.common.name.to_string() == name)
                 .expect("name is in map so it must be in the list");
             let ComponentLocationToml::Path(ref path) = cfg.common.location else {
-                bail!(
-                    "component '{name}' uses OCI/GitHub location, only local paths are supported for push"
-                );
+                bail!("component '{name}' uses OCI, only local paths are supported for push");
             };
             Ok(ComponentPushData {
                 component_type,

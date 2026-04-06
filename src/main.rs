@@ -2,7 +2,6 @@ mod args;
 mod command;
 mod config;
 mod env_vars;
-mod github;
 mod init;
 mod oci;
 mod server;

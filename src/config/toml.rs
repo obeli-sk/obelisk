@@ -5,7 +5,6 @@ use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::{
     EnvVarMissing, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
 };
-use crate::github::{self, GH_SCHEMA_PREFIX, GitHubReleaseReference};
 use crate::oci;
 use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
@@ -33,7 +32,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, instrument, warn};
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::http_hooks::ConfigSectionHint;
 use wasm_workers::http_request_policy::HostPatternError;
@@ -146,18 +145,16 @@ impl DeploymentToml {
             }
         }
         for c in &mut self.activities_js {
-            if let JsLocationToml::Path(p) = &mut c.location {
-                expand_str(p);
-            }
+            let JsLocationToml::Path(p) = &mut c.location;
+            expand_str(p);
         }
         for c in &mut self.workflows {
             expand_loc(&mut c.common.location);
             expand_backtrace(&mut c.backtrace);
         }
         for c in &mut self.workflows_js {
-            if let JsLocationToml::Path(p) = &mut c.location {
-                expand_str(p);
-            }
+            let JsLocationToml::Path(p) = &mut c.location;
+            expand_str(p);
         }
         for c in &mut self.webhooks {
             expand_loc(&mut c.common.location);
@@ -683,12 +680,11 @@ pub(crate) struct ComponentCommonVerified {
 pub(crate) enum ComponentLocationToml {
     Path(String), // String because it can contain path prefix - $DEPLOYMENT_DIR/
     Oci(oci_client::Reference),
-    GitHub(GitHubReleaseReference),
 }
 impl ComponentLocationToml {
     /// Fetch wasm file, calculate its content digest.
     ///
-    /// Read wasm file either from local fs, pull from an OCI registry, or pull from GitHub release and cache it.
+    /// Read wasm file either from local fs, or pull from an OCI registry and cache it.
     /// Calculate the `content_digest`. File is not converted from Core to Component format.
     /// If `expected_content_digest` is specified:
     /// - try to find it in cache instead of download. (We trust that the cache was not tampered with).
@@ -729,21 +725,6 @@ impl ComponentLocationToml {
                     .context("try cleaning the cache directory with `--clean-cache`")?;
                 (digest, path)
             }
-            ComponentLocationToml::GitHub(github_ref) => {
-                let (actual_digest, wasm_path) =
-                    github::pull_to_cache_dir(github_ref, wasm_cache_dir)
-                        .await
-                        .context("try cleaning the cache directory with `--clean-cache`")?;
-                // Suggest adding content_digest to config
-                if expected_digest.is_none() {
-                    info!(
-                        r#"No content_digest specified for GitHub release component. Consider adding content_digest = "{}" to avoid refetching"#,
-                        actual_digest.with_infix(":")
-                    );
-                }
-
-                (actual_digest, wasm_path)
-            }
         };
         if let Some(expected_digest) = expected_digest {
             ensure!(
@@ -766,10 +747,6 @@ impl FromStr for ComponentLocationToml {
                 oci_client::Reference::from_str(location)
                     .map_err(|e| anyhow::anyhow!("invalid OCI reference: {e}"))?,
             ))
-        } else if let Some(location) = s.strip_prefix(GH_SCHEMA_PREFIX) {
-            Ok(ComponentLocationToml::GitHub(
-                GitHubReleaseReference::from_str(location)?,
-            ))
         } else {
             Ok(ComponentLocationToml::Path(s.to_string()))
         }
@@ -781,26 +758,23 @@ impl std::fmt::Display for ComponentLocationToml {
         match self {
             ComponentLocationToml::Path(p) => write!(f, "{p}"),
             ComponentLocationToml::Oci(r) => write!(f, "{OCI_SCHEMA_PREFIX}{r}"),
-            ComponentLocationToml::GitHub(gh) => write!(f, "{GH_SCHEMA_PREFIX}{gh}"),
         }
     }
 }
 
 /// Location of a JavaScript source file for JS activities.
-/// Supports local file paths and `gh://` GitHub release references.
+/// Supports local file paths.
 /// OCI references are not supported.
 /// On-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.
 #[derive(Debug, Clone, Hash, JsonSchema, SerializeDisplay, DeserializeFromStr)]
 #[schemars(with = "String")]
 pub(crate) enum JsLocationToml {
     Path(String),
-    GitHub(GitHubReleaseReference),
 }
 impl Display for JsLocationToml {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             JsLocationToml::Path(p) => write!(f, "{p}"),
-            JsLocationToml::GitHub(gh) => write!(f, "{GH_SCHEMA_PREFIX}{gh}"),
         }
     }
 }
@@ -809,16 +783,9 @@ impl FromStr for JsLocationToml {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.starts_with(OCI_SCHEMA_PREFIX) {
-            bail!(
-                "OCI references are not supported for JS activities. Use a local file path or gh:// reference."
-            );
-        } else if let Some(location) = s.strip_prefix(GH_SCHEMA_PREFIX) {
-            Ok(JsLocationToml::GitHub(GitHubReleaseReference::from_str(
-                location,
-            )?))
-        } else {
-            Ok(JsLocationToml::Path(s.to_string()))
+            bail!("OCI references are not supported for JS activities. Use a local file path.");
         }
+        Ok(JsLocationToml::Path(s.to_string()))
     }
 }
 
@@ -862,8 +829,7 @@ impl serde::Serialize for ConfigName {
 pub(crate) struct ComponentCommon {
     pub(crate) name: ConfigName,
     pub(crate) location: ComponentLocationToml,
-    /// Content digest of the WASM file.
-    /// Recommended for GitHub releases to enable caching and reproducible builds.
+    /// Content digest of the file.
     /// If the file is found in cache, the download is bypassed.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
@@ -1493,11 +1459,10 @@ impl ActivityWasmComponentConfigToml {
 pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) name: ConfigName,
     /// Location of the JavaScript source file.
-    /// Supports local file paths and `gh://` GitHub release references.
+    /// Supports local file paths.
     /// OCI references are not supported for JS activities.
     pub(crate) location: JsLocationToml,
     /// Content digest of the JS source file.
-    /// Recommended for GitHub releases to enable caching and reproducible builds.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
@@ -1599,11 +1564,10 @@ impl ActivityJsConfigVerified {
 pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) name: ConfigName,
     /// Location of the JavaScript source file.
-    /// Supports local file paths and `gh://` GitHub release references.
+    /// Supports local file paths.
     /// OCI references are not supported for JS workflows.
     pub(crate) location: JsLocationToml,
     /// Content digest of the JS source file.
-    /// Recommended for GitHub releases to enable caching and reproducible builds.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
@@ -1765,25 +1729,20 @@ pub(crate) struct ComponentBacktraceConfig {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum JsLocationCanonical {
     #[schemars(with = "String")]
-    GitHub(GitHubReleaseReference),
-    Content {
-        content: String,
-        file_name: String,
-    },
+    Content { content: String, file_name: String },
 }
 impl JsLocationCanonical {
     pub(crate) fn file_name(&self) -> String {
         match self {
-            JsLocationCanonical::GitHub(gh) => gh.asset_name.clone(),
             JsLocationCanonical::Content { file_name, .. } => file_name.clone(),
         }
     }
 
     /// Return the JS source content. For `Content`, returns it directly (validating digest if
-    /// provided). For `GitHub`, downloads to `wasm_cache_dir`.
+    /// provided).
     pub(crate) async fn get_content(
         &self,
-        wasm_cache_dir: &Path,
+        _wasm_cache_dir: &Path,
         expected_digest: Option<&ContentDigest>,
     ) -> anyhow::Result<String> {
         match self {
@@ -1797,35 +1756,6 @@ impl JsLocationCanonical {
                     );
                 }
                 Ok(content.clone())
-            }
-            JsLocationCanonical::GitHub(github_ref) => {
-                if let Some(expected) = expected_digest {
-                    let cached = content_digest_to_wasm_file(wasm_cache_dir, expected);
-                    if cached.exists() {
-                        trace!("Using cached JS source for known content digest");
-                        return tokio::fs::read_to_string(&cached).await.with_context(|| {
-                            format!("cannot read cached JS source file `{cached:?}`")
-                        });
-                    }
-                }
-                let (actual_digest, cached_path) =
-                    github::pull_to_cache_dir(github_ref, wasm_cache_dir)
-                        .await
-                        .context("cannot fetch JS source from GitHub release")?;
-                if let Some(expected) = expected_digest {
-                    ensure!(
-                        *expected == actual_digest,
-                        "content digest mismatch for JS source: expected {expected}, got {actual_digest}"
-                    );
-                } else {
-                    info!(
-                        r#"No content_digest specified for GitHub release JS source. Consider adding content_digest = "{}" to avoid refetching"#,
-                        actual_digest.with_infix(":")
-                    );
-                }
-                tokio::fs::read_to_string(&cached_path)
-                    .await
-                    .with_context(|| format!("cannot read cached JS source file `{cached_path:?}`"))
             }
         }
     }
@@ -2178,7 +2108,7 @@ pub(crate) struct DeploymentCanonical {
 }
 
 /// Resolve a `DeploymentToml` to `DeploymentCanonical` by reading all local JS and backtrace
-/// source files. GitHub JS locations are left as references (downloaded lazily at verify time).
+/// source files.
 pub(crate) async fn resolve_local_refs_to_canonical(
     deployment: &DeploymentTomlValidated,
 ) -> anyhow::Result<DeploymentCanonical> {
@@ -2297,7 +2227,6 @@ async fn resolve_js_to_canonical(location: &JsLocationToml) -> anyhow::Result<Js
                 .with_context(|| format!("cannot read JS file {full_path:?}"))?;
             Ok(JsLocationCanonical::Content { content, file_name })
         }
-        JsLocationToml::GitHub(gh) => Ok(JsLocationCanonical::GitHub(gh.clone())),
     }
 }
 
@@ -2781,7 +2710,7 @@ pub(crate) mod webhook {
     pub(crate) struct WebhookJsComponentConfigToml {
         pub(crate) name: ConfigName,
         /// Location of the JavaScript source file.
-        /// Supports local file paths and `gh://` GitHub release references.
+        /// Supports local file paths.
         pub(crate) location: JsLocationToml,
         /// Content digest of the JS source file.
         #[serde(default)]
@@ -3464,7 +3393,6 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
 
     mod component_location {
         use super::super::*;
-        use crate::github::GitHubReleaseTag;
 
         #[test]
         fn parse_local_path() {
@@ -3479,65 +3407,6 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
             let location: ComponentLocationToml =
                 "oci://ghcr.io/obeli-sk/obelisk:v0.34.1".parse().unwrap();
             assert!(matches!(location, ComponentLocationToml::Oci(_)));
-        }
-
-        #[test]
-        fn parse_github_release_specific_tag() {
-            let location: ComponentLocationToml = "gh://obeli-sk/obelisk@v0.34.1/my-component.wasm"
-                .parse()
-                .unwrap();
-            match location {
-                ComponentLocationToml::GitHub(ref gh_ref) => {
-                    assert_eq!(gh_ref.owner, "obeli-sk");
-                    assert_eq!(gh_ref.repo, "obelisk");
-                    assert_eq!(
-                        gh_ref.tag,
-                        GitHubReleaseTag::Specific("v0.34.1".to_string())
-                    );
-                    assert_eq!(gh_ref.asset_name, "my-component.wasm");
-                }
-                _ => panic!("expected GitHub variant"),
-            }
-        }
-
-        #[test]
-        fn parse_github_release_latest() {
-            let location: ComponentLocationToml = "gh://obeli-sk/obelisk@latest/my-component.wasm"
-                .parse()
-                .unwrap();
-            match location {
-                ComponentLocationToml::GitHub(ref gh_ref) => {
-                    assert_eq!(gh_ref.tag, GitHubReleaseTag::Latest);
-                }
-                _ => panic!("expected GitHub variant"),
-            }
-        }
-
-        #[test]
-        fn parse_github_release_invalid() {
-            let result: Result<ComponentLocationToml, _> = "gh://invalid-format".parse();
-            assert!(result.is_err());
-        }
-
-        #[test]
-        fn deserialize_component_common_with_content_digest() {
-            let toml_str = r#"
-name = "my_component"
-location = "gh://owner/repo@v1.0.0/component.wasm"
-content_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-"#;
-            let common: ComponentCommon = toml::from_str(toml_str).unwrap();
-            assert!(common.content_digest.is_some());
-        }
-
-        #[test]
-        fn deserialize_component_common_without_content_digest() {
-            let toml_str = r#"
-name = "my_component"
-location = "gh://owner/repo@v1.0.0/component.wasm"
-"#;
-            let common: ComponentCommon = toml::from_str(toml_str).unwrap();
-            assert!(common.content_digest.is_none());
         }
     }
 

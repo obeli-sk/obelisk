@@ -87,11 +87,11 @@
 # [[activity_js]]
 # name = "name"                              # Required. Component name.
 ## Location of the JavaScript source file.
-## Supports local file paths and `gh://` GitHub release references.
+## Supports local file paths.
 ## OCI references are NOT supported for JS activities.
 # location = "path/to/source.js"
 # location = "gh://user/repo@release/my-activity.js"
-# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
+# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash.
 # component_digest = "sha256:AA.."           # Optional. Override the component digest used for locking. If omitted, the digest is derived from the JS source, ffqn, and params.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
@@ -202,11 +202,11 @@
 # [[workflow_js]]
 # name = "name"                              # Required. Component name.
 ## Location of the JavaScript source file.
-## Supports local file paths and `gh://` GitHub release references.
+## Supports local file paths.
 ## OCI references are NOT supported for JS workflows.
 # location = "path/to/workflow.js"
 # location = "gh://user/repo@release/my-workflow.js"
-# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
+# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash.
 # component_digest = "sha256:AA.."           # Optional. Override the component digest used for locking. If omitted, the digest is derived from the JS source, ffqn, and params.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
@@ -277,11 +277,11 @@
 # [[webhook_endpoint_js]]
 # name = "name"                              # Required. Component name.
 ## Location of the JavaScript source file.
-## Supports local file paths and `gh://` GitHub release references.
+## Supports local file paths.
 ## OCI references are NOT supported for JS webhook endpoints.
 # location = "path/to/webhook.js"
 # location = "gh://user/repo@release/my-webhook.js"
-# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash. Enables caching for GitHub releases.
+# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash.
 # http_server = "external"                   # link to a `http_server`'s name (built-in default, or one defined in server.toml)
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]  # Required. See Routes section above.
 ## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".

@@ -109,7 +109,7 @@
           "default": null
         },
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -149,7 +149,7 @@
           "default": null
         },
         "content_digest": {
-          "description": "Content digest of the JS source file.\nRecommended for GitHub releases to enable caching and reproducible builds.",
+          "description": "Content digest of the JS source file.",
           "type": [
             "string",
             "null"
@@ -188,7 +188,7 @@
           "default": "db"
         },
         "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported for JS activities.",
+          "description": "Location of the JavaScript source file.\nSupports local file paths.\nOCI references are not supported for JS activities.",
           "$ref": "#/$defs/JsLocationToml"
         },
         "logs_store_min_level": {
@@ -251,7 +251,7 @@
       "type": "object",
       "properties": {
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -324,7 +324,7 @@
           "default": null
         },
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -646,7 +646,7 @@
       "additionalProperties": false
     },
     "JsLocationToml": {
-      "description": "Location of a JavaScript source file for JS activities.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported.\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
+      "description": "Location of a JavaScript source file for JS activities.\nSupports local file paths.\nOCI references are not supported.\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
       "type": "string"
     },
     "JsParamToml": {
@@ -754,7 +754,7 @@
           "default": "external"
         },
         "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths and `gh://` GitHub release references.",
+          "description": "Location of the JavaScript source file.\nSupports local file paths.",
           "$ref": "#/$defs/JsLocationToml"
         },
         "logs_store_min_level": {
@@ -826,7 +826,7 @@
           }
         },
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -892,7 +892,7 @@
           "default": null
         },
         "content_digest": {
-          "description": "Content digest of the JS source file.\nRecommended for GitHub releases to enable caching and reproducible builds.",
+          "description": "Content digest of the JS source file.",
           "type": [
             "string",
             "null"
@@ -916,7 +916,7 @@
           "type": "string"
         },
         "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths and `gh://` GitHub release references.\nOCI references are not supported for JS workflows.",
+          "description": "Location of the JavaScript source file.\nSupports local file paths.\nOCI references are not supported for JS workflows.",
           "$ref": "#/$defs/JsLocationToml"
         },
         "lock_extension": {
@@ -985,7 +985,7 @@
           "default": null
         },
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
