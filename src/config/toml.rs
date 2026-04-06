@@ -1,7 +1,6 @@
 use super::{config_holder::PathPrefixes, env_var::EnvVarConfig};
 use crate::command::server::FrameFilesToSourceContent;
 use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
-use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::{
     EnvVarMissing, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
 };
@@ -669,7 +668,6 @@ impl Default for CancelWatcherTomlConfig {
 pub(crate) struct ComponentCommonVerified {
     pub(crate) name: ConfigName,
     pub(crate) location: ComponentLocationToml,
-    pub(crate) content_digest: ContentDigest,
 }
 
 #[derive(
@@ -682,7 +680,7 @@ pub(crate) enum ComponentLocationToml {
     Oci(oci_client::Reference),
 }
 impl ComponentLocationToml {
-    /// Fetch wasm file, calculate its content digest.
+    /// Fetch wasm file and calculate its content digest.
     ///
     /// Read wasm file either from local fs, or pull from an OCI registry and cache it.
     /// Calculate the `content_digest`. File is not converted from Core to Component format.
@@ -693,20 +691,12 @@ impl ComponentLocationToml {
         &self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-        expected_digest: Option<&ContentDigest>,
+        _expected_digest: Option<&ContentDigest>,
     ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
         use utils::sha256sum::calculate_sha256_file;
 
         debug!("Fetching {self:?}");
         let stopwatch = std::time::Instant::now();
-        // Happy path: if content_digest is known and file exists in cache, return immediately
-        if let Some(expected_digest) = expected_digest
-            && let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, expected_digest)
-            && wasm_path.exists()
-        {
-            debug!("Using cached file for known content digest");
-            return Ok((expected_digest.clone(), wasm_path));
-        }
 
         let (actual_digest, path) = match &self {
             ComponentLocationToml::Path(wasm_path) => {
@@ -720,18 +710,13 @@ impl ComponentLocationToml {
                 (actual_digest, wasm_path)
             }
             ComponentLocationToml::Oci(image) => {
-                let (digest, path, _) = oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
-                    .await
-                    .context("try cleaning the cache directory with `--clean-cache`")?;
+                let (digest, path, _, _) =
+                    oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
+                        .await
+                        .context("try cleaning the cache directory with `--clean-cache`")?;
                 (digest, path)
             }
         };
-        if let Some(expected_digest) = expected_digest {
-            ensure!(
-                *expected_digest == actual_digest,
-                "content digest mismatch: expected {expected_digest}, got {actual_digest}"
-            );
-        }
         let stopwatch = stopwatch.elapsed();
         debug!("Fetching done in {stopwatch:?}");
         Ok((actual_digest, path))
@@ -829,11 +814,6 @@ impl serde::Serialize for ConfigName {
 pub(crate) struct ComponentCommon {
     pub(crate) name: ConfigName,
     pub(crate) location: ComponentLocationToml,
-    /// Content digest of the file.
-    /// If the file is found in cache, the download is bypassed.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub(crate) content_digest: Option<ContentDigest>,
 }
 
 impl ComponentCommon {
@@ -841,18 +821,17 @@ impl ComponentCommon {
         self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-    ) -> Result<(ComponentCommonVerified, PathBuf), anyhow::Error> {
-        let (fetched_digest, wasm_path) = self
+    ) -> Result<(ComponentCommonVerified, ContentDigest, PathBuf), anyhow::Error> {
+        let (content_digest, wasm_path) = self
             .location
-            .fetch(wasm_cache_dir, metadata_dir, self.content_digest.as_ref())
+            .fetch(wasm_cache_dir, metadata_dir, None)
             .await?;
 
         let verified = ComponentCommonVerified {
             name: self.name,
             location: self.location,
-            content_digest: fetched_digest,
         };
-        Ok((verified, wasm_path))
+        Ok((verified, content_digest, wasm_path))
     }
 }
 
@@ -1150,11 +1129,12 @@ impl ActivityStubComponentConfigToml {
     ) -> Result<ActivityStubConfigVerified, anyhow::Error> {
         match self {
             Self::File(file) => {
-                let (common, wasm_path) = file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+                let (common, content_digest, wasm_path) =
+                    file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
                 let component_id = ComponentId::new(
                     ComponentType::ActivityStub,
                     StrVariant::from(common.name),
-                    ComponentDigest(common.content_digest.0),
+                    ComponentDigest(content_digest.0),
                 )?;
                 Ok(ActivityStubConfigVerified::File(
                     ActivityStubExtConfigVerified {
@@ -1257,9 +1237,10 @@ impl ActivityExternalComponentConfigToml {
         match self {
             Self::File(file) => {
                 let component_digest_override = file.component_digest;
-                let (common, wasm_path) = file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+                let (common, content_digest, wasm_path) =
+                    file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
                 let component_digest =
-                    component_digest_override.unwrap_or(ComponentDigest(common.content_digest.0));
+                    component_digest_override.unwrap_or(ComponentDigest(content_digest.0));
                 let component_id = ComponentId::new(
                     ComponentType::Activity,
                     StrVariant::from(common.name),
@@ -1396,7 +1377,8 @@ impl ActivityWasmComponentConfigToml {
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
-        let (common, wasm_path) = self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+        let (common, content_digest, wasm_path) =
+            self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
 
         let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
         let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
@@ -1421,7 +1403,7 @@ impl ActivityWasmComponentConfigToml {
 
         let component_digest = self
             .component_digest
-            .unwrap_or(ComponentDigest(common.content_digest.0));
+            .unwrap_or(ComponentDigest(content_digest.0));
         let component_id = ComponentId::new(
             ComponentType::Activity,
             StrVariant::from(common.name),
@@ -1939,17 +1921,18 @@ impl WorkflowWasmComponentConfigCanonical {
                 self.common.name.0
             );
         }
-        let (common, wasm_path) = self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+        let (common, content_digest, wasm_path) =
+            self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
         let wasm_path = WasmComponent::convert_core_module_to_component(
             &wasm_path,
-            &common.content_digest,
+            &content_digest,
             &wasm_cache_dir,
         )
         .await?
         .unwrap_or(wasm_path);
         let component_digest = self
             .component_digest
-            .unwrap_or(ComponentDigest(common.content_digest.0));
+            .unwrap_or(ComponentDigest(content_digest.0));
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(common.name),
@@ -2786,12 +2769,13 @@ pub(crate) mod webhook {
             ignore_missing_env_vars: bool,
             subscription_interruption: Option<Duration>,
         ) -> Result<(ConfigName, WebhookWasmComponentConfigVerified), anyhow::Error> {
-            let (common, wasm_path) = self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+            let (common, content_digest, wasm_path) =
+                self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
             let frame_files_to_sources = self.backtrace.into_frame_files();
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(common.name.clone()),
-                ComponentDigest(common.content_digest.0),
+                ComponentDigest(content_digest.0),
             )?;
             let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
             let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;

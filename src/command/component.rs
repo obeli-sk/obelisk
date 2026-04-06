@@ -198,7 +198,7 @@ async fn add_component_from_oci(
     };
 
     // Pull image and extract metadata; download WASM blob only if locked
-    let (content_digest, metadata) = if locked {
+    let (oci_manifest_digest_if_locked, component_metadata) = if locked {
         let project_dirs = project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
@@ -211,25 +211,38 @@ async fn add_component_from_oci(
         tokio::fs::create_dir_all(&metadata_dir)
             .await
             .with_context(|| format!("cannot create metadata directory {metadata_dir:?}"))?;
-        let (digest, _path, comp_metadata) =
+        let (_digest, _path, manifest_digest, component_metadata) =
             oci::pull_to_cache_dir(&oci_ref, &wasm_cache_dir, &metadata_dir)
                 .await
                 .context("failed to pull OCI image")?;
-        info!("Fetched OCI image, content_digest: {digest}");
-        (Some(digest), comp_metadata)
+        info!("Fetched OCI image, manifest_digest: {manifest_digest}");
+        (Some(manifest_digest), component_metadata)
     } else {
-        let comp_metadata = oci::pull_metadata(&oci_ref)
+        let component_metadata = oci::pull_metadata(&oci_ref)
             .await
             .context("failed to fetch OCI image metadata")?;
-        (None, comp_metadata)
+        (None, component_metadata)
     };
 
     // Determine component type and config from metadata
-    let metadata = metadata
+    let metadata: ComponentMetadata = component_metadata
         .context("cannot determine component type: OCI image was pushed without metadata (use a newer `obelisk component push`)")?;
     let component_type = metadata.component_type;
 
-    let location_raw = format!("{OCI_SCHEMA_PREFIX}{}", oci_ref.whole());
+    let location_raw = if let Some(actual_digest) = oci_manifest_digest_if_locked {
+        if let Some(requested_digest) = oci_ref.digest() {
+            // Requested `oci_ref` is already pinned
+            assert_eq!(requested_digest, actual_digest); // Registry must return the requested image based on the digest, disregarding tag.
+            format!("{OCI_SCHEMA_PREFIX}{oci_ref}")
+        } else {
+            // Set digest from OCI image metadata.
+            let oci_ref = oci_ref.clone_with_digest(actual_digest);
+            format!("{OCI_SCHEMA_PREFIX}{oci_ref}")
+        }
+    } else {
+        // Just output the requested reference.
+        format!("{OCI_SCHEMA_PREFIX}{oci_ref}")
+    };
 
     let contents = {
         use toml_edit::{ArrayOfTables, DocumentMut, Item, value};
@@ -247,25 +260,17 @@ async fn add_component_from_oci(
             .with_context(|| format!("expected {component_type} to be an array of tables"))?;
 
         // Find existing table by name
-        if let Some(table) = components.iter_mut().find(|t| {
+        if let Some(table) = components.iter_mut().find(|t: &&mut toml_edit::Table| {
             t.get("name")
                 .and_then(|item| item.as_str())
                 .is_some_and(|s| s == name)
         }) {
             // Update existing
             table["location"] = value(location_raw);
-            if let Some(ref digest) = content_digest {
-                table["content_digest"] = value(digest.to_string());
-            } else {
-                table.remove("content_digest");
-            }
+            // Remove stale content_digest if present from a previous version
+            table.remove("content_digest");
         } else {
-            components.push(build_component_table(
-                &name,
-                &location_raw,
-                content_digest.as_ref(),
-                &metadata,
-            ));
+            components.push(build_component_table(&name, &location_raw, &metadata));
         }
         format!("{prefix}{doc}")
     };
@@ -277,7 +282,6 @@ async fn add_component_from_oci(
 fn build_component_table(
     name: &str,
     location_raw: &str,
-    content_digest: Option<&concepts::ContentDigest>,
     metadata: &ComponentMetadata,
 ) -> toml_edit::Table {
     use toml_edit::{Item, Table, value};
@@ -285,9 +289,6 @@ fn build_component_table(
     let mut t = Table::new();
     t["name"] = value(name);
     t["location"] = value(location_raw);
-    if let Some(digest) = content_digest {
-        t["content_digest"] = value(digest.to_string());
-    }
 
     if !metadata.env_vars.is_empty() {
         let mut arr = toml_edit::Array::new();
@@ -498,7 +499,6 @@ mod tests {
         let table = build_component_table(
             "my_activity",
             "oci://registry.example.com/repo/my-activity:latest",
-            None,
             &metadata,
         );
 
@@ -534,7 +534,6 @@ mod tests {
         let table = build_component_table(
             "my_webhook",
             "oci://registry.example.com/repo/webhook:v1",
-            None,
             &metadata,
         );
 

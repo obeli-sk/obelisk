@@ -71,26 +71,26 @@ pub(crate) async fn pull_to_cache_dir(
     image: &Reference,
     wasm_cache_dir: &Path,
     metadata_dir: &Path,
-) -> Result<(ContentDigest, PathBuf, Option<ComponentMetadata>), anyhow::Error> {
+) -> Result<(ContentDigest, PathBuf, String, Option<ComponentMetadata>), anyhow::Error> {
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let auth = get_oci_auth(image)?;
     // Happy path: image's metadata digest mapping.txt -> content digest -> file -> verify hash
     // Recoverable errors, like reading inconsistent data, will be ignored. Image will be downloaded again.
-    if let Some(metadata_digest) = image.digest()
-        && let Ok(metadata_digest) = Digest::from_str(metadata_digest)
+    if let Some(manifest_digest) = image.digest()
+        && let Ok(metadata_digest) = Digest::from_str(manifest_digest)
         && let metadata_file = digest_to_metadata_file(metadata_dir, &metadata_digest)
         && let Ok(content) = tokio::fs::read_to_string(&metadata_file).await
         && let Ok(content_digest) = ContentDigest::from_str(&content)
         && let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &content_digest)
         && let Ok(()) = verify_wasm_file(&wasm_path, &content_digest).await
     {
-        return Ok((content_digest, wasm_path, None));
+        return Ok((content_digest, wasm_path, manifest_digest.to_string(), None));
     }
     // The mapping file will be recreated. We need to fetch metadata anyway for `layer`
     // and use that as the source of truth.
 
     info!("Fetching metadata");
-    let (layer, content_digest, component_metadata) = {
+    let (layer, content_digest, manifest_digest, component_metadata) = {
         let LayerWithAnnotations {
             layer_content_digest,
             layer,
@@ -99,17 +99,12 @@ pub(crate) async fn pull_to_cache_dir(
         } = client
             .pull_manifest_and_config_with_retry(image, &auth)
             .await?;
-        debug!("Fetched metadata digest {metadata_digest}");
-        match image.digest() {
-            None => warn!(
-                "Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}"
-            ),
-            Some(specified) => {
-                ensure!(
-                    specified == metadata_digest,
-                    "metadata digest specified in {image} must be respected by the oci client, got {metadata_digest}"
-                );
-            }
+        debug!("Fetched manifest digest {metadata_digest}");
+        if let Some(specified) = image.digest() {
+            ensure!(
+                specified == metadata_digest,
+                "manifest digest specified in {image} must be respected by the oci client, got {metadata_digest}"
+            );
         }
         // Create new file in the metadata directory.
         let metadata_file =
@@ -118,11 +113,16 @@ pub(crate) async fn pull_to_cache_dir(
         tokio::fs::write(&metadata_file, layer_content_digest.to_string()).await?;
 
         let comp_metadata = extract_component_metadata(manifest_annotations.as_ref());
-        (layer, layer_content_digest, comp_metadata)
+        (layer, layer_content_digest, metadata_digest, comp_metadata)
     };
     let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &content_digest);
     if let Ok(()) = verify_wasm_file(&wasm_path, &content_digest).await {
-        return Ok((content_digest, wasm_path, component_metadata));
+        return Ok((
+            content_digest,
+            wasm_path,
+            manifest_digest.clone(),
+            component_metadata,
+        ));
     }
     info!("Pulling image to {wasm_path:?}");
     client
@@ -130,7 +130,12 @@ pub(crate) async fn pull_to_cache_dir(
         .await
         .with_context(|| format!("Unable to pull image {image}"))?;
 
-    Ok((content_digest, wasm_path, component_metadata))
+    Ok((
+        content_digest,
+        wasm_path,
+        manifest_digest.clone(),
+        component_metadata,
+    ))
 }
 
 /// Pull only the manifest/config to extract metadata, without downloading the WASM blob.
