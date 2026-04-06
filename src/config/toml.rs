@@ -159,6 +159,11 @@ impl DeploymentToml {
             expand_loc(&mut c.common.location);
             expand_backtrace(&mut c.backtrace);
         }
+        for c in &mut self.webhooks_js {
+            if let JsLocationToml::Path(p) = &mut c.location {
+                expand_str(p);
+            }
+        }
     }
 
     fn all_component_names_with_types(
