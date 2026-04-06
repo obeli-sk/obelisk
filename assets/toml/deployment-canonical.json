@@ -110,14 +110,6 @@
           ],
           "default": null
         },
-        "content_digest": {
-          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
         "location": {
           "type": "string"
         },
@@ -232,14 +224,6 @@
     "ActivityStubFileConfigToml": {
       "type": "object",
       "properties": {
-        "content_digest": {
-          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
         "location": {
           "type": "string"
         },
@@ -299,14 +283,6 @@
         },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "content_digest": {
-          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -497,14 +473,6 @@
     "ComponentCommon": {
       "type": "object",
       "properties": {
-        "content_digest": {
-          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
         "location": {
           "type": "string"
         },
@@ -838,14 +806,6 @@
           "default": {
             "frame_files_to_sources": {}
           }
-        },
-        "content_digest": {
-          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
         },
         "env_vars": {
           "type": "array",

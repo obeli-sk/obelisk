@@ -328,7 +328,7 @@ pub(crate) enum Component {
         /// Path to the deployment TOML file.
         #[arg(long, short, required = true)]
         deployment: PathBuf,
-        /// Store the component in local cache and record its `content_digest` for reproducible builds.
+        /// Pin the location with the manifest digest (e.g. `image:tag@sha256:...`).
         #[arg(long)]
         locked: bool,
     },
