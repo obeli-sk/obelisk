@@ -111,7 +111,7 @@
           "default": null
         },
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -233,7 +233,7 @@
       "type": "object",
       "properties": {
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -306,7 +306,7 @@
           "default": null
         },
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -498,7 +498,7 @@
       "type": "object",
       "properties": {
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"
@@ -656,32 +656,8 @@
         {
           "type": "object",
           "properties": {
-            "git_hub": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "git_hub"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
             "content": {
-              "type": "object",
-              "properties": {
-                "content": {
-                  "type": "string"
-                },
-                "file_name": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "content",
-                "file_name"
-              ]
+              "type": "string"
             }
           },
           "additionalProperties": false,
@@ -864,7 +840,7 @@
           }
         },
         "content_digest": {
-          "description": "Content digest of the WASM file.\nRecommended for GitHub releases to enable caching and reproducible builds.\nIf the file is found in cache, the download is bypassed.",
+          "description": "Content digest of the file.\nIf the file is found in cache, the download is bypassed.",
           "type": [
             "string",
             "null"

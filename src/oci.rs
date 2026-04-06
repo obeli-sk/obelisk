@@ -1,6 +1,6 @@
 use crate::args::TomlComponentType;
+use crate::config::content_digest_to_wasm_file;
 use crate::config::toml::{AllowedHostToml, DurationConfig, OCI_SCHEMA_PREFIX};
-use crate::github::content_digest_to_wasm_file;
 use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, component_id::Digest};
 use futures_util::TryFutureExt;
