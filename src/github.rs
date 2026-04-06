@@ -12,6 +12,8 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, trace, warn};
 use utils::sha256sum::calculate_sha256_file;
 
+use crate::config::content_digest_to_wasm_file;
+
 pub(crate) const GH_SCHEMA_PREFIX: &str = "gh://";
 const GITHUB_CLIENT_RETRIES: u64 = 10;
 
@@ -113,13 +115,6 @@ struct GitHubRelease {
 struct GitHubAsset {
     id: u64,
     name: String,
-}
-
-pub(crate) fn content_digest_to_wasm_file(
-    wasm_cache_dir: &Path,
-    content_digest: &ContentDigest,
-) -> PathBuf {
-    wasm_cache_dir.join(format!("{}.wasm", content_digest.with_infix("_")))
 }
 
 /// Pull a WASM file from a GitHub release to the cache directory.

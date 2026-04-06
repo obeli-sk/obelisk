@@ -1,14 +1,12 @@
 use super::{config_holder::PathPrefixes, env_var::EnvVarConfig};
 use crate::command::server::FrameFilesToSourceContent;
+use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
+use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::{
     EnvVarMissing, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
 };
 use crate::github::{self, GH_SCHEMA_PREFIX, GitHubReleaseReference};
 use crate::oci;
-use crate::{
-    config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX},
-    github::content_digest_to_wasm_file,
-};
 use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
 use concepts::ContentDigest;
