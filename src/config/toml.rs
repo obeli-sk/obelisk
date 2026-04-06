@@ -1740,7 +1740,7 @@ impl JsLocationCanonical {
 
     /// Return the JS source content. For `Content`, returns it directly (validating digest if
     /// provided).
-    pub(crate) async fn get_content(
+    pub(crate) fn get_content(
         &self,
         _wasm_cache_dir: &Path,
         expected_digest: Option<&ContentDigest>,
@@ -1839,8 +1839,7 @@ impl ActivityJsComponentConfigCanonical {
         };
         let js_source = self
             .location
-            .get_content(&wasm_cache_dir, self.content_digest.as_ref())
-            .await?;
+            .get_content(&wasm_cache_dir, self.content_digest.as_ref())?;
         const DEFAULT_RETURN_TYPE: &str = "result";
         let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
         let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
@@ -2027,8 +2026,7 @@ impl WorkflowJsComponentConfigCanonical {
         };
         let js_source = self
             .location
-            .get_content(&wasm_cache_dir, self.content_digest.as_ref())
-            .await?;
+            .get_content(&wasm_cache_dir, self.content_digest.as_ref())?;
         const DEFAULT_RETURN_TYPE: &str = "result";
         let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
         let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
@@ -2854,8 +2852,7 @@ pub(crate) mod webhook {
         ) -> Result<(ConfigName, WebhookJsConfigVerified), anyhow::Error> {
             let js_source = self
                 .location
-                .get_content(&wasm_cache_dir, self.content_digest.as_ref())
-                .await?;
+                .get_content(&wasm_cache_dir, self.content_digest.as_ref())?;
             let mut hasher = Sha256::new();
             hasher.update(b"webhook_js:");
             hasher.update(js_source.as_bytes());
