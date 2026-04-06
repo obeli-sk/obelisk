@@ -25,12 +25,12 @@ use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
 
 pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:1.0.0";
 
-type ManifestConfigResult = (
-    ContentDigest,
-    OciDescriptor,                    /* layer */
-    String,                           /* metadata_digest */
-    Option<BTreeMap<String, String>>, /* manifest_annotations */
-);
+struct LayerWithAnnotations {
+    layer_content_digest: ContentDigest,
+    layer: OciDescriptor,
+    metadata_digest: String,
+    manifest_annotations: Option<BTreeMap<String, String>>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ComponentMetadata {
@@ -91,7 +91,12 @@ pub(crate) async fn pull_to_cache_dir(
 
     info!("Fetching metadata");
     let (layer, content_digest, component_metadata) = {
-        let (layer_content_digest, layer, metadata_digest, annotations) = client
+        let LayerWithAnnotations {
+            layer_content_digest,
+            layer,
+            metadata_digest,
+            manifest_annotations,
+        } = client
             .pull_manifest_and_config_with_retry(image, &auth)
             .await?;
         debug!("Fetched metadata digest {metadata_digest}");
@@ -112,7 +117,7 @@ pub(crate) async fn pull_to_cache_dir(
         debug!("Writing WASM digest {layer_content_digest} to metadata file {metadata_file:?}");
         tokio::fs::write(&metadata_file, layer_content_digest.to_string()).await?;
 
-        let comp_metadata = extract_component_metadata(annotations.as_ref());
+        let comp_metadata = extract_component_metadata(manifest_annotations.as_ref());
         (layer, layer_content_digest, comp_metadata)
     };
     let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &content_digest);
@@ -135,10 +140,12 @@ pub(crate) async fn pull_metadata(
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let auth = get_oci_auth(image)?;
     info!("Fetching metadata");
-    let (_layer_content_digest, _layer, _metadata_digest, annotations) = client
+    let layer_with_annotations = client
         .pull_manifest_and_config_with_retry(image, &auth)
         .await?;
-    Ok(extract_component_metadata(annotations.as_ref()))
+    Ok(extract_component_metadata(
+        layer_with_annotations.manifest_annotations.as_ref(),
+    ))
 }
 
 fn extract_component_metadata(
@@ -256,7 +263,7 @@ impl WasmClientWithRetry {
         &self,
         image: &Reference,
         auth: &oci_client::secrets::RegistryAuth,
-    ) -> anyhow::Result<ManifestConfigResult> {
+    ) -> anyhow::Result<LayerWithAnnotations> {
         self.retry(
             || async {
                 let (mut manifest, wasm_config, metadata_digest) =
@@ -279,12 +286,12 @@ impl WasmClientWithRetry {
                 wasm_config
                     .component
                     .context("image must contain a wasi component")?;
-                Ok((
+                Ok(LayerWithAnnotations {
                     layer_content_digest,
                     layer,
                     metadata_digest,
-                    manifest.annotations,
-                ))
+                    manifest_annotations: manifest.annotations,
+                })
             },
             "calling pull_manifest_and_config",
         )
