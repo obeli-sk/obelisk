@@ -296,12 +296,11 @@ pub(crate) async fn generate_wit_deps(
     output_directory: PathBuf,
     overwrite: bool,
 ) -> Result<(), anyhow::Error> {
-    let (deployment_toml, deployment_dir) = load_deployment_toml(deployment_path).await?;
+    let deployment_toml = load_deployment_toml(deployment_path).await?;
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
     let config = config_holder.load_config().await?;
     let _guard = init::init(&config)?;
-    let mut path_prefixes = config_holder.path_prefixes;
-    path_prefixes.deployment_dir = Some(deployment_dir);
+    let path_prefixes = config_holder.path_prefixes;
     let path_prefixes = Arc::new(path_prefixes);
     let deployment =
         crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)

@@ -1,18 +1,22 @@
 use crate::FunctionMetadataVerbosity;
 use crate::FunctionRepositoryClient;
 use crate::args;
-use crate::args::DeploymentTomlSection;
+use crate::args::TomlComponentType;
 use crate::config::config_holder::{ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML};
+use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ConfigName;
+use crate::config::toml::DeploymentTomlValidated;
+use crate::config::toml::DurationConfig;
 use crate::config::toml::OCI_SCHEMA_PREFIX;
 use crate::get_fn_repository_client;
-use crate::github;
 use crate::oci;
+use crate::oci::ComponentMetadata;
 use crate::project_dirs;
 use anyhow::Context;
+use anyhow::bail;
 use concepts::ComponentType;
-use concepts::{ContentDigest, FunctionFqn};
+use concepts::FunctionFqn;
 use directories::BaseDirs;
 use grpc::grpc_gen;
 use grpc::to_channel;
@@ -20,7 +24,6 @@ use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tracing::info;
-use utils::sha256sum::calculate_sha256_file;
 
 impl args::Component {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
@@ -43,29 +46,137 @@ impl args::Component {
                 )
                 .await
             }
-            args::Component::Push { path, image_name } => oci::push(path, &image_name).await,
+            args::Component::Push {
+                component_name,
+                deployment,
+                oci,
+            } => push_component(&component_name, &deployment, &oci).await,
             args::Component::Add {
-                component_type,
-                name,
                 location,
+                name,
                 deployment,
                 locked,
-            } => add(component_type, name, location, deployment, locked).await,
+            } => add_component_from_oci(location, name, deployment, locked).await,
         }
     }
 }
 
-pub(crate) async fn add(
-    component_type: DeploymentTomlSection,
+struct ComponentPushData {
+    component_type: TomlComponentType,
+    wasm_path: PathBuf,
+    env_vars: Vec<String>,
+    allowed_hosts: Vec<crate::config::toml::AllowedHostToml>,
+    lock_duration: Option<DurationConfig>,
+}
+
+/// Find a component by name in the deployment TOML and build metadata for push.
+fn find_component_for_push(
+    deployment: &DeploymentTomlValidated,
+    name: &str,
+) -> anyhow::Result<ComponentPushData> {
+    let component_type = deployment
+        .component_type_by_name
+        .get(name)
+        .copied()
+        .with_context(|| format!("component '{name}' not found in deployment TOML"))?;
+
+    let deployment = &deployment.inner;
+    match component_type {
+        TomlComponentType::ActivityWasm => {
+            let cfg = deployment
+                .activities_wasm
+                .iter()
+                .find(|c| c.common.name.to_string() == name)
+                .expect("name is in map so it must be in the list");
+            let ComponentLocationToml::Path(ref path) = cfg.common.location else {
+                bail!(
+                    "component '{name}' uses OCI/GitHub location, only local paths are supported for push"
+                );
+            };
+            Ok(ComponentPushData {
+                component_type,
+                wasm_path: PathBuf::from(path),
+                env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
+                allowed_hosts: cfg.allowed_hosts.clone(),
+                lock_duration: Some(cfg.exec.lock_expiry),
+            })
+        }
+        TomlComponentType::WebhookEndpointWasm => {
+            let cfg = deployment
+                .webhooks
+                .iter()
+                .find(|c| c.common.name.to_string() == name)
+                .expect("name is in map so it must be in the list");
+            let ComponentLocationToml::Path(ref path) = cfg.common.location else {
+                bail!(
+                    "component '{name}' uses OCI/GitHub location, only local paths are supported for push"
+                );
+            };
+            Ok(ComponentPushData {
+                component_type,
+                wasm_path: PathBuf::from(path),
+                env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
+                allowed_hosts: cfg.allowed_hosts.clone(),
+                lock_duration: None,
+            })
+        }
+        TomlComponentType::WorkflowWasm => {
+            let cfg = deployment
+                .workflows
+                .iter()
+                .find(|c| c.common.name.to_string() == name)
+                .expect("name is in map so it must be in the list");
+            let ComponentLocationToml::Path(ref path) = cfg.common.location else {
+                bail!(
+                    "component '{name}' uses OCI/GitHub location, only local paths are supported for push"
+                );
+            };
+            Ok(ComponentPushData {
+                component_type,
+                wasm_path: PathBuf::from(path),
+                env_vars: Vec::new(),
+                allowed_hosts: vec![],
+                lock_duration: None,
+            })
+        }
+        other => bail!("component type `{other}` does not support push"),
+    }
+}
+
+fn env_var_key(ev: &EnvVarConfig) -> String {
+    match ev {
+        EnvVarConfig::Key(k) => k.clone(),
+        EnvVarConfig::KeyValue { key, .. } => key.clone(),
+    }
+}
+
+async fn push_component(
+    component_name: &str,
+    deployment_path: &std::path::Path,
+    reference: &oci_client::Reference,
+) -> anyhow::Result<()> {
+    let validated =
+        crate::config::config_holder::load_deployment_toml(deployment_path.to_path_buf()).await?;
+    let data = find_component_for_push(&validated, component_name)?;
+    let metadata = ComponentMetadata {
+        component_type: data.component_type,
+        env_vars: data.env_vars,
+        allowed_hosts: data.allowed_hosts,
+        lock_duration: data.lock_duration,
+    };
+    oci::push(data.wasm_path, reference, &metadata).await
+}
+
+async fn add_component_from_oci(
+    oci_ref: oci_client::Reference,
     name: String,
-    location: ComponentLocationToml,
     deployment_path: PathBuf,
     locked: bool,
 ) -> anyhow::Result<()> {
-    // Check name
+    // Validate name
     ConfigName::new(name.clone().into()).context("name is invalid")?;
 
-    // Generate from default if file does not exist.
+    // Open/create deployment TOML
     let (mut file, contents, prefix) = if deployment_path.try_exists().unwrap_or_default() {
         let contents = tokio::fs::read_to_string(&deployment_path)
             .await
@@ -92,46 +203,51 @@ pub(crate) async fn add(
         )
     };
 
-    // Fetch, store to local cache and compute content_digest if `locked`
-    let content_digest: Option<ContentDigest> = if locked {
+    // Pull image and extract metadata; download WASM blob only if locked
+    let (content_digest, metadata) = if locked {
         let project_dirs = project_dirs();
         let base_dirs = BaseDirs::new();
-        // Use default server config (for wasm cache dir)
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
         let config = config_holder.load_config().await?;
         let wasm_cache_dir = config
             .wasm_global_config
             .get_wasm_cache_directory(&config_holder.path_prefixes)
             .await?;
-        Some(compute_content_digest(&location, &wasm_cache_dir).await?)
+        let metadata_dir = wasm_cache_dir.join("metadata");
+        tokio::fs::create_dir_all(&metadata_dir)
+            .await
+            .with_context(|| format!("cannot create metadata directory {metadata_dir:?}"))?;
+        let (digest, _path, comp_metadata) =
+            oci::pull_to_cache_dir(&oci_ref, &wasm_cache_dir, &metadata_dir)
+                .await
+                .context("failed to pull OCI image")?;
+        info!("Fetched OCI image, content_digest: {digest}");
+        (Some(digest), comp_metadata)
     } else {
-        None
+        let comp_metadata = oci::pull_metadata(&oci_ref)
+            .await
+            .context("failed to fetch OCI image metadata")?;
+        (None, comp_metadata)
     };
 
-    let location_raw = match &location {
-        ComponentLocationToml::Path(path) => path.clone(),
-        ComponentLocationToml::Oci(reference) => {
-            format!("{OCI_SCHEMA_PREFIX}{}", reference.whole())
-        }
-        ComponentLocationToml::GitHub(github_ref) => github_ref.to_string(),
-    };
+    // Determine component type and config from metadata
+    let metadata = metadata
+        .context("cannot determine component type: OCI image was pushed without metadata (use a newer `obelisk component push`)")?;
+    let component_type = metadata.component_type;
+
+    let location_raw = format!("{OCI_SCHEMA_PREFIX}{}", oci_ref.whole());
 
     let contents = {
-        use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
+        use toml_edit::{ArrayOfTables, DocumentMut, Item, value};
 
         let mut doc = contents.parse::<DocumentMut>()?;
-
         let key = component_type.to_string();
 
-        // Ensure the entry exists in the document.
-        // If missing, `insert` appends it to the end of the key list (End of File).
+        // Ensure the entry exists
         if !doc.contains_key(&key) {
             doc.insert(&key, Item::ArrayOfTables(ArrayOfTables::new()));
         }
 
-        // Get or create the array-of-tables (e.g. [[workflow_wasm]] items)
-
-        // Get mutable reference to the array of tables
         let components = doc[&key]
             .as_array_of_tables_mut()
             .with_context(|| format!("expected {component_type} to be an array of tables"))?;
@@ -150,14 +266,12 @@ pub(crate) async fn add(
                 table.remove("content_digest");
             }
         } else {
-            // Insert new standard table
-            let mut new_table = Table::new();
-            new_table["name"] = value(name);
-            new_table["location"] = value(location_raw);
-            if let Some(ref digest) = content_digest {
-                new_table["content_digest"] = value(digest.to_string());
-            }
-            components.push(new_table);
+            components.push(build_component_table(
+                &name,
+                &location_raw,
+                content_digest.as_ref(),
+                &metadata,
+            ));
         }
         format!("{prefix}{doc}")
     };
@@ -166,57 +280,124 @@ pub(crate) async fn add(
     Ok(())
 }
 
-/// Compute content digest for the given location and copy to cache.
-/// For remote locations (OCI, GitHub), fetches to the cache directory.
-/// For local files, computes hash and copies to cache.
-async fn compute_content_digest(
-    location: &ComponentLocationToml,
-    wasm_cache_dir: &std::path::Path,
-) -> anyhow::Result<ContentDigest> {
-    match location {
-        ComponentLocationToml::Path(path) => {
-            let path = PathBuf::from(path);
-            if !path.exists() {
-                anyhow::bail!("file not found: {path:?}");
-            }
-            let digest = calculate_sha256_file(&path)
-                .await
-                .with_context(|| format!("cannot compute hash of file `{path:?}`"))?;
+fn build_component_table(
+    name: &str,
+    location_raw: &str,
+    content_digest: Option<&concepts::ContentDigest>,
+    metadata: &ComponentMetadata,
+) -> toml_edit::Table {
+    use toml_edit::{Item, Table, value};
 
-            // Copy to cache directory
-            let cache_path = github::content_digest_to_wasm_file(wasm_cache_dir, &digest);
-            if !cache_path.exists() {
-                tokio::fs::create_dir_all(wasm_cache_dir)
-                    .await
-                    .with_context(|| format!("cannot create cache directory {wasm_cache_dir:?}"))?;
-                tokio::fs::copy(&path, &cache_path)
-                    .await
-                    .with_context(|| format!("cannot copy {path:?} to cache {cache_path:?}"))?;
-                info!("Copied to cache: {cache_path:?}");
+    let mut t = Table::new();
+    t["name"] = value(name);
+    t["location"] = value(location_raw);
+    if let Some(digest) = content_digest {
+        t["content_digest"] = value(digest.to_string());
+    }
+
+    if !metadata.env_vars.is_empty() {
+        let mut arr = toml_edit::Array::new();
+        for v in &metadata.env_vars {
+            arr.push(v.clone());
+        }
+        t["env_vars"] = Item::Value(toml_edit::Value::Array(arr));
+    }
+
+    if !metadata.allowed_hosts.is_empty() {
+        let mut host_array = toml_edit::ArrayOfTables::new();
+        for host in &metadata.allowed_hosts {
+            let mut host_table = Table::new();
+            host_table["pattern"] = value(&host.pattern);
+            if let Some(ref methods) = host.methods {
+                host_table["methods"] = serialize_methods_input(methods);
             }
-            info!("Computed content_digest: {digest}");
-            Ok(digest)
+            if let Some(ref secrets) = host.secrets {
+                let mut secrets_table = Table::new();
+                if !secrets.env_vars.is_empty() {
+                    let mut secret_env_array = toml_edit::Array::new();
+                    for ev in &secrets.env_vars {
+                        let ev_val = match ev {
+                            EnvVarConfig::Key(k) => {
+                                toml_edit::Value::String(toml_edit::Formatted::new(k.clone()))
+                            }
+                            EnvVarConfig::KeyValue { key, value: v } => {
+                                let mut ev_inline = toml_edit::InlineTable::new();
+                                ev_inline.insert("key", key.clone().into());
+                                ev_inline.insert("value", v.clone().into());
+                                toml_edit::Value::InlineTable(ev_inline)
+                            }
+                        };
+                        secret_env_array.push(ev_val);
+                    }
+                    secrets_table["env_vars"] =
+                        Item::Value(toml_edit::Value::Array(secret_env_array));
+                }
+                if !secrets.replace_in.is_empty() {
+                    let mut replace_array = toml_edit::Array::new();
+                    for r in &secrets.replace_in {
+                        let name = match r {
+                            crate::config::toml::ReplaceIn::Headers => "headers",
+                            crate::config::toml::ReplaceIn::Body => "body",
+                            crate::config::toml::ReplaceIn::Params => "params",
+                        };
+                        replace_array.push(name);
+                    }
+                    secrets_table["replace_in"] =
+                        Item::Value(toml_edit::Value::Array(replace_array));
+                }
+                host_table["secrets"] = Item::Value(toml_edit::Value::InlineTable(
+                    secrets_table.into_inline_table(),
+                ));
+            }
+            host_array.push(host_table);
         }
-        ComponentLocationToml::Oci(reference) => {
-            let metadata_dir = wasm_cache_dir.join("metadata");
-            tokio::fs::create_dir_all(&metadata_dir)
-                .await
-                .with_context(|| format!("cannot create metadata directory {metadata_dir:?}"))?;
-            let (digest, _path) = oci::pull_to_cache_dir(reference, wasm_cache_dir, &metadata_dir)
-                .await
-                .context("failed to pull OCI image")?;
-            info!("Fetched OCI image, content_digest: {digest}");
-            Ok(digest)
-        }
-        ComponentLocationToml::GitHub(github_ref) => {
-            tokio::fs::create_dir_all(wasm_cache_dir)
-                .await
-                .with_context(|| format!("cannot create cache directory {wasm_cache_dir:?}"))?;
-            let (digest, _path) = github::pull_to_cache_dir(github_ref, wasm_cache_dir)
-                .await
-                .context("failed to pull GitHub release asset")?;
-            info!("Fetched GitHub release asset, content_digest: {digest}");
-            Ok(digest)
+        t.insert("allowed_host", Item::ArrayOfTables(host_array));
+    }
+
+    // Webhook requires a `routes` field; write an empty array as a placeholder
+    if matches!(
+        metadata.component_type,
+        TomlComponentType::WebhookEndpointWasm | TomlComponentType::WebhookEndpointJs
+    ) {
+        t["routes"] = Item::Value(toml_edit::Value::Array(toml_edit::Array::new()));
+    }
+
+    // Write exec.lock_expiry as an inline table: exec = {lock_expiry = {seconds = N}}
+    if let Some(duration) = metadata.lock_duration {
+        let mut lock_expiry_inline = toml_edit::InlineTable::new();
+        let (unit, n) = match duration {
+            DurationConfig::Milliseconds(n) => ("milliseconds", n),
+            DurationConfig::Seconds(n) => ("seconds", n),
+            DurationConfig::Minutes(n) => ("minutes", n),
+            DurationConfig::Hours(n) => ("hours", n),
+        };
+        lock_expiry_inline.insert(
+            unit,
+            toml_edit::Value::Integer(toml_edit::Formatted::new(
+                i64::try_from(n).unwrap_or(i64::MAX),
+            )),
+        );
+        let mut exec_inline = toml_edit::InlineTable::new();
+        exec_inline.insert(
+            "lock_expiry",
+            toml_edit::Value::InlineTable(lock_expiry_inline),
+        );
+        t["exec"] = Item::Value(toml_edit::Value::InlineTable(exec_inline));
+    }
+
+    t
+}
+
+fn serialize_methods_input(methods: &crate::config::toml::MethodsInput) -> toml_edit::Item {
+    use crate::config::toml::MethodsInput;
+    match methods {
+        MethodsInput::Star(_) => toml_edit::Item::Value("*".into()),
+        MethodsInput::List(list) => {
+            let mut arr = toml_edit::Array::new();
+            for m in list {
+                arr.push(m);
+            }
+            toml_edit::Item::Value(toml_edit::Value::Array(arr))
         }
     }
 }
@@ -290,4 +471,92 @@ fn print_fn_details(vec: Vec<grpc_gen::FunctionDetail>) -> Result<(), anyhow::Er
 
 fn print_wit_type(wit_type: &grpc_gen::WitType) {
     print!("{}", wit_type.wit_type);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::toml::{AllowedHostSecretsToml, AllowedHostToml, MethodsInput, ReplaceIn};
+    use crate::oci::ComponentMetadata;
+
+    fn make_metadata_activity() -> ComponentMetadata {
+        ComponentMetadata {
+            component_type: TomlComponentType::ActivityWasm,
+            env_vars: vec!["API_KEY".to_string(), "BASE_URL".to_string()],
+            allowed_hosts: vec![AllowedHostToml {
+                pattern: "api.example.com".to_string(),
+                methods: Some(MethodsInput::List(vec![
+                    "GET".to_string(),
+                    "POST".to_string(),
+                ])),
+                secrets: Some(AllowedHostSecretsToml {
+                    env_vars: vec![EnvVarConfig::Key("API_KEY".to_string())],
+                    replace_in: vec![ReplaceIn::Headers],
+                }),
+            }],
+            lock_duration: Some(DurationConfig::Seconds(5)),
+        }
+    }
+
+    #[test]
+    fn build_and_parse_activity_wasm_toml() {
+        let metadata = make_metadata_activity();
+        let table = build_component_table(
+            "my_activity",
+            "oci://registry.example.com/repo/my-activity:latest",
+            None,
+            &metadata,
+        );
+
+        // Wrap in an [[activity_wasm]] array-of-tables document and parse
+        let mut doc = toml_edit::DocumentMut::new();
+        let mut aot = toml_edit::ArrayOfTables::new();
+        aot.push(table);
+        doc.insert("activity_wasm", toml_edit::Item::ArrayOfTables(aot));
+
+        let toml_str = doc.to_string();
+        let parsed: crate::config::toml::DeploymentToml =
+            toml::from_str(&toml_str).expect("generated TOML must parse");
+
+        assert_eq!(parsed.activities_wasm.len(), 1);
+        let act = &parsed.activities_wasm[0];
+        assert_eq!(act.common.name.to_string(), "my_activity");
+        assert_eq!(act.env_vars.len(), 2);
+        assert_eq!(act.allowed_hosts.len(), 1);
+        assert_eq!(act.allowed_hosts[0].pattern, "api.example.com");
+        assert!(act.allowed_hosts[0].secrets.is_some());
+        // exec.lock_expiry.seconds = 5
+        assert!(matches!(act.exec.lock_expiry, DurationConfig::Seconds(5)));
+    }
+
+    #[test]
+    fn build_and_parse_webhook_toml() {
+        let metadata = ComponentMetadata {
+            component_type: TomlComponentType::WebhookEndpointWasm,
+            env_vars: vec!["TOKEN".to_string()],
+            allowed_hosts: vec![],
+            lock_duration: None,
+        };
+        let table = build_component_table(
+            "my_webhook",
+            "oci://registry.example.com/repo/webhook:v1",
+            None,
+            &metadata,
+        );
+
+        let mut doc = toml_edit::DocumentMut::new();
+        let mut aot = toml_edit::ArrayOfTables::new();
+        aot.push(table);
+        doc.insert("webhook_endpoint_wasm", toml_edit::Item::ArrayOfTables(aot));
+
+        let toml_str = doc.to_string();
+        let parsed: crate::config::toml::DeploymentToml =
+            toml::from_str(&toml_str).expect("generated TOML must parse");
+
+        assert_eq!(parsed.webhooks.len(), 1);
+        let wh = &parsed.webhooks[0];
+        assert_eq!(wh.common.name.to_string(), "my_webhook");
+        assert_eq!(wh.env_vars.len(), 1);
+        assert_eq!(wh.allowed_hosts.len(), 0);
+    }
 }

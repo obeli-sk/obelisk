@@ -1,4 +1,3 @@
-use crate::config::toml::ComponentLocationToml;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
@@ -6,9 +5,12 @@ use concepts::{
 };
 
 /// Deployment TOML section names, used as the key in the deployment TOML file.
-#[derive(Debug, Clone, Copy, strum::Display, strum::EnumString)]
+#[derive(
+    Debug, Clone, Copy, strum::Display, strum::EnumString, serde::Serialize, serde::Deserialize,
+)]
 #[strum(serialize_all = "snake_case")]
-pub(crate) enum DeploymentTomlSection {
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TomlComponentType {
     ActivityWasm,
     ActivityStub,
     ActivityExternal,
@@ -19,6 +21,13 @@ pub(crate) enum DeploymentTomlSection {
     WebhookEndpointJs,
 }
 use std::{path::PathBuf, str::FromStr};
+
+fn parse_oci_reference(s: &str) -> Result<oci_client::Reference, String> {
+    let s = s
+        .strip_prefix("oci://")
+        .ok_or_else(|| format!("OCI reference must start with `oci://`, got: {s}"))?;
+    oci_client::Reference::from_str(s).map_err(|e| e.to_string())
+}
 
 /// A deployment source: either a path to a TOML file or an existing deployment ID.
 #[derive(Debug, Clone)]
@@ -296,27 +305,28 @@ pub(crate) enum Component {
         #[arg(short, long)]
         extensions: bool,
     },
-    /// Push a WASM file to an OCI registry.
+    /// Push a WASM component to an OCI registry with deployment metadata.
     Push {
-        /// WASM file to be pushed
+        /// Component name in the deployment TOML
         #[arg(required(true))]
-        path: PathBuf,
-        /// OCI reference. Example: docker.io/repo/image:tag
-        #[arg(required(true))]
-        image_name: oci_client::Reference,
+        component_name: String,
+        /// OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`
+        #[arg(required(true), value_parser = parse_oci_reference)]
+        oci: oci_client::Reference,
+        /// Path to the deployment TOML file.
+        #[arg(long, short, required = true)]
+        deployment: PathBuf,
     },
-    /// Add a component to the deployment TOML configuration file.
+    /// Add a component to the deployment TOML configuration file from an OCI reference.
     Add {
-        /// Deployment TOML section, one of: `activity_wasm`, `activity_stub`, `activity_external`, `activity_js`, `workflow_wasm`, `workflow_js`, `webhook_endpoint_wasm`, `webhook_endpoint_js`
+        /// OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`
+        #[arg(required(true), value_parser = parse_oci_reference)]
+        location: oci_client::Reference,
+        /// Component name
         #[arg(required(true))]
-        component_type: DeploymentTomlSection,
-        /// Path to the WASM file
-        #[arg(required(true))]
-        location: ComponentLocationToml,
-        #[arg(long, short)]
         name: String,
         /// Path to the deployment TOML file.
-        #[arg(long, short)]
+        #[arg(long, short, required = true)]
         deployment: PathBuf,
         /// Store the component in local cache and record its `content_digest` for reproducible builds.
         #[arg(long)]
