@@ -29,41 +29,6 @@ pub(crate) struct PathPrefixes {
 }
 
 impl PathPrefixes {
-    pub(crate) fn deployment_config_replace_file_prefix_verify_exists(
-        &self,
-        input_path: &str,
-    ) -> Result<PathBuf, anyhow::Error> {
-        let path =
-            if let (Some(project_dirs), Some(base_dirs)) = (&self.project_dirs, &self.base_dirs) {
-                if let Some(suffix) = input_path.strip_prefix(HOME_DIR_PREFIX) {
-                    base_dirs.home_dir().join(suffix)
-                } else if let Some(suffix) = input_path.strip_prefix(DATA_DIR_PREFIX) {
-                    project_dirs.data_dir().join(suffix)
-                } else if let Some(suffix) = input_path.strip_prefix(CACHE_DIR_PREFIX) {
-                    project_dirs.cache_dir().join(suffix)
-                } else if let Some(suffix) = input_path.strip_prefix(CONFIG_DIR_PREFIX) {
-                    project_dirs.config_dir().join(suffix)
-                } else {
-                    PathBuf::from(input_path)
-                }
-            } else {
-                if input_path.starts_with(HOME_DIR_PREFIX)
-                    || input_path.starts_with(DATA_DIR_PREFIX)
-                    || input_path.starts_with(CACHE_DIR_PREFIX)
-                    || input_path.starts_with(CONFIG_DIR_PREFIX)
-                {
-                    warn!("Not expanding prefix of `{input_path}`");
-                }
-
-                PathBuf::from(input_path)
-            };
-        if path.exists() {
-            Ok(path)
-        } else {
-            bail!("file does not exist: {path:?}")
-        }
-    }
-
     pub(crate) async fn server_config_replace_path_prefix_mkdir(
         &self,
         dir: &str,

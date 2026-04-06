@@ -304,9 +304,4 @@
 
 ## Appendix: Supported path prefixes:
 # | Prefix                  | Default path           | Details
-# | ~                       | ~                      | Current user's home directory
-# | ${DATA_DIR}             | ~/.local/share/obelisk | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.data_dir
-# | ${CACHE_DIR}            | ~/.cache/obelisk       | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.cache_dir
-# | ${CONFIG_DIR}           | ~/.config/obelisk      | https://docs.rs/directories/6.0.0/directories/struct.ProjectDirs.html#method.config_dir
 # | ${DEPLOYMENT_DIR}       | N/A                    | Directory where the deployment.toml file is located
-# | ${TEMP_DIR}             | /tmp                   | https://doc.rust-lang.org/std/env/fn.temp_dir.html

@@ -683,11 +683,8 @@ pub(crate) struct ComponentCommonVerified {
 #[serde(rename_all = "snake_case")]
 #[schemars(with = "String")]
 pub(crate) enum ComponentLocationToml {
-    Path(String), // String because it can contain path prefix
-    Oci(
-        // #[serde_as(as = "serde_with::DisplayFromStr")]
-        oci_client::Reference,
-    ),
+    Path(String), // String because it can contain path prefix - $DEPLOYMENT_DIR/
+    Oci(oci_client::Reference),
     GitHub(GitHubReleaseReference),
 }
 impl ComponentLocationToml {
@@ -702,7 +699,6 @@ impl ComponentLocationToml {
         &self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-        path_prefixes: &PathPrefixes,
         expected_digest: Option<&ContentDigest>,
     ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
         use utils::sha256sum::calculate_sha256_file;
@@ -720,8 +716,10 @@ impl ComponentLocationToml {
 
         let (actual_digest, path) = match &self {
             ComponentLocationToml::Path(wasm_path) => {
-                let wasm_path =
-                    path_prefixes.deployment_config_replace_file_prefix_verify_exists(wasm_path)?;
+                let wasm_path = PathBuf::from(wasm_path);
+                if !wasm_path.exists() {
+                    bail!("file does not exist: {wasm_path:?}");
+                }
                 let actual_digest = calculate_sha256_file(&wasm_path)
                     .await
                     .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
@@ -879,16 +877,10 @@ impl ComponentCommon {
         self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-        path_prefixes: &PathPrefixes,
     ) -> Result<(ComponentCommonVerified, PathBuf), anyhow::Error> {
         let (fetched_digest, wasm_path) = self
             .location
-            .fetch(
-                wasm_cache_dir,
-                metadata_dir,
-                path_prefixes,
-                self.content_digest.as_ref(),
-            )
+            .fetch(wasm_cache_dir, metadata_dir, self.content_digest.as_ref())
             .await?;
 
         let verified = ComponentCommonVerified {
@@ -1191,14 +1183,10 @@ impl ActivityStubComponentConfigToml {
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        path_prefixes: Arc<PathPrefixes>,
     ) -> Result<ActivityStubConfigVerified, anyhow::Error> {
         match self {
             Self::File(file) => {
-                let (common, wasm_path) = file
-                    .common
-                    .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
-                    .await?;
+                let (common, wasm_path) = file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
                 let component_id = ComponentId::new(
                     ComponentType::ActivityStub,
                     StrVariant::from(common.name),
@@ -1301,15 +1289,11 @@ impl ActivityExternalComponentConfigToml {
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        path_prefixes: Arc<PathPrefixes>,
     ) -> Result<ActivityExternalConfigVerified, anyhow::Error> {
         match self {
             Self::File(file) => {
                 let component_digest_override = file.component_digest;
-                let (common, wasm_path) = file
-                    .common
-                    .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
-                    .await?;
+                let (common, wasm_path) = file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
                 let component_digest =
                     component_digest_override.unwrap_or(ComponentDigest(common.content_digest.0));
                 let component_id = ComponentId::new(
@@ -1439,21 +1423,16 @@ impl ActivityWasmConfigVerified {
 
 impl ActivityWasmComponentConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()))]
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        path_prefixes: Arc<PathPrefixes>,
         ignore_missing_env_vars: bool,
         parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
-        let (common, wasm_path) = self
-            .common
-            .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
-            .await?;
+        let (common, wasm_path) = self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
 
         let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
         let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
@@ -2017,12 +1996,10 @@ pub(crate) struct WorkflowWasmComponentConfigCanonical {
 
 impl WorkflowWasmComponentConfigCanonical {
     #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()))]
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        path_prefixes: Arc<PathPrefixes>,
         global_backtrace_persist: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
@@ -2035,10 +2012,7 @@ impl WorkflowWasmComponentConfigCanonical {
                 self.common.name.0
             );
         }
-        let (common, wasm_path) = self
-            .common
-            .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
-            .await?;
+        let (common, wasm_path) = self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
         let wasm_path = WasmComponent::convert_core_module_to_component(
             &wasm_path,
             &common.content_digest,
@@ -2209,14 +2183,13 @@ pub(crate) struct DeploymentCanonical {
 /// source files. GitHub JS locations are left as references (downloaded lazily at verify time).
 pub(crate) async fn resolve_local_refs_to_canonical(
     deployment: &DeploymentTomlValidated,
-    path_prefixes: &PathPrefixes,
 ) -> anyhow::Result<DeploymentCanonical> {
     let deployment = &deployment.inner;
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
     for a in &deployment.activities_js {
         activities_js.push(ActivityJsComponentConfigCanonical {
             name: a.name.clone(),
-            location: resolve_js_to_canonical(&a.location, path_prefixes).await?,
+            location: resolve_js_to_canonical(&a.location).await?,
             content_digest: a.content_digest.clone(),
             component_digest: a.component_digest.clone(),
             ffqn: a.ffqn.clone(),
@@ -2241,7 +2214,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
             exec: w.exec.clone(),
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
-            backtrace: resolve_backtrace_to_canonical(&w.backtrace, path_prefixes).await,
+            backtrace: resolve_backtrace_to_canonical(&w.backtrace).await,
             stub_wasi: w.stub_wasi,
             lock_extension: w.lock_extension,
             logs_store_min_level: w.logs_store_min_level,
@@ -2252,7 +2225,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
     for w in &deployment.workflows_js {
         workflows_js.push(WorkflowJsComponentConfigCanonical {
             name: w.name.clone(),
-            location: resolve_js_to_canonical(&w.location, path_prefixes).await?,
+            location: resolve_js_to_canonical(&w.location).await?,
             content_digest: w.content_digest.clone(),
             component_digest: w.component_digest.clone(),
             ffqn: w.ffqn.clone(),
@@ -2275,7 +2248,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             env_vars: w.env_vars.clone(),
-            backtrace: resolve_backtrace_to_canonical(&w.backtrace, path_prefixes).await,
+            backtrace: resolve_backtrace_to_canonical(&w.backtrace).await,
             logs_store_min_level: w.logs_store_min_level,
             allowed_hosts: w.allowed_hosts.clone(),
         });
@@ -2285,7 +2258,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
     for w in &deployment.webhooks_js {
         webhooks_js.push(webhook::WebhookJsComponentConfigCanonical {
             name: w.name.clone(),
-            location: resolve_js_to_canonical(&w.location, path_prefixes).await?,
+            location: resolve_js_to_canonical(&w.location).await?,
             content_digest: w.content_digest.clone(),
             http_server: w.http_server.clone(),
             routes: w.routes.clone(),
@@ -2309,10 +2282,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
     })
 }
 
-async fn resolve_js_to_canonical(
-    location: &JsLocationToml,
-    path_prefixes: &PathPrefixes,
-) -> anyhow::Result<JsLocationCanonical> {
+async fn resolve_js_to_canonical(location: &JsLocationToml) -> anyhow::Result<JsLocationCanonical> {
     match location {
         JsLocationToml::Path(path) => {
             let file_name = std::path::Path::new(path)
@@ -2320,8 +2290,10 @@ async fn resolve_js_to_canonical(
                 .and_then(|n| n.to_str())
                 .unwrap_or(path)
                 .to_string();
-            let full_path =
-                path_prefixes.deployment_config_replace_file_prefix_verify_exists(path)?;
+            let full_path = PathBuf::from(path);
+            if !full_path.exists() {
+                bail!("file does not exist: {full_path:?}");
+            }
             let content = tokio::fs::read_to_string(&full_path)
                 .await
                 .with_context(|| format!("cannot read JS file {full_path:?}"))?;
@@ -2333,16 +2305,16 @@ async fn resolve_js_to_canonical(
 
 async fn resolve_backtrace_to_canonical(
     backtrace: &ComponentBacktraceConfig,
-    path_prefixes: &PathPrefixes,
 ) -> ComponentBacktraceConfigCanonical {
     let mut frame_files_to_sources = HashMap::new();
     for (key, location) in &backtrace.frame_files_to_sources {
         let BacktraceSourceLocation::Path(path) = location;
         let content = async {
-            let full_path = path_prefixes
-                .deployment_config_replace_file_prefix_verify_exists(path)
-                .inspect_err(|err| warn!("Ignoring missing backtrace source - {err:?}"))
-                .ok()?;
+            let full_path = PathBuf::from(path);
+            if !full_path.exists() {
+                warn!("Ignoring missing backtrace source - file does not exist: {full_path:?}");
+                return None;
+            }
             tokio::fs::read_to_string(&full_path)
                 .await
                 .inspect_err(|err| warn!("Cannot read backtrace source {full_path:?} - {err:?}"))
@@ -2682,7 +2654,7 @@ pub(crate) mod webhook {
     };
     use crate::{
         command::server::FrameFilesToSourceContent,
-        config::{config_holder::PathPrefixes, env_var::EnvVarConfig, toml::LogLevelToml},
+        config::{env_var::EnvVarConfig, toml::LogLevelToml},
     };
     use anyhow::Context;
     use concepts::{
@@ -2887,13 +2859,9 @@ pub(crate) mod webhook {
             wasm_cache_dir: Arc<Path>,
             metadata_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
-            path_prefixes: Arc<PathPrefixes>,
             subscription_interruption: Option<Duration>,
         ) -> Result<(ConfigName, WebhookWasmComponentConfigVerified), anyhow::Error> {
-            let (common, wasm_path) = self
-                .common
-                .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes)
-                .await?;
+            let (common, wasm_path) = self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
             let frame_files_to_sources = self.backtrace.into_frame_files();
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,

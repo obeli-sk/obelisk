@@ -443,7 +443,7 @@ pub(crate) async fn verify(
     };
     let path_prefixes = Arc::new(path_prefixes);
     let deployment_canonical = if let Some(toml) = deployment_toml_opt {
-        crate::config::toml::resolve_local_refs_to_canonical(&toml, &path_prefixes).await?
+        crate::config::toml::resolve_local_refs_to_canonical(&toml).await?
     } else {
         get_deployment_canonical_from_db(&config.database, &path_prefixes).await?
     };
@@ -842,10 +842,9 @@ pub(crate) async fn run_internal(
         // --deployment or `--deployment-empty` provided: resolve, insert, and activate.
         let new_deployment_id = DeploymentId::generate();
         span.record("deployment_id", tracing::field::display(&new_deployment_id));
-        let canonical =
-            crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)
-                .await
-                .context("cannot resolve deployment to canonical form")?;
+        let canonical = crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml)
+            .await
+            .context("cannot resolve deployment to canonical form")?;
         let config_json = crate::config::toml::compute_config_json(&canonical);
         insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json).await?;
         info!("Activated new deployment");
@@ -1141,7 +1140,6 @@ impl ServerVerified {
             wasm_cache_dir,
             metadata_dir,
             ignore_missing_env_vars,
-            path_prefixes,
             global_backtrace_persist,
             parent_preopen_dir.clone(),
             global_executor_instance_limiter,
@@ -1852,7 +1850,6 @@ impl ConfigVerified {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
-        path_prefixes: Arc<PathPrefixes>,
         global_backtrace_persist: bool,
         parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
@@ -1924,7 +1921,6 @@ impl ConfigVerified {
                         .fetch_and_verify(
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
-                            path_prefixes.clone(),
                             ignore_missing_env_vars,
                             parent_preopen_dir.clone(),
                             global_executor_instance_limiter.clone(),
@@ -1941,11 +1937,7 @@ impl ConfigVerified {
             .map(|activity| {
                 tokio::spawn(
                     activity
-                        .fetch_and_verify(
-                            wasm_cache_dir.clone(),
-                            metadata_dir.clone(),
-                            path_prefixes.clone(),
-                        )
+                        .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone())
                         .in_current_span(),
                 )
             })
@@ -1956,11 +1948,7 @@ impl ConfigVerified {
             .map(|activity| {
                 tokio::spawn(
                     activity
-                        .fetch_and_verify(
-                            wasm_cache_dir.clone(),
-                            metadata_dir.clone(),
-                            path_prefixes.clone(),
-                        )
+                        .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone())
                         .in_current_span(),
                 )
             })
@@ -1975,7 +1963,6 @@ impl ConfigVerified {
                         .fetch_and_verify(
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
-                            path_prefixes.clone(),
                             global_backtrace_persist,
                             global_executor_instance_limiter.clone(),
                             fuel,
@@ -1992,13 +1979,11 @@ impl ConfigVerified {
                 tokio::spawn({
                     let wasm_cache_dir = wasm_cache_dir.clone();
                     let metadata_dir = metadata_dir.clone();
-                    let path_prefixes = path_prefixes.clone();
                     webhook
                         .fetch_and_verify(
                             wasm_cache_dir,
                             metadata_dir,
                             ignore_missing_env_vars,
-                            path_prefixes,
                             subscription_interruption,
                         )
                         .in_current_span()
@@ -2013,7 +1998,6 @@ impl ConfigVerified {
             Some(fetch_activity_js_runtime(
                 wasm_cache_dir.clone(),
                 metadata_dir.clone(),
-                path_prefixes.clone(),
             ))
         }
         .into();
@@ -2025,7 +2009,6 @@ impl ConfigVerified {
             Some(fetch_workflow_js_runtime(
                 wasm_cache_dir.clone(),
                 metadata_dir.clone(),
-                path_prefixes.clone(),
             ))
         }
         .into();
@@ -2037,7 +2020,6 @@ impl ConfigVerified {
             Some(fetch_webhook_js_runtime(
                 wasm_cache_dir.clone(),
                 metadata_dir.clone(),
-                path_prefixes.clone(),
             ))
         }
         .into();
@@ -2665,7 +2647,6 @@ fn prespawn_js_activity(
 async fn fetch_activity_js_runtime(
     _wasm_cache_dir: Arc<Path>,
     _metadata_dir: Arc<Path>,
-    _path_prefixes: Arc<PathPrefixes>,
 ) -> Result<PathBuf, anyhow::Error> {
     Ok(PathBuf::from(
         activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
@@ -2677,13 +2658,12 @@ async fn fetch_activity_js_runtime(
 async fn fetch_activity_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
-    path_prefixes: Arc<PathPrefixes>,
 ) -> Result<PathBuf, anyhow::Error> {
     let location: crate::config::toml::ComponentLocationToml = ACTIVITY_JS_LOCATION
         .parse()
         .context("cannot parse built-in activity-js runtime location")?;
     let (_content_digest, wasm_path) = location
-        .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes, None)
+        .fetch(&wasm_cache_dir, &metadata_dir, None)
         .await
         .context("cannot fetch activity-js runtime")?;
     Ok(wasm_path)
@@ -2694,7 +2674,6 @@ async fn fetch_activity_js_runtime(
 async fn fetch_workflow_js_runtime(
     _wasm_cache_dir: Arc<Path>,
     _metadata_dir: Arc<Path>,
-    _path_prefixes: Arc<PathPrefixes>,
 ) -> Result<PathBuf, anyhow::Error> {
     Ok(PathBuf::from(
         workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME,
@@ -2706,13 +2685,12 @@ async fn fetch_workflow_js_runtime(
 async fn fetch_workflow_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
-    path_prefixes: Arc<PathPrefixes>,
 ) -> Result<PathBuf, anyhow::Error> {
     let location: crate::config::toml::ComponentLocationToml = WORKFLOW_JS_LOCATION
         .parse()
         .context("cannot parse built-in workflow-js runtime location")?;
     let (_content_digest, wasm_path) = location
-        .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes, None)
+        .fetch(&wasm_cache_dir, &metadata_dir, None)
         .await
         .context("cannot fetch workflow-js runtime")?;
     Ok(wasm_path)
@@ -2723,7 +2701,6 @@ async fn fetch_workflow_js_runtime(
 async fn fetch_webhook_js_runtime(
     _wasm_cache_dir: Arc<Path>,
     _metadata_dir: Arc<Path>,
-    _path_prefixes: Arc<PathPrefixes>,
 ) -> Result<PathBuf, anyhow::Error> {
     Ok(PathBuf::from(
         webhook_js_runtime_builder::WEBHOOK_JS_RUNTIME,
@@ -2736,13 +2713,12 @@ async fn fetch_webhook_js_runtime(
 async fn fetch_webhook_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
-    path_prefixes: Arc<PathPrefixes>,
 ) -> Result<PathBuf, anyhow::Error> {
     let location: crate::config::toml::ComponentLocationToml = WEBHOOK_JS_LOCATION
         .parse()
         .context("cannot parse built-in webhook-js runtime location")?;
     let (_content_digest, wasm_path) = location
-        .fetch(&wasm_cache_dir, &metadata_dir, &path_prefixes, None)
+        .fetch(&wasm_cache_dir, &metadata_dir, None)
         .await
         .context("cannot fetch webhook-js runtime")?;
     Ok(wasm_path)
@@ -3154,8 +3130,7 @@ mod tests {
         let path_prefixes = Arc::new(config_holder.path_prefixes);
 
         let deployment_canonical =
-            crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)
-                .await?;
+            crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml).await?;
 
         let prepared_dirs =
             prepare_dirs(&config, &PrepareDirsParams::default(), &path_prefixes).await?;

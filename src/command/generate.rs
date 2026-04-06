@@ -302,9 +302,7 @@ pub(crate) async fn generate_wit_deps(
     let _guard = init::init(&config)?;
     let path_prefixes = config_holder.path_prefixes;
     let path_prefixes = Arc::new(path_prefixes);
-    let deployment =
-        crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml, &path_prefixes)
-            .await?;
+    let deployment = crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml).await?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let verify_params = VerifyParams {
