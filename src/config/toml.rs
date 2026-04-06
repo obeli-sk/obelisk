@@ -144,20 +144,27 @@ impl DeploymentToml {
             }
         }
         for c in &mut self.activities_js {
-            let JsLocationToml::Path(p) = &mut c.location;
-            expand_str(p);
+            if let JsLocationToml::Path(p) = &mut c.location {
+                expand_str(p);
+            }
         }
         for c in &mut self.workflows {
             expand_loc(&mut c.common.location);
             expand_backtrace(&mut c.backtrace);
         }
         for c in &mut self.workflows_js {
-            let JsLocationToml::Path(p) = &mut c.location;
-            expand_str(p);
+            if let JsLocationToml::Path(p) = &mut c.location {
+                expand_str(p);
+            }
         }
         for c in &mut self.webhooks {
             expand_loc(&mut c.common.location);
             expand_backtrace(&mut c.backtrace);
+        }
+        for c in &mut self.webhooks_js {
+            if let JsLocationToml::Path(p) = &mut c.location {
+                expand_str(p);
+            }
         }
     }
 
@@ -747,19 +754,20 @@ impl std::fmt::Display for ComponentLocationToml {
     }
 }
 
-/// Location of a JavaScript source file for JS activities.
-/// Supports local file paths.
-/// OCI references are not supported.
+/// Location of a JavaScript source file.
+/// Supports local file paths and OCI registry references (`oci://...`).
 /// On-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.
 #[derive(Debug, Clone, Hash, JsonSchema, SerializeDisplay, DeserializeFromStr)]
 #[schemars(with = "String")]
 pub(crate) enum JsLocationToml {
     Path(String),
+    Oci(oci_client::Reference),
 }
 impl Display for JsLocationToml {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             JsLocationToml::Path(p) => write!(f, "{p}"),
+            JsLocationToml::Oci(r) => write!(f, "{OCI_SCHEMA_PREFIX}{r}"),
         }
     }
 }
@@ -767,10 +775,14 @@ impl FromStr for JsLocationToml {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.starts_with(OCI_SCHEMA_PREFIX) {
-            bail!("OCI references are not supported for JS activities. Use a local file path.");
+        if let Some(location) = s.strip_prefix(OCI_SCHEMA_PREFIX) {
+            Ok(JsLocationToml::Oci(
+                oci_client::Reference::from_str(location)
+                    .map_err(|e| anyhow::anyhow!("invalid OCI reference: {e}"))?,
+            ))
+        } else {
+            Ok(JsLocationToml::Path(s.to_string()))
         }
-        Ok(JsLocationToml::Path(s.to_string()))
     }
 }
 
@@ -1441,8 +1453,7 @@ impl ActivityWasmComponentConfigToml {
 pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) name: ConfigName,
     /// Location of the JavaScript source file.
-    /// Supports local file paths.
-    /// OCI references are not supported for JS activities.
+    /// Supports local file paths and OCI registry references (`oci://...`).
     pub(crate) location: JsLocationToml,
     /// Content digest of the JS source file.
     #[serde(default)]
@@ -1457,9 +1468,9 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS function.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
-    /// If omitted, defaults to no parameters.
+    /// Defaults to no parameters.
     #[serde(default)]
-    pub(crate) params: Option<Vec<JsParamToml>>,
+    pub(crate) params: Vec<JsParamToml>,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
@@ -1546,8 +1557,7 @@ impl ActivityJsConfigVerified {
 pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) name: ConfigName,
     /// Location of the JavaScript source file.
-    /// Supports local file paths.
-    /// OCI references are not supported for JS workflows.
+    /// Supports local file paths and OCI registry references (`oci://...`).
     pub(crate) location: JsLocationToml,
     /// Content digest of the JS source file.
     #[serde(default)]
@@ -1562,9 +1572,9 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS workflow function.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
-    /// If omitted, defaults to no parameters.
+    /// Defaults to no parameters.
     #[serde(default)]
-    pub(crate) params: Option<Vec<JsParamToml>>,
+    pub(crate) params: Vec<JsParamToml>,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_retry_exp_backoff")]
@@ -1712,21 +1722,25 @@ pub(crate) struct ComponentBacktraceConfig {
 pub(crate) enum JsLocationCanonical {
     #[schemars(with = "String")]
     Content { content: String, file_name: String },
+    /// OCI-sourced JS.
+    #[schemars(with = "String")]
+    Oci { image: String },
 }
-impl JsLocationCanonical {
-    pub(crate) fn file_name(&self) -> String {
-        match self {
-            JsLocationCanonical::Content { file_name, .. } => file_name.clone(),
-        }
-    }
 
-    /// Return the JS source content. For `Content`, returns it directly (validating digest if
-    /// provided).
-    pub(crate) fn get_content(
+pub(crate) struct JsContent {
+    pub(crate) source: String,
+    pub(crate) file_name: String,
+}
+
+impl JsLocationCanonical {
+    /// Return the JS source content and file name.
+    /// For `Content`, returns them directly (validating digest if provided).
+    /// For `Oci`, pulls from the registry (or cache) under `wasm_cache_dir/js/`.
+    pub(crate) async fn get_content(
         &self,
-        _wasm_cache_dir: &Path,
+        wasm_cache_dir: &Path,
         expected_digest: Option<&ContentDigest>,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<JsContent> {
         match self {
             JsLocationCanonical::Content { content, file_name } => {
                 if let Some(expected) = expected_digest {
@@ -1737,7 +1751,46 @@ impl JsLocationCanonical {
                         "content digest mismatch for inline JS `{file_name}`: expected {expected}, got {actual}"
                     );
                 }
-                Ok(content.clone())
+                Ok(JsContent {
+                    source: content.clone(),
+                    file_name: file_name.clone(),
+                })
+            }
+            JsLocationCanonical::Oci { image } => {
+                let oci_ref = oci_client::Reference::from_str(image)
+                    .map_err(|e| anyhow::anyhow!("invalid OCI reference in canonical form: {e}"))?;
+                let js_cache_dir = wasm_cache_dir.join("js");
+                tokio::fs::create_dir_all(&js_cache_dir)
+                    .await
+                    .with_context(|| {
+                        format!("cannot create JS cache directory {js_cache_dir:?}")
+                    })?;
+                let metadata_dir = wasm_cache_dir.join("metadata");
+                tokio::fs::create_dir_all(&metadata_dir)
+                    .await
+                    .with_context(|| {
+                        format!("cannot create metadata directory {metadata_dir:?}")
+                    })?;
+                let crate::oci::JsCacheResult { js_path, .. } =
+                    crate::oci::pull_js_to_cache(&oci_ref, &js_cache_dir, &metadata_dir)
+                        .await
+                        .with_context(|| format!("cannot pull JS from OCI: {image}"))?;
+                if let Some(expected) = expected_digest {
+                    let hash = utils::sha256sum::calculate_sha256_file(&js_path).await?;
+                    ensure!(
+                        *expected == hash,
+                        "content digest mismatch for OCI JS `{image}`: expected {expected}, got {hash}"
+                    );
+                }
+                let file_name = js_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("cached.js")
+                    .to_string();
+                let source = tokio::fs::read_to_string(&js_path)
+                    .await
+                    .with_context(|| format!("cannot read cached JS file {js_path:?}"))?;
+                Ok(JsContent { source, file_name })
             }
         }
     }
@@ -1782,7 +1835,7 @@ pub(crate) struct ActivityJsComponentConfigCanonical {
     pub(crate) content_digest: Option<ContentDigest>,
     pub(crate) component_digest: Option<ComponentDigest>,
     pub(crate) ffqn: FunctionFqn,
-    pub(crate) params: Option<Vec<JsParamToml>>,
+    pub(crate) params: Vec<JsParamToml>,
     pub(crate) exec: ExecConfigToml,
     pub(crate) max_retries: u32,
     pub(crate) retry_exp_backoff: DurationConfig,
@@ -1804,24 +1857,25 @@ impl ActivityJsComponentConfigCanonical {
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
-        let parsed_params = match self.params {
-            None => vec![],
-            Some(params) => params
-                .iter()
-                .map(|p| {
-                    let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
-                        .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
-                    Ok(concepts::ParameterType {
-                        type_wrapper: tw,
-                        name: StrVariant::from(p.name.clone()),
-                        wit_type: StrVariant::from(p.wit_type.clone()),
-                    })
+        let parsed_params = self
+            .params
+            .iter()
+            .map(|p| {
+                let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
+                    .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
+                Ok(concepts::ParameterType {
+                    type_wrapper: tw,
+                    name: StrVariant::from(p.name.clone()),
+                    wit_type: StrVariant::from(p.wit_type.clone()),
                 })
-                .collect::<Result<Vec<_>, anyhow::Error>>()?,
-        };
-        let js_source = self
+            })
+            .collect::<Result<Vec<_>, anyhow::Error>>()?;
+        let JsContent {
+            source: js_source, ..
+        } = self
             .location
-            .get_content(&wasm_cache_dir, self.content_digest.as_ref())?;
+            .get_content(&wasm_cache_dir, self.content_digest.as_ref())
+            .await?;
         const DEFAULT_RETURN_TYPE: &str = "result";
         let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
         let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
@@ -1975,7 +2029,7 @@ pub(crate) struct WorkflowJsComponentConfigCanonical {
     pub(crate) content_digest: Option<ContentDigest>,
     pub(crate) component_digest: Option<ComponentDigest>,
     pub(crate) ffqn: FunctionFqn,
-    pub(crate) params: Option<Vec<JsParamToml>>,
+    pub(crate) params: Vec<JsParamToml>,
     pub(crate) exec: ExecConfigToml,
     pub(crate) retry_exp_backoff: DurationConfig,
     pub(crate) blocking_strategy: BlockingStrategyConfigToml,
@@ -1992,24 +2046,26 @@ impl WorkflowJsComponentConfigCanonical {
         wasm_cache_dir: Arc<Path>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
-        let parsed_params = match self.params {
-            None => vec![],
-            Some(params) => params
-                .iter()
-                .map(|p| {
-                    let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
-                        .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
-                    Ok(concepts::ParameterType {
-                        type_wrapper: tw,
-                        name: StrVariant::from(p.name.clone()),
-                        wit_type: StrVariant::from(p.wit_type.clone()),
-                    })
+        let parsed_params = self
+            .params
+            .iter()
+            .map(|p| {
+                let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
+                    .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
+                Ok(concepts::ParameterType {
+                    type_wrapper: tw,
+                    name: StrVariant::from(p.name.clone()),
+                    wit_type: StrVariant::from(p.wit_type.clone()),
                 })
-                .collect::<Result<Vec<_>, anyhow::Error>>()?,
-        };
-        let js_source = self
+            })
+            .collect::<Result<Vec<_>, anyhow::Error>>()?;
+        let JsContent {
+            source: js_source,
+            file_name: js_file_name,
+        } = self
             .location
-            .get_content(&wasm_cache_dir, self.content_digest.as_ref())?;
+            .get_content(&wasm_cache_dir, self.content_digest.as_ref())
+            .await?;
         const DEFAULT_RETURN_TYPE: &str = "result";
         let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
         let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
@@ -2055,7 +2111,6 @@ impl WorkflowJsComponentConfigCanonical {
             max_retries: None,
             retry_exp_backoff: self.retry_exp_backoff.into(),
         };
-        let js_file_name = self.location.file_name();
         Ok(WorkflowJsConfigVerified {
             wasm_path,
             js_source,
@@ -2208,6 +2263,9 @@ async fn resolve_js_to_canonical(location: &JsLocationToml) -> anyhow::Result<Js
                 .with_context(|| format!("cannot read JS file {full_path:?}"))?;
             Ok(JsLocationCanonical::Content { content, file_name })
         }
+        JsLocationToml::Oci(reference) => Ok(JsLocationCanonical::Oci {
+            image: reference.whole(),
+        }),
     }
 }
 
@@ -2557,8 +2615,9 @@ impl From<ComponentStdOutputToml> for Option<StdOutputConfig> {
 pub(crate) mod webhook {
     use super::{
         AllowedHostToml, ComponentBacktraceConfig, ComponentBacktraceConfigCanonical,
-        ComponentCommon, ComponentStdOutputToml, ConfigName, JsLocationCanonical, JsLocationToml,
-        resolve_allowed_hosts, resolve_env_vars_plaintext, validate_no_env_collision,
+        ComponentCommon, ComponentStdOutputToml, ConfigName, JsContent, JsLocationCanonical,
+        JsLocationToml, resolve_allowed_hosts, resolve_env_vars_plaintext,
+        validate_no_env_collision,
     };
     use crate::{
         command::server::FrameFilesToSourceContent,
@@ -2834,9 +2893,13 @@ pub(crate) mod webhook {
             wasm_cache_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
         ) -> Result<(ConfigName, WebhookJsConfigVerified), anyhow::Error> {
-            let js_source = self
+            let JsContent {
+                source: js_source,
+                file_name: js_file_name,
+            } = self
                 .location
-                .get_content(&wasm_cache_dir, self.content_digest.as_ref())?;
+                .get_content(&wasm_cache_dir, self.content_digest.as_ref())
+                .await?;
             let mut hasher = Sha256::new();
             hasher.update(b"webhook_js:");
             hasher.update(js_source.as_bytes());
@@ -2854,7 +2917,7 @@ pub(crate) mod webhook {
                 WebhookJsConfigVerified {
                     wasm_path,
                     component_id,
-                    js_file_name: self.location.file_name(),
+                    js_file_name,
                     js_source,
                     routes: self
                         .routes

@@ -178,10 +178,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "params": {
-          "type": [
-            "array",
-            "null"
-          ],
+          "type": "array",
           "items": {
             "$ref": "#/$defs/JsParamToml"
           }
@@ -201,6 +198,7 @@
         "name",
         "location",
         "ffqn",
+        "params",
         "exec",
         "max_retries",
         "retry_exp_backoff",
@@ -632,6 +630,19 @@
           "required": [
             "content"
           ]
+        },
+        {
+          "description": "OCI-sourced JS.",
+          "type": "object",
+          "properties": {
+            "oci": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "oci"
+          ]
         }
       ]
     },
@@ -888,10 +899,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "params": {
-          "type": [
-            "array",
-            "null"
-          ],
+          "type": "array",
           "items": {
             "$ref": "#/$defs/JsParamToml"
           }
@@ -911,6 +919,7 @@
         "name",
         "location",
         "ffqn",
+        "params",
         "exec",
         "retry_exp_backoff",
         "blocking_strategy",
