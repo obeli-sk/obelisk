@@ -23,7 +23,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, warn};
 use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
 
-pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:1.0.0";
+pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:0.1.0";
 
 struct LayerWithAnnotations {
     layer_content_digest: ContentDigest,
