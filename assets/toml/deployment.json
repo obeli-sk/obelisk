@@ -180,7 +180,7 @@
           "default": "db"
         },
         "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths.\nOCI references are not supported for JS activities.",
+          "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
           "$ref": "#/$defs/JsLocationToml"
         },
         "logs_store_min_level": {
@@ -197,12 +197,9 @@
           "$ref": "#/$defs/ConfigName"
         },
         "params": {
-          "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to no parameters.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "default": null,
+          "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
+          "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/JsParamToml"
           }
@@ -622,7 +619,7 @@
       "additionalProperties": false
     },
     "JsLocationToml": {
-      "description": "Location of a JavaScript source file for JS activities.\nSupports local file paths.\nOCI references are not supported.\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
+      "description": "Location of a JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
       "type": "string"
     },
     "JsParamToml": {
@@ -884,7 +881,7 @@
           "type": "string"
         },
         "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths.\nOCI references are not supported for JS workflows.",
+          "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
           "$ref": "#/$defs/JsLocationToml"
         },
         "lock_extension": {
@@ -899,12 +896,9 @@
           "$ref": "#/$defs/ConfigName"
         },
         "params": {
-          "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nIf omitted, defaults to no parameters.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "default": null,
+          "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
+          "type": "array",
+          "default": [],
           "items": {
             "$ref": "#/$defs/JsParamToml"
           }
