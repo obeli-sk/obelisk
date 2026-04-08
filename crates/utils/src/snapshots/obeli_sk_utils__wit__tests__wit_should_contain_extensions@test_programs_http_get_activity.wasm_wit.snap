@@ -5,565 +5,565 @@ expression: wit
 package root:component;
 
 world root {
-  import wasi:io/poll@0.2.9;
-  import wasi:clocks/monotonic-clock@0.2.9;
-  import wasi:io/error@0.2.9;
-  import wasi:io/streams@0.2.9;
-  import wasi:cli/stdout@0.2.9;
-  import wasi:cli/stderr@0.2.9;
-  import wasi:cli/stdin@0.2.9;
-  import wasi:http/types@0.2.9;
-  import wasi:http/outgoing-handler@0.2.9;
-  import wasi:cli/environment@0.2.9;
-  import wasi:cli/exit@0.2.9;
-  import wasi:cli/terminal-input@0.2.9;
-  import wasi:cli/terminal-output@0.2.9;
-  import wasi:cli/terminal-stdin@0.2.9;
-  import wasi:cli/terminal-stdout@0.2.9;
-  import wasi:cli/terminal-stderr@0.2.9;
-  import wasi:random/insecure-seed@0.2.9;
+    import wasi:io/poll@0.2.9;
+    import wasi:clocks/monotonic-clock@0.2.9;
+    import wasi:io/error@0.2.9;
+    import wasi:io/streams@0.2.9;
+    import wasi:cli/stdout@0.2.9;
+    import wasi:cli/stderr@0.2.9;
+    import wasi:cli/stdin@0.2.9;
+    import wasi:http/types@0.2.9;
+    import wasi:http/outgoing-handler@0.2.9;
+    import wasi:cli/environment@0.2.9;
+    import wasi:cli/exit@0.2.9;
+    import wasi:cli/terminal-input@0.2.9;
+    import wasi:cli/terminal-output@0.2.9;
+    import wasi:cli/terminal-stdin@0.2.9;
+    import wasi:cli/terminal-stdout@0.2.9;
+    import wasi:cli/terminal-stderr@0.2.9;
+    import wasi:random/insecure-seed@0.2.9;
 
-  export testing:http/http-get;
-  export testing:http/http-post;
-  export testing:http-obelisk-ext/http-get;
-  export testing:http-obelisk-ext/http-post;
-  export testing:http-obelisk-schedule/http-get;
-  export testing:http-obelisk-schedule/http-post;
+    export testing:http/http-get;
+    export testing:http/http-post;
+    export testing:http-obelisk-ext/http-get;
+    export testing:http-obelisk-ext/http-post;
+    export testing:http-obelisk-schedule/http-get;
+    export testing:http-obelisk-schedule/http-post;
 }
 package obelisk:types@4.2.0 {
-  @since(version = 3.0.0)
-  interface time {
     @since(version = 3.0.0)
-    variant duration {
-      milliseconds(u64),
-      seconds(u64),
-      minutes(u32),
-      hours(u32),
-      days(u32),
-    }
+    interface time {
+        @since(version = 3.0.0)
+        variant duration {
+            milliseconds(u64),
+            seconds(u64),
+            minutes(u32),
+            hours(u32),
+            days(u32),
+        }
 
-    /// A time and date in seconds plus nanoseconds.
-    /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
-    @since(version = 3.0.0)
-    record datetime {
-      seconds: u64,
-      nanoseconds: u32,
-    }
+        /// A time and date in seconds plus nanoseconds.
+        /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+        @since(version = 3.0.0)
+        record datetime {
+            seconds: u64,
+            nanoseconds: u32,
+        }
 
-    @since(version = 3.0.0)
-    variant schedule-at {
-      now,
-      at(datetime),
-      in(duration),
+        @since(version = 3.0.0)
+        variant schedule-at {
+            now,
+            at(datetime),
+            in(duration),
+        }
     }
-  }
-  @since(version = 4.0.0)
-  interface execution {
-    use time.{duration};
-
-    @since(version = 3.0.0)
-    record execution-id {
-      id: string,
-    }
-
-    @since(version = 3.0.0)
-    record delay-id {
-      id: string,
-    }
-
-    @since(version = 3.0.0)
-    record function {
-      /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
-      interface-name: string,
-      /// must not contain dot (`.`)
-      function-name: string,
-    }
-
-    @since(version = 3.0.0)
-    variant response-id {
-      execution-id(execution-id),
-      delay-id(delay-id),
-    }
-
-    @since(version = 3.0.0)
-    record function-mismatch {
-      /// Workflow requested function
-      specified-function: function,
-      /// What was found actually during execution. None if delay was found as next unprocessed response.
-      actual-function: option<function>,
-      actual-id: response-id,
-    }
-
-    /// Error that is thrown by `-await-next` extension functions.
-    @since(version = 3.0.0)
-    variant await-next-extension-error {
-      /// All submitted requests and their responses of specified function and join set were already processed.
-      all-processed,
-      /// Execution response was awaited and marked as processed, but it belongs to a different function.
-      /// This can happen when join set contains responses of multiple functions or delay requests.
-      function-mismatch(function-mismatch),
-    }
-
-    /// Error variants that may occur when calling `-get` extension functions.
-    @since(version = 3.0.0)
-    variant get-extension-error {
-      /// Execution is found in processed responses, but it belongs to a different function.
-      /// This can happen when join set contains responses of multiple functions.
-      function-mismatch(function-mismatch),
-      /// Processed responses do not contain the specified execution ID.
-      /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
-      not-found-in-processed-responses,
-    }
-
-    /// Error variants that may occur when calling `-invoke` extension functions.
-    @since(version = 3.0.0)
-    variant invoke-extension-error {
-      invalid-name(string),
-    }
-
-    /// Error variants that may occur when calling `-stub` extension functions.
-    @since(version = 3.0.0)
-    variant stub-error {
-      /// execution was not found.
-      execution-not-found,
-      /// supplied return value does not type check.
-      type-check-error(string),
-      /// Conflict can happen when a second writer attempts to stub a value, while the
-      /// value is not equal to the already stubbed value.
-      conflict,
-    }
-
-    @since(version = 4.1.0)
-    record submit-config {
-      /// Override max duration of a execution run (single attempt).
-      /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
-      timeout: option<duration>,
-    }
-
-    @since(version = 4.2.0)
-    variant schedule-json-error {
-      /// See `Function` definition
-      ffqn-parsing-error(string),
-      function-not-found,
-      type-check-error(string),
-    }
-  }
-  @since(version = 4.2.0)
-  interface backtrace {
-    @since(version = 4.2.0)
-    record frame-symbol {
-      func-name: option<string>,
-      file: option<string>,
-      line: option<u32>,
-      col: option<u32>,
-    }
-
-    @since(version = 4.2.0)
-    record frame-info {
-      module: string,
-      func-name: string,
-      symbols: list<frame-symbol>,
-    }
-
-    @since(version = 4.2.0)
-    record wasm-backtrace {
-      frames: list<frame-info>,
-    }
-  }
-  @since(version = 4.0.0)
-  interface join-set {
-    use time.{schedule-at};
-    use execution.{delay-id, response-id};
-
-    /// Join set resouce.
     @since(version = 4.0.0)
-    resource join-set {
-      /// Get the join set identifier in the form of:
-      /// * `o:NAME` in case of a one-off join set, where `NAME` is generally an auto-incremented index optionally followed by underscode and a supplied name,
-      /// * `g:NAME` in case of a generated join set where `NAME` is generally an auto-incremented index,
-      /// * `n:NAME` in case of a named join set
-      @since(version = 4.0.0)
-      id: func() -> string;
-      /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
-      /// This function has been moved to `workflow-support`.
-      @since(version = 4.0.0)
-      @deprecated(version = 4.1.0)
-      submit-delay: func(timeout: schedule-at) -> delay-id;
-      /// Block the workflow execution until next response associated with the join set arrives.
-      /// The response is marked as processed.
-      /// Child execution result can be obtained using `-get` extension function using the
-      /// returned execution ID.
-      /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
-      /// This function has been moved to `workflow-support`.
-      @since(version = 4.0.0)
-      @deprecated(version = 4.1.0)
-      join-next: func() -> result<tuple<response-id, result>, join-next-error>;
-    }
+    interface execution {
+        use time.{duration};
 
-    /// Error variants that may occur when calling `join-next` function.
-    @since(version = 4.0.0)
-    @deprecated(version = 4.1.0)
-    variant join-next-error {
-      /// All submitted requests and their responses were already processed.
-      all-processed,
+        @since(version = 3.0.0)
+        record execution-id {
+            id: string,
+        }
+
+        @since(version = 3.0.0)
+        record delay-id {
+            id: string,
+        }
+
+        @since(version = 3.0.0)
+        record function {
+            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+            interface-name: string,
+            /// must not contain dot (`.`)
+            function-name: string,
+        }
+
+        @since(version = 3.0.0)
+        variant response-id {
+            execution-id(execution-id),
+            delay-id(delay-id),
+        }
+
+        @since(version = 3.0.0)
+        record function-mismatch {
+            /// Workflow requested function
+            specified-function: function,
+            /// What was found actually during execution. None if delay was found as next unprocessed response.
+            actual-function: option<function>,
+            actual-id: response-id,
+        }
+
+        /// Error that is thrown by `-await-next` extension functions.
+        @since(version = 3.0.0)
+        variant await-next-extension-error {
+            /// All submitted requests and their responses of specified function and join set were already processed.
+            all-processed,
+            /// Execution response was awaited and marked as processed, but it belongs to a different function.
+            /// This can happen when join set contains responses of multiple functions or delay requests.
+            function-mismatch(function-mismatch),
+        }
+
+        /// Error variants that may occur when calling `-get` extension functions.
+        @since(version = 3.0.0)
+        variant get-extension-error {
+            /// Execution is found in processed responses, but it belongs to a different function.
+            /// This can happen when join set contains responses of multiple functions.
+            function-mismatch(function-mismatch),
+            /// Processed responses do not contain the specified execution ID.
+            /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
+            not-found-in-processed-responses,
+        }
+
+        /// Error variants that may occur when calling `-invoke` extension functions.
+        @since(version = 3.0.0)
+        variant invoke-extension-error {
+            invalid-name(string),
+        }
+
+        /// Error variants that may occur when calling `-stub` extension functions.
+        @since(version = 3.0.0)
+        variant stub-error {
+            /// execution was not found.
+            execution-not-found,
+            /// supplied return value does not type check.
+            type-check-error(string),
+            /// Conflict can happen when a second writer attempts to stub a value, while the
+            /// value is not equal to the already stubbed value.
+            conflict,
+        }
+
+        @since(version = 4.1.0)
+        record submit-config {
+            /// Override max duration of a execution run (single attempt).
+            /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
+            timeout: option<duration>,
+        }
+
+        @since(version = 4.2.0)
+        variant schedule-json-error {
+            /// See `Function` definition
+            ffqn-parsing-error(string),
+            function-not-found,
+            type-check-error(string),
+        }
     }
-  }
+    @since(version = 4.2.0)
+    interface backtrace {
+        @since(version = 4.2.0)
+        record frame-symbol {
+            func-name: option<string>,
+            file: option<string>,
+            line: option<u32>,
+            col: option<u32>,
+        }
+
+        @since(version = 4.2.0)
+        record frame-info {
+            module: string,
+            func-name: string,
+            symbols: list<frame-symbol>,
+        }
+
+        @since(version = 4.2.0)
+        record wasm-backtrace {
+            frames: list<frame-info>,
+        }
+    }
+    @since(version = 4.0.0)
+    interface join-set {
+        use time.{schedule-at};
+        use execution.{delay-id, response-id};
+
+        /// Join set resouce.
+        @since(version = 4.0.0)
+        resource join-set {
+            /// Get the join set identifier in the form of:
+            /// * `o:NAME` in case of a one-off join set, where `NAME` is generally an auto-incremented index optionally followed by underscode and a supplied name,
+            /// * `g:NAME` in case of a generated join set where `NAME` is generally an auto-incremented index,
+            /// * `n:NAME` in case of a named join set
+            @since(version = 4.0.0)
+            id: func() -> string;
+            /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
+            /// This function has been moved to `workflow-support`.
+            @since(version = 4.0.0)
+            @deprecated(version = 4.1.0)
+            submit-delay: func(timeout: schedule-at) -> delay-id;
+            /// Block the workflow execution until next response associated with the join set arrives.
+            /// The response is marked as processed.
+            /// Child execution result can be obtained using `-get` extension function using the
+            /// returned execution ID.
+            /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+            /// This function has been moved to `workflow-support`.
+            @since(version = 4.0.0)
+            @deprecated(version = 4.1.0)
+            join-next: func() -> result<tuple<response-id, result>, join-next-error>;
+        }
+
+        /// Error variants that may occur when calling `join-next` function.
+        @since(version = 4.0.0)
+        @deprecated(version = 4.1.0)
+        variant join-next-error {
+            /// All submitted requests and their responses were already processed.
+            all-processed,
+        }
+    }
 }
 
 
 package wasi:io@0.2.9 {
-  interface poll {
-    resource pollable {
-      ready: func() -> bool;
-      block: func();
-    }
+    interface poll {
+        resource pollable {
+            ready: func() -> bool;
+            block: func();
+        }
 
-    poll: func(in: list<borrow<pollable>>) -> list<u32>;
-  }
-  interface error {
-    resource error {
-      to-debug-string: func() -> string;
+        poll: func(in: list<borrow<pollable>>) -> list<u32>;
     }
-  }
-  interface streams {
-    use poll.{pollable};
-    use error.{error};
+    interface error {
+        resource error {
+            to-debug-string: func() -> string;
+        }
+    }
+    interface streams {
+        use poll.{pollable};
+        use error.{error};
 
-    resource output-stream {
-      check-write: func() -> result<u64, stream-error>;
-      write: func(contents: list<u8>) -> result<_, stream-error>;
-      blocking-flush: func() -> result<_, stream-error>;
-      subscribe: func() -> pollable;
-      splice: func(src: borrow<input-stream>, len: u64) -> result<u64, stream-error>;
-    }
+        resource output-stream {
+            check-write: func() -> result<u64, stream-error>;
+            write: func(contents: list<u8>) -> result<_, stream-error>;
+            blocking-flush: func() -> result<_, stream-error>;
+            subscribe: func() -> pollable;
+            splice: func(src: borrow<input-stream>, len: u64) -> result<u64, stream-error>;
+        }
 
-    resource input-stream {
-      read: func(len: u64) -> result<list<u8>, stream-error>;
-      subscribe: func() -> pollable;
-    }
+        resource input-stream {
+            read: func(len: u64) -> result<list<u8>, stream-error>;
+            subscribe: func() -> pollable;
+        }
 
-    variant stream-error {
-      last-operation-failed(error),
-      closed,
+        variant stream-error {
+            last-operation-failed(error),
+            closed,
+        }
     }
-  }
 }
 
 
 package wasi:clocks@0.2.9 {
-  interface monotonic-clock {
-    use wasi:io/poll@0.2.9.{pollable};
+    interface monotonic-clock {
+        use wasi:io/poll@0.2.9.{pollable};
 
-    type duration = u64;
+        type duration = u64;
 
-    subscribe-duration: func(when: duration) -> pollable;
-  }
+        subscribe-duration: func(when: duration) -> pollable;
+    }
 }
 
 
 package wasi:cli@0.2.9 {
-  interface stdout {
-    use wasi:io/streams@0.2.9.{output-stream};
+    interface stdout {
+        use wasi:io/streams@0.2.9.{output-stream};
 
-    get-stdout: func() -> output-stream;
-  }
-  interface stderr {
-    use wasi:io/streams@0.2.9.{output-stream};
+        get-stdout: func() -> output-stream;
+    }
+    interface stderr {
+        use wasi:io/streams@0.2.9.{output-stream};
 
-    get-stderr: func() -> output-stream;
-  }
-  interface stdin {
-    use wasi:io/streams@0.2.9.{input-stream};
+        get-stderr: func() -> output-stream;
+    }
+    interface stdin {
+        use wasi:io/streams@0.2.9.{input-stream};
 
-    get-stdin: func() -> input-stream;
-  }
-  interface environment {
-    get-environment: func() -> list<tuple<string, string>>;
-  }
-  interface exit {
-    exit: func(status: result);
-  }
-  interface terminal-input {
-    resource terminal-input;
-  }
-  interface terminal-output {
-    resource terminal-output;
-  }
-  interface terminal-stdin {
-    use terminal-input.{terminal-input};
+        get-stdin: func() -> input-stream;
+    }
+    interface environment {
+        get-environment: func() -> list<tuple<string, string>>;
+    }
+    interface exit {
+        exit: func(status: result);
+    }
+    interface terminal-input {
+        resource terminal-input;
+    }
+    interface terminal-output {
+        resource terminal-output;
+    }
+    interface terminal-stdin {
+        use terminal-input.{terminal-input};
 
-    get-terminal-stdin: func() -> option<terminal-input>;
-  }
-  interface terminal-stdout {
-    use terminal-output.{terminal-output};
+        get-terminal-stdin: func() -> option<terminal-input>;
+    }
+    interface terminal-stdout {
+        use terminal-output.{terminal-output};
 
-    get-terminal-stdout: func() -> option<terminal-output>;
-  }
-  interface terminal-stderr {
-    use terminal-output.{terminal-output};
+        get-terminal-stdout: func() -> option<terminal-output>;
+    }
+    interface terminal-stderr {
+        use terminal-output.{terminal-output};
 
-    get-terminal-stderr: func() -> option<terminal-output>;
-  }
+        get-terminal-stderr: func() -> option<terminal-output>;
+    }
 }
 
 
 package wasi:http@0.2.9 {
-  interface types {
-    use wasi:io/streams@0.2.9.{input-stream};
-    use wasi:clocks/monotonic-clock@0.2.9.{duration};
-    use wasi:io/streams@0.2.9.{output-stream};
-    use wasi:io/poll@0.2.9.{pollable};
+    interface types {
+        use wasi:io/streams@0.2.9.{input-stream};
+        use wasi:clocks/monotonic-clock@0.2.9.{duration};
+        use wasi:io/streams@0.2.9.{output-stream};
+        use wasi:io/poll@0.2.9.{pollable};
 
-    resource outgoing-body {
-      write: func() -> result<output-stream>;
-      finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+        resource outgoing-body {
+            write: func() -> result<output-stream>;
+            finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+        }
+
+        resource future-incoming-response {
+            subscribe: func() -> pollable;
+            get: func() -> option<result<result<incoming-response, error-code>>>;
+        }
+
+        resource incoming-body {
+            %stream: func() -> result<input-stream>;
+            finish: static func(this: incoming-body) -> future-trailers;
+        }
+
+        resource fields {
+            constructor();
+            append: func(name: field-name, value: field-value) -> result<_, header-error>;
+            entries: func() -> list<tuple<field-name, field-value>>;
+        }
+
+        resource future-trailers {
+            subscribe: func() -> pollable;
+            get: func() -> option<result<result<option<trailers>, error-code>>>;
+        }
+
+        type headers = fields;
+
+        resource outgoing-request {
+            constructor(headers: headers);
+            body: func() -> result<outgoing-body>;
+            set-method: func(method: method) -> result;
+            set-path-with-query: func(path-with-query: option<string>) -> result;
+            set-scheme: func(scheme: option<scheme>) -> result;
+            set-authority: func(authority: option<string>) -> result;
+        }
+
+        variant method {
+            get,
+            head,
+            post,
+            put,
+            delete,
+            connect,
+            options,
+            trace,
+            patch,
+            other(string),
+        }
+
+        variant scheme {
+            HTTP,
+            HTTPS,
+            other(string),
+        }
+
+        resource request-options {
+            constructor();
+            set-connect-timeout: func(duration: option<duration>) -> result;
+            set-first-byte-timeout: func(duration: option<duration>) -> result;
+            set-between-bytes-timeout: func(duration: option<duration>) -> result;
+        }
+
+        resource incoming-response {
+            status: func() -> status-code;
+            headers: func() -> headers;
+            consume: func() -> result<incoming-body>;
+        }
+
+        record DNS-error-payload {
+            rcode: option<string>,
+            info-code: option<u16>,
+        }
+
+        record TLS-alert-received-payload {
+            alert-id: option<u8>,
+            alert-message: option<string>,
+        }
+
+        record field-size-payload {
+            field-name: option<string>,
+            field-size: option<u32>,
+        }
+
+        variant error-code {
+            DNS-timeout,
+            DNS-error(DNS-error-payload),
+            destination-not-found,
+            destination-unavailable,
+            destination-IP-prohibited,
+            destination-IP-unroutable,
+            connection-refused,
+            connection-terminated,
+            connection-timeout,
+            connection-read-timeout,
+            connection-write-timeout,
+            connection-limit-reached,
+            TLS-protocol-error,
+            TLS-certificate-error,
+            TLS-alert-received(TLS-alert-received-payload),
+            HTTP-request-denied,
+            HTTP-request-length-required,
+            HTTP-request-body-size(option<u64>),
+            HTTP-request-method-invalid,
+            HTTP-request-URI-invalid,
+            HTTP-request-URI-too-long,
+            HTTP-request-header-section-size(option<u32>),
+            HTTP-request-header-size(option<field-size-payload>),
+            HTTP-request-trailer-section-size(option<u32>),
+            HTTP-request-trailer-size(field-size-payload),
+            HTTP-response-incomplete,
+            HTTP-response-header-section-size(option<u32>),
+            HTTP-response-header-size(field-size-payload),
+            HTTP-response-body-size(option<u64>),
+            HTTP-response-trailer-section-size(option<u32>),
+            HTTP-response-trailer-size(field-size-payload),
+            HTTP-response-transfer-coding(option<string>),
+            HTTP-response-content-coding(option<string>),
+            HTTP-response-timeout,
+            HTTP-upgrade-failed,
+            HTTP-protocol-error,
+            loop-detected,
+            configuration-error,
+            internal-error(option<string>),
+        }
+
+        type status-code = u16;
+
+        type trailers = fields;
+
+        type field-key = string;
+
+        type field-name = field-key;
+
+        type field-value = list<u8>;
+
+        variant header-error {
+            invalid-syntax,
+            forbidden,
+            immutable,
+        }
     }
+    interface outgoing-handler {
+        use types.{outgoing-request, request-options, future-incoming-response, error-code};
 
-    resource future-incoming-response {
-      subscribe: func() -> pollable;
-      get: func() -> option<result<result<incoming-response, error-code>>>;
+        handle: func(request: outgoing-request, options: option<request-options>) -> result<future-incoming-response, error-code>;
     }
-
-    resource incoming-body {
-      %stream: func() -> result<input-stream>;
-      finish: static func(this: incoming-body) -> future-trailers;
-    }
-
-    resource fields {
-      constructor();
-      append: func(name: field-name, value: field-value) -> result<_, header-error>;
-      entries: func() -> list<tuple<field-name, field-value>>;
-    }
-
-    resource future-trailers {
-      subscribe: func() -> pollable;
-      get: func() -> option<result<result<option<trailers>, error-code>>>;
-    }
-
-    type headers = fields;
-
-    resource outgoing-request {
-      constructor(headers: headers);
-      body: func() -> result<outgoing-body>;
-      set-method: func(method: method) -> result;
-      set-path-with-query: func(path-with-query: option<string>) -> result;
-      set-scheme: func(scheme: option<scheme>) -> result;
-      set-authority: func(authority: option<string>) -> result;
-    }
-
-    variant method {
-      get,
-      head,
-      post,
-      put,
-      delete,
-      connect,
-      options,
-      trace,
-      patch,
-      other(string),
-    }
-
-    variant scheme {
-      HTTP,
-      HTTPS,
-      other(string),
-    }
-
-    resource request-options {
-      constructor();
-      set-connect-timeout: func(duration: option<duration>) -> result;
-      set-first-byte-timeout: func(duration: option<duration>) -> result;
-      set-between-bytes-timeout: func(duration: option<duration>) -> result;
-    }
-
-    resource incoming-response {
-      status: func() -> status-code;
-      headers: func() -> headers;
-      consume: func() -> result<incoming-body>;
-    }
-
-    record DNS-error-payload {
-      rcode: option<string>,
-      info-code: option<u16>,
-    }
-
-    record TLS-alert-received-payload {
-      alert-id: option<u8>,
-      alert-message: option<string>,
-    }
-
-    record field-size-payload {
-      field-name: option<string>,
-      field-size: option<u32>,
-    }
-
-    variant error-code {
-      DNS-timeout,
-      DNS-error(DNS-error-payload),
-      destination-not-found,
-      destination-unavailable,
-      destination-IP-prohibited,
-      destination-IP-unroutable,
-      connection-refused,
-      connection-terminated,
-      connection-timeout,
-      connection-read-timeout,
-      connection-write-timeout,
-      connection-limit-reached,
-      TLS-protocol-error,
-      TLS-certificate-error,
-      TLS-alert-received(TLS-alert-received-payload),
-      HTTP-request-denied,
-      HTTP-request-length-required,
-      HTTP-request-body-size(option<u64>),
-      HTTP-request-method-invalid,
-      HTTP-request-URI-invalid,
-      HTTP-request-URI-too-long,
-      HTTP-request-header-section-size(option<u32>),
-      HTTP-request-header-size(option<field-size-payload>),
-      HTTP-request-trailer-section-size(option<u32>),
-      HTTP-request-trailer-size(field-size-payload),
-      HTTP-response-incomplete,
-      HTTP-response-header-section-size(option<u32>),
-      HTTP-response-header-size(field-size-payload),
-      HTTP-response-body-size(option<u64>),
-      HTTP-response-trailer-section-size(option<u32>),
-      HTTP-response-trailer-size(field-size-payload),
-      HTTP-response-transfer-coding(option<string>),
-      HTTP-response-content-coding(option<string>),
-      HTTP-response-timeout,
-      HTTP-upgrade-failed,
-      HTTP-protocol-error,
-      loop-detected,
-      configuration-error,
-      internal-error(option<string>),
-    }
-
-    type status-code = u16;
-
-    type trailers = fields;
-
-    type field-key = string;
-
-    type field-name = field-key;
-
-    type field-value = list<u8>;
-
-    variant header-error {
-      invalid-syntax,
-      forbidden,
-      immutable,
-    }
-  }
-  interface outgoing-handler {
-    use types.{outgoing-request, request-options, future-incoming-response, error-code};
-
-    handle: func(request: outgoing-request, options: option<request-options>) -> result<future-incoming-response, error-code>;
-  }
 }
 
 
 package wasi:random@0.2.9 {
-  interface insecure-seed {
-    insecure-seed: func() -> tuple<u64, u64>;
-  }
+    interface insecure-seed {
+        insecure-seed: func() -> tuple<u64, u64>;
+    }
 }
 
 
 package testing:http {
-  interface http-get {
-    record response {
-      body: list<u8>,
-      status-code: u16,
+    interface http-get {
+        record response {
+            body: list<u8>,
+            status-code: u16,
+        }
+
+        record response-str {
+            body: string,
+            status-code: u16,
+        }
+
+        get: func(url: string) -> result<string, string>;
+
+        get-resp: func(url: string) -> result<response, string>;
+
+        get-successful: func(url: string) -> result<string, string>;
+
+        secret-get: func(url: string, env-var: string, header: option<tuple<string, string>>) -> result<response-str, string>;
     }
+    interface http-post {
+        use http-get.{response-str};
 
-    record response-str {
-      body: string,
-      status-code: u16,
+        secret-post: func(url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> result<response-str, string>;
     }
-
-    get: func(url: string) -> result<string, string>;
-
-    get-resp: func(url: string) -> result<response, string>;
-
-    get-successful: func(url: string) -> result<string, string>;
-
-    secret-get: func(url: string, env-var: string, header: option<tuple<string, string>>) -> result<response-str, string>;
-  }
-  interface http-post {
-    use http-get.{response-str};
-
-    secret-post: func(url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> result<response-str, string>;
-  }
 }
 
 
 package testing:http-obelisk-ext {
-  interface http-get {
-    use testing:http/http-get.{response, response-str};
-    use obelisk:types/execution@4.2.0.{execution-id};
-    use obelisk:types/join-set@4.2.0.{join-set};
-    use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
+    interface http-get {
+        use testing:http/http-get.{response, response-str};
+        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/join-set@4.2.0.{join-set};
+        use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
 
-    get-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
-    get-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+        get-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
 
-    get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+        get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-resp-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-resp-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
-    get-resp-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<response, string>>, await-next-extension-error>;
+        get-resp-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<response, string>>, await-next-extension-error>;
 
-    get-resp-get: func(execution-id: execution-id) -> result<result<response, string>, get-extension-error>;
+        get-resp-get: func(execution-id: execution-id) -> result<result<response, string>, get-extension-error>;
 
-    get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
-    get-successful-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+        get-successful-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
 
-    get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+        get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    secret-get-submit: func(join-set: borrow<join-set>, url: string, env-var: string, header: option<tuple<string, string>>) -> execution-id;
+        secret-get-submit: func(join-set: borrow<join-set>, url: string, env-var: string, header: option<tuple<string, string>>) -> execution-id;
 
-    secret-get-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<response-str, string>>, await-next-extension-error>;
+        secret-get-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<response-str, string>>, await-next-extension-error>;
 
-    secret-get-get: func(execution-id: execution-id) -> result<result<response-str, string>, get-extension-error>;
-  }
-  interface http-post {
-    use testing:http/http-get.{response-str};
-    use obelisk:types/execution@4.2.0.{execution-id};
-    use obelisk:types/join-set@4.2.0.{join-set};
-    use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
+        secret-get-get: func(execution-id: execution-id) -> result<result<response-str, string>, get-extension-error>;
+    }
+    interface http-post {
+        use testing:http/http-get.{response-str};
+        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/join-set@4.2.0.{join-set};
+        use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
 
-    secret-post-submit: func(join-set: borrow<join-set>, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> execution-id;
+        secret-post-submit: func(join-set: borrow<join-set>, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> execution-id;
 
-    secret-post-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<response-str, string>>, await-next-extension-error>;
+        secret-post-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<response-str, string>>, await-next-extension-error>;
 
-    secret-post-get: func(execution-id: execution-id) -> result<result<response-str, string>, get-extension-error>;
-  }
+        secret-post-get: func(execution-id: execution-id) -> result<result<response-str, string>, get-extension-error>;
+    }
 }
 
 
 package testing:http-obelisk-schedule {
-  interface http-get {
-    use testing:http/http-get.{response, response-str};
-    use obelisk:types/execution@4.2.0.{execution-id};
-    use obelisk:types/time@4.2.0.{schedule-at};
+    interface http-get {
+        use testing:http/http-get.{response, response-str};
+        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/time@4.2.0.{schedule-at};
 
-    get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+        get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
-    get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+        get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
-    get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+        get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
-    secret-get-schedule: func(schedule-at: schedule-at, url: string, env-var: string, header: option<tuple<string, string>>) -> execution-id;
-  }
-  interface http-post {
-    use testing:http/http-get.{response-str};
-    use obelisk:types/execution@4.2.0.{execution-id};
-    use obelisk:types/time@4.2.0.{schedule-at};
+        secret-get-schedule: func(schedule-at: schedule-at, url: string, env-var: string, header: option<tuple<string, string>>) -> execution-id;
+    }
+    interface http-post {
+        use testing:http/http-get.{response-str};
+        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/time@4.2.0.{schedule-at};
 
-    secret-post-schedule: func(schedule-at: schedule-at, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> execution-id;
-  }
+        secret-post-schedule: func(schedule-at: schedule-at, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> execution-id;
+    }
 }

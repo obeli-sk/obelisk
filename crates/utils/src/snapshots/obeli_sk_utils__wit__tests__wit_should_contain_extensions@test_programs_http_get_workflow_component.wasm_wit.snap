@@ -5,310 +5,310 @@ expression: wit
 package root:component;
 
 world root {
-  import testing:http/http-get;
-  import obelisk:types/time@4.2.0;
-  import obelisk:types/execution@4.2.0;
-  import obelisk:types/join-set@4.2.0;
-  import testing:http-obelisk-ext/http-get;
-  import obelisk:workflow/workflow-support@5.0.0;
-  import obelisk:log/log@1.0.0;
+    import testing:http/http-get;
+    import obelisk:types/time@4.2.0;
+    import obelisk:types/execution@4.2.0;
+    import obelisk:types/join-set@4.2.0;
+    import testing:http-obelisk-ext/http-get;
+    import obelisk:workflow/workflow-support@5.0.0;
+    import obelisk:log/log@1.0.0;
 
-  export testing:http-workflow/workflow;
-  export testing:http-workflow-obelisk-ext/workflow;
-  export testing:http-workflow-obelisk-schedule/workflow;
+    export testing:http-workflow/workflow;
+    export testing:http-workflow-obelisk-ext/workflow;
+    export testing:http-workflow-obelisk-schedule/workflow;
 }
 package obelisk:log@1.0.0 {
-  interface log {
-    info: func(message: string);
-  }
+    interface log {
+        info: func(message: string);
+    }
 }
 
 
 package obelisk:types@4.2.0 {
-  @since(version = 3.0.0)
-  interface time {
     @since(version = 3.0.0)
-    variant duration {
-      milliseconds(u64),
-      seconds(u64),
-      minutes(u32),
-      hours(u32),
-      days(u32),
-    }
+    interface time {
+        @since(version = 3.0.0)
+        variant duration {
+            milliseconds(u64),
+            seconds(u64),
+            minutes(u32),
+            hours(u32),
+            days(u32),
+        }
 
-    /// A time and date in seconds plus nanoseconds.
-    /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
-    @since(version = 3.0.0)
-    record datetime {
-      seconds: u64,
-      nanoseconds: u32,
-    }
+        /// A time and date in seconds plus nanoseconds.
+        /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+        @since(version = 3.0.0)
+        record datetime {
+            seconds: u64,
+            nanoseconds: u32,
+        }
 
-    @since(version = 3.0.0)
-    variant schedule-at {
-      now,
-      at(datetime),
-      in(duration),
+        @since(version = 3.0.0)
+        variant schedule-at {
+            now,
+            at(datetime),
+            in(duration),
+        }
     }
-  }
-  @since(version = 4.0.0)
-  interface execution {
-    use time.{duration};
-
-    @since(version = 3.0.0)
-    record execution-id {
-      id: string,
-    }
-
-    @since(version = 3.0.0)
-    record delay-id {
-      id: string,
-    }
-
-    @since(version = 3.0.0)
-    record function {
-      /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
-      interface-name: string,
-      /// must not contain dot (`.`)
-      function-name: string,
-    }
-
-    @since(version = 3.0.0)
-    variant response-id {
-      execution-id(execution-id),
-      delay-id(delay-id),
-    }
-
-    @since(version = 3.0.0)
-    record function-mismatch {
-      /// Workflow requested function
-      specified-function: function,
-      /// What was found actually during execution. None if delay was found as next unprocessed response.
-      actual-function: option<function>,
-      actual-id: response-id,
-    }
-
-    /// Error that is thrown by `-await-next` extension functions.
-    @since(version = 3.0.0)
-    variant await-next-extension-error {
-      /// All submitted requests and their responses of specified function and join set were already processed.
-      all-processed,
-      /// Execution response was awaited and marked as processed, but it belongs to a different function.
-      /// This can happen when join set contains responses of multiple functions or delay requests.
-      function-mismatch(function-mismatch),
-    }
-
-    /// Error variants that may occur when calling `-get` extension functions.
-    @since(version = 3.0.0)
-    variant get-extension-error {
-      /// Execution is found in processed responses, but it belongs to a different function.
-      /// This can happen when join set contains responses of multiple functions.
-      function-mismatch(function-mismatch),
-      /// Processed responses do not contain the specified execution ID.
-      /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
-      not-found-in-processed-responses,
-    }
-
-    /// Error variants that may occur when calling `-invoke` extension functions.
-    @since(version = 3.0.0)
-    variant invoke-extension-error {
-      invalid-name(string),
-    }
-
-    /// Error variants that may occur when calling `-stub` extension functions.
-    @since(version = 3.0.0)
-    variant stub-error {
-      /// execution was not found.
-      execution-not-found,
-      /// supplied return value does not type check.
-      type-check-error(string),
-      /// Conflict can happen when a second writer attempts to stub a value, while the
-      /// value is not equal to the already stubbed value.
-      conflict,
-    }
-
-    @since(version = 4.1.0)
-    record submit-config {
-      /// Override max duration of a execution run (single attempt).
-      /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
-      timeout: option<duration>,
-    }
-
-    @since(version = 4.2.0)
-    variant schedule-json-error {
-      /// See `Function` definition
-      ffqn-parsing-error(string),
-      function-not-found,
-      type-check-error(string),
-    }
-  }
-  @since(version = 4.2.0)
-  interface backtrace {
-    @since(version = 4.2.0)
-    record frame-symbol {
-      func-name: option<string>,
-      file: option<string>,
-      line: option<u32>,
-      col: option<u32>,
-    }
-
-    @since(version = 4.2.0)
-    record frame-info {
-      module: string,
-      func-name: string,
-      symbols: list<frame-symbol>,
-    }
-
-    @since(version = 4.2.0)
-    record wasm-backtrace {
-      frames: list<frame-info>,
-    }
-  }
-  @since(version = 4.0.0)
-  interface join-set {
-    use time.{schedule-at};
-    use execution.{delay-id, response-id};
-
-    /// Join set resouce.
     @since(version = 4.0.0)
-    resource join-set {
-      /// Get the join set identifier in the form of:
-      /// * `o:NAME` in case of a one-off join set, where `NAME` is generally an auto-incremented index optionally followed by underscode and a supplied name,
-      /// * `g:NAME` in case of a generated join set where `NAME` is generally an auto-incremented index,
-      /// * `n:NAME` in case of a named join set
-      @since(version = 4.0.0)
-      id: func() -> string;
-      /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
-      /// This function has been moved to `workflow-support`.
-      @since(version = 4.0.0)
-      @deprecated(version = 4.1.0)
-      submit-delay: func(timeout: schedule-at) -> delay-id;
-      /// Block the workflow execution until next response associated with the join set arrives.
-      /// The response is marked as processed.
-      /// Child execution result can be obtained using `-get` extension function using the
-      /// returned execution ID.
-      /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
-      /// This function has been moved to `workflow-support`.
-      @since(version = 4.0.0)
-      @deprecated(version = 4.1.0)
-      join-next: func() -> result<tuple<response-id, result>, join-next-error>;
-    }
+    interface execution {
+        use time.{duration};
 
-    /// Error variants that may occur when calling `join-next` function.
-    @since(version = 4.0.0)
-    @deprecated(version = 4.1.0)
-    variant join-next-error {
-      /// All submitted requests and their responses were already processed.
-      all-processed,
+        @since(version = 3.0.0)
+        record execution-id {
+            id: string,
+        }
+
+        @since(version = 3.0.0)
+        record delay-id {
+            id: string,
+        }
+
+        @since(version = 3.0.0)
+        record function {
+            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+            interface-name: string,
+            /// must not contain dot (`.`)
+            function-name: string,
+        }
+
+        @since(version = 3.0.0)
+        variant response-id {
+            execution-id(execution-id),
+            delay-id(delay-id),
+        }
+
+        @since(version = 3.0.0)
+        record function-mismatch {
+            /// Workflow requested function
+            specified-function: function,
+            /// What was found actually during execution. None if delay was found as next unprocessed response.
+            actual-function: option<function>,
+            actual-id: response-id,
+        }
+
+        /// Error that is thrown by `-await-next` extension functions.
+        @since(version = 3.0.0)
+        variant await-next-extension-error {
+            /// All submitted requests and their responses of specified function and join set were already processed.
+            all-processed,
+            /// Execution response was awaited and marked as processed, but it belongs to a different function.
+            /// This can happen when join set contains responses of multiple functions or delay requests.
+            function-mismatch(function-mismatch),
+        }
+
+        /// Error variants that may occur when calling `-get` extension functions.
+        @since(version = 3.0.0)
+        variant get-extension-error {
+            /// Execution is found in processed responses, but it belongs to a different function.
+            /// This can happen when join set contains responses of multiple functions.
+            function-mismatch(function-mismatch),
+            /// Processed responses do not contain the specified execution ID.
+            /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
+            not-found-in-processed-responses,
+        }
+
+        /// Error variants that may occur when calling `-invoke` extension functions.
+        @since(version = 3.0.0)
+        variant invoke-extension-error {
+            invalid-name(string),
+        }
+
+        /// Error variants that may occur when calling `-stub` extension functions.
+        @since(version = 3.0.0)
+        variant stub-error {
+            /// execution was not found.
+            execution-not-found,
+            /// supplied return value does not type check.
+            type-check-error(string),
+            /// Conflict can happen when a second writer attempts to stub a value, while the
+            /// value is not equal to the already stubbed value.
+            conflict,
+        }
+
+        @since(version = 4.1.0)
+        record submit-config {
+            /// Override max duration of a execution run (single attempt).
+            /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
+            timeout: option<duration>,
+        }
+
+        @since(version = 4.2.0)
+        variant schedule-json-error {
+            /// See `Function` definition
+            ffqn-parsing-error(string),
+            function-not-found,
+            type-check-error(string),
+        }
     }
-  }
+    @since(version = 4.2.0)
+    interface backtrace {
+        @since(version = 4.2.0)
+        record frame-symbol {
+            func-name: option<string>,
+            file: option<string>,
+            line: option<u32>,
+            col: option<u32>,
+        }
+
+        @since(version = 4.2.0)
+        record frame-info {
+            module: string,
+            func-name: string,
+            symbols: list<frame-symbol>,
+        }
+
+        @since(version = 4.2.0)
+        record wasm-backtrace {
+            frames: list<frame-info>,
+        }
+    }
+    @since(version = 4.0.0)
+    interface join-set {
+        use time.{schedule-at};
+        use execution.{delay-id, response-id};
+
+        /// Join set resouce.
+        @since(version = 4.0.0)
+        resource join-set {
+            /// Get the join set identifier in the form of:
+            /// * `o:NAME` in case of a one-off join set, where `NAME` is generally an auto-incremented index optionally followed by underscode and a supplied name,
+            /// * `g:NAME` in case of a generated join set where `NAME` is generally an auto-incremented index,
+            /// * `n:NAME` in case of a named join set
+            @since(version = 4.0.0)
+            id: func() -> string;
+            /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
+            /// This function has been moved to `workflow-support`.
+            @since(version = 4.0.0)
+            @deprecated(version = 4.1.0)
+            submit-delay: func(timeout: schedule-at) -> delay-id;
+            /// Block the workflow execution until next response associated with the join set arrives.
+            /// The response is marked as processed.
+            /// Child execution result can be obtained using `-get` extension function using the
+            /// returned execution ID.
+            /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+            /// This function has been moved to `workflow-support`.
+            @since(version = 4.0.0)
+            @deprecated(version = 4.1.0)
+            join-next: func() -> result<tuple<response-id, result>, join-next-error>;
+        }
+
+        /// Error variants that may occur when calling `join-next` function.
+        @since(version = 4.0.0)
+        @deprecated(version = 4.1.0)
+        variant join-next-error {
+            /// All submitted requests and their responses were already processed.
+            all-processed,
+        }
+    }
 }
 
 
 package obelisk:workflow@5.0.0 {
-  interface workflow-support {
-    use obelisk:types/join-set@4.2.0.{join-set};
+    interface workflow-support {
+        use obelisk:types/join-set@4.2.0.{join-set};
 
-    join-set-create: func() -> join-set;
-  }
+        join-set-create: func() -> join-set;
+    }
 }
 
 
 package testing:http {
-  interface http-get {
-    record response {
-      body: list<u8>,
-      status-code: u16,
+    interface http-get {
+        record response {
+            body: list<u8>,
+            status-code: u16,
+        }
+
+        get: func(url: string) -> result<string, string>;
+
+        get-resp: func(url: string) -> result<response, string>;
+
+        get-successful: func(url: string) -> result<string, string>;
     }
-
-    get: func(url: string) -> result<string, string>;
-
-    get-resp: func(url: string) -> result<response, string>;
-
-    get-successful: func(url: string) -> result<string, string>;
-  }
 }
 
 
 package testing:http-obelisk-ext {
-  interface http-get {
-    use obelisk:types/join-set@4.2.0.{join-set};
-    use obelisk:types/execution@4.2.0.{execution-id, await-next-extension-error};
+    interface http-get {
+        use obelisk:types/join-set@4.2.0.{join-set};
+        use obelisk:types/execution@4.2.0.{execution-id, await-next-extension-error};
 
-    get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
-    get-successful-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
-  }
+        get-successful-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+    }
 }
 
 
 package testing:http-workflow {
-  interface workflow {
-    get: func(url: string) -> result<string, string>;
+    interface workflow {
+        get: func(url: string) -> result<string, string>;
 
-    get-resp: func(url: string) -> result<string, string>;
+        get-resp: func(url: string) -> result<string, string>;
 
-    get-successful: func(url: string) -> result<string, string>;
+        get-successful: func(url: string) -> result<string, string>;
 
-    get-successful-concurrently: func(urls: list<string>) -> result<list<string>, string>;
+        get-successful-concurrently: func(urls: list<string>) -> result<list<string>, string>;
 
-    get-successful-concurrently-stress: func(url: string, concurrency: u32) -> result<list<string>, string>;
-  }
+        get-successful-concurrently-stress: func(url: string, concurrency: u32) -> result<list<string>, string>;
+    }
 }
 
 
 package testing:http-workflow-obelisk-ext {
-  interface workflow {
-    use obelisk:types/execution@4.2.0.{execution-id};
-    use obelisk:types/join-set@4.2.0.{join-set};
-    use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
+    interface workflow {
+        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/join-set@4.2.0.{join-set};
+        use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
 
-    get-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
-    get-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+        get-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
 
-    get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+        get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-resp-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-resp-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
-    get-resp-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+        get-resp-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
 
-    get-resp-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+        get-resp-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
 
-    get-successful-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
+        get-successful-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
 
-    get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
+        get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-    get-successful-concurrently-submit: func(join-set: borrow<join-set>, urls: list<string>) -> execution-id;
+        get-successful-concurrently-submit: func(join-set: borrow<join-set>, urls: list<string>) -> execution-id;
 
-    get-successful-concurrently-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>;
+        get-successful-concurrently-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>;
 
-    get-successful-concurrently-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
+        get-successful-concurrently-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
 
-    get-successful-concurrently-stress-submit: func(join-set: borrow<join-set>, url: string, concurrency: u32) -> execution-id;
+        get-successful-concurrently-stress-submit: func(join-set: borrow<join-set>, url: string, concurrency: u32) -> execution-id;
 
-    get-successful-concurrently-stress-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>;
+        get-successful-concurrently-stress-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<list<string>, string>>, await-next-extension-error>;
 
-    get-successful-concurrently-stress-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
-  }
+        get-successful-concurrently-stress-get: func(execution-id: execution-id) -> result<result<list<string>, string>, get-extension-error>;
+    }
 }
 
 
 package testing:http-workflow-obelisk-schedule {
-  interface workflow {
-    use obelisk:types/execution@4.2.0.{execution-id};
-    use obelisk:types/time@4.2.0.{schedule-at};
+    interface workflow {
+        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/time@4.2.0.{schedule-at};
 
-    get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+        get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
-    get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+        get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
-    get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+        get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
 
-    get-successful-concurrently-schedule: func(schedule-at: schedule-at, urls: list<string>) -> execution-id;
+        get-successful-concurrently-schedule: func(schedule-at: schedule-at, urls: list<string>) -> execution-id;
 
-    get-successful-concurrently-stress-schedule: func(schedule-at: schedule-at, url: string, concurrency: u32) -> execution-id;
-  }
+        get-successful-concurrently-stress-schedule: func(schedule-at: schedule-at, url: string, concurrency: u32) -> execution-id;
+    }
 }
