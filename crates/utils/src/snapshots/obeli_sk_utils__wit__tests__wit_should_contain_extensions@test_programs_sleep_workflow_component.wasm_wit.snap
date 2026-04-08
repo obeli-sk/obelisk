@@ -5,409 +5,409 @@ expression: wit
 package root:component;
 
 world root {
-  import obelisk:types/time@4.2.0;
-  import obelisk:types/execution@4.2.0;
-  import obelisk:types/join-set@4.2.0;
-  import obelisk:workflow/workflow-support@5.0.0;
-  import testing:sleep/sleep;
-  import testing:sleep-obelisk-ext/sleep;
-  import testing:sleep-obelisk-schedule/sleep;
-  import obelisk:log/log@1.0.0;
+    import obelisk:types/time@4.2.0;
+    import obelisk:types/execution@4.2.0;
+    import obelisk:types/join-set@4.2.0;
+    import obelisk:workflow/workflow-support@5.0.0;
+    import testing:sleep/sleep;
+    import testing:sleep-obelisk-ext/sleep;
+    import testing:sleep-obelisk-schedule/sleep;
+    import obelisk:log/log@1.0.0;
 
-  export testing:sleep-workflow/workflow;
-  export testing:sleep-workflow-obelisk-ext/workflow;
-  export testing:sleep-workflow-obelisk-schedule/workflow;
+    export testing:sleep-workflow/workflow;
+    export testing:sleep-workflow-obelisk-ext/workflow;
+    export testing:sleep-workflow-obelisk-schedule/workflow;
 }
 package obelisk:log@1.0.0 {
-  interface log {
-    info: func(message: string);
-  }
+    interface log {
+        info: func(message: string);
+    }
 }
 
 
 package obelisk:types@4.2.0 {
-  @since(version = 3.0.0)
-  interface time {
     @since(version = 3.0.0)
-    variant duration {
-      milliseconds(u64),
-      seconds(u64),
-      minutes(u32),
-      hours(u32),
-      days(u32),
-    }
+    interface time {
+        @since(version = 3.0.0)
+        variant duration {
+            milliseconds(u64),
+            seconds(u64),
+            minutes(u32),
+            hours(u32),
+            days(u32),
+        }
 
-    /// A time and date in seconds plus nanoseconds.
-    /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
-    @since(version = 3.0.0)
-    record datetime {
-      seconds: u64,
-      nanoseconds: u32,
-    }
+        /// A time and date in seconds plus nanoseconds.
+        /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+        @since(version = 3.0.0)
+        record datetime {
+            seconds: u64,
+            nanoseconds: u32,
+        }
 
-    @since(version = 3.0.0)
-    variant schedule-at {
-      now,
-      at(datetime),
-      in(duration),
+        @since(version = 3.0.0)
+        variant schedule-at {
+            now,
+            at(datetime),
+            in(duration),
+        }
     }
-  }
-  @since(version = 4.0.0)
-  interface execution {
-    use time.{duration};
-
-    @since(version = 3.0.0)
-    record execution-id {
-      id: string,
-    }
-
-    @since(version = 3.0.0)
-    record delay-id {
-      id: string,
-    }
-
-    @since(version = 3.0.0)
-    record function {
-      /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
-      interface-name: string,
-      /// must not contain dot (`.`)
-      function-name: string,
-    }
-
-    @since(version = 3.0.0)
-    variant response-id {
-      execution-id(execution-id),
-      delay-id(delay-id),
-    }
-
-    @since(version = 3.0.0)
-    record function-mismatch {
-      /// Workflow requested function
-      specified-function: function,
-      /// What was found actually during execution. None if delay was found as next unprocessed response.
-      actual-function: option<function>,
-      actual-id: response-id,
-    }
-
-    /// Error that is thrown by `-await-next` extension functions.
-    @since(version = 3.0.0)
-    variant await-next-extension-error {
-      /// All submitted requests and their responses of specified function and join set were already processed.
-      all-processed,
-      /// Execution response was awaited and marked as processed, but it belongs to a different function.
-      /// This can happen when join set contains responses of multiple functions or delay requests.
-      function-mismatch(function-mismatch),
-    }
-
-    /// Error variants that may occur when calling `-get` extension functions.
-    @since(version = 3.0.0)
-    variant get-extension-error {
-      /// Execution is found in processed responses, but it belongs to a different function.
-      /// This can happen when join set contains responses of multiple functions.
-      function-mismatch(function-mismatch),
-      /// Processed responses do not contain the specified execution ID.
-      /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
-      not-found-in-processed-responses,
-    }
-
-    /// Error variants that may occur when calling `-invoke` extension functions.
-    @since(version = 3.0.0)
-    variant invoke-extension-error {
-      invalid-name(string),
-    }
-
-    /// Error variants that may occur when calling `-stub` extension functions.
-    @since(version = 3.0.0)
-    variant stub-error {
-      /// execution was not found.
-      execution-not-found,
-      /// supplied return value does not type check.
-      type-check-error(string),
-      /// Conflict can happen when a second writer attempts to stub a value, while the
-      /// value is not equal to the already stubbed value.
-      conflict,
-    }
-
-    @since(version = 4.1.0)
-    record submit-config {
-      /// Override max duration of a execution run (single attempt).
-      /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
-      timeout: option<duration>,
-    }
-
-    @since(version = 4.2.0)
-    variant schedule-json-error {
-      /// See `Function` definition
-      ffqn-parsing-error(string),
-      function-not-found,
-      type-check-error(string),
-    }
-  }
-  @since(version = 4.2.0)
-  interface backtrace {
-    @since(version = 4.2.0)
-    record frame-symbol {
-      func-name: option<string>,
-      file: option<string>,
-      line: option<u32>,
-      col: option<u32>,
-    }
-
-    @since(version = 4.2.0)
-    record frame-info {
-      module: string,
-      func-name: string,
-      symbols: list<frame-symbol>,
-    }
-
-    @since(version = 4.2.0)
-    record wasm-backtrace {
-      frames: list<frame-info>,
-    }
-  }
-  @since(version = 4.0.0)
-  interface join-set {
-    use time.{schedule-at};
-    use execution.{delay-id, response-id};
-
-    /// Join set resouce.
     @since(version = 4.0.0)
-    resource join-set {
-      /// Get the join set identifier in the form of:
-      /// * `o:NAME` in case of a one-off join set, where `NAME` is generally an auto-incremented index optionally followed by underscode and a supplied name,
-      /// * `g:NAME` in case of a generated join set where `NAME` is generally an auto-incremented index,
-      /// * `n:NAME` in case of a named join set
-      @since(version = 4.0.0)
-      id: func() -> string;
-      /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
-      /// This function has been moved to `workflow-support`.
-      @since(version = 4.0.0)
-      @deprecated(version = 4.1.0)
-      submit-delay: func(timeout: schedule-at) -> delay-id;
-      /// Block the workflow execution until next response associated with the join set arrives.
-      /// The response is marked as processed.
-      /// Child execution result can be obtained using `-get` extension function using the
-      /// returned execution ID.
-      /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
-      /// This function has been moved to `workflow-support`.
-      @since(version = 4.0.0)
-      @deprecated(version = 4.1.0)
-      join-next: func() -> result<tuple<response-id, result>, join-next-error>;
-    }
+    interface execution {
+        use time.{duration};
 
-    /// Error variants that may occur when calling `join-next` function.
-    @since(version = 4.0.0)
-    @deprecated(version = 4.1.0)
-    variant join-next-error {
-      /// All submitted requests and their responses were already processed.
-      all-processed,
+        @since(version = 3.0.0)
+        record execution-id {
+            id: string,
+        }
+
+        @since(version = 3.0.0)
+        record delay-id {
+            id: string,
+        }
+
+        @since(version = 3.0.0)
+        record function {
+            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+            interface-name: string,
+            /// must not contain dot (`.`)
+            function-name: string,
+        }
+
+        @since(version = 3.0.0)
+        variant response-id {
+            execution-id(execution-id),
+            delay-id(delay-id),
+        }
+
+        @since(version = 3.0.0)
+        record function-mismatch {
+            /// Workflow requested function
+            specified-function: function,
+            /// What was found actually during execution. None if delay was found as next unprocessed response.
+            actual-function: option<function>,
+            actual-id: response-id,
+        }
+
+        /// Error that is thrown by `-await-next` extension functions.
+        @since(version = 3.0.0)
+        variant await-next-extension-error {
+            /// All submitted requests and their responses of specified function and join set were already processed.
+            all-processed,
+            /// Execution response was awaited and marked as processed, but it belongs to a different function.
+            /// This can happen when join set contains responses of multiple functions or delay requests.
+            function-mismatch(function-mismatch),
+        }
+
+        /// Error variants that may occur when calling `-get` extension functions.
+        @since(version = 3.0.0)
+        variant get-extension-error {
+            /// Execution is found in processed responses, but it belongs to a different function.
+            /// This can happen when join set contains responses of multiple functions.
+            function-mismatch(function-mismatch),
+            /// Processed responses do not contain the specified execution ID.
+            /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
+            not-found-in-processed-responses,
+        }
+
+        /// Error variants that may occur when calling `-invoke` extension functions.
+        @since(version = 3.0.0)
+        variant invoke-extension-error {
+            invalid-name(string),
+        }
+
+        /// Error variants that may occur when calling `-stub` extension functions.
+        @since(version = 3.0.0)
+        variant stub-error {
+            /// execution was not found.
+            execution-not-found,
+            /// supplied return value does not type check.
+            type-check-error(string),
+            /// Conflict can happen when a second writer attempts to stub a value, while the
+            /// value is not equal to the already stubbed value.
+            conflict,
+        }
+
+        @since(version = 4.1.0)
+        record submit-config {
+            /// Override max duration of a execution run (single attempt).
+            /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
+            timeout: option<duration>,
+        }
+
+        @since(version = 4.2.0)
+        variant schedule-json-error {
+            /// See `Function` definition
+            ffqn-parsing-error(string),
+            function-not-found,
+            type-check-error(string),
+        }
     }
-  }
+    @since(version = 4.2.0)
+    interface backtrace {
+        @since(version = 4.2.0)
+        record frame-symbol {
+            func-name: option<string>,
+            file: option<string>,
+            line: option<u32>,
+            col: option<u32>,
+        }
+
+        @since(version = 4.2.0)
+        record frame-info {
+            module: string,
+            func-name: string,
+            symbols: list<frame-symbol>,
+        }
+
+        @since(version = 4.2.0)
+        record wasm-backtrace {
+            frames: list<frame-info>,
+        }
+    }
+    @since(version = 4.0.0)
+    interface join-set {
+        use time.{schedule-at};
+        use execution.{delay-id, response-id};
+
+        /// Join set resouce.
+        @since(version = 4.0.0)
+        resource join-set {
+            /// Get the join set identifier in the form of:
+            /// * `o:NAME` in case of a one-off join set, where `NAME` is generally an auto-incremented index optionally followed by underscode and a supplied name,
+            /// * `g:NAME` in case of a generated join set where `NAME` is generally an auto-incremented index,
+            /// * `n:NAME` in case of a named join set
+            @since(version = 4.0.0)
+            id: func() -> string;
+            /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
+            /// This function has been moved to `workflow-support`.
+            @since(version = 4.0.0)
+            @deprecated(version = 4.1.0)
+            submit-delay: func(timeout: schedule-at) -> delay-id;
+            /// Block the workflow execution until next response associated with the join set arrives.
+            /// The response is marked as processed.
+            /// Child execution result can be obtained using `-get` extension function using the
+            /// returned execution ID.
+            /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
+            /// This function has been moved to `workflow-support`.
+            @since(version = 4.0.0)
+            @deprecated(version = 4.1.0)
+            join-next: func() -> result<tuple<response-id, result>, join-next-error>;
+        }
+
+        /// Error variants that may occur when calling `join-next` function.
+        @since(version = 4.0.0)
+        @deprecated(version = 4.1.0)
+        variant join-next-error {
+            /// All submitted requests and their responses were already processed.
+            all-processed,
+        }
+    }
 }
 
 
 package obelisk:workflow@5.0.0 {
-  interface workflow-support {
-    use obelisk:types/join-set@4.2.0.{join-set};
-    use obelisk:types/time@4.2.0.{schedule-at};
-    use obelisk:types/execution@4.2.0.{delay-id, response-id};
-    use obelisk:types/time@4.2.0.{datetime};
+    interface workflow-support {
+        use obelisk:types/join-set@4.2.0.{join-set};
+        use obelisk:types/time@4.2.0.{schedule-at};
+        use obelisk:types/execution@4.2.0.{delay-id, response-id};
+        use obelisk:types/time@4.2.0.{datetime};
 
-    variant join-next-try-error {
-      all-processed,
-      pending,
+        variant join-next-try-error {
+            all-processed,
+            pending,
+        }
+
+        variant join-next-error {
+            all-processed,
+        }
+
+        random-u64-inclusive: func(min: u64, max-inclusive: u64) -> u64;
+
+        sleep: func(schedule-at: schedule-at) -> result<datetime>;
+
+        join-set-create: func() -> join-set;
+
+        submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
+
+        join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
+
+        join-next-try: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-try-error>;
     }
-
-    variant join-next-error {
-      all-processed,
-    }
-
-    random-u64-inclusive: func(min: u64, max-inclusive: u64) -> u64;
-
-    sleep: func(schedule-at: schedule-at) -> result<datetime>;
-
-    join-set-create: func() -> join-set;
-
-    submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
-
-    join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
-
-    join-next-try: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-try-error>;
-  }
 }
 
 
 package testing:sleep {
-  interface sleep {
-    use obelisk:types/time@4.2.0.{duration};
+    interface sleep {
+        use obelisk:types/time@4.2.0.{duration};
 
-    sleep: func(duration: duration) -> result;
-  }
+        sleep: func(duration: duration) -> result;
+    }
 }
 
 
 package testing:sleep-obelisk-ext {
-  interface sleep {
-    use obelisk:types/join-set@4.2.0.{join-set};
-    use obelisk:types/time@4.2.0.{duration};
-    use obelisk:types/execution@4.2.0.{execution-id};
+    interface sleep {
+        use obelisk:types/join-set@4.2.0.{join-set};
+        use obelisk:types/time@4.2.0.{duration};
+        use obelisk:types/execution@4.2.0.{execution-id};
 
-    sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
-  }
+        sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
+    }
 }
 
 
 package testing:sleep-obelisk-schedule {
-  interface sleep {
-    use obelisk:types/time@4.2.0.{schedule-at};
-    use obelisk:types/execution@4.2.0.{execution-id};
+    interface sleep {
+        use obelisk:types/time@4.2.0.{schedule-at};
+        use obelisk:types/execution@4.2.0.{execution-id};
 
-    noop-schedule: func(schedule-at: schedule-at) -> execution-id;
-  }
+        noop-schedule: func(schedule-at: schedule-at) -> execution-id;
+    }
 }
 
 
 package testing:sleep-workflow {
-  interface workflow {
-    use obelisk:types/time@4.2.0.{duration, schedule-at};
-    use obelisk:types/execution@4.2.0.{execution-id};
+    interface workflow {
+        use obelisk:types/time@4.2.0.{duration, schedule-at};
+        use obelisk:types/execution@4.2.0.{execution-id};
 
-    sleep-host-activity: func(duration: duration) -> result;
+        sleep-host-activity: func(duration: duration) -> result;
 
-    sleep-schedule-at: func(schedule-at: schedule-at) -> result;
+        sleep-schedule-at: func(schedule-at: schedule-at) -> result;
 
-    sleep-activity: func(duration: duration) -> result;
+        sleep-activity: func(duration: duration) -> result;
 
-    sleep-random: func(min-millis: u64, max-millis-inclusive: u64) -> result;
+        sleep-random: func(min-millis: u64, max-millis-inclusive: u64) -> result;
 
-    schedule-noop: func(duration: duration) -> result;
+        schedule-noop: func(duration: duration) -> result;
 
-    two-delays-in-same-join-set: func() -> result;
+        two-delays-in-same-join-set: func() -> result;
 
-    join-next-produces-all-processed-error: func() -> result;
+        join-next-produces-all-processed-error: func() -> result;
 
-    join-next-try-pending: func() -> result;
+        join-next-try-pending: func() -> result;
 
-    join-next-try-all-processed: func() -> result;
+        join-next-try-all-processed: func() -> result;
 
-    join-next-try-found: func() -> result;
+        join-next-try-found: func() -> result;
 
-    sleep-activity-submit: func() -> result;
+        sleep-activity-submit: func() -> result;
 
-    sleep-activity-submit-then-trap: func() -> result;
-  }
+        sleep-activity-submit-then-trap: func() -> result;
+    }
 }
 
 
 package testing:sleep-workflow-obelisk-ext {
-  interface workflow {
-    use obelisk:types/time@4.2.0.{duration, schedule-at};
-    use obelisk:types/execution@4.2.0.{execution-id};
-    use obelisk:types/join-set@4.2.0.{join-set};
-    use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
+    interface workflow {
+        use obelisk:types/time@4.2.0.{duration, schedule-at};
+        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/join-set@4.2.0.{join-set};
+        use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
 
-    sleep-host-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
+        sleep-host-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
-    sleep-host-activity-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-host-activity-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    sleep-host-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        sleep-host-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-schedule-at-submit: func(join-set: borrow<join-set>, schedule-at: schedule-at) -> execution-id;
+        sleep-schedule-at-submit: func(join-set: borrow<join-set>, schedule-at: schedule-at) -> execution-id;
 
-    sleep-schedule-at-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-schedule-at-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    sleep-schedule-at-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        sleep-schedule-at-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
+        sleep-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
-    sleep-activity-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-activity-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    sleep-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        sleep-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-random-submit: func(join-set: borrow<join-set>, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
+        sleep-random-submit: func(join-set: borrow<join-set>, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
 
-    sleep-random-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-random-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    sleep-random-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        sleep-random-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    schedule-noop-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
+        schedule-noop-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
-    schedule-noop-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        schedule-noop-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    schedule-noop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        schedule-noop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    two-delays-in-same-join-set-submit: func(join-set: borrow<join-set>) -> execution-id;
+        two-delays-in-same-join-set-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    two-delays-in-same-join-set-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        two-delays-in-same-join-set-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    two-delays-in-same-join-set-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        two-delays-in-same-join-set-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    join-next-produces-all-processed-error-submit: func(join-set: borrow<join-set>) -> execution-id;
+        join-next-produces-all-processed-error-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    join-next-produces-all-processed-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        join-next-produces-all-processed-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    join-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        join-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    join-next-try-pending-submit: func(join-set: borrow<join-set>) -> execution-id;
+        join-next-try-pending-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    join-next-try-pending-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        join-next-try-pending-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    join-next-try-pending-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        join-next-try-pending-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    join-next-try-all-processed-submit: func(join-set: borrow<join-set>) -> execution-id;
+        join-next-try-all-processed-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    join-next-try-all-processed-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        join-next-try-all-processed-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    join-next-try-all-processed-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        join-next-try-all-processed-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    join-next-try-found-submit: func(join-set: borrow<join-set>) -> execution-id;
+        join-next-try-found-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    join-next-try-found-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        join-next-try-found-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    join-next-try-found-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        join-next-try-found-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-activity-submit-submit: func(join-set: borrow<join-set>) -> execution-id;
+        sleep-activity-submit-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    sleep-activity-submit-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-activity-submit-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    sleep-activity-submit-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        sleep-activity-submit-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-    sleep-activity-submit-then-trap-submit: func(join-set: borrow<join-set>) -> execution-id;
+        sleep-activity-submit-then-trap-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-    sleep-activity-submit-then-trap-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-activity-submit-then-trap-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
-    sleep-activity-submit-then-trap-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
-  }
+        sleep-activity-submit-then-trap-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+    }
 }
 
 
 package testing:sleep-workflow-obelisk-schedule {
-  interface workflow {
-    use obelisk:types/time@4.2.0.{duration, schedule-at};
-    use obelisk:types/execution@4.2.0.{execution-id};
+    interface workflow {
+        use obelisk:types/time@4.2.0.{duration, schedule-at};
+        use obelisk:types/execution@4.2.0.{execution-id};
 
-    sleep-host-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
+        sleep-host-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 
-    sleep-schedule-at-schedule: func(schedule-at-a: schedule-at, schedule-at: schedule-at) -> execution-id;
+        sleep-schedule-at-schedule: func(schedule-at-a: schedule-at, schedule-at: schedule-at) -> execution-id;
 
-    sleep-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
+        sleep-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 
-    sleep-random-schedule: func(schedule-at: schedule-at, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
+        sleep-random-schedule: func(schedule-at: schedule-at, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
 
-    schedule-noop-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
+        schedule-noop-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 
-    two-delays-in-same-join-set-schedule: func(schedule-at: schedule-at) -> execution-id;
+        two-delays-in-same-join-set-schedule: func(schedule-at: schedule-at) -> execution-id;
 
-    join-next-produces-all-processed-error-schedule: func(schedule-at: schedule-at) -> execution-id;
+        join-next-produces-all-processed-error-schedule: func(schedule-at: schedule-at) -> execution-id;
 
-    join-next-try-pending-schedule: func(schedule-at: schedule-at) -> execution-id;
+        join-next-try-pending-schedule: func(schedule-at: schedule-at) -> execution-id;
 
-    join-next-try-all-processed-schedule: func(schedule-at: schedule-at) -> execution-id;
+        join-next-try-all-processed-schedule: func(schedule-at: schedule-at) -> execution-id;
 
-    join-next-try-found-schedule: func(schedule-at: schedule-at) -> execution-id;
+        join-next-try-found-schedule: func(schedule-at: schedule-at) -> execution-id;
 
-    sleep-activity-submit-schedule: func(schedule-at: schedule-at) -> execution-id;
+        sleep-activity-submit-schedule: func(schedule-at: schedule-at) -> execution-id;
 
-    sleep-activity-submit-then-trap-schedule: func(schedule-at: schedule-at) -> execution-id;
-  }
+        sleep-activity-submit-then-trap-schedule: func(schedule-at: schedule-at) -> execution-id;
+    }
 }

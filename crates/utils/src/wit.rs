@@ -8,7 +8,7 @@ use hashbrown::HashMap;
 use id_arena::Arena;
 use indexmap::IndexMap;
 use semver::{BuildMetadata, Prerelease, Version};
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 use tracing::{error, warn};
 use wit_component::WitPrinter;
 use wit_parser::{
@@ -71,7 +71,7 @@ pub const WIT_OBELISK_WEBHOOK_PACKAGE: [&str; 3] = [
 pub(crate) fn wit(resolve: &Resolve, main_package: PackageId) -> Result<String, anyhow::Error> {
     // print all packages, with the main package as root, others as nested.
     let ids = packages_except_main(resolve, main_package, false);
-    let mut printer = WitPrinter::default();
+    let mut printer = WitPrinter::new(OutputToString::default());
     printer.print(resolve, main_package, &ids)?;
     let wit = printer.output.to_string();
     Ok(wit)
@@ -87,7 +87,7 @@ pub(crate) fn rebuild_resolve(
     main_package: PackageId,
 ) -> Result<(Resolve, PackageId), anyhow::Error> {
     let ids = packages_except_main(&resolve, main_package, true);
-    let mut printer = WitPrinter::default();
+    let mut printer = WitPrinter::new(OutputToString::default());
     printer.print(&resolve, main_package, &ids)?;
     let wit = printer.output.to_string();
 
@@ -752,7 +752,7 @@ pub fn build_wit_deps_map(
         // Build primary Resolve and print it.
         let (primary_resolve, primary_pkg_id) = build_primary_resolve(pkg_fqn, ifc_fns_list, None)?;
         let primary_wit = {
-            let mut printer = WitPrinter::default();
+            let mut printer = WitPrinter::new(OutputToString::default());
             printer.print(&primary_resolve, primary_pkg_id, &[])?;
             printer.output.to_string()
         };
@@ -786,7 +786,7 @@ pub fn build_wit_deps_map(
             for (ext_pkg_id, ext_pkg) in &resolve_with_types.packages {
                 let ext_pkg_fqn = from_wit_package_name_to_pkg_fqn(&ext_pkg.name);
                 if ext_pkg_fqn.is_extension() {
-                    let mut printer = WitPrinter::default();
+                    let mut printer = WitPrinter::new(OutputToString::default());
                     printer.print(&resolve_with_types, ext_pkg_id, &[])?;
                     result.insert(ext_pkg_fqn, printer.output.to_string());
                 }
@@ -937,9 +937,68 @@ pub(crate) fn build_primary_resolve(
     Ok((resolve, pkg_id))
 }
 
+// TODO: Make the wit_component's OutputToString configurable for number of spaces
+#[derive(Default)]
+pub struct OutputToString {
+    indent: usize,
+    output: String,
+    // set to true after newline, then to false after first item is indented.
+    needs_indent: bool,
+}
+
+impl wit_component::Output for OutputToString {
+    fn push_str(&mut self, src: &str) {
+        self.output.push_str(src);
+    }
+
+    fn indent_if_needed(&mut self) -> bool {
+        if self.needs_indent {
+            for _ in 0..self.indent {
+                // Indenting by 4 spaces.
+                self.output.push_str("    ");
+            }
+            self.needs_indent = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn indent_start(&mut self) {
+        assert!(
+            !self.needs_indent,
+            "`indent_start` is never called after newline"
+        );
+        self.output.push_str(" {");
+        self.indent += 1;
+        self.newline();
+    }
+
+    fn indent_end(&mut self) {
+        // Note that a `saturating_sub` is used here to prevent a panic
+        // here in the case of invalid code being generated in debug
+        // mode. It's typically easier to debug those issues through
+        // looking at the source code rather than getting a panic.
+        self.indent = self.indent.saturating_sub(1);
+        self.indent_if_needed();
+        self.output.push('}');
+        self.newline();
+    }
+
+    fn newline(&mut self) {
+        self.output.push('\n');
+        self.needs_indent = true;
+    }
+}
+impl Display for OutputToString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.output.fmt(f)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::wasm_tools::WasmComponent;
+    use crate::{wasm_tools::WasmComponent, wit::OutputToString};
     use concepts::ComponentType;
     use rstest::rstest;
     use std::path::PathBuf;
@@ -1004,7 +1063,7 @@ mod tests {
             // The main package would show as a nested package as well
             .filter(|id| *id != main_id)
             .collect::<Vec<_>>();
-        let mut printer = WitPrinter::default();
+        let mut printer = WitPrinter::new(OutputToString::default());
         printer.print(&resolve, main_id, &ids).unwrap(); // verify it parses
         // store original WIT string in snapshots, because that is the `wit()` output.
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});

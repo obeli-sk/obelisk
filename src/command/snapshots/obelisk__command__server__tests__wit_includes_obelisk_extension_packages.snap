@@ -1,29 +1,17 @@
 ---
-source: crates/utils/src/wit.rs
-expression: wit
+source: src/command/server.rs
+expression: config.wit
 ---
-package root:component;
+package ns:pkg;
 
-world root {
-    import obelisk:types/time@4.2.0;
-    import wasi:io/poll@0.2.6;
-    import wasi:clocks/monotonic-clock@0.2.6;
-    import wasi:io/error@0.2.6;
-    import wasi:io/streams@0.2.6;
-    import wasi:cli/environment@0.2.6;
-    import wasi:cli/exit@0.2.6;
-    import wasi:cli/stdin@0.2.6;
-    import wasi:cli/stdout@0.2.6;
-    import wasi:cli/stderr@0.2.6;
-    import wasi:cli/terminal-input@0.2.6;
-    import wasi:cli/terminal-output@0.2.6;
-    import wasi:cli/terminal-stdin@0.2.6;
-    import wasi:cli/terminal-stdout@0.2.6;
-    import wasi:cli/terminal-stderr@0.2.6;
+interface ifc {
+    my-fn: func(id: u64) -> result<string, string>;
+}
 
-    export testing:sleep/sleep;
-    export testing:sleep-obelisk-ext/sleep;
-    export testing:sleep-obelisk-schedule/sleep;
+world stub-activity {
+    export ifc;
+    export ns:pkg-obelisk-ext/ifc;
+    export ns:pkg-obelisk-stub/ifc;
 }
 package obelisk:types@4.2.0 {
     @since(version = 3.0.0)
@@ -206,148 +194,25 @@ package obelisk:types@4.2.0 {
 }
 
 
-package wasi:io@0.2.6 {
-    interface poll {
-        resource pollable {
-            block: func();
-        }
-    }
-    interface error {
-        resource error;
-    }
-    interface streams {
-        use error.{error};
-        use poll.{pollable};
-
-        resource input-stream;
-
-        resource output-stream {
-            check-write: func() -> result<u64, stream-error>;
-            write: func(contents: list<u8>) -> result<_, stream-error>;
-            blocking-flush: func() -> result<_, stream-error>;
-            subscribe: func() -> pollable;
-        }
-
-        variant stream-error {
-            last-operation-failed(error),
-            closed,
-        }
-    }
-}
-
-
-package wasi:clocks@0.2.6 {
-    interface monotonic-clock {
-        use wasi:io/poll@0.2.6.{pollable};
-
-        type instant = u64;
-
-        type duration = u64;
-
-        subscribe-instant: func(when: instant) -> pollable;
-
-        subscribe-duration: func(when: duration) -> pollable;
-    }
-}
-
-
-package wasi:cli@0.2.6 {
-    interface environment {
-        get-environment: func() -> list<tuple<string, string>>;
-    }
-    interface exit {
-        exit: func(status: result);
-    }
-    interface stdin {
-        use wasi:io/streams@0.2.6.{input-stream};
-
-        get-stdin: func() -> input-stream;
-    }
-    interface stdout {
-        use wasi:io/streams@0.2.6.{output-stream};
-
-        get-stdout: func() -> output-stream;
-    }
-    interface stderr {
-        use wasi:io/streams@0.2.6.{output-stream};
-
-        get-stderr: func() -> output-stream;
-    }
-    interface terminal-input {
-        resource terminal-input;
-    }
-    interface terminal-output {
-        resource terminal-output;
-    }
-    interface terminal-stdin {
-        use terminal-input.{terminal-input};
-
-        get-terminal-stdin: func() -> option<terminal-input>;
-    }
-    interface terminal-stdout {
-        use terminal-output.{terminal-output};
-
-        get-terminal-stdout: func() -> option<terminal-output>;
-    }
-    interface terminal-stderr {
-        use terminal-output.{terminal-output};
-
-        get-terminal-stderr: func() -> option<terminal-output>;
-    }
-}
-
-
-package testing:sleep {
-    interface sleep {
-        use obelisk:types/time@4.2.0.{duration};
-
-        sleep: func(duration: duration) -> result;
-
-        sleep-loop: func(duration: duration, iterations: u32) -> result;
-
-        noop: func() -> result;
-    }
-}
-
-
-package testing:sleep-obelisk-ext {
-    interface sleep {
-        use obelisk:types/time@4.2.0.{duration};
+package ns:pkg-obelisk-ext {
+    interface ifc {
         use obelisk:types/execution@4.2.0.{execution-id};
         use obelisk:types/join-set@4.2.0.{join-set};
         use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
 
-        sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
+        my-fn-submit: func(join-set: borrow<join-set>, id: u64) -> execution-id;
 
-        sleep-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        my-fn-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string, string>>, await-next-extension-error>;
 
-        sleep-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
-
-        sleep-loop-submit: func(join-set: borrow<join-set>, duration: duration, iterations: u32) -> execution-id;
-
-        sleep-loop-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
-
-        sleep-loop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
-
-        noop-submit: func(join-set: borrow<join-set>) -> execution-id;
-
-        noop-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
-
-        noop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+        my-fn-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
     }
 }
 
 
-package testing:sleep-obelisk-schedule {
-    interface sleep {
-        use obelisk:types/time@4.2.0.{duration};
-        use obelisk:types/execution@4.2.0.{execution-id};
-        use obelisk:types/time@4.2.0.{schedule-at};
+package ns:pkg-obelisk-stub {
+    interface ifc {
+        use obelisk:types/execution@4.2.0.{execution-id, stub-error};
 
-        sleep-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
-
-        sleep-loop-schedule: func(schedule-at: schedule-at, duration: duration, iterations: u32) -> execution-id;
-
-        noop-schedule: func(schedule-at: schedule-at) -> execution-id;
+        my-fn-stub: func(execution-id: execution-id, execution-result: result<string, string>) -> result<_, stub-error>;
     }
 }

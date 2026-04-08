@@ -41,6 +41,7 @@ use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
 use anyhow::Context;
 use anyhow::bail;
+use concepts::ComponentId;
 use concepts::ComponentType;
 use concepts::ExecutionId;
 use concepts::FnName;
@@ -50,6 +51,7 @@ use concepts::FunctionRegistry;
 use concepts::IfcFqnName;
 use concepts::ParameterType;
 use concepts::Params;
+use concepts::ReturnTypeExtendable;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::component_id::ComponentDigest;
@@ -106,7 +108,6 @@ use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use wasm_workers::RunnableComponent;
 use wasm_workers::activity::activity_js_worker::ActivityJsWorkerCompiled;
-use wasm_workers::activity::activity_stub_inline::compile_activity_stub_inline;
 use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::component_logger::LogStrageConfig;
@@ -121,6 +122,7 @@ use wasm_workers::registry::ComponentConfigImportable;
 use wasm_workers::registry::ComponentConfigRegistry;
 use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::registry::JsWorkflowReplayInfo;
+use wasm_workers::registry::WitOrigin;
 use wasm_workers::registry::WorkflowReplayInfo;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::webhook::webhook_trigger;
@@ -2177,7 +2179,7 @@ async fn compile_and_link(
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
-    activities_stub_inline: Vec<ActivityStubExtInlineConfigVerified>,
+    activities_stub_ext_inline: Vec<ActivityStubExtInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_wasm_by_names: IndexMap<ConfigName, WebhookWasmComponentConfigVerified>,
@@ -2323,17 +2325,18 @@ async fn compile_and_link(
                         workflow_or_activity_config: Some(component_config_importable),
                         wit,
                         workflow_replay_info: None,
+                        wit_origin: WitOrigin::Wasm,
                     };
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
                 })
             })
         }))
-        .chain(activities_stub_inline.into_iter().map(|stub| {
+        .chain(activities_stub_ext_inline.into_iter().map(|stub| {
             // No build_semaphore needed (no WASM compilation).
-            let span = info_span!("activity_stub_inline_init", component_id = %stub.component_id);
+            let span = info_span!("activity_inline_init", component_id = %stub.component_id);
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
-                    let component_config = compile_activity_stub_inline(
+                    let component_config = compile_activity_inline(
                         stub.component_id,
                         &stub.ffqn,
                         &stub.params,
@@ -2495,6 +2498,7 @@ async fn compile_and_link(
                             workflow_or_activity_config: None,
                             wit: webhook_compiled.runnable_component.wasm_component.wit(),
                             workflow_replay_info: None,
+                            wit_origin: WitOrigin::Wasm,
                         };
                         component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
@@ -2529,6 +2533,40 @@ async fn compile_and_link(
             anyhow::bail!("canceling while compiling the components")
         }
     }
+}
+/// Build a [`ComponentConfig`] for an inline-defined stub activity.
+///
+/// The function synthesizes a WIT string from `ffqn`, `params`, and `return_type`
+/// (same approach as JS activities), then creates a virtual `WasmComponent` from
+/// the WIT alone — no real WASM binary is required.
+fn compile_activity_inline(
+    component_id: ComponentId,
+    ffqn: &FunctionFqn,
+    params: &[ParameterType],
+    return_type: &ReturnTypeExtendable,
+) -> Result<ComponentConfig, utils::wasm_tools::DecodeError> {
+    let wasm_component = WasmComponent::new_from_fn_signature(
+        ffqn,
+        params,
+        return_type,
+        ComponentType::ActivityStub,
+        "stub-activity",
+    )?;
+    let wit_text_with_extensions = wasm_component.wit();
+    let exports_ext = wasm_component.exim.get_exports(true).to_vec();
+    let exports_hierarchy_ext = wasm_component.exim.get_exports_hierarchy_ext().to_vec();
+    let component_config_importable = ComponentConfigImportable {
+        exports_ext,
+        exports_hierarchy_ext,
+    };
+    Ok(ComponentConfig {
+        component_id,
+        imports: vec![],
+        workflow_or_activity_config: Some(component_config_importable),
+        wit: wit_text_with_extensions,
+        workflow_replay_info: None,
+        wit_origin: WitOrigin::Synthesized,
+    })
 }
 
 mod semaphore {
@@ -2838,6 +2876,7 @@ impl WorkerCompiled {
             imports: worker.imported_functions().to_vec(),
             wit,
             workflow_replay_info: None,
+            wit_origin: WitOrigin::Wasm,
         };
         (
             WorkerCompiled {
@@ -2864,6 +2903,7 @@ impl WorkerCompiled {
             imports: worker.imported_functions().to_vec(),
             wit,
             workflow_replay_info: None,
+            wit_origin: WitOrigin::Synthesized,
         };
         (
             WorkerCompiled {
@@ -2904,6 +2944,7 @@ impl WorkerCompiled {
                 logs_store_min_level: workflow.logs_store_min_level,
                 js_workflow_info: None,
             }),
+            wit_origin: WitOrigin::Wasm,
         };
         Ok((
             WorkerCompiled {
@@ -2947,6 +2988,7 @@ impl WorkerCompiled {
                     user_params,
                 }),
             }),
+            wit_origin: WitOrigin::Synthesized,
         };
         (
             WorkerCompiled {
@@ -3094,12 +3136,16 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{
-            PrepareDirsParams, ServerCompiledLinked, ServerVerified, VerifyParams, create_engines,
-            prepare_dirs,
+            PrepareDirsParams, ServerCompiledLinked, ServerVerified, VerifyParams,
+            compile_activity_inline, create_engines, prepare_dirs,
         },
         config::config_holder::{ConfigHolder, load_deployment_toml},
     };
-    use concepts::prefixed_ulid::DeploymentId;
+    use concepts::{ComponentId, FunctionFqn, prefixed_ulid::DeploymentId};
+    use concepts::{
+        ComponentType, ParameterType, ReturnType, StrVariant,
+        component_id::{ComponentDigest, Digest},
+    };
     use directories::BaseDirs;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
@@ -3107,6 +3153,38 @@ mod tests {
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
+    }
+
+    #[test]
+    fn wit_includes_obelisk_extension_packages() {
+        let component_id = ComponentId::new(
+            ComponentType::ActivityStub,
+            StrVariant::Static("test_stub"),
+            ComponentDigest(Digest([0u8; 32])),
+        )
+        .unwrap();
+        let ffqn = FunctionFqn::new_static("ns:pkg/ifc", "my-fn");
+        let params = vec![ParameterType {
+            name: StrVariant::Static("id"),
+            type_wrapper: val_json::type_wrapper::TypeWrapper::U64,
+            wit_type: StrVariant::Static("u64"),
+        }];
+
+        let ret_type = {
+            let tw = val_json::type_wrapper::parse_wit_type("result<string, string>").unwrap();
+            let ReturnType::Extendable(rt) =
+                ReturnType::detect(tw, StrVariant::Static("result<string, string>"))
+            else {
+                unreachable!()
+            };
+            rt
+        };
+
+        let config = compile_activity_inline(component_id, &ffqn, &params, &ret_type)
+            .expect("compile must succeed");
+
+        // The rebuilt WIT includes extension packages absent from the raw synthesized string.
+        insta::assert_snapshot!(config.wit);
     }
 
     #[rstest]

@@ -8,7 +8,7 @@ use crate::config::config_holder::{ConfigHolder, load_deployment_toml};
 use crate::init::{self};
 use crate::project_dirs;
 use anyhow::Context;
-use concepts::{ComponentType, ExecutionId, FunctionRegistry, PkgFqn, prefixed_ulid::DeploymentId};
+use concepts::{ComponentType, ExecutionId, PackageIfcFns, PkgFqn, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::HashMap;
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::watch;
 use utils::{wasm_tools::WasmComponent, wit};
+use wasm_workers::registry::WitOrigin;
 
 impl Generate {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
@@ -330,9 +331,52 @@ pub(crate) async fn generate_wit_deps(
         .await
         .with_context(|| format!("cannot create the output directory {output_directory:?}"))?;
 
-    // Build WIT from the registry's already-merged export hierarchy.
-    let all_exports = compiled_and_linked.component_registry_ro.all_exports();
-    let pkg_to_wit = wit::build_wit_deps_map(all_exports)?;
+    // Build per-package WITs from each component:
+    //
+    // * WASM components — parse their per-component `wit` text and
+    //   walk the package graph via `wit_printer::process_pkg_with_deps`.
+    // * Synthesized-WIT components (JS, inline stubs) — collect their `PackageIfcFns` and feed
+    //   them through `wit::build_wit_deps_map`, which rebuilds a `Resolve` from `TypeWrapper`s.
+    //
+    // Sharing of `ifc_fqn` between WASM and synthesized-WIT components is rejected at registry
+    // insertion time, so the two outputs can never collide on the same interface.
+    let mut pkg_to_wit: HashMap<PkgFqn, String> = HashMap::new();
+    let mut synthesized_exports: Vec<PackageIfcFns> = Vec::new();
+    for component in compiled_and_linked.component_registry_ro.list(true) {
+        if let Some(importable) = &component.workflow_or_activity_config {
+            match component.wit_origin {
+                WitOrigin::Synthesized => {
+                    synthesized_exports.extend(importable.exports_hierarchy_ext.iter().cloned());
+                }
+                WitOrigin::Wasm => {
+                    let requested_pkgs: Vec<PkgFqn> = importable
+                        .exports_hierarchy_ext
+                        .iter()
+                        .map(|ifc_fns| ifc_fns.ifc_fqn.pkg_fqn_name())
+                        .collect::<hashbrown::HashSet<_>>()
+                        .into_iter()
+                        .collect();
+                    crate::wit_printer::process_pkg_with_deps(
+                        &component.wit,
+                        &requested_pkgs,
+                        &mut pkg_to_wit,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "cannot extract WIT packages from {}",
+                            component.component_id
+                        )
+                    })?;
+                }
+            }
+        } // webhooks are ignored, nothing depends on them
+    }
+    if !synthesized_exports.is_empty() {
+        let synthesized_map = wit::build_wit_deps_map(&synthesized_exports)?;
+        for (pkg_fqn, content) in synthesized_map {
+            pkg_to_wit.entry(pkg_fqn).or_insert(content);
+        }
+    }
     write_wit_deps(&pkg_to_wit, &output_directory, overwrite).await?;
     Ok(())
 }
