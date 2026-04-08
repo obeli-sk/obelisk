@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.1](https://github.com/obeli-sk/obelisk/compare/v0.37.0...v0.37.1)
+
+### Fixed
+
+- *(cli)* Output WASM WITs using their `Resolve` in `generate wit-deps` - ([9a8cb04](https://github.com/obeli-sk/obelisk/commit/9a8cb043a53f7039b604d71ea84c74868d624ce0))
+- Disallow JS and WASM components sharing the same `IfcFqn` - ([c8b595b](https://github.com/obeli-sk/obelisk/commit/c8b595b9579b4578bf05825145e07b1609a82b9f))
+
+### Changed
+
+- Print WIT indended with 4 spaces - ([edad80a](https://github.com/obeli-sk/obelisk/commit/edad80a628b98ec201fa1af97868080692566148))
+
+
 ## [0.37.0](https://github.com/obeli-sk/obelisk/compare/v0.36.1...v0.37.0)
 
 JavaScript components are now first-class: they can be pushed to and pulled from OCI registries just like WASM components.
