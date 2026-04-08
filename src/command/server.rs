@@ -121,6 +121,7 @@ use wasm_workers::registry::ComponentConfigImportable;
 use wasm_workers::registry::ComponentConfigRegistry;
 use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::registry::JsWorkflowReplayInfo;
+use wasm_workers::registry::WitOrigin;
 use wasm_workers::registry::WorkflowReplayInfo;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::webhook::webhook_trigger;
@@ -2323,6 +2324,7 @@ async fn compile_and_link(
                         workflow_or_activity_config: Some(component_config_importable),
                         wit,
                         workflow_replay_info: None,
+                        wit_origin: WitOrigin::Wasm,
                     };
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
                 })
@@ -2495,6 +2497,7 @@ async fn compile_and_link(
                             workflow_or_activity_config: None,
                             wit: webhook_compiled.runnable_component.wasm_component.wit(),
                             workflow_replay_info: None,
+                            wit_origin: WitOrigin::Wasm,
                         };
                         component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
@@ -2838,6 +2841,7 @@ impl WorkerCompiled {
             imports: worker.imported_functions().to_vec(),
             wit,
             workflow_replay_info: None,
+            wit_origin: WitOrigin::Wasm,
         };
         (
             WorkerCompiled {
@@ -2864,6 +2868,7 @@ impl WorkerCompiled {
             imports: worker.imported_functions().to_vec(),
             wit,
             workflow_replay_info: None,
+            wit_origin: WitOrigin::Synthesized,
         };
         (
             WorkerCompiled {
@@ -2904,6 +2909,7 @@ impl WorkerCompiled {
                 logs_store_min_level: workflow.logs_store_min_level,
                 js_workflow_info: None,
             }),
+            wit_origin: WitOrigin::Wasm,
         };
         Ok((
             WorkerCompiled {
@@ -2947,6 +2953,7 @@ impl WorkerCompiled {
                     user_params,
                 }),
             }),
+            wit_origin: WitOrigin::Synthesized,
         };
         (
             WorkerCompiled {

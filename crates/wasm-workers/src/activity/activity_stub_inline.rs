@@ -7,7 +7,7 @@
 use concepts::{ComponentId, ComponentType, FunctionFqn, ParameterType, ReturnTypeExtendable};
 use utils::wasm_tools::WasmComponent;
 
-use crate::registry::{ComponentConfig, ComponentConfigImportable};
+use crate::registry::{ComponentConfig, ComponentConfigImportable, WitOrigin};
 
 /// Build a [`ComponentConfig`] for an inline-defined stub activity.
 ///
@@ -40,6 +40,7 @@ pub fn compile_activity_stub_inline(
         workflow_or_activity_config: Some(component_config_importable),
         wit: wit_text_with_extensions,
         workflow_replay_info: None,
+        wit_origin: WitOrigin::Synthesized,
     })
 }
 

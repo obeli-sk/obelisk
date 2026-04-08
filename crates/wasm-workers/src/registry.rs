@@ -6,15 +6,26 @@ use concepts::ComponentType;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
+use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
 use concepts::StrVariant;
 use concepts::component_id::ComponentDigest;
 use concepts::storage::LogLevel;
+use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::sync::Arc;
 use tracing::error;
+
+/// Origin of a component's WIT: parsed from a real WASM binary, or synthesized from `TypeWrapper`s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
+pub enum WitOrigin {
+    #[display("wasm")]
+    Wasm,
+    #[display("synthesized")]
+    Synthesized,
+}
 
 /// Holds information about components, used for gRPC services like `ListComponents`
 #[derive(Debug, Clone)]
@@ -24,6 +35,8 @@ pub struct ComponentConfig {
     pub workflow_or_activity_config: Option<ComponentConfigImportable>,
     pub wit: String,
     pub workflow_replay_info: Option<WorkflowReplayInfo>,
+    /// Origin of this component's WIT (parsed from WASM vs synthesized from `TypeWrapper`s).
+    pub wit_origin: WitOrigin,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +69,10 @@ pub struct ComponentConfigRegistry {
 struct ComponentConfigRegistryInner {
     exported_ffqns_ext: IndexMap<FunctionFqn, (ComponentId, FunctionMetadata)>,
     export_hierarchy: Vec<PackageIfcFns>,
+    /// Tracks the origin (synthesized-WIT vs real WASM) of each exported non-extension
+    /// interface so that JS / inline-stub interfaces cannot be merged into WASM-owned
+    /// interfaces and vice versa.
+    export_hierarchy_origin: HashMap<IfcFqnName, WitOrigin>,
     /// Primary index: component name → component config. Names are unique across all component types.
     names_to_components: IndexMap<StrVariant, ComponentConfig>,
     /// Digest-keyed secondary indexes.
@@ -120,8 +137,29 @@ impl ComponentConfigRegistry {
                 assert!(old.is_none());
             }
             // Insert into `export_hierarchy`, merging entries that share the same ifc_fqn.
-            // Multiple (JS) components may export different functions under the same interface.
             for new_ifc_fns in &workflow_or_activity_config.exports_hierarchy_ext {
+                if !new_ifc_fns.extension {
+                    if let Some(&existing_origin) =
+                        self.inner.export_hierarchy_origin.get(&new_ifc_fns.ifc_fqn)
+                    {
+                        if existing_origin != component.wit_origin {
+                            return Err(ComponentInsertionError(
+                                format!(
+                                    "interface `{}` is already exported by a {} component, cannot insert {} which is a {} component",
+                                    new_ifc_fns.ifc_fqn,
+                                    existing_origin,
+                                    component.component_id,
+                                    component.wit_origin,
+                                )
+                                .into(),
+                            ));
+                        }
+                    } else {
+                        self.inner
+                            .export_hierarchy_origin
+                            .insert(new_ifc_fns.ifc_fqn.clone(), component.wit_origin);
+                    }
+                }
                 if let Some(existing) = self.inner.export_hierarchy.iter_mut().find(|e| {
                     e.ifc_fqn == new_ifc_fns.ifc_fqn && e.extension == new_ifc_fns.extension
                 }) {
