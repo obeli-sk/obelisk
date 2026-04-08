@@ -32,6 +32,17 @@ jobs:
   cargo-publish:
     runs-on: ubuntu-24.04
     steps:
+      - name: Refuse to run from main
+        # Dispatching this workflow from `main` propagates `head_branch=main`
+        # to downstream `workflow_run` jobs (release-5-verify-*), which then
+        # check out stale sources. Releases must be dispatched from a release
+        # branch (e.g. `latest`).
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "::error::release-2-cargo-publish must not be dispatched from 'main'. Use a release branch such as 'latest'."
+            exit 1
+          fi
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ github.event.inputs.ref }} # Use the ref if provided, otherwise defaults to the current branch/commit
