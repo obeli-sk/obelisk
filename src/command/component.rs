@@ -432,14 +432,18 @@ fn build_component_table(
     if let Some(js) = js_config {
         t["ffqn"] = value(js.ffqn.to_string());
         if !js.params.is_empty() {
-            let mut param_array = toml_edit::ArrayOfTables::new();
+            let mut arr = toml_edit::Array::new();
             for p in &js.params {
-                let mut pt = Table::new();
-                pt["name"] = value(&p.name);
-                pt["type"] = value(&p.wit_type);
-                param_array.push(pt);
+                let mut inline = toml_edit::InlineTable::new();
+                inline.insert("name", p.name.clone().into());
+                inline.insert("type", p.wit_type.clone().into());
+                let mut v = toml_edit::Value::InlineTable(inline);
+                v.decor_mut().set_prefix("\n  ");
+                arr.push_formatted(v);
             }
-            t.insert("params", Item::ArrayOfTables(param_array));
+            arr.set_trailing("\n");
+            arr.set_trailing_comma(true);
+            t["params"] = Item::Value(toml_edit::Value::Array(arr));
         }
         if let Some(ref rt) = js.return_type {
             t["return_type"] = value(rt.clone());
@@ -513,27 +517,24 @@ fn build_component_table(
         t["routes"] = Item::Value(toml_edit::Value::Array(toml_edit::Array::new()));
     }
 
-    // Write exec.lock_expiry as an inline table: exec = {lock_expiry = {seconds = N}}
+    // Write as a dotted key: exec.lock_expiry.<unit> = N
     if let Some(duration) = metadata.lock_duration {
-        let mut lock_expiry_inline = toml_edit::InlineTable::new();
         let (unit, n) = match duration {
             DurationConfig::Milliseconds(n) => ("milliseconds", n),
             DurationConfig::Seconds(n) => ("seconds", n),
             DurationConfig::Minutes(n) => ("minutes", n),
             DurationConfig::Hours(n) => ("hours", n),
         };
-        lock_expiry_inline.insert(
+        let mut lock_expiry_tbl = Table::new();
+        lock_expiry_tbl.set_dotted(true);
+        lock_expiry_tbl.insert(
             unit,
-            toml_edit::Value::Integer(toml_edit::Formatted::new(
-                i64::try_from(n).unwrap_or(i64::MAX),
-            )),
+            value(i64::try_from(n).unwrap_or(i64::MAX)),
         );
-        let mut exec_inline = toml_edit::InlineTable::new();
-        exec_inline.insert(
-            "lock_expiry",
-            toml_edit::Value::InlineTable(lock_expiry_inline),
-        );
-        t["exec"] = Item::Value(toml_edit::Value::InlineTable(exec_inline));
+        let mut exec_tbl = Table::new();
+        exec_tbl.set_dotted(true);
+        exec_tbl.insert("lock_expiry", Item::Table(lock_expiry_tbl));
+        t.insert("exec", Item::Table(exec_tbl));
     }
 
     t
@@ -666,6 +667,10 @@ mod tests {
         doc.insert("activity_wasm", toml_edit::Item::ArrayOfTables(aot));
 
         let toml_str = doc.to_string();
+        assert!(
+            toml_str.contains("exec.lock_expiry.seconds = 5"),
+            "unexpected exec format:\n{toml_str}"
+        );
         let parsed: crate::config::toml::DeploymentToml =
             toml::from_str(&toml_str).expect("generated TOML must parse");
 
@@ -743,6 +748,16 @@ mod tests {
         doc.insert("activity_js", toml_edit::Item::ArrayOfTables(aot));
 
         let toml_str = doc.to_string();
+        // Format assertions: params rendered as a multi-line array of inline
+        // tables, and exec.lock_expiry as a dotted key.
+        assert!(
+            toml_str.contains("params = [\n  { name = \"input\", type = \"string\" },\n]"),
+            "unexpected params format:\n{toml_str}"
+        );
+        assert!(
+            toml_str.contains("exec.lock_expiry.seconds = 10"),
+            "unexpected exec format:\n{toml_str}"
+        );
         let parsed: crate::config::toml::DeploymentToml =
             toml::from_str(&toml_str).expect("generated TOML must parse");
 
