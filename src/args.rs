@@ -307,13 +307,13 @@ pub(crate) enum Component {
     },
     /// Push a WASM component to an OCI registry with deployment metadata.
     Push {
-        /// Component name in the deployment TOML
+        /// Component name in the input deployment TOML
         #[arg(required(true))]
         component_name: String,
         /// OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`
         #[arg(required(true), value_parser = parse_oci_reference)]
         oci: oci_client::Reference,
-        /// Path to the deployment TOML file.
+        /// Path to the input deployment TOML file.
         #[arg(long, short, required = true)]
         deployment: PathBuf,
     },
@@ -322,10 +322,10 @@ pub(crate) enum Component {
         /// OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`
         #[arg(required(true), value_parser = parse_oci_reference)]
         location: oci_client::Reference,
-        /// Component name
+        /// Component name in the target deployment TOML
         #[arg(required(true))]
-        name: String,
-        /// Path to the deployment TOML file.
+        component_name: String,
+        /// Path to the target deployment TOML file.
         #[arg(long, short, required = true)]
         deployment: PathBuf,
         /// Pin the location with the manifest digest (e.g. `image:tag@sha256:...`).

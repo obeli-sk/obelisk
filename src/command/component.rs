@@ -55,10 +55,10 @@ impl args::Component {
             } => push_component(&component_name, &deployment, &oci).await,
             args::Component::Add {
                 location,
-                name,
+                component_name,
                 deployment,
                 locked,
-            } => add_component_from_oci(location, name, deployment, locked).await,
+            } => add_component_from_oci(location, component_name, deployment, locked).await,
         }
     }
 }
