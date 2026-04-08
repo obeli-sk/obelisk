@@ -61,7 +61,8 @@ jobs:
         working-directory: temp
         run: |
           full_target="github:obeli-sk/obelisk/${TAG}#${{ matrix.target }}"
-          nix run $full_target -- --version
+          nix run $full_target -- --version | grep "$VERSION"
           nix run $full_target -- server verify --deployment ../obelisk-testing-wasm-oci.toml
         env:
           TAG: ${{ steps.git-info.outputs.tag }}
+          VERSION: ${{ steps.git-info.outputs.version }}
