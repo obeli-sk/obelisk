@@ -55,7 +55,9 @@ jobs:
           VERSION: ${{ steps.git-info.outputs.version }}
 
       - name: Verify Obelisk
+        env:
+          VERSION: ${{ steps.git-info.outputs.version }}
         run: |
           source "$HOME/.cargo/env"
-          obelisk --version
+          obelisk --version | grep "$VERSION"
           obelisk server verify --deployment obelisk-testing-wasm-oci.toml

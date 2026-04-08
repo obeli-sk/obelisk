@@ -56,8 +56,10 @@ jobs:
           VERSION: ${{ steps.git-info.outputs.version }}
 
       - name: Verify Obelisk
+        env:
+          VERSION: ${{ steps.git-info.outputs.version }}
         run: |
-          obelisk --version
+          obelisk --version | grep "$VERSION"
           obelisk server verify --deployment obelisk-testing-wasm-oci.toml
 
   cargo-binstall-alpine:
@@ -89,7 +91,7 @@ jobs:
               --install-path . \
               -y \
               obelisk@$VERSION
-            RUN ./obelisk --version
+            RUN ./obelisk --version | grep $VERSION
             RUN ./obelisk server verify --deployment obelisk-testing-wasm-oci.toml
           EOF
         env:
