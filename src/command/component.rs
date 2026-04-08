@@ -527,10 +527,7 @@ fn build_component_table(
         };
         let mut lock_expiry_tbl = Table::new();
         lock_expiry_tbl.set_dotted(true);
-        lock_expiry_tbl.insert(
-            unit,
-            value(i64::try_from(n).unwrap_or(i64::MAX)),
-        );
+        lock_expiry_tbl.insert(unit, value(i64::try_from(n).unwrap_or(i64::MAX)));
         let mut exec_tbl = Table::new();
         exec_tbl.set_dotted(true);
         exec_tbl.insert("lock_expiry", Item::Table(lock_expiry_tbl));
