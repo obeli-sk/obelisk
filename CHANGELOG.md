@@ -6,6 +6,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0](https://github.com/obeli-sk/obelisk/compare/v0.36.1...v0.37.0)
+
+JavaScript components are now first-class: they can be pushed to and pulled from OCI registries just like WASM components.
+OCI images now carry Obelisk metadata, like allowed hosts, env vars, and secrets for activities and webhooks, directly in the manifest.
+GitHub (`gh://`) references have been removed from JS component configuration in favor of OCI.
+
+### Added
+
+- *(cli)* Pin OCI location with manifest digest when using --locked - ([7a3cdd5](https://github.com/obeli-sk/obelisk/commit/7a3cdd54e4f3f66197f19ef2040026fe9b4ea494))
+- *(cli)* [**breaking**] Add OCI metadata for `component push` and `component add` - ([d1f69d4](https://github.com/obeli-sk/obelisk/commit/d1f69d44bdaa16a6bbd43bde5c5b6fbff24afcd0))
+- *(cli)* Generate webhook support WIT - ([c851159](https://github.com/obeli-sk/obelisk/commit/c851159f3fb937eb352c8be7b3afe1b7eed61a82))
+- *(js,oci)* Add OCI push / pull support for JS components - ([ecd1c34](https://github.com/obeli-sk/obelisk/commit/ecd1c3466f54025e5232ba46c448dd95dda9c12c))
+- *(webapi)* Mirror missing deployment APIs from gRPC - ([611c8aa](https://github.com/obeli-sk/obelisk/commit/611c8aaa6b7a6a35fcde1c874a402df071b75c50))
+- *(webapi)* Expose backtrace and sources - ([981257e](https://github.com/obeli-sk/obelisk/commit/981257e7f0871a01397eca20b896176ecce1b1a5))
+- *(webapi,grpc)* Allow getting logs of derived executions in a single request - ([1ba3a0b](https://github.com/obeli-sk/obelisk/commit/1ba3a0b9b0529beed19c43e954cfe0382403b96f))
+- *(webhook)* Add currentExecutionId() JS API - ([ca56ae3](https://github.com/obeli-sk/obelisk/commit/ca56ae38f7b7d29737ffef2ce37a895001c403d0))
+- *(workflow-js)* Add support for `Date.now()` - ([2ae9c96](https://github.com/obeli-sk/obelisk/commit/2ae9c96c473f4182d26261b7acd2f1be4795724a))
+- *(workflow-js)* Add support for `Math.random` - ([bcb5066](https://github.com/obeli-sk/obelisk/commit/bcb5066f0e1ca1d0e4c7552339928afbeb258551))
+- Feat(cli) Add `-d` short arg to `server run` and `verify` commands - ([c9e0921](https://github.com/obeli-sk/obelisk/commit/c9e092174057233d6c021d48aa2529076e41cc96))
+
+### Fixed
+
+- *(cli)* Output JS activities, merged interfaces in `generate wit-deps` - ([01fb978](https://github.com/obeli-sk/obelisk/commit/01fb9784e9f4cbc899c6b3b2ec843c61c5620ba6))
+
+### Changed
+
+- *(docker)* Remove env vars, bundle `server.toml`, bind to `[::]` - ([a133b18](https://github.com/obeli-sk/obelisk/commit/a133b184a5d381a55cb091d05f5831b63b3c4774))
+- *(js)* Include actual return type in error message when throwing non-null - ([bbcf612](https://github.com/obeli-sk/obelisk/commit/bbcf61276a1d72794e47839a9a7e3eb733c7ad39))
+- *(toml)* Remove all prefix support from deployment except for `DEPLOYMENT_DIR` - ([6a6cfb3](https://github.com/obeli-sk/obelisk/commit/6a6cfb3bb82b73b5bf0924578d3c515213eca6b5))
+- *(toml)* Convert wit params to kebab case transparently - ([14bcb72](https://github.com/obeli-sk/obelisk/commit/14bcb7253cf9a5c1f093130bd803e51db7480a66))
+- *(wit)* Bump `webhook-support` to 5.1.0 - ([96c7504](https://github.com/obeli-sk/obelisk/commit/96c750463333bf6f306f0bfafb14bc4965f36466))
+- Expand JS webhoook local paths - ([91b4cc3](https://github.com/obeli-sk/obelisk/commit/91b4cc3af01afa9dca1184d1d1287b5f5d96926d))
+
+### Removed
+
+- *(toml)* [**breaking**] Remove github references - ([e472311](https://github.com/obeli-sk/obelisk/commit/e472311db1a14b13d16ff83563ede898bdaf959c))
+
 ## [0.36.1](https://github.com/obeli-sk/obelisk/compare/v0.36.0...v0.36.1)
 
 ### Fixed
