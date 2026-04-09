@@ -1301,7 +1301,7 @@ async fn webhook_js_env_var() {
     server.shutdown().await;
 }
 
-/// Mirrors the unit test `webhook_js_generate_execution_id` in webhook_trigger.rs.
+/// Mirrors the unit test `webhook_js_generate_execution_id` in `webhook_trigger.rs`.
 /// JS source (in `generate_execution_id.js`):
 /// ```js
 /// export default function handle(request) {
@@ -1320,10 +1320,7 @@ async fn webhook_js_generate_execution_id() {
     let server = TestServer::start(test_addr!(43)).await;
     let resp = server
         .client
-        .get(format!(
-            "{}/generate-execution-id",
-            server.webhook_base_url
-        ))
+        .get(format!("{}/generate-execution-id", server.webhook_base_url))
         .send()
         .await
         .expect("webhook request failed");
@@ -1334,14 +1331,8 @@ async fn webhook_js_generate_execution_id() {
     // Verify the IDs are valid execution IDs
     let id1 = body["id1"].as_str().expect("id1 must be a string");
     let id2 = body["id2"].as_str().expect("id2 must be a string");
-    assert!(
-        id1.starts_with("E_"),
-        "id1 must have E_ prefix, got: {id1}"
-    );
-    assert!(
-        id2.starts_with("E_"),
-        "id2 must have E_ prefix, got: {id2}"
-    );
+    assert!(id1.starts_with("E_"), "id1 must have E_ prefix, got: {id1}");
+    assert!(id2.starts_with("E_"), "id2 must have E_ prefix, got: {id2}");
     assert_ne!(id1, id2, "generated execution IDs must be unique");
     server.shutdown().await;
 }
