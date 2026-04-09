@@ -2988,8 +2988,8 @@ pub(crate) mod tests {
             test_utils::set_up();
             let js_source = r#"
                 export default function handle(request) {
-                    const id1 = obelisk.generateExecutionId();
-                    const id2 = obelisk.generateExecutionId();
+                    const id1 = obelisk.executionIdGenerate();
+                    const id2 = obelisk.executionIdGenerate();
                     return Response.json({
                         id1,
                         id2,
@@ -3181,7 +3181,7 @@ pub(crate) mod tests {
             let js_source = r#"
                 export default function handle(request) {
                     // Schedule fibo(10) for later execution
-                    const execId = obelisk.generateExecutionId();
+                    const execId = obelisk.executionIdGenerate();
                     obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10], { seconds: 60 });
                     return Response.json({ execId });
                 }
@@ -3217,7 +3217,7 @@ pub(crate) mod tests {
             let js_source = r#"
                 export default function handle(request) {
                     // Schedule for later, then check status
-                    const execId = obelisk.generateExecutionId();
+                    const execId = obelisk.executionIdGenerate();
                     obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10], { seconds: 60 });
                     const status = obelisk.getStatus(execId);
                     return Response.json({ execId, executionStatus: status });
@@ -3244,7 +3244,7 @@ pub(crate) mod tests {
             let js_source = r#"
                 export default function handle(request) {
                     // Schedule now but don't wait for completion
-                    const execId = obelisk.generateExecutionId();
+                    const execId = obelisk.executionIdGenerate();
                     obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10]);
                     const result = obelisk.tryGet(execId);
                     return Response.json({ result });

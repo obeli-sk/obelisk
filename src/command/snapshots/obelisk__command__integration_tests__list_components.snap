@@ -177,5 +177,12 @@ expression: components
       "component_type": "webhook_endpoint",
       "name": "test_read_env_webhook"
     }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "webhook_endpoint",
+      "name": "test_generate_execution_id_webhook"
+    }
   }
 ]
