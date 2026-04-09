@@ -529,6 +529,7 @@ pub(crate) struct Stub {
 
 #[derive(Debug, clap::Args)]
 #[command()]
+#[expect(clippy::doc_markdown)]
 pub(crate) struct CancelCommand {
     /// Address of the obelisk server
     #[arg(short, long, default_value = "http://127.0.0.1:5005")]
