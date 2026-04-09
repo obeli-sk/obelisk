@@ -27,6 +27,7 @@ pub enum ComponentType {
     ActivityStub,
     Workflow,
     WebhookEndpoint,
+    Cron,
 }
 impl ComponentType {
     #[must_use]

@@ -183,17 +183,19 @@ impl ComponentConfigRegistry {
                 );
                 assert!(old.is_none());
             }
-        } else {
-            // For WebhookEndpoints: first wins for digest-keyed maps (same code = same WIT)
+        } else if component.component_id.component_type == ComponentType::WebhookEndpoint {
+            // first wins for digest-keyed maps (same code = same WIT)
             self.inner
                 .digests_to_wit
                 .entry(component.component_id.component_digest.clone())
                 .or_insert(component.wit.clone());
-        }
+        } // Cron executions do not expose WIT
 
-        self.inner
+        let old = self
+            .inner
             .names_to_components
             .insert(name.clone(), component);
+        assert!(old.is_none());
 
         Ok(())
     }
@@ -266,7 +268,7 @@ impl ComponentConfigRegistry {
                     _ => false,
                 }
             }
-            ComponentType::ActivityStub => false,
+            ComponentType::ActivityStub | ComponentType::Cron => false,
         }
     }
 

@@ -411,7 +411,8 @@ fn world_interfaces(world: &World, exorim: ExOrIm) -> impl Iterator<Item = Inter
 }
 
 fn has_submittable_exports(component_type: ComponentType) -> bool {
-    component_type != ComponentType::ActivityStub // not submittable, stub executions must be created by workflows
+    // Activity stubs don't have submittable exports
+    !matches!(component_type, ComponentType::ActivityStub)
 }
 
 #[derive(Debug, thiserror::Error)]

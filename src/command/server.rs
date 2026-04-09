@@ -27,6 +27,7 @@ use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::WorkflowJsConfigVerified;
+use crate::config::toml::cron::CronConfigVerified;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookJsConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
@@ -111,6 +112,9 @@ use wasm_workers::activity::activity_js_worker::ActivityJsWorkerCompiled;
 use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::component_logger::LogStrageConfig;
+use wasm_workers::cron::cron_worker;
+use wasm_workers::cron::cron_worker::CronOrOnce;
+use wasm_workers::cron::cron_worker::CronWorker;
 use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
@@ -1200,6 +1204,7 @@ impl ServerCompiledLinked {
             server_verified.config.workflows_js,
             server_verified.config.webhooks_wasm_by_names,
             server_verified.config.webhooks_js_by_names,
+            server_verified.config.crons,
             server_verified.config.global_backtrace_persist,
             server_verified.config.fuel,
             server_verified.build_semaphore,
@@ -1618,6 +1623,67 @@ async fn spawn_tasks_and_threads(
         (log_forwarder_sender, log_db_forarder)
     };
 
+    // Create seed cron executions if they don't already exist (same config = same ContentDigest)
+    {
+        let conn = db_pool.external_api_conn().await?;
+        for worker_linked in &server_compiled_linked.workers_linked {
+            if let LinkedWorkerKind::Cron(cron_config) = &worker_linked.worker {
+                let digest = &cron_config.component_id.component_digest;
+                // Check if there's already a non-finished execution for this schedule digest
+                let existing = conn
+                    .list_executions(
+                        concepts::storage::ListExecutionsFilter {
+                            component_digest: Some(digest.clone()),
+                            hide_finished: true,
+                            ..Default::default()
+                        },
+                        concepts::storage::ExecutionListPagination::CreatedBy(
+                            concepts::storage::Pagination::OlderThan {
+                                length: 1,
+                                cursor: None,
+                                including_cursor: false,
+                            },
+                        ),
+                    )
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!("failed to check existing schedule executions: {e}")
+                    })?;
+                if existing.is_empty() {
+                    // Derive a deterministic execution_id from the component digest
+                    // so that duplicate seed creation is impossible.
+                    let execution_id = ExecutionId::deterministic_at_unix_epoch(&digest.0.0);
+                    info!(
+                        %execution_id,
+                        "Creating seed execution for cron `{}`",
+                        cron_config.component_id.name
+                    );
+                    let source_ffqn = cron_worker::cron_ffqn(&cron_config.target_ffqn);
+                    let now = chrono::Utc::now();
+                    conn.create(CreateRequest {
+                        created_at: now,
+                        execution_id,
+                        ffqn: source_ffqn,
+                        params: Params::empty(),
+                        parent: None,
+                        scheduled_at: now,
+                        component_id: cron_config.component_id.clone(),
+                        deployment_id,
+                        metadata: concepts::ExecutionMetadata::empty(),
+                        scheduled_by: None,
+                    })
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "failed to create seed execution for cron `{}`: {e}",
+                            cron_config.component_id.name
+                        )
+                    })?;
+                }
+            }
+        }
+    }
+
     // Spawn executors
     let exec_join_handles: Vec<ExecutorTaskHandle> = server_compiled_linked
         .workers_linked
@@ -1837,6 +1903,7 @@ struct ConfigVerified {
     workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_wasm_by_names: IndexMap<ConfigName, WebhookWasmComponentConfigVerified>,
     webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
+    crons: Vec<CronConfigVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
@@ -2124,6 +2191,14 @@ impl ConfigVerified {
                     }
                 }
 
+                let mut crons = Vec::with_capacity(deployment.crons.len());
+                for cron in deployment.crons {
+                    let name = cron.name.clone();
+                    crons.push(cron.verify().with_context(|| {
+                        format!("failed to verify cron `{name}`")
+                    })?);
+                }
+
                 Ok(ConfigVerified {
                     activities_wasm,
                     activities_js: activities_js_verified,
@@ -2133,6 +2208,7 @@ impl ConfigVerified {
                     workflows_js: workflows_js_verified,
                     webhooks_wasm_by_names,
                     webhooks_js_by_names,
+                    crons,
                     http_servers_to_webhook_names,
                     global_backtrace_persist,
                     fuel
@@ -2184,6 +2260,7 @@ async fn compile_and_link(
     workflows_js: Vec<WorkflowJsConfigVerified>,
     webhooks_wasm_by_names: IndexMap<ConfigName, WebhookWasmComponentConfigVerified>,
     webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
+    crons: Vec<CronConfigVerified>,
     global_backtrace_persist: bool,
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
@@ -2509,9 +2586,53 @@ async fn compile_and_link(
                     },
                 }
             }
+            // Register cron components in the registry (no WASM, no imports/exports)
+            for cron in &crons {
+                let component_config = ComponentConfig {
+                    component_id: cron.component_id.clone(),
+                    imports: vec![],
+                    workflow_or_activity_config: None,
+                    wit: String::new(), // does not matter, WIT is not exposed
+                    workflow_replay_info: None,
+                    wit_origin: WitOrigin::Synthesized,
+                };
+                component_registry.insert(component_config)?; // Mostly just for name uniqueness checking
+            }
             let (component_registry_ro, supressed_errors) = component_registry.verify_registry();
             let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
-            let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
+            let mut workers_linked = workers_compiled
+                .into_iter()
+                .map(|worker| worker.link(&fn_registry))
+                .collect::<Result<Vec<_>,_>>()?;
+            // Resolve cron target FFQNs, type-check params, and create WorkerLinked entries
+            for cron in crons {
+                let (target_component_id, target_fn_metadata) = component_registry_ro
+                    .find_by_exported_ffqn(&cron.target_ffqn)
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "cron `{}` targets function `{}` which is not exported by any component",
+                        cron.component_id.name,
+                        cron.target_ffqn,
+                    ))?;
+                // Parse and type-check params against the target function's parameter types
+                let params = Params::from_json_values(
+                    Arc::from(cron.params_json),
+                    target_fn_metadata.parameter_types.iter().map(|pt| &pt.type_wrapper),
+                ).with_context(|| format!(
+                    "cron `{}`: params do not match target function `{}` parameter types",
+                    cron.component_id.name, cron.target_ffqn,
+                ))?;
+                workers_linked.push(WorkerLinked {
+                    worker: LinkedWorkerKind::Cron(ScheduleWorkerConfig {
+                        component_id: cron.component_id,
+                        target_ffqn: cron.target_ffqn,
+                        target_component_id: target_component_id.clone(),
+                        params,
+                        cron_schedule: cron.cron_schedule,
+                    }),
+                    exec_config: cron.exec_config,
+                    logs_store_min_level: None,
+                });
+            }
             let webhooks_wasm_by_names = webhooks_compiled_by_names
                 .into_iter()
                 .map(|(name, (compiled, routes))|{
@@ -3052,6 +3173,16 @@ enum LinkedWorkerKind {
     ActivityJs(Box<ActivityJsWorkerCompiled>),
     WorkflowWasm(WorkflowWorkerLinkedWithConfig),
     WorkflowJs(WorkflowJsWorkerLinkedWithConfig),
+    Cron(ScheduleWorkerConfig),
+}
+
+/// Configuration carried through the pipeline to construct a [`ScheduleWorker`] at spawn time.
+struct ScheduleWorkerConfig {
+    component_id: ComponentId,
+    target_ffqn: FunctionFqn,
+    target_component_id: ComponentId,
+    params: Params,
+    cron_schedule: CronOrOnce,
 }
 
 pub(crate) struct WorkerLinked {
@@ -3112,6 +3243,16 @@ impl WorkerLinked {
                     logs_storage_config,
                 ))
             }
+            LinkedWorkerKind::Cron(config) => Arc::from(CronWorker::new(
+                config.component_id,
+                config.target_ffqn,
+                config.target_component_id,
+                config.params,
+                config.cron_schedule,
+                deployment_id,
+                db_pool.clone(),
+                Now.clone_box(),
+            )),
         };
         ExecTask::spawn_new(
             deployment_id,

@@ -31,6 +31,13 @@
         "$ref": "#/$defs/ActivityWasmComponentConfigToml"
       }
     },
+    "cron": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CronComponentConfigToml"
+      }
+    },
     "webhook_endpoint_js": {
       "type": "array",
       "default": [],
@@ -498,6 +505,46 @@
     "ConfigName": {
       "description": "Activity, Webhook, Workflow or a Http server",
       "type": "string"
+    },
+    "CronComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "locking_strategy": null,
+            "tick_sleep": {
+              "milliseconds": 200
+            }
+          }
+        },
+        "ffqn": {
+          "description": "Fully qualified function name of the target to invoke on each schedule tick.",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "params": {
+          "description": "JSON-encoded parameters to pass to the target function.",
+          "type": "string",
+          "default": "[]"
+        },
+        "schedule": {
+          "description": "Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "ffqn",
+        "schedule"
+      ]
     },
     "DurationConfig": {
       "oneOf": [

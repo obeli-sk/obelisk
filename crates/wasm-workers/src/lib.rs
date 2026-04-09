@@ -6,6 +6,7 @@ use utils::wasm_tools::{self, DecodeError, ExIm, WasmComponent};
 
 pub mod activity;
 pub mod component_logger;
+pub mod cron;
 pub mod engines;
 pub mod epoch_ticker;
 pub mod http_hooks;

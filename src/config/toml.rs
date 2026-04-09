@@ -4,6 +4,7 @@ use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
 use crate::config::env_var::{
     EnvVarMissing, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
 };
+use crate::config::toml::cron::CronComponentConfigToml;
 use crate::oci;
 use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
@@ -33,6 +34,7 @@ use std::{
 };
 use tracing::{debug, instrument, warn};
 use utils::wasm_tools::WasmComponent;
+use wasm_workers::cron::cron_worker::CronOrOnce;
 use wasm_workers::http_hooks::ConfigSectionHint;
 use wasm_workers::http_request_policy::HostPatternError;
 use wasm_workers::{
@@ -77,6 +79,8 @@ pub(crate) struct DeploymentToml {
     pub(crate) webhooks: Vec<WebhookWasmComponentConfigToml>,
     #[serde(default, rename = "webhook_endpoint_js")]
     pub(crate) webhooks_js: Vec<WebhookJsComponentConfigToml>,
+    #[serde(default, rename = "cron")]
+    pub(crate) crons: Vec<CronComponentConfigToml>,
 }
 
 /// A `DeploymentToml` that has passed name-uniqueness validation.
@@ -210,6 +214,11 @@ impl DeploymentToml {
                 self.webhooks_js
                     .iter()
                     .map(|c| (c.name.0.as_ref(), TomlComponentType::WebhookEndpointJs)),
+            )
+            .chain(
+                self.crons
+                    .iter()
+                    .map(|c| (c.name.0.as_ref(), TomlComponentType::Cron)),
             )
     }
 }
@@ -904,31 +913,40 @@ impl ExecConfigToml {
         component_id: ComponentId,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         retry_config: ComponentRetryConfig,
-    ) -> executor::executor::ExecConfig {
-        executor::executor::ExecConfig {
+    ) -> Result<executor::executor::ExecConfig, anyhow::Error> {
+        Ok(executor::executor::ExecConfig {
             lock_expiry: self.lock_expiry.into(),
             tick_sleep: self.tick_sleep.into(),
             batch_size: self.batch_size,
-            locking_strategy: locking_strategy(self.locking_strategy, component_id.component_type),
+            locking_strategy: locking_strategy(self.locking_strategy, component_id.component_type)?,
             component_id,
             task_limiter: global_executor_instance_limiter,
             executor_id: ExecutorId::generate(),
             retry_config,
-        }
+        })
     }
 }
+
 fn locking_strategy(
     locking_strategy_override: Option<LockingStrategy>,
     component_type: ComponentType,
-) -> executor::executor::LockingStrategy {
-    locking_strategy_override.map(executor::executor::LockingStrategy::from).unwrap_or_else(||
+) -> Result<executor::executor::LockingStrategy, anyhow::Error> {
+    if component_type == ComponentType::Cron {
+        ensure!(
+            locking_strategy_override.is_none(),
+            "locking strategy cannot be overridden for cron"
+        );
+        // needed for seed execution deduplication.
+        return Ok(executor::executor::LockingStrategy::ByComponentDigest);
+    }
+    Ok(locking_strategy_override.map(executor::executor::LockingStrategy::from).unwrap_or_else(||
     match component_type {
         ComponentType::Activity => executor::executor::LockingStrategy::ByFfqns,
         ComponentType::Workflow => executor::executor::LockingStrategy::ByComponentDigest,
         other => unreachable!(
-            "unexpected type {other}, only worklows and activities (wasm,js) expose locking strategy"
+            "unexpected type {other}, only workflows, activities, and crons expose locking strategy"
         ),
-    })
+    }))
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -1442,7 +1460,7 @@ impl ActivityWasmComponentConfigToml {
                 component_id,
                 global_executor_instance_limiter,
                 retry_config,
-            ),
+            )?,
             logs_store_min_level: self.logs_store_min_level.into(),
         })
     }
@@ -1936,7 +1954,7 @@ impl ActivityJsComponentConfigCanonical {
                 component_id,
                 global_executor_instance_limiter,
                 retry_config,
-            ),
+            )?,
             logs_store_min_level: self.logs_store_min_level.into(),
         })
     }
@@ -2013,7 +2031,7 @@ impl WorkflowWasmComponentConfigCanonical {
                 component_id,
                 global_executor_instance_limiter,
                 retry_config,
-            ),
+            )?,
             frame_files_to_sources,
             logs_store_min_level: self.logs_store_min_level.into(),
         })
@@ -2123,7 +2141,7 @@ impl WorkflowJsComponentConfigCanonical {
                 component_id,
                 global_executor_instance_limiter,
                 retry_config,
-            ),
+            )?,
             logs_store_min_level: self.logs_store_min_level.into(),
         })
     }
@@ -2141,6 +2159,8 @@ pub(crate) struct DeploymentCanonical {
     pub(crate) workflows_js: Vec<WorkflowJsComponentConfigCanonical>,
     pub(crate) webhooks: Vec<webhook::WebhookWasmComponentConfigCanonical>,
     pub(crate) webhooks_js: Vec<webhook::WebhookJsComponentConfigCanonical>,
+    #[serde(default)]
+    pub(crate) crons: Vec<CronComponentConfigToml>,
 }
 
 /// Resolve a `DeploymentToml` to `DeploymentCanonical` by reading all local JS and backtrace
@@ -2243,6 +2263,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
         workflows_js,
         webhooks,
         webhooks_js,
+        crons: deployment.crons.clone(),
     })
 }
 
@@ -3278,6 +3299,93 @@ fn default_cancel_watcher_enabled() -> bool {
 }
 fn default_cancel_watcher_tick_sleep() -> DurationConfig {
     DurationConfig::Seconds(1)
+}
+
+pub(crate) mod cron {
+    use super::*;
+
+    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct CronComponentConfigToml {
+        pub(crate) name: ConfigName,
+        /// Fully qualified function name of the target to invoke on each schedule tick.
+        #[schemars(with = "String")]
+        pub(crate) ffqn: FunctionFqn,
+        /// JSON-encoded parameters to pass to the target function.
+        #[serde(default = "default_schedule_params")]
+        pub(crate) params: String,
+        /// Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.
+        pub(crate) schedule: String,
+        #[serde(default)]
+        pub(crate) exec: ExecConfigToml,
+    }
+
+    fn default_schedule_params() -> String {
+        "[]".to_string()
+    }
+
+    #[derive(Debug)]
+    pub(crate) struct CronConfigVerified {
+        pub(crate) component_id: ComponentId,
+        pub(crate) target_ffqn: FunctionFqn,
+        pub(crate) params_json: Vec<serde_json::Value>,
+        pub(crate) cron_schedule: CronOrOnce,
+        pub(crate) exec_config: executor::executor::ExecConfig,
+    }
+
+    impl CronComponentConfigToml {
+        pub(crate) fn verify(self) -> Result<CronConfigVerified, anyhow::Error> {
+            let name = self.name.0.to_string();
+            let cron_schedule = if self.schedule == "@once" {
+                CronOrOnce::Once
+            } else {
+                CronOrOnce::Cron(Box::new(
+                    croner::Cron::new(&self.schedule).parse().with_context(|| {
+                        format!(
+                            "invalid cron expression `{}` for schedule `{name}`",
+                            self.schedule
+                        )
+                    })?,
+                ))
+            };
+            // Validate params JSON
+            let serde_json::Value::Array(params_json) =
+                serde_json::from_str::<serde_json::Value>(&self.params).with_context(|| {
+                    format!(
+                        "invalid JSON params for schedule `{name}`: `{}`",
+                        self.params
+                    )
+                })?
+            else {
+                bail!("invalid params for schedule `{name}` - expected JSON array")
+            };
+            // Compute component digest from schedule config
+            let mut hasher = Sha256::new();
+            sha2::Digest::update(&mut hasher, name.as_bytes());
+            sha2::Digest::update(&mut hasher, self.ffqn.to_string().as_bytes());
+            sha2::Digest::update(&mut hasher, self.params.as_bytes());
+            sha2::Digest::update(&mut hasher, self.schedule.as_bytes());
+            let hash: [u8; 32] = sha2::Digest::finalize(hasher).into();
+            let component_digest = ComponentDigest(Digest(hash));
+            let component_id = ComponentId::new(
+                ComponentType::Cron,
+                StrVariant::from(name),
+                component_digest,
+            )?;
+            let exec_config = self.exec.into_exec_exec_config(
+                component_id.clone(),
+                None, // no global instance limiter for crons
+                ComponentRetryConfig::CRON,
+            )?;
+            Ok(CronConfigVerified {
+                component_id,
+                target_ffqn: self.ffqn,
+                params_json,
+                cron_schedule,
+                exec_config,
+            })
+        }
+    }
 }
 
 #[cfg(test)]

@@ -121,6 +121,7 @@ enum ComponentType {
     COMPONENT_TYPE_ACTIVITY = 2;
     COMPONENT_TYPE_WEBHOOK_ENDPOINT = 3;
     COMPONENT_TYPE_ACTIVITY_STUB = 4;
+    COMPONENT_TYPE_CRON = 5;
 }
 
 message FunctionDetail {

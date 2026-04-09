@@ -1097,12 +1097,6 @@ impl ParamsParsingError {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ParamsFromJsonError {
-    #[error("value must be a json array containing function parameters")]
-    MustBeArray,
-}
-
 impl Params {
     #[must_use]
     pub const fn empty() -> Self {
@@ -1715,6 +1709,30 @@ pub mod prefixed_ulid {
         }
 
         #[must_use]
+        pub fn deterministic_at_unix_epoch(hash: &[u8; 32]) -> Self {
+            // Year is set to 1970. Year part takes around 13 bits, we keep first 16 bits as 0.
+            // timestamp (48 bits total = 6 bytes)
+
+            // build 48-bit timestamp inside u64
+            let mut ts_bytes = [0u8; 8];
+            // first 2 bytes already 0 (epoch prefix)
+            ts_bytes[2..6].copy_from_slice(&hash[..4]); // next 4 bytes = hash
+            // ulid is encoded in network byte order (big-endian) per spec
+            let timestamp_ms = u64::from_be_bytes(ts_bytes);
+
+            // randomness (80 bits = 10 bytes)
+            // place 10 bytes (80 bits) into the lower part
+            const RAND_LEN: usize = 10;
+            const U128_BYTES_LEN: usize = 128 / 8;
+            let mut rand_bytes = [0u8; U128_BYTES_LEN];
+            let start = U128_BYTES_LEN - RAND_LEN;
+            rand_bytes[start..].copy_from_slice(&hash[4..4 + RAND_LEN]);
+            let random = u128::from_be_bytes(rand_bytes);
+
+            ExecutionId::TopLevel(PrefixedUlid::new(Ulid::from_parts(timestamp_ms, random)))
+        }
+
+        #[must_use]
         pub fn get_top_level(&self) -> ExecutionIdTopLevel {
             match &self {
                 ExecutionId::TopLevel(prefixed_ulid) => *prefixed_ulid,
@@ -2277,6 +2295,11 @@ impl ComponentRetryConfig {
     };
 
     pub const WORKFLOW: ComponentRetryConfig = ComponentRetryConfig {
+        max_retries: None,
+        retry_exp_backoff: Duration::ZERO,
+    };
+
+    pub const CRON: ComponentRetryConfig = ComponentRetryConfig {
         max_retries: None,
         retry_exp_backoff: Duration::ZERO,
     };
