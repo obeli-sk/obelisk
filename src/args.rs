@@ -69,14 +69,19 @@ pub(crate) struct Args {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Subcommand {
+    /// Run or verify the Obelisk server.
     #[command(subcommand)]
     Server(Server),
+    /// Submit, inspect, stub, or cancel executions against a running server.
     #[command(subcommand)]
     Execution(Execution),
+    /// Inspect components or add/push them to an OCI registry.
     #[command(subcommand)]
     Component(Component),
+    /// Manage deployments.
     #[command(subcommand)]
     Deployment(Deployment),
+    /// Generate configuration files and WIT artifacts.
     #[command(subcommand)]
     Generate(Generate),
 }
@@ -187,23 +192,25 @@ pub(crate) enum Generate {
         output: Option<PathBuf>,
     },
     /// Generate extension WIT files that are automatically implemented by Obelisk
-    /// based on the exported interfaces of the component.
+    /// based on the exported interfaces of the component (e.g. `-schedule`, `-await-next` variants).
     WitExtensions {
+        /// Overwrite existing files in the output directory.
         #[arg(long, short)]
         force: bool,
-        /// One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`
+        /// Component type this WIT is for. One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`.
         component_type: ComponentType,
-        /// Path to the `wit` folder, containing the target world and possibly `deps` subfolder.
+        /// Path to the `wit` folder containing the target world and, if present, a `deps` subfolder.
         input_wit_directory: PathBuf,
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
     },
-    /// Generate Obelisk WIT files for given component type.
+    /// Generate Obelisk's built-in support WIT files (host interfaces) for the given component type.
     WitSupport {
-        /// One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`
+        /// Component type whose host interfaces to emit. One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`.
         component_type: ComponentType,
         /// Directory where folders and WIT files will be written to.
         output_directory: PathBuf,
+        /// Overwrite existing files in the output directory.
         #[arg(long, short)]
         overwrite: bool,
     },
@@ -234,19 +241,21 @@ pub(crate) enum Generate {
         #[arg(long, short)]
         overwrite: bool,
     },
+    /// Generate a fresh random execution ID and print it to stdout.
     ExecutionId,
 }
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Server {
+    /// Start the Obelisk server.
     Run {
-        /// Clean the sqlite database directory
+        /// Delete the sqlite database directory before starting. Destroys all execution history.
         #[arg(long)]
         clean_sqlite_directory: bool,
-        /// Clean the codegen and OCI cache directories
+        /// Delete both the codegen cache and the OCI image cache before starting.
         #[arg(long)]
         clean_cache: bool,
-        /// Clean the codegen cache directory
+        /// Delete only the codegen cache before starting; OCI image cache is kept.
         #[arg(long)]
         clean_codegen_cache: bool,
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
@@ -257,19 +266,19 @@ pub(crate) enum Server {
         #[arg(short, long, conflicts_with = "deployment_empty")]
         deployment: Option<PathBuf>,
         /// Start with an empty deployment, ignoring any Enqueued or Active deployment in the database.
-        /// Useful for recovering from a faulty deployment: start empty, then push a new deployment via gRPC.
+        /// Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via gRPC.
         #[arg(long)]
         deployment_empty: bool,
-        /// Ignore type checking errors
+        /// Do not fail startup when a component's imports/exports fail type checking against the current deployment.
         #[arg(long, short)]
         suppress_type_checking_errors: bool,
     },
-    /// Read the configuration, compile the components, verify their imports and exit
+    /// Read the configuration, compile the components, verify their imports and exit without starting the server.
     Verify {
-        /// Clean the codegen and OCI cache directories
+        /// Delete both the codegen cache and the OCI image cache before verifying.
         #[arg(long)]
         clean_cache: bool,
-        /// Clean the codegen cache
+        /// Delete only the codegen cache before verifying; OCI image cache is kept.
         #[arg(long)]
         clean_codegen_cache: bool,
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
@@ -279,13 +288,13 @@ pub(crate) enum Server {
         /// falling back to the Active deployment. Errors if neither is found.
         #[arg(short, long)]
         deployment: Option<PathBuf>,
-        /// Do not verify existence of environment variables
+        /// Skip the check that every environment variable referenced by the deployment is set.
         #[arg(long, short)]
         ignore_missing_env_vars: bool,
-        /// Ignore type checking errors
+        /// Do not fail when a component's imports/exports fail type checking against the deployment.
         #[arg(long, short)]
         suppress_type_checking_errors: bool,
-        /// Do not check database schema
+        /// Skip opening the sqlite database and validating its schema.
         #[arg(long)]
         skip_db: bool,
     },
@@ -371,23 +380,25 @@ impl FromStr for FunctionFqnOrShort {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Execution {
-    /// Submit new execution and optionally follow its status stream until the it finishes.
+    /// Submit a new execution and optionally follow its status stream until it finishes.
     Submit {
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
+        /// Use this explicit execution ID instead of having the server assign one. Useful for idempotency. See `obelisk generate execution-id`.
         #[arg(short, long)]
         execution_id: Option<ExecutionId>,
-        /// Function in the fully qualified format or shortened to .../ifc.fn
+        /// Function to invoke, either as a fully qualified name (`ns:pkg/ifc.fn`)
+        /// or shortened to `.../ifc.fn` when the interface name is unambiguous.
         #[arg(value_name = "function")]
         ffqn: FunctionFqnOrShort,
-        /// Follow the stream of events until the execution finishes
+        /// Follow the stream of events until the execution finishes.
         #[arg(short, long)]
         follow: bool,
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long, requires = "follow")]
         no_reconnect: bool,
-        /// Output JSON in Web API format.
+        /// Output events as JSON in Web API format instead of human-readable text.
         #[arg(short, long)]
         json: bool,
         /// Accepted Parameter Formats:
@@ -402,9 +413,10 @@ pub(crate) enum Execution {
         #[arg(name = "parameters")]
         params: Vec<String>,
     },
-    /// Write a return value or an execution error to an already created stubbed execution.
+    /// Write a return value or an execution error to an already created stubbed execution,
+    /// unblocking any parent workflow that is awaiting it.
     Stub(Stub),
-    /// Get the current state of an execution.
+    /// Get the current state of an execution, optionally following the event stream.
     Get {
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
@@ -412,11 +424,13 @@ pub(crate) enum Execution {
         /// Follow the status stream until the execution finishes.
         #[arg(short, long)]
         follow: bool,
+        /// Execution ID to look up.
         execution_id: ExecutionId,
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long, requires = "follow")]
         no_reconnect: bool,
     },
+    /// Request cancellation of a running activity or pending delay.
     Cancel(CancelCommand),
 }
 
@@ -519,6 +533,7 @@ pub(crate) struct CancelCommand {
     /// Address of the obelisk server
     #[arg(short, long, default_value = "http://127.0.0.1:5005")]
     pub(crate) api_url: String,
+    /// Execution id of an activity (E_01...) or a delay request (Delay_01...)
     #[arg(value_name = "ID")]
     pub(crate) id: String,
 }
