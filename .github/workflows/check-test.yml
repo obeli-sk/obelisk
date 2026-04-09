@@ -32,6 +32,8 @@ jobs:
         include:
           - report: junit-default.xml
             script: "scripts/test.sh"
+          - report: junit-js-local.xml
+            script: "scripts/test-js-local.sh"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd

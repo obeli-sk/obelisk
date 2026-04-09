@@ -317,6 +317,11 @@ name = "test_read_env_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/read_env.js"
 routes = [{{ methods = ["GET"], route = "/read-env" }}]
 env_vars = [{{key = "WEBHOOK_TEST_ENV_VAR", value = "hello_from_webhook_env"}}]
+
+[[webhook_endpoint_js]]
+name = "test_generate_execution_id_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/generate_execution_id.js"
+routes = [{{ methods = ["GET"], route = "/generate-execution-id" }}]
 "#,
     );
     debug!("Deployment TOML:{deployment_contents}");
@@ -1293,6 +1298,42 @@ async fn webhook_js_env_var() {
     assert_eq!(resp.status().as_u16(), 200);
     let body = resp.text().await.unwrap();
     assert_eq!(body, "hello_from_webhook_env");
+    server.shutdown().await;
+}
+
+/// Mirrors the unit test `webhook_js_generate_execution_id` in `webhook_trigger.rs`.
+/// JS source (in `generate_execution_id.js`):
+/// ```js
+/// export default function handle(request) {
+///     const id1 = obelisk.generateExecutionId();
+///     const id2 = obelisk.generateExecutionId();
+///     return Response.json({
+///         id1,
+///         id2,
+///         different: id1 !== id2,
+///         hasPrefix: id1.startsWith("E_"),
+///     });
+/// }
+/// ```
+#[tokio::test]
+async fn webhook_js_generate_execution_id() {
+    let server = TestServer::start(test_addr!(43)).await;
+    let resp = server
+        .client
+        .get(format!("{}/generate-execution-id", server.webhook_base_url))
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["different"], json!(true));
+    assert_eq!(body["hasPrefix"], json!(true));
+    // Verify the IDs are valid execution IDs
+    let id1 = body["id1"].as_str().expect("id1 must be a string");
+    let id2 = body["id2"].as_str().expect("id2 must be a string");
+    assert!(id1.starts_with("E_"), "id1 must have E_ prefix, got: {id1}");
+    assert!(id2.starts_with("E_"), "id2 must have E_ prefix, got: {id2}");
+    assert_ne!(id1, id2, "generated execution IDs must be unique");
     server.shutdown().await;
 }
 

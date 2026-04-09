@@ -32,7 +32,7 @@
 //! ## Scheduling Executions
 //! ```js
 //! // Generate execution ID first
-//! const execId = obelisk.generateExecutionId();
+//! const execId = obelisk.executionIdGenerate();
 //!
 //! // Schedule immediately (scheduleAt is optional, defaults to now)
 //! obelisk.schedule(execId, "ns:pkg/ifc.func", [arg1, arg2]);
@@ -324,13 +324,13 @@ fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
 fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     let obelisk = new_object(context);
 
-    // obelisk.generateExecutionId()
+    // obelisk.executionIdGenerate()
     let generate_execution_id_fn = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
         let exec_id = webhook_support::execution_id_generate();
         Ok(JsValue::from(js_string!(exec_id.id)))
     });
     obelisk.set(
-        js_string!("generateExecutionId"),
+        js_string!("executionIdGenerate"),
         generate_execution_id_fn.to_js_function(context.realm()),
         false,
         context,
