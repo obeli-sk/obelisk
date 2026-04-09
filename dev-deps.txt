@@ -9,5 +9,5 @@ rustc 1.94.0 (4a4ef493e 2026-03-02)
 wasm-tools 1.245.1
 wasmtime 43.0.0
 cargo-zigbuild 0.22.1
-litestream v0.5.10
+litestream v0.5.11
 ldd (GNU libc) 2.42

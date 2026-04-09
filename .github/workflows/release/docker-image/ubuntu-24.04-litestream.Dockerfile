@@ -9,7 +9,7 @@ COPY obelisk /obelisk/obelisk
 COPY server.toml /obelisk/server.toml
 
 # Install Litestream
-COPY --from=litestream/litestream:0.5.10 /usr/local/bin/litestream /usr/local/bin/litestream
+COPY --from=litestream/litestream:0.5.11 /usr/local/bin/litestream /usr/local/bin/litestream
 
 ENV PATH="/obelisk:${PATH}"
 
