@@ -1498,7 +1498,7 @@ pub(crate) async fn switch_deployment(
             closed: false,
         };
 
-        info!(%deployment_id, "Deployment hot-redeployed");
+        info!(%deployment_id, "Switched to new  deployment");
         Ok(SwitchOutcome::Switched)
     } else {
         if action == SwitchDeploymentAction::VerifyAndStore {
