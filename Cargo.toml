@@ -283,15 +283,15 @@ hashbrown = { version = "0.16.1", features = ["serde"] }
 hdrhistogram = { version = "7.5.4", default-features = false }
 http = "1.4.0"
 http-body-util = "0.1"
-hyper = "1.9.0"
+hyper = "1.8.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.3.0"
-indexmap = { version = "2.14", features = ["serde"] }
-insta = { version = "1.47.2", features = ["json"] }
+indexmap = { version = "2.13", features = ["serde"] }
+insta = { version = "1.47.0", features = ["json"] }
 itertools = "0.14"
 jsonwebtoken = { version = "10", default-features = false }
 lazy_static = "1.5"
-libc = "0.2.184"
+libc = "0.2.183"
 oci-client = { version = "0.16.1", default-features = false }
 oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
@@ -318,7 +318,7 @@ rusqlite = { version = "0.39.0", features = [
 ] }
 schemars = { version = "1.2.1", features = ["indexmap2", "chrono04"] }
 secrecy = "0.10.3"
-semver = "1.0.28"
+semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_with = "3.18.0"
@@ -328,7 +328,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3.27"
 thiserror = "2.0"
-tokio-postgres = { version = "0.7.17", features = ["with-chrono-0_4", "with-serde_json-1"] }
+tokio-postgres = { version = "0.7.16", features = ["with-chrono-0_4", "with-serde_json-1"] }
 tokio = { version = "1", features = [
     "fs",
     "io-util",
@@ -342,8 +342,8 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.18"
-toml = { version = "1.1.2", features = ["preserve_order"] }
-toml_edit = "0.25.11"
+toml = { version = "1.1.0", features = ["preserve_order"] }
+toml_edit = "0.25.8"
 tonic = { version = "0.14.5", default-features = false }
 tonic-prost = "0.14.5"
 tonic-prost-build = "0.14.5"
@@ -362,11 +362,11 @@ utoipa-axum = "0.2.0"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "43.0.1", features = ["memory-protection-keys"] }
-wasmtime-wasi = "43.0.1"
-wasmtime-wasi-io = "43.0.1"
-wasmtime-wasi-http = "43.0.1"
-wasmtime-environ = "43.0.1"
+wasmtime = { version = "43.0.0", features = ["memory-protection-keys"] }
+wasmtime-wasi = "43.0.0"
+wasmtime-wasi-io = "43.0.0"
+wasmtime-wasi-http = "43.0.0"
+wasmtime-environ = "43.0.0"
 # wasm-tools
 wast = "245.0.1"
 wit-parser = "0.245.1"
