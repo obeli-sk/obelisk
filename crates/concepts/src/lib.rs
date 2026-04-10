@@ -1709,24 +1709,26 @@ pub mod prefixed_ulid {
         }
 
         #[must_use]
+        /// Generate a deterministic ULID based on the provided hash.
+        /// Year must be set to 1970 to avoid weird dates.
+        /// Ordering between those ULIDs does not matter.
         pub fn deterministic_at_unix_epoch(hash: &[u8; 32]) -> Self {
-            // Year is set to 1970. Year part takes around 13 bits, we keep first 16 bits as 0.
+            // Year part takes around 13 bits, we keep first 2 bytes as 0,
+            // only filling last 4 bytes.
             // timestamp (48 bits total = 6 bytes)
 
-            // build 48-bit timestamp inside u64
             let mut ts_bytes = [0u8; 8];
-            // first 2 bytes already 0 (epoch prefix)
-            ts_bytes[2..6].copy_from_slice(&hash[..4]); // next 4 bytes = hash
+            ts_bytes[4..8].copy_from_slice(&hash[..4]); // take first 4 bytes from hash.
             // ulid is encoded in network byte order (big-endian) per spec
             let timestamp_ms = u64::from_be_bytes(ts_bytes);
 
             // randomness (80 bits = 10 bytes)
             // place 10 bytes (80 bits) into the lower part
             const RAND_LEN: usize = 10;
-            const U128_BYTES_LEN: usize = 128 / 8;
+            const U128_BYTES_LEN: usize = std::mem::size_of::<u128>(); // 16
+            const START: usize = U128_BYTES_LEN - RAND_LEN;
             let mut rand_bytes = [0u8; U128_BYTES_LEN];
-            let start = U128_BYTES_LEN - RAND_LEN;
-            rand_bytes[start..].copy_from_slice(&hash[4..4 + RAND_LEN]);
+            rand_bytes[START..].copy_from_slice(&hash[4..4 + RAND_LEN]);
             let random = u128::from_be_bytes(rand_bytes);
 
             ExecutionId::TopLevel(PrefixedUlid::new(Ulid::from_parts(timestamp_ms, random)))
