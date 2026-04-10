@@ -1484,10 +1484,6 @@ pub(crate) async fn switch_deployment(
             )));
         }
 
-        conn.activate_deployment(deployment_id, chrono::Utc::now())
-            .await
-            .map_err(|e| SwitchError::Other(e.into()))?;
-
         let old = std::mem::take(&mut ctx.exec_task_handles);
         futures_util::future::join_all(
             old.iter()
@@ -1527,6 +1523,10 @@ pub(crate) async fn switch_deployment(
             exec_task_handles: new_handles,
             closed: false,
         };
+
+        conn.activate_deployment(deployment_id, chrono::Utc::now())
+            .await
+            .map_err(|e| SwitchError::Other(e.into()))?;
 
         info!(%deployment_id, "Switched to new  deployment");
         Ok(SwitchOutcome::Switched)
