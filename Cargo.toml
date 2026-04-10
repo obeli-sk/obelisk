@@ -362,11 +362,11 @@ utoipa-axum = "0.2.0"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "43.0.0", features = ["memory-protection-keys"] }
-wasmtime-wasi = "43.0.0"
-wasmtime-wasi-io = "43.0.0"
-wasmtime-wasi-http = "43.0.0"
-wasmtime-environ = "43.0.0"
+wasmtime = { version = "43.0.1", features = ["memory-protection-keys"] }
+wasmtime-wasi = "43.0.1"
+wasmtime-wasi-io = "43.0.1"
+wasmtime-wasi-http = "43.0.1"
+wasmtime-environ = "43.0.1"
 # wasm-tools
 wast = "245.0.1"
 wit-parser = "0.245.1"
