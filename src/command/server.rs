@@ -1276,6 +1276,25 @@ impl ServerCompiledLinked {
             })
             .collect()
     }
+
+    async fn create_missing_cron_seeds(
+        &self,
+        db_pool: &Arc<dyn DbPool>,
+        deployment_id: DeploymentId,
+    ) -> Result<(), anyhow::Error> {
+        create_missing_cron_seeds(
+            db_pool,
+            deployment_id,
+            self.workers_linked.iter().filter_map(|worker_linked| {
+                if let LinkedWorkerKind::Cron(cron_config) = &worker_linked.worker {
+                    Some(cron_config)
+                } else {
+                    None
+                }
+            }),
+        )
+        .await
+    }
 }
 
 pub(crate) async fn upsert_backtrace_sources(
@@ -1366,9 +1385,11 @@ pub(crate) async fn submit_deployment(
 }
 
 /// Outcome of switching a deployment.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, derive_more::Display)]
 pub(crate) enum SwitchOutcome {
+    #[display("switched")]
     Switched,
+    #[display("restart required")]
     RestartRequired,
 }
 
@@ -1437,7 +1458,7 @@ pub(crate) async fn switch_deployment(
             .with_context(|| "cannot parse stored deployment config")?;
 
     if action == SwitchDeploymentAction::HotRedeploy {
-        let linked = verify_config_compile_link(
+        let server_compiled_linked = verify_config_compile_link(
             config,
             engines,
             prepared_dirs,
@@ -1474,11 +1495,20 @@ pub(crate) async fn switch_deployment(
         )
         .await;
 
-        webhook_registry.swap(linked.http_servers_to_webhooks_and_state.iter().map(
-            |(http_server, (_instance, state))| (http_server.name.to_string(), state.clone()),
-        ));
+        webhook_registry.swap(
+            server_compiled_linked
+                .http_servers_to_webhooks_and_state
+                .iter()
+                .map(|(http_server, (_instance, state))| {
+                    (http_server.name.to_string(), state.clone())
+                }),
+        );
 
-        let new_handles: Vec<ExecutorTaskHandle> = linked
+        server_compiled_linked
+            .create_missing_cron_seeds(&db_pool, deployment_id)
+            .await?;
+
+        let new_handles: Vec<ExecutorTaskHandle> = server_compiled_linked
             .workers_linked
             .into_iter()
             .map(|pre_spawn| {
@@ -1493,7 +1523,7 @@ pub(crate) async fn switch_deployment(
 
         *ctx = DeploymentContext {
             deployment_id,
-            component_registry_ro: linked.component_registry_ro.clone(),
+            component_registry_ro: server_compiled_linked.component_registry_ro.clone(),
             exec_task_handles: new_handles,
             closed: false,
         };
@@ -1529,6 +1559,55 @@ pub(crate) async fn switch_deployment(
         info!(%deployment_id, "Deployment enqueued for next restart");
         Ok(SwitchOutcome::RestartRequired)
     }
+}
+
+// Create seed cron executions if they don't already exist (same config = same ContentDigest)
+async fn create_missing_cron_seeds(
+    db_pool: &Arc<dyn DbPool>,
+    deployment_id: DeploymentId,
+    cron_configs: impl Iterator<Item = &ScheduleWorkerConfig>,
+) -> Result<(), anyhow::Error> {
+    let conn = db_pool.external_api_conn().await?;
+    for cron_config in cron_configs {
+        let digest = &cron_config.component_id.component_digest;
+        let execution_id = ExecutionId::deterministic_at_unix_epoch(&digest.0.0);
+
+        if conn.get(&execution_id).await.is_ok() {
+            info!(
+                %execution_id,
+                "Cron execution `{}` already found",
+                cron_config.component_id.name
+            );
+        } else {
+            info!(
+                %execution_id,
+                "Creating cron execution `{}`",
+                cron_config.component_id.name
+            );
+            let source_ffqn = cron_worker::cron_ffqn(&cron_config.target_ffqn);
+            let now = chrono::Utc::now();
+            conn.create(CreateRequest {
+                created_at: now,
+                execution_id,
+                ffqn: source_ffqn,
+                params: Params::empty(),
+                parent: None,
+                scheduled_at: now,
+                component_id: cron_config.component_id.clone(),
+                deployment_id,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_by: None,
+            })
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to create seed execution for cron `{}`: {e}",
+                    cron_config.component_id.name
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 #[instrument(skip_all)]
@@ -1600,6 +1679,10 @@ async fn spawn_tasks_and_threads(
         None
     };
 
+    server_compiled_linked
+        .create_missing_cron_seeds(&db_pool, deployment_id)
+        .await?;
+
     let preopens_cleaner = if let (Some(parent_preopen_dir), Some(activities_cleanup)) = (
         server_compiled_linked.parent_preopen_dir,
         server_compiled_linked.activities_cleanup,
@@ -1622,67 +1705,6 @@ async fn spawn_tasks_and_threads(
         let log_db_forarder = log_db_forwarder::spawn_new(db_pool.clone(), receiver);
         (log_forwarder_sender, log_db_forarder)
     };
-
-    // Create seed cron executions if they don't already exist (same config = same ContentDigest)
-    {
-        let conn = db_pool.external_api_conn().await?;
-        for worker_linked in &server_compiled_linked.workers_linked {
-            if let LinkedWorkerKind::Cron(cron_config) = &worker_linked.worker {
-                let digest = &cron_config.component_id.component_digest;
-                // Check if there's already a non-finished execution for this schedule digest
-                let existing = conn
-                    .list_executions(
-                        concepts::storage::ListExecutionsFilter {
-                            component_digest: Some(digest.clone()),
-                            hide_finished: true,
-                            ..Default::default()
-                        },
-                        concepts::storage::ExecutionListPagination::CreatedBy(
-                            concepts::storage::Pagination::OlderThan {
-                                length: 1,
-                                cursor: None,
-                                including_cursor: false,
-                            },
-                        ),
-                    )
-                    .await
-                    .map_err(|e| {
-                        anyhow::anyhow!("failed to check existing schedule executions: {e}")
-                    })?;
-                if existing.is_empty() {
-                    // Derive a deterministic execution_id from the component digest
-                    // so that duplicate seed creation is impossible.
-                    let execution_id = ExecutionId::deterministic_at_unix_epoch(&digest.0.0);
-                    info!(
-                        %execution_id,
-                        "Creating seed execution for cron `{}`",
-                        cron_config.component_id.name
-                    );
-                    let source_ffqn = cron_worker::cron_ffqn(&cron_config.target_ffqn);
-                    let now = chrono::Utc::now();
-                    conn.create(CreateRequest {
-                        created_at: now,
-                        execution_id,
-                        ffqn: source_ffqn,
-                        params: Params::empty(),
-                        parent: None,
-                        scheduled_at: now,
-                        component_id: cron_config.component_id.clone(),
-                        deployment_id,
-                        metadata: concepts::ExecutionMetadata::empty(),
-                        scheduled_by: None,
-                    })
-                    .await
-                    .map_err(|e| {
-                        anyhow::anyhow!(
-                            "failed to create seed execution for cron `{}`: {e}",
-                            cron_config.component_id.name
-                        )
-                    })?;
-                }
-            }
-        }
-    }
 
     // Spawn executors
     let exec_join_handles: Vec<ExecutorTaskHandle> = server_compiled_linked

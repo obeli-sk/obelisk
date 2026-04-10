@@ -2164,7 +2164,7 @@ mod deployment {
     use serde::{Deserialize, Serialize};
     use std::fmt::Write as _;
     use std::sync::Arc;
-    use tracing::instrument;
+    use tracing::{info, instrument};
     use utoipa::{IntoParams, ToSchema};
 
     #[derive(Debug, Serialize, ToSchema)]
@@ -2479,6 +2479,7 @@ mod deployment {
         Json(payload): Json<DeploymentSwitchPayload>,
     ) -> Result<Response, HttpResponse> {
         let mut termination_watcher = state.termination_watcher.clone();
+        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let outcome = Box::pin(crate::command::server::switch_deployment(
             deployment_id,
             SwitchDeploymentAction::new(payload.hot_redeploy, payload.verify),
@@ -2504,6 +2505,7 @@ mod deployment {
                 accept,
             },
         })?;
+        info!(%deployment_id, "Deployment switch outcome: {outcome}");
         let message = match outcome {
             crate::command::server::SwitchOutcome::Switched => "switched",
             crate::command::server::SwitchOutcome::RestartRequired => "restart_required",
