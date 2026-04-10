@@ -7,14 +7,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow/workflow.fiboa",
     "parameter_types": [
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      },
-      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -33,14 +33,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow/workflow.fiboa-concurrent",
     "parameter_types": [
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      },
-      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -80,14 +80,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow/workflow.fibow",
     "parameter_types": [
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      },
-      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {

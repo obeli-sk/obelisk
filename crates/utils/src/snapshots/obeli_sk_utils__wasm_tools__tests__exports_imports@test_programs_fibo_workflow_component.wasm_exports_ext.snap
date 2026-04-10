@@ -66,14 +66,14 @@ expression: exports
         "wit_type": "borrow<join-set>"
       },
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      },
-      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -112,14 +112,14 @@ expression: exports
         "wit_type": "borrow<join-set>"
       },
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      },
-      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -235,14 +235,14 @@ expression: exports
         "wit_type": "borrow<join-set>"
       },
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      },
-      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -528,9 +528,9 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-concurrent-schedule",
     "parameter_types": [
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
       },
       {
         "type_wrapper": "u8",
@@ -538,9 +538,9 @@ expression: exports
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
-        "name": "scheduled-at",
-        "wit_type": "schedule-at"
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -556,9 +556,9 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-schedule",
     "parameter_types": [
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
       },
       {
         "type_wrapper": "u8",
@@ -566,9 +566,9 @@ expression: exports
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
-        "name": "scheduled-at",
-        "wit_type": "schedule-at"
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -584,14 +584,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-submit-json-schedule",
     "parameter_types": [
       {
-        "type_wrapper": "u8",
-        "name": "n",
-        "wit_type": "u8"
-      },
-      {
         "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
       }
     ],
     "return_type": {
@@ -607,9 +607,9 @@ expression: exports
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule",
     "parameter_types": [
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
       },
       {
         "type_wrapper": "u8",
@@ -617,9 +617,9 @@ expression: exports
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
-        "name": "scheduled-at",
-        "wit_type": "schedule-at"
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -725,14 +725,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow/workflow.fiboa",
     "parameter_types": [
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      },
-      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -751,14 +751,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow/workflow.fiboa-concurrent",
     "parameter_types": [
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      },
-      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
@@ -798,14 +798,14 @@ expression: exports
     "ffqn": "testing:fibo-workflow/workflow.fibow",
     "parameter_types": [
       {
-        "type_wrapper": "u32",
-        "name": "iterations",
-        "wit_type": "u32"
-      },
-      {
         "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
       }
     ],
     "return_type": {
