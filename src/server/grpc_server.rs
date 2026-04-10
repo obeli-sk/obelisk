@@ -1429,15 +1429,14 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     ) -> TonicRespResult<grpc_gen::SwitchDeploymentResponse> {
         use grpc_gen::switch_deployment_response::Outcome;
         let request = request.into_inner();
-        let new_deployment_id: DeploymentId = request
+        let deployment_id: DeploymentId = request
             .deployment_id
             .argument_must_exist("deployment_id")?
             .try_into()?;
-        tracing::Span::current()
-            .record("deployment_id", tracing::field::display(&new_deployment_id));
+        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let mut termination_watcher = self.termination_watcher.clone();
         let outcome = Box::pin(server::switch_deployment(
-            new_deployment_id,
+            deployment_id,
             SwitchDeploymentAction::new(request.hot_redeploy, request.verify),
             self.config.clone(),
             self.engines.clone(),
@@ -1455,12 +1454,12 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             server::SwitchError::NotFound => tonic::Status::not_found("deployment not found"),
             server::SwitchError::Other(e) => tonic::Status::failed_precondition(format!("{e:#}")),
         })?;
+        info!(%deployment_id, "Deployment switch outcome: {outcome}");
 
         let grpc_outcome = match outcome {
             server::SwitchOutcome::Switched => Outcome::SwitchOutcomeSwitched,
             server::SwitchOutcome::RestartRequired => Outcome::SwitchOutcomeRestartRequired,
         };
-        info!(%new_deployment_id, ?grpc_outcome, "Deployment switch requested");
         Ok(tonic::Response::new(grpc_gen::SwitchDeploymentResponse {
             outcome: grpc_outcome.into(),
         }))

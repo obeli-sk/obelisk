@@ -1366,9 +1366,11 @@ pub(crate) async fn submit_deployment(
 }
 
 /// Outcome of switching a deployment.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, derive_more::Display)]
 pub(crate) enum SwitchOutcome {
+    #[display("switched")]
     Switched,
+    #[display("restart required")]
     RestartRequired,
 }
 
