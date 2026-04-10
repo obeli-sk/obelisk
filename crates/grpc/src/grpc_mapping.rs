@@ -277,6 +277,7 @@ impl From<ComponentType> for grpc_gen::ComponentType {
             ComponentType::ActivityStub => grpc_gen::ComponentType::ActivityStub,
             ComponentType::Workflow => grpc_gen::ComponentType::Workflow,
             ComponentType::WebhookEndpoint => grpc_gen::ComponentType::WebhookEndpoint,
+            ComponentType::Cron => grpc_gen::ComponentType::Cron,
         }
     }
 }
@@ -291,6 +292,7 @@ impl TryFrom<grpc_gen::ComponentType> for ComponentType {
             grpc_gen::ComponentType::ActivityStub => Ok(ComponentType::ActivityStub),
             grpc_gen::ComponentType::Workflow => Ok(ComponentType::Workflow),
             grpc_gen::ComponentType::WebhookEndpoint => Ok(ComponentType::WebhookEndpoint),
+            grpc_gen::ComponentType::Cron => Ok(ComponentType::Cron),
         }
     }
 }

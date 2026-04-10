@@ -302,6 +302,15 @@
 # env_vars = ["API_KEY"]
 # replace_in = ["headers"]
 
+### Cron components configuration
+### Schedules trigger a target function on a cron-like schedule.
+## On redeployment: if the schedule config is unchanged, the existing pending execution continues uninterrupted.
+# [[cron]]
+# name = "my-daily-job"                                       # Required. Each schedule must be named.
+# ffqn = "myapp:tasks/jobs@1.0.0.daily-cleanup"               # Required. Fully qualified function name of the target to invoke on each tick.
+# params = '["arg1", 42]'                                     # Optional. JSON-encoded parameters (default: "[]").
+# schedule = "@daily"                                         # Required. Cron expression, or one of "@once", "@daily", "@hourly", "@weekly", "@monthly", "@yearly".
+
 ## Appendix: Supported path prefixes:
 # | Prefix                  | Default path           | Details
 # | ${DEPLOYMENT_DIR}       | N/A                    | Directory where the deployment.toml file is located

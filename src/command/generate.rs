@@ -238,7 +238,6 @@ pub(crate) async fn generate_support_wits(
                 wit::WIT_OBELISK_LOG_PACKAGE,
             ]
         }
-        ComponentType::ActivityStub => vec![],
         ComponentType::Workflow => vec![
             wit::WIT_OBELISK_TYPES_PACKAGE,
             wit::WIT_OBELISK_WORKFLOW_PACKAGE,
@@ -251,6 +250,7 @@ pub(crate) async fn generate_support_wits(
                 wit::WIT_OBELISK_LOG_PACKAGE,
             ]
         }
+        ComponentType::ActivityStub | ComponentType::Cron => vec![],
     };
     for [folder, filename, contents] in files {
         let output_directory = output_directory.join(folder);

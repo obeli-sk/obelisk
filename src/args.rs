@@ -19,6 +19,7 @@ pub(crate) enum TomlComponentType {
     WorkflowJs,
     WebhookEndpointWasm,
     WebhookEndpointJs,
+    Cron,
 }
 use std::{path::PathBuf, str::FromStr};
 
