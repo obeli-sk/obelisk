@@ -2,7 +2,8 @@ builds:
   - branch: latest
     include:
       - "packages.x86_64-linux.default"
-
       - "packages.aarch64-linux.default"
-
       - "packages.aarch64-darwin.default"
+
+  - exclude:
+      - "*"
