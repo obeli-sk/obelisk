@@ -1377,7 +1377,6 @@ impl SwitchDeploymentAction {
     }
 }
 
-/// Shared logic for switching deployments (used by both gRPC and web API).
 #[expect(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(%deployment_id))]
 pub(crate) async fn switch_deployment(
@@ -1392,12 +1391,12 @@ pub(crate) async fn switch_deployment(
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<SwitchOutcome, SwitchError> {
-    let conn = db_pool
+    let db_conn = db_pool
         .external_api_conn()
         .await
         .map_err(|e| SwitchError::Other(e.into()))?;
 
-    let deployment_record = conn
+    let deployment_record = db_conn
         .get_deployment(deployment_id)
         .await
         .map_err(|e| SwitchError::Other(e.into()))?
@@ -1424,60 +1423,17 @@ pub(crate) async fn switch_deployment(
             termination_watcher,
         )
         .await?;
-
-        let mut ctx = deployment_ctx.write().await;
-        if ctx.closed {
-            return Err(SwitchError::Other(anyhow::anyhow!(
-                "server is being shut down"
-            )));
-        }
-
-        let old = std::mem::take(&mut ctx.exec_task_handles);
-        futures_util::future::join_all(
-            old.iter()
-                .map(executor::executor::ExecutorTaskHandle::close),
-        )
-        .await;
-
-        webhook_registry.swap(
-            server_compiled_linked
-                .http_servers_to_webhooks_and_state
-                .iter()
-                .map(|(http_server, (_instance, state))| {
-                    (http_server.name.to_string(), state.clone())
-                }),
-        );
-
-        server_compiled_linked
-            .create_missing_cron_seeds(&db_pool, deployment_id)
-            .await?;
-
-        let new_handles: Vec<ExecutorTaskHandle> = server_compiled_linked
-            .workers_linked
-            .into_iter()
-            .map(|pre_spawn| {
-                pre_spawn.spawn(
-                    deployment_id,
-                    &db_pool,
-                    cancel_registry.clone(),
-                    &log_forwarder_sender,
-                )
-            })
-            .collect();
-
-        *ctx = DeploymentContext {
+        switch_hot_redeploy(
+            server_compiled_linked,
+            db_conn.as_ref(),
             deployment_id,
-            component_registry_ro: server_compiled_linked.component_registry_ro.clone(),
-            exec_task_handles: new_handles,
-            closed: false,
-        };
-
-        conn.activate_deployment(deployment_id, chrono::Utc::now())
-            .await
-            .map_err(|e| SwitchError::Other(e.into()))?;
-
-        info!(%deployment_id, "Switched to new  deployment");
-        Ok(SwitchOutcome::Switched)
+            &db_pool,
+            deployment_ctx,
+            webhook_registry,
+            cancel_registry,
+            &log_forwarder_sender,
+        )
+        .await
     } else {
         if action == SwitchDeploymentAction::VerifyAndStore {
             deployment_verify_config_compile_link(
@@ -1497,14 +1453,81 @@ pub(crate) async fn switch_deployment(
             )
             .await?;
         }
-
-        conn.enqueue_deployment(deployment_id)
+        db_conn
+            .enqueue_deployment(deployment_id)
             .await
             .map_err(|e| SwitchError::Other(e.into()))?;
 
         info!(%deployment_id, "Deployment enqueued for next restart");
         Ok(SwitchOutcome::RestartRequired)
     }
+}
+
+/// Write lock pretected switch to the new deployment
+#[instrument(skip_all, fields(%deployment_id))]
+#[expect(clippy::too_many_arguments)]
+async fn switch_hot_redeploy(
+    server_compiled_linked: ServerCompiledLinked,
+    db_conn: &dyn DbExternalApi,
+    deployment_id: DeploymentId,
+    db_pool: &Arc<dyn DbPool>,
+    deployment_ctx: &DeploymentContextHandle,
+    webhook_registry: &WebhookRegistry,
+    cancel_registry: CancelRegistry,
+    log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+) -> Result<SwitchOutcome, SwitchError> {
+    let mut write_guard_ctx = deployment_ctx.write().await;
+    if write_guard_ctx.closed {
+        return Err(SwitchError::Other(anyhow::anyhow!(
+            "server is being shut down"
+        )));
+    }
+
+    let old = std::mem::take(&mut write_guard_ctx.exec_task_handles);
+    futures_util::future::join_all(
+        old.iter()
+            .map(executor::executor::ExecutorTaskHandle::close),
+    )
+    .await;
+
+    webhook_registry.swap(
+        server_compiled_linked
+            .http_servers_to_webhooks_and_state
+            .iter()
+            .map(|(http_server, (_instance, state))| (http_server.name.to_string(), state.clone())),
+    );
+
+    server_compiled_linked
+        .create_missing_cron_seeds(db_pool, deployment_id)
+        .await?;
+
+    let new_handles: Vec<ExecutorTaskHandle> = server_compiled_linked
+        .workers_linked
+        .into_iter()
+        .map(|pre_spawn| {
+            pre_spawn.spawn(
+                deployment_id,
+                db_pool,
+                cancel_registry.clone(),
+                log_forwarder_sender,
+            )
+        })
+        .collect();
+
+    *write_guard_ctx = DeploymentContext {
+        deployment_id,
+        component_registry_ro: server_compiled_linked.component_registry_ro.clone(),
+        exec_task_handles: new_handles,
+        closed: false,
+    };
+
+    db_conn
+        .activate_deployment(deployment_id, chrono::Utc::now())
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?;
+
+    info!(%deployment_id, "Switched to new  deployment");
+    Ok(SwitchOutcome::Switched)
 }
 
 // Create seed cron executions if they don't already exist (same config = same ContentDigest)
