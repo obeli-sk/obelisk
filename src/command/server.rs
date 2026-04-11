@@ -1924,6 +1924,35 @@ impl ConfigVerified {
         {
             bail!("Each `http_server` must have a unique name");
         }
+        if let Some(api_listening_addr) = api_addr_if_webui_enabled {
+            let target_url = format!("http://{api_listening_addr}");
+            deployment
+                .webhooks
+                .push(webhook::WebhookWasmComponentConfigCanonical {
+                    common: ComponentCommon {
+                        name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
+                        location: WEBUI_LOCATION
+                            .parse()
+                            .expect("hard-coded webui reference must be parsed"),
+                    },
+                    http_server: ConfigName::new(HTTP_SERVER_NAME_WEBUI.into()).unwrap(),
+                    routes: vec![WebhookRoute::default()],
+                    forward_stdout: ComponentStdOutputToml::default(),
+                    forward_stderr: ComponentStdOutputToml::default(),
+                    env_vars: vec![EnvVarConfig::KeyValue {
+                        key: "TARGET_URL".to_string(),
+                        value: target_url.clone(),
+                    }],
+                    backtrace: crate::config::toml::ComponentBacktraceConfigCanonical::default(),
+                    logs_store_min_level: LogLevelToml::Off,
+                    allowed_hosts: vec![AllowedHostToml {
+                        pattern: target_url,
+                        methods: Some(MethodsInput::Star(MethodsInputStar::default())),
+                        secrets: None,
+                    }],
+                });
+        }
+
         let http_servers_to_webhook_names = {
             let mut remaining_server_names_to_webhook_names = {
                 let mut map: hashbrown::HashMap<ConfigName, Vec<ConfigName>> =
@@ -1967,35 +1996,6 @@ impl ConfigVerified {
             );
             http_servers_to_webhook_names
         };
-
-        if let Some(api_listening_addr) = api_addr_if_webui_enabled {
-            let target_url = format!("http://{api_listening_addr}");
-            deployment
-                .webhooks
-                .push(webhook::WebhookWasmComponentConfigCanonical {
-                    common: ComponentCommon {
-                        name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
-                        location: WEBUI_LOCATION
-                            .parse()
-                            .expect("hard-coded webui reference must be parsed"),
-                    },
-                    http_server: ConfigName::new(HTTP_SERVER_NAME_WEBUI.into()).unwrap(),
-                    routes: vec![WebhookRoute::default()],
-                    forward_stdout: ComponentStdOutputToml::default(),
-                    forward_stderr: ComponentStdOutputToml::default(),
-                    env_vars: vec![EnvVarConfig::KeyValue {
-                        key: "TARGET_URL".to_string(),
-                        value: target_url.clone(),
-                    }],
-                    backtrace: crate::config::toml::ComponentBacktraceConfigCanonical::default(),
-                    logs_store_min_level: LogLevelToml::Off,
-                    allowed_hosts: vec![AllowedHostToml {
-                        pattern: target_url,
-                        methods: Some(MethodsInput::Star(MethodsInputStar::default())),
-                        secrets: None,
-                    }],
-                });
-        }
 
         // Fetch and verify components, each in its own tokio task.
         let activities_wasm = deployment
