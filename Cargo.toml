@@ -193,7 +193,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.37.2"
+version = "0.37.3"
 license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
 authors = ["Project Developers"]
@@ -204,14 +204,14 @@ rust-version = "1.91.0"
 activity-js-runtime-builder = { path = "crates/activity-js-runtime/builder" }
 boa-common = { path = "crates/boa-common" }
 webhook-js-runtime-builder = { path = "crates/webhook-js-runtime/builder" }
-concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.37.2" }
-db-common = { package = "obeli-sk-db-common", path = "crates/db-common", version = "0.37.2" }
-db-mem = { package = "obeli-sk-db-mem", path = "crates/db-mem", version = "0.37.2" }
-db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres", version = "0.37.2" }
-db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.37.2" }
+concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.37.3" }
+db-common = { package = "obeli-sk-db-common", path = "crates/db-common", version = "0.37.3" }
+db-mem = { package = "obeli-sk-db-mem", path = "crates/db-mem", version = "0.37.3" }
+db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres", version = "0.37.3" }
+db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.37.3" }
 db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }
-executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.37.2" }
-grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.37.2" }
+executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.37.3" }
+grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.37.3" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
     "genrs",
 ] }
@@ -231,9 +231,9 @@ test-programs-sleep-workflow-builder = { path = "crates/testing/test-programs/sl
 test-programs-stub-activity-builder = { path = "crates/testing/test-programs/stub/activity/builder" }
 test-programs-stub-workflow-builder = { path = "crates/testing/test-programs/stub/workflow/builder" }
 test-utils = { path = "crates/testing/test-utils" }
-utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.37.2" }
-val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.37.2" }
-wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.37.2" }
+utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.37.3" }
+val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.37.3" }
+wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.37.3" }
 workflow-js-runtime-builder = { path = "crates/workflow-js-runtime/builder" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }
