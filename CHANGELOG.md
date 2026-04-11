@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.2](https://github.com/obeli-sk/obelisk/compare/v0.37.1...v0.37.2)
+
+This release adds support for specifying periodic and one-off executions directly in `deployment.toml`:
+```toml
+[[cron]]
+name = "my-daily-job"
+ffqn = "myapp:tasks/jobs@1.0.0.daily-cleanup"
+params = '["arg1", 42]'
+schedule = "@daily"     # cron expression, or one of "@once", "@daily", "@hourly", "@weekly", "@monthly", "@yearly".
+```
+
+### Added
+
+- *(cron)* Add first-class periodic execution support - ([6099e9a](https://github.com/obeli-sk/obelisk/commit/6099e9ae81acdd31b85e12d8511db6fa499f111c))
+
+### Fixed
+
+- *(webhook-js)* Rename `generateExecutionId` to `executionIdGenerate` - ([cb5e3dc](https://github.com/obeli-sk/obelisk/commit/cb5e3dc97e0af964d5032bea04b9258849c1f998))
+
 ## [0.37.1](https://github.com/obeli-sk/obelisk/compare/v0.37.0...v0.37.1)
 
 ### Fixed
