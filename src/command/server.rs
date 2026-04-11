@@ -452,7 +452,7 @@ pub(crate) async fn verify(
         None
     };
     let path_prefixes = Arc::new(path_prefixes);
-    let deployment_canonical = if let Some(toml) = deployment_toml_opt {
+    let deployment = if let Some(toml) = deployment_toml_opt {
         crate::config::toml::resolve_local_refs_to_canonical(&toml).await?
     } else {
         get_deployment_canonical_from_db(&config.database, &path_prefixes).await?
@@ -462,31 +462,19 @@ pub(crate) async fn verify(
     let prepared_dirs = prepare_dirs(&config, &verify_params.dir_params, &path_prefixes).await?;
     let engines = create_engines(&config, &prepared_dirs)?;
     tokio::spawn(async move { termination_notifier(termination_sender).await });
-    if skip_db {
-        Box::pin(verify_config_compile_link(
-            config,
-            engines,
-            &prepared_dirs,
-            deployment_canonical,
-            path_prefixes,
-            deployment_id,
-            verify_params,
-            &mut termination_watcher,
-        ))
-        .await?;
-    } else {
-        Box::pin(verify_with_db_schema(
-            config,
-            engines,
-            &prepared_dirs,
-            deployment_canonical,
-            path_prefixes,
-            deployment_id,
-            verify_params,
-            &mut termination_watcher,
-        ))
-        .await?;
+    if !skip_db {
+        verify_db_schema(&config.database, &path_prefixes).await?;
     }
+    let server_verified = server_verify(config, engines, path_prefixes).await?;
+    deployment_verify_config_compile_link(
+        server_verified,
+        &prepared_dirs,
+        deployment,
+        deployment_id,
+        verify_params,
+        &mut termination_watcher,
+    )
+    .await?;
     Ok(())
 }
 
@@ -498,35 +486,14 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
     }
 }
 
-/// Verifies configuration including database schema version.
-/// Called by `verify` command.
 #[expect(clippy::too_many_arguments)]
-async fn verify_with_db_schema(
-    config: ServerConfigToml,
-    engines: Engines,
-    prepared_dirs: &PreparedDirs,
-    deployment: DeploymentCanonical,
-    path_prefixes: Arc<PathPrefixes>,
-    deployment_id: DeploymentId,
-    params: VerifyParams,
-    termination_watcher: &mut watch::Receiver<()>,
-) -> Result<ServerCompiledLinked, anyhow::Error> {
-    let database = config.database.clone();
-    let ok = Box::pin(verify_config_compile_link(
-        config,
-        engines,
-        prepared_dirs,
-        deployment,
-        path_prefixes.clone(),
-        deployment_id,
-        params,
-        termination_watcher,
-    ))
-    .await?;
-    // Verify database schema version
-    match &database {
+async fn verify_db_schema(
+    db_config_toml: &DatabaseConfigToml,
+    path_prefixes: &PathPrefixes,
+) -> Result<(), anyhow::Error> {
+    match db_config_toml {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-            let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes).await?;
+            let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes).await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
             if sqlite_file.exists() {
@@ -550,7 +517,7 @@ async fn verify_with_db_schema(
             info!("PostgreSQL database schema verified");
         }
     }
-    Ok(ok)
+    Ok(())
 }
 
 #[derive(Debug, Default, Clone)]
@@ -616,19 +583,13 @@ pub(crate) struct PreparedDirs {
 
 /// Verifies configuration without database schema check.
 #[expect(clippy::too_many_arguments)]
-#[instrument(skip_all, name = "verify", fields(%deployment_id))]
-pub(crate) async fn verify_config_compile_link(
+#[instrument(skip_all)]
+pub(crate) async fn server_verify(
     config: ServerConfigToml,
     engines: Engines,
-    prepared_dirs: &PreparedDirs,
-    deployment: DeploymentCanonical,
     path_prefixes: Arc<PathPrefixes>,
-    deployment_id: DeploymentId,
-    params: VerifyParams,
-    termination_watcher: &mut watch::Receiver<()>,
-) -> Result<ServerCompiledLinked, anyhow::Error> {
-    info!("Verifying configuration, compiling WASM components");
-
+) -> Result<ServerVerified, anyhow::Error> {
+    info!("Verifying server configuration");
     // Check obelisk-version compatibility if specified
     if let Some(version_req_str) = &config.obelisk_version {
         let version_req = semver::VersionReq::parse(version_req_str)
@@ -643,8 +604,21 @@ pub(crate) async fn verify_config_compile_link(
         info!("Obelisk version {PKG_VERSION} matches requirement {version_req_str}",);
     }
     // Verify server
-    let server_verified = Box::pin(ServerVerified::new(engines, config, path_prefixes)).await?;
+    Box::pin(ServerVerified::new(engines, config, path_prefixes)).await
+}
 
+/// Verifies configuration without database schema check.
+#[expect(clippy::too_many_arguments)]
+#[instrument(skip_all, fields(%deployment_id))]
+pub(crate) async fn deployment_verify_config_compile_link(
+    server_verified: ServerVerified,
+    prepared_dirs: &PreparedDirs,
+    deployment: DeploymentCanonical,
+    deployment_id: DeploymentId,
+    params: VerifyParams,
+    termination_watcher: &mut watch::Receiver<()>,
+) -> Result<ServerCompiledLinked, anyhow::Error> {
+    info!("Verifying deployment configuration, compiling WASM components");
     // Verify deployment
     let config = Box::pin(ConfigVerified::fetch_and_verify_all(
         deployment,
@@ -913,12 +887,11 @@ pub(crate) async fn run_internal(
         }
     };
     let engines = create_engines(&config, &prepared_dirs)?;
-    let compiled_and_linked = Box::pin(verify_config_compile_link(
-        config.clone(),
-        engines,
+    let server_verified = server_verify(config, engines, path_prefixes).await?;
+    let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
+        server_verified.clone(),
         &prepared_dirs,
         deployment_canonical,
-        path_prefixes.clone(),
         active_deployment_id,
         VerifyParams {
             dir_params: PrepareDirsParams {
@@ -937,6 +910,7 @@ pub(crate) async fn run_internal(
     let subscription_interruption = database.get_subscription_interruption();
 
     let server_init = spawn_tasks_and_threads(
+        server_verified,
         active_deployment_id,
         db_pool,
         db_close,
@@ -946,22 +920,19 @@ pub(crate) async fn run_internal(
         cancel_watcher,
         &cancel_registry,
         &termination_watcher,
-        config.clone(),
         prepared_dirs.clone(),
-        path_prefixes.clone(),
     )
     .instrument(span)
     .await?;
 
     let grpc_server = Arc::new(GrpcServer::new(
+        server_init.server_verified.clone(),
         server_init.db_pool.clone(),
         termination_watcher.clone(),
         cancel_registry.clone(),
         server_init.engines.clone(),
         prepared_dirs.clone(),
         server_init.log_forwarder_sender.clone(),
-        config,
-        path_prefixes.clone(),
         server_init.deployment_ctx.clone(),
         server_init.webhook_registry.clone(),
     ));
@@ -1012,6 +983,7 @@ pub(crate) async fn run_internal(
         .service(grpc.routes());
 
     let app_router = app_router(WebApiState {
+        server_verified: server_init.server_verified.clone(),
         deployment_ctx: server_init.deployment_ctx.clone(),
         db_pool: server_init.db_pool.clone(),
         cancel_registry,
@@ -1019,9 +991,7 @@ pub(crate) async fn run_internal(
         subscription_interruption,
         engines: server_init.engines.clone(),
         log_forwarder_sender: server_init.log_forwarder_sender.clone(),
-        config: server_init.config.clone(),
         prepared_dirs: server_init.prepared_dirs.clone(),
-        path_prefixes: server_init.path_prefixes.clone(),
         webhook_registry: server_init.webhook_registry.clone(),
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
@@ -1060,7 +1030,8 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
     )
 }
 
-struct ServerVerified {
+#[derive(Clone)]
+pub(crate) struct ServerVerified {
     launch: ServerVerifiedLaunch,
     http_servers: Vec<HttpServer>,
     fuel: Option<u64>,
@@ -1070,6 +1041,7 @@ struct ServerVerified {
     api_addr_if_webui_enabled: Option<String>,
 }
 
+#[derive(Clone)]
 struct ServerVerifiedLaunch {
     engines: Engines,
     parent_preopen_dir: Option<Arc<Path>>,
@@ -1317,13 +1289,11 @@ pub(crate) async fn upsert_backtrace_sources(
 #[expect(clippy::too_many_arguments)]
 #[instrument(skip_all)]
 pub(crate) async fn submit_deployment(
+    server_verified: ServerVerified,
     config_json: &str,
     verify: bool,
     created_by: Option<String>,
-    config: ServerConfigToml,
-    engines: Engines,
     prepared_dirs: &PreparedDirs,
-    path_prefixes: Arc<PathPrefixes>,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> anyhow::Result<DeploymentId> {
@@ -1333,12 +1303,10 @@ pub(crate) async fn submit_deployment(
     let canonical_config = crate::config::toml::compute_config_json(&deployment);
 
     let verify_deployment_id = DeploymentId::generate();
-    let server_compiled = verify_config_compile_link(
-        config,
-        engines,
+    let server_compiled = deployment_verify_config_compile_link(
+        server_verified,
         prepared_dirs,
         deployment,
-        path_prefixes,
         verify_deployment_id,
         VerifyParams {
             dir_params: PrepareDirsParams {
@@ -1418,12 +1386,10 @@ impl SwitchDeploymentAction {
 #[expect(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(%deployment_id))]
 pub(crate) async fn switch_deployment(
+    server_verified: ServerVerified,
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
-    config: ServerConfigToml,
-    engines: Engines,
     prepared_dirs: &PreparedDirs,
-    path_prefixes: Arc<PathPrefixes>,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
     deployment_ctx: &DeploymentContextHandle,
@@ -1447,12 +1413,10 @@ pub(crate) async fn switch_deployment(
             .with_context(|| "cannot parse stored deployment config")?;
 
     if action == SwitchDeploymentAction::HotRedeploy {
-        let server_compiled_linked = verify_config_compile_link(
-            config,
-            engines,
+        let server_compiled_linked = deployment_verify_config_compile_link(
+            server_verified,
             prepared_dirs,
             target_deployment,
-            path_prefixes,
             DeploymentId::generate(),
             VerifyParams {
                 dir_params: PrepareDirsParams {
@@ -1521,12 +1485,10 @@ pub(crate) async fn switch_deployment(
         Ok(SwitchOutcome::Switched)
     } else {
         if action == SwitchDeploymentAction::VerifyAndStore {
-            verify_config_compile_link(
-                config,
-                engines,
+            deployment_verify_config_compile_link(
+                server_verified,
                 prepared_dirs,
                 target_deployment,
-                path_prefixes,
                 DeploymentId::generate(),
                 VerifyParams {
                     dir_params: PrepareDirsParams {
@@ -1602,6 +1564,7 @@ async fn create_missing_cron_seeds(
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
+    server_verified: ServerVerified,
     deployment_id: DeploymentId,
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
@@ -1611,9 +1574,7 @@ async fn spawn_tasks_and_threads(
     cancel_watcher: CancelWatcherTomlConfig,
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
-    config: ServerConfigToml,
     prepared_dirs: PreparedDirs,
-    path_prefixes: Arc<PathPrefixes>,
 ) -> Result<ServerInit, anyhow::Error> {
     upsert_backtrace_sources(
         db_pool.external_api_conn().await?.as_ref(),
@@ -1739,6 +1700,7 @@ async fn spawn_tasks_and_threads(
             closed: false,
         }));
     let server_init = ServerInit {
+        server_verified,
         deployment_ctx,
         // deployment_id,
         db_pool,
@@ -1753,14 +1715,13 @@ async fn spawn_tasks_and_threads(
         engines: server_compiled_linked.engines,
         log_forwarder_sender,
         webhook_registry: Arc::new(webhook_registry),
-        config,
         prepared_dirs,
-        path_prefixes,
     };
     Ok(server_init)
 }
 
 struct ServerInit {
+    server_verified: ServerVerified,
     deployment_ctx: DeploymentContextHandle,
     // deployment_id: DeploymentId,
     db_pool: Arc<dyn DbPool>,
@@ -1775,15 +1736,14 @@ struct ServerInit {
     log_db_forarder: AbortOnDropHandle,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     webhook_registry: Arc<WebhookRegistry>,
-    config: ServerConfigToml,
     prepared_dirs: PreparedDirs,
-    path_prefixes: Arc<PathPrefixes>,
 }
 impl ServerInit {
     async fn close(self) {
         info!("Server is shutting down");
 
         let ServerInit {
+            server_verified: _,
             deployment_ctx,
             db_pool,
             db_close,
@@ -1796,9 +1756,7 @@ impl ServerInit {
             log_db_forarder,
             log_forwarder_sender,
             webhook_registry,
-            config: _,
             prepared_dirs: _,
-            path_prefixes: _,
         } = self;
 
         debug!("Closing executors");

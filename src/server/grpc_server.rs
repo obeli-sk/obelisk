@@ -1,10 +1,9 @@
 use crate::command::server;
 use crate::command::server::DeploymentContextHandle;
 use crate::command::server::PreparedDirs;
+use crate::command::server::ServerVerified;
 use crate::command::server::SubmitError;
 use crate::command::server::SwitchDeploymentAction;
-use crate::config::config_holder::PathPrefixes;
-use crate::config::toml::ServerConfigToml;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
@@ -78,52 +77,41 @@ use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
 use wasm_workers::workflow::workflow_worker::WorkflowWorker;
 
-#[derive(derive_more::Debug)]
 pub(crate) struct GrpcServer {
-    #[debug(skip)]
+    server_verified: ServerVerified,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: watch::Receiver<()>,
-    #[debug(skip)]
     cancel_registry: CancelRegistry,
-    #[debug(skip)]
     engines: Engines,
-    #[debug(skip)]
     prepared_dirs: PreparedDirs,
-    #[debug(skip)]
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-    #[debug(skip)]
-    config: ServerConfigToml,
-    #[debug(skip)]
-    path_prefixes: Arc<crate::config::config_holder::PathPrefixes>,
-    #[debug(skip)]
+    // config: ServerConfigToml,
+    // path_prefixes: Arc<crate::config::config_holder::PathPrefixes>,
     deployment_ctx: DeploymentContextHandle,
-    #[debug(skip)]
     webhook_registry: Arc<WebhookRegistry>,
 }
 
 impl GrpcServer {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
+        server_verified: ServerVerified,
         db_pool: Arc<dyn DbPool>,
         termination_watcher: watch::Receiver<()>,
         cancel_registry: CancelRegistry,
         engines: Engines,
         prepared_dirs: PreparedDirs,
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-        config: ServerConfigToml,
-        path_prefixes: Arc<PathPrefixes>,
         deployment_ctx: DeploymentContextHandle,
         webhook_registry: Arc<WebhookRegistry>,
     ) -> Self {
         Self {
+            server_verified,
             db_pool,
             termination_watcher,
             cancel_registry,
             engines,
             prepared_dirs,
             log_forwarder_sender,
-            config,
-            path_prefixes,
             deployment_ctx,
             webhook_registry,
         }
@@ -1436,12 +1424,10 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let mut termination_watcher = self.termination_watcher.clone();
         let outcome = Box::pin(server::switch_deployment(
+            self.server_verified.clone(),
             deployment_id,
             SwitchDeploymentAction::new(request.hot_redeploy, request.verify),
-            self.config.clone(),
-            self.engines.clone(),
             &self.prepared_dirs,
-            self.path_prefixes.clone(),
             self.db_pool.clone(),
             &mut termination_watcher,
             &self.deployment_ctx,
@@ -1473,13 +1459,11 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let request = request.into_inner();
         let mut termination_watcher = self.termination_watcher.clone();
         let result = Box::pin(server::submit_deployment(
+            self.server_verified.clone(),
             &request.config_json,
             request.verify,
             request.created_by.clone(),
-            self.config.clone(),
-            self.engines.clone(),
             &self.prepared_dirs,
-            self.path_prefixes.clone(),
             self.db_pool.clone(),
             &mut termination_watcher,
         ))
