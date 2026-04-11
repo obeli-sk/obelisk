@@ -1,8 +1,6 @@
 #![expect(clippy::needless_for_each)] // for #[openapi] annotation
 use crate::{
-    command::server::{self, PreparedDirs, SubmitError, SubmitOutcome},
-    config::config_holder::PathPrefixes,
-    config::toml::ServerConfigToml,
+    command::server::{self, PreparedDirs, ServerVerified, SubmitError, SubmitOutcome},
     server::web_api_server::{
         backtrace::{execution_backtrace, execution_backtrace_source},
         components::{component_wit, components_list},
@@ -56,6 +54,7 @@ use wasm_workers::{
 
 #[derive(Clone)]
 pub(crate) struct WebApiState {
+    pub(crate) server_verified: ServerVerified,
     pub(crate) deployment_ctx: crate::command::server::DeploymentContextHandle,
     pub(crate) db_pool: Arc<dyn DbPool>,
     pub(crate) cancel_registry: CancelRegistry,
@@ -63,9 +62,7 @@ pub(crate) struct WebApiState {
     pub(crate) subscription_interruption: Option<Duration>,
     pub(crate) engines: Engines,
     pub(crate) log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-    pub(crate) config: ServerConfigToml,
     pub(crate) prepared_dirs: PreparedDirs,
-    pub(crate) path_prefixes: Arc<PathPrefixes>,
     pub(crate) webhook_registry: Arc<WebhookRegistry>,
 }
 
@@ -2421,13 +2418,11 @@ mod deployment {
     ) -> Result<Response, HttpResponse> {
         let mut termination_watcher = state.termination_watcher.clone();
         let result = Box::pin(crate::command::server::submit_deployment(
+            state.server_verified.clone(),
             &payload.config_json,
             payload.verify,
             Some("web-api".to_string()),
-            state.config.clone(),
-            state.engines.clone(),
             &state.prepared_dirs,
-            state.path_prefixes.clone(),
             state.db_pool.clone(),
             &mut termination_watcher,
         ))
@@ -2481,12 +2476,10 @@ mod deployment {
         let mut termination_watcher = state.termination_watcher.clone();
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let outcome = Box::pin(crate::command::server::switch_deployment(
+            state.server_verified.clone(),
             deployment_id,
             SwitchDeploymentAction::new(payload.hot_redeploy, payload.verify),
-            state.config.clone(),
-            state.engines.clone(),
             &state.prepared_dirs,
-            state.path_prefixes.clone(),
             state.db_pool.clone(),
             &mut termination_watcher,
             &state.deployment_ctx,

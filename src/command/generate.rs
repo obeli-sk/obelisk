@@ -1,7 +1,8 @@
 use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::server::{
-    PrepareDirsParams, VerifyParams, create_engines, prepare_dirs, verify_config_compile_link,
+    PrepareDirsParams, VerifyParams, create_engines, deployment_verify_config_compile_link,
+    prepare_dirs, server_verify,
 };
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{ConfigHolder, load_deployment_toml};
@@ -316,17 +317,18 @@ pub(crate) async fn generate_wit_deps(
     };
     let prepared_dirs = prepare_dirs(&config, &verify_params.dir_params, &path_prefixes).await?;
     let engines = create_engines(&config, &prepared_dirs)?;
-    let compiled_and_linked = Box::pin(verify_config_compile_link(
-        config,
-        engines,
+
+    let server_verified = Box::pin(server_verify(config, engines, path_prefixes)).await?;
+    let compiled_and_linked = deployment_verify_config_compile_link(
+        server_verified,
         &prepared_dirs,
         deployment,
-        path_prefixes,
         DeploymentId::generate(),
         verify_params,
         &mut termination_watcher,
-    ))
+    )
     .await?;
+
     tokio::fs::create_dir_all(&output_directory)
         .await
         .with_context(|| format!("cannot create the output directory {output_directory:?}"))?;
