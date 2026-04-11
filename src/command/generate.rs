@@ -318,7 +318,7 @@ pub(crate) async fn generate_wit_deps(
     let prepared_dirs = prepare_dirs(&config, &verify_params.dir_params, &path_prefixes).await?;
     let engines = create_engines(&config, &prepared_dirs)?;
 
-    let server_verified = server_verify(config, engines, path_prefixes).await?;
+    let server_verified = Box::pin(server_verify(config, engines, path_prefixes)).await?;
     let compiled_and_linked = deployment_verify_config_compile_link(
         server_verified,
         &prepared_dirs,

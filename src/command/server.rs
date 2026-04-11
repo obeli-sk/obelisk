@@ -465,7 +465,7 @@ pub(crate) async fn verify(
     if !skip_db {
         verify_db_schema(&config.database, &path_prefixes).await?;
     }
-    let server_verified = server_verify(config, engines, path_prefixes).await?;
+    let server_verified = Box::pin(server_verify(config, engines, path_prefixes)).await?;
     deployment_verify_config_compile_link(
         server_verified,
         &prepared_dirs,
@@ -486,7 +486,6 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
     }
 }
 
-#[expect(clippy::too_many_arguments)]
 async fn verify_db_schema(
     db_config_toml: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
@@ -582,7 +581,6 @@ pub(crate) struct PreparedDirs {
 }
 
 /// Verifies configuration without database schema check.
-#[expect(clippy::too_many_arguments)]
 #[instrument(skip_all)]
 pub(crate) async fn server_verify(
     config: ServerConfigToml,
@@ -608,7 +606,6 @@ pub(crate) async fn server_verify(
 }
 
 /// Verifies configuration without database schema check.
-#[expect(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(%deployment_id))]
 pub(crate) async fn deployment_verify_config_compile_link(
     server_verified: ServerVerified,
@@ -1052,7 +1049,6 @@ struct ServerVerifiedLaunch {
 
 impl ServerVerified {
     #[instrument(name = "ServerVerified::new", skip_all)]
-    #[expect(clippy::too_many_arguments)]
     async fn new(
         engines: Engines,
         config: ServerConfigToml,
@@ -1286,7 +1282,6 @@ pub(crate) async fn upsert_backtrace_sources(
 
 /// Shared logic for submitting a deployment (used by both gRPC and web API).
 /// Parses, verifies, and inserts the deployment record.
-#[expect(clippy::too_many_arguments)]
 #[instrument(skip_all)]
 pub(crate) async fn submit_deployment(
     server_verified: ServerVerified,
@@ -1951,7 +1946,7 @@ impl ConfigVerified {
         };
 
         if let Some(api_listening_addr) = api_addr_if_webui_enabled {
-            let target_url = format!("http://{}", api_listening_addr);
+            let target_url = format!("http://{api_listening_addr}");
             deployment
                 .webhooks
                 .push(webhook::WebhookWasmComponentConfigCanonical {
