@@ -29,6 +29,7 @@ use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::WorkflowJsConfigVerified;
 use crate::config::toml::cron::CronConfigVerified;
 use crate::config::toml::webhook;
+use crate::config::toml::webhook::HttpServer;
 use crate::config::toml::webhook::WebhookJsConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
@@ -164,6 +165,9 @@ pub(crate) const WORKFLOW_JS_LOCATION: &str =
 #[cfg(not(feature = "webhook-js-local"))]
 pub(crate) const WEBHOOK_JS_LOCATION: &str =
     include_str!("../../assets/webhook-js-runtime-version.txt");
+
+const HTTP_SERVER_NAME_WEBUI: &str = "webui";
+const HTTP_SERVER_NAME_EXTERNAL: &str = "external";
 
 impl Server {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
@@ -624,7 +628,7 @@ pub(crate) async fn verify_config_compile_link(
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<ServerCompiledLinked, anyhow::Error> {
     info!("Verifying configuration, compiling WASM components");
-    debug!("Using toml config: {config:#?}");
+
     // Check obelisk-version compatibility if specified
     if let Some(version_req_str) = &config.obelisk_version {
         let version_req = semver::VersionReq::parse(version_req_str)
@@ -638,20 +642,31 @@ pub(crate) async fn verify_config_compile_link(
         }
         info!("Obelisk version {PKG_VERSION} matches requirement {version_req_str}",);
     }
-    let server_verified = Box::pin(ServerVerified::new(
-        engines,
-        config,
+    // Verify server
+    let server_verified = Box::pin(ServerVerified::new(engines, config, path_prefixes)).await?;
+
+    // Verify deployment
+    let config = Box::pin(ConfigVerified::fetch_and_verify_all(
         deployment,
+        server_verified.http_servers,
         prepared_dirs.wasm_cache_dir.clone(),
         prepared_dirs.metadata_dir.clone(),
         params.ignore_missing_env_vars,
-        path_prefixes,
+        server_verified.global_backtrace_persist,
+        server_verified.launch.parent_preopen_dir.clone(),
+        server_verified.global_executor_instance_limiter,
+        server_verified.fuel,
         termination_watcher,
+        server_verified.database_subscription_interruption,
+        server_verified.api_addr_if_webui_enabled,
     ))
     .await?;
+    debug!("Verified config: {config:#?}");
+
     let compiled_and_linked = ServerCompiledLinked::new(
         deployment_id,
-        server_verified,
+        config,
+        server_verified.launch,
         termination_watcher,
         params.suppress_type_checking_errors,
     )
@@ -1046,7 +1061,16 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 }
 
 struct ServerVerified {
-    config: ConfigVerified,
+    launch: ServerVerifiedLaunch,
+    http_servers: Vec<HttpServer>,
+    fuel: Option<u64>,
+    global_backtrace_persist: bool,
+    global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    database_subscription_interruption: Option<Duration>,
+    api_addr_if_webui_enabled: Option<String>,
+}
+
+struct ServerVerifiedLaunch {
     engines: Engines,
     parent_preopen_dir: Option<Arc<Path>>,
     activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
@@ -1060,19 +1084,14 @@ impl ServerVerified {
     async fn new(
         engines: Engines,
         config: ServerConfigToml,
-        mut deployment: DeploymentCanonical,
-        wasm_cache_dir: Arc<Path>,
-        metadata_dir: Arc<Path>,
-        ignore_missing_env_vars: bool,
         path_prefixes: Arc<PathPrefixes>,
-        termination_watcher: &mut watch::Receiver<()>,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> Result<ServerVerified, anyhow::Error> {
+        debug!("Using server toml: {config:#?}");
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
-            let http_server_name = ConfigName::new(StrVariant::Static("webui")).unwrap();
             http_servers.push(webhook::HttpServer {
-                name: http_server_name.clone(),
+                name: ConfigName::new(HTTP_SERVER_NAME_WEBUI.into()).unwrap(),
                 listening_addr: webui_listening_addr
                     .parse()
                     .context("error converting `webui.listening_addr` to a socket address")?,
@@ -1082,36 +1101,10 @@ impl ServerVerified {
                     "cannot expose webui without enabling the API (`api.enabled = false` is set)"
                 );
             }
-            let target_url = format!("http://{}", config.api.listening_addr);
-            deployment
-                .webhooks
-                .push(webhook::WebhookWasmComponentConfigCanonical {
-                    common: ComponentCommon {
-                        name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
-                        location: WEBUI_LOCATION
-                            .parse()
-                            .expect("hard-coded webui reference must be parsed"),
-                    },
-                    http_server: http_server_name,
-                    routes: vec![WebhookRoute::default()],
-                    forward_stdout: ComponentStdOutputToml::default(),
-                    forward_stderr: ComponentStdOutputToml::default(),
-                    env_vars: vec![EnvVarConfig::KeyValue {
-                        key: "TARGET_URL".to_string(),
-                        value: target_url.clone(),
-                    }],
-                    backtrace: crate::config::toml::ComponentBacktraceConfigCanonical::default(),
-                    logs_store_min_level: LogLevelToml::Off,
-                    allowed_hosts: vec![AllowedHostToml {
-                        pattern: target_url,
-                        methods: Some(MethodsInput::Star(MethodsInputStar::default())),
-                        secrets: None,
-                    }],
-                });
         }
         if config.external.enabled {
             http_servers.push(webhook::HttpServer {
-                name: ConfigName::new(StrVariant::Static("external")).unwrap(),
+                name: ConfigName::new(HTTP_SERVER_NAME_EXTERNAL.into()).unwrap(),
                 listening_addr: config.external.listening_addr,
             });
         }
@@ -1139,29 +1132,24 @@ impl ServerVerified {
             .as_semaphore();
         let database_subscription_interruption = config.database.get_subscription_interruption();
 
-        let config = Box::pin(ConfigVerified::fetch_and_verify_all(
-            deployment,
-            http_servers,
-            wasm_cache_dir,
-            metadata_dir,
-            ignore_missing_env_vars,
-            global_backtrace_persist,
-            parent_preopen_dir.clone(),
-            global_executor_instance_limiter,
-            fuel,
-            termination_watcher,
-            database_subscription_interruption,
-        ))
-        .await?;
-        debug!("Verified config: {config:#?}");
-
         Ok(Self {
-            config,
-            engines,
-            parent_preopen_dir,
-            activities_cleanup,
-            build_semaphore,
-            workflows_lock_extension_leeway,
+            launch: ServerVerifiedLaunch {
+                engines,
+                parent_preopen_dir,
+                activities_cleanup,
+                build_semaphore,
+                workflows_lock_extension_leeway,
+            },
+            http_servers,
+            fuel,
+            global_backtrace_persist,
+            global_executor_instance_limiter,
+            database_subscription_interruption,
+            api_addr_if_webui_enabled: if config.webui.enabled {
+                Some(config.api.listening_addr.to_string()) // `config.api.enabled` checked above
+            } else {
+                None
+            },
         })
     }
 }
@@ -1190,23 +1178,24 @@ pub(crate) struct ServerCompiledLinked {
 impl ServerCompiledLinked {
     async fn new(
         deployment_id: DeploymentId,
-        server_verified: ServerVerified,
+        config: ConfigVerified,
+        server_verified: ServerVerifiedLaunch,
         termination_watcher: &mut watch::Receiver<()>,
         suppress_type_checking_errors: bool,
     ) -> Result<Self, anyhow::Error> {
         let linked = compile_and_link(
             &server_verified.engines,
-            server_verified.config.activities_wasm,
-            server_verified.config.activities_js,
-            server_verified.config.activities_stub_ext,
-            server_verified.config.activities_stub_ext_inline,
-            server_verified.config.workflows,
-            server_verified.config.workflows_js,
-            server_verified.config.webhooks_wasm_by_names,
-            server_verified.config.webhooks_js_by_names,
-            server_verified.config.crons,
-            server_verified.config.global_backtrace_persist,
-            server_verified.config.fuel,
+            config.activities_wasm,
+            config.activities_js,
+            config.activities_stub_ext,
+            config.activities_stub_ext_inline,
+            config.workflows,
+            config.workflows_js,
+            config.webhooks_wasm_by_names,
+            config.webhooks_js_by_names,
+            config.crons,
+            config.global_backtrace_persist,
+            config.fuel,
             server_verified.build_semaphore,
             server_verified.workflows_lock_extension_leeway,
             termination_watcher,
@@ -1215,9 +1204,9 @@ impl ServerCompiledLinked {
         if !suppress_type_checking_errors && linked.supressed_errors.is_some() {
             bail!("type checking errors detected");
         }
-        let http_server_len = server_verified.config.http_servers_to_webhook_names.len();
+        let http_server_len = config.http_servers_to_webhook_names.len();
         let http_servers_to_webhooks = Self::connect_http_servers_to_webhooks(
-            &server_verified.config.http_servers_to_webhook_names,
+            &config.http_servers_to_webhook_names,
             linked.webhooks_wasm_by_names,
         );
         assert_eq!(
@@ -1935,7 +1924,7 @@ impl ConfigVerified {
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
-        deployment: DeploymentCanonical,
+        mut deployment: DeploymentCanonical,
         http_servers: Vec<webhook::HttpServer>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -1946,7 +1935,9 @@ impl ConfigVerified {
         fuel: Option<u64>,
         termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
+        api_addr_if_webui_enabled: Option<String>,
     ) -> Result<ConfigVerified, anyhow::Error> {
+        debug!("Using deployment toml: {deployment:#?}");
         // Check uniqueness of http_server names.
         if http_servers.len()
             > http_servers
@@ -2000,6 +1991,35 @@ impl ConfigVerified {
             );
             http_servers_to_webhook_names
         };
+
+        if let Some(api_listening_addr) = api_addr_if_webui_enabled {
+            let target_url = format!("http://{}", api_listening_addr);
+            deployment
+                .webhooks
+                .push(webhook::WebhookWasmComponentConfigCanonical {
+                    common: ComponentCommon {
+                        name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
+                        location: WEBUI_LOCATION
+                            .parse()
+                            .expect("hard-coded webui reference must be parsed"),
+                    },
+                    http_server: ConfigName::new(HTTP_SERVER_NAME_WEBUI.into()).unwrap(),
+                    routes: vec![WebhookRoute::default()],
+                    forward_stdout: ComponentStdOutputToml::default(),
+                    forward_stderr: ComponentStdOutputToml::default(),
+                    env_vars: vec![EnvVarConfig::KeyValue {
+                        key: "TARGET_URL".to_string(),
+                        value: target_url.clone(),
+                    }],
+                    backtrace: crate::config::toml::ComponentBacktraceConfigCanonical::default(),
+                    logs_store_min_level: LogLevelToml::Off,
+                    allowed_hosts: vec![AllowedHostToml {
+                        pattern: target_url,
+                        methods: Some(MethodsInput::Star(MethodsInputStar::default())),
+                        secrets: None,
+                    }],
+                });
+        }
 
         // Fetch and verify components, each in its own tokio task.
         let activities_wasm = deployment
@@ -3299,7 +3319,7 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{
-            PrepareDirsParams, ServerCompiledLinked, ServerVerified, VerifyParams,
+            ConfigVerified, PrepareDirsParams, ServerCompiledLinked, ServerVerified, VerifyParams,
             compile_activity_inline, create_engines, prepare_dirs,
         },
         config::config_holder::{ConfigHolder, load_deployment_toml},
@@ -3369,7 +3389,7 @@ mod tests {
         let deployment_toml = load_deployment_toml(workspace.join(deployment_toml)).await?;
         let path_prefixes = Arc::new(config_holder.path_prefixes);
 
-        let deployment_canonical =
+        let deployment =
             crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml).await?;
 
         let prepared_dirs =
@@ -3377,24 +3397,36 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(
-            engines,
-            config,
-            deployment_canonical,
+        let server_verified = Box::pin(ServerVerified::new(engines, config, path_prefixes)).await?;
+        let params = VerifyParams::default();
+        let webui_enabled = None;
+
+        // Verify deployment
+        let config = Box::pin(ConfigVerified::fetch_and_verify_all(
+            deployment,
+            server_verified.http_servers,
             prepared_dirs.wasm_cache_dir.clone(),
             prepared_dirs.metadata_dir.clone(),
-            VerifyParams::default().ignore_missing_env_vars,
-            path_prefixes,
+            params.ignore_missing_env_vars,
+            server_verified.global_backtrace_persist,
+            server_verified.launch.parent_preopen_dir.clone(),
+            server_verified.global_executor_instance_limiter,
+            server_verified.fuel,
             &mut termination_watcher,
+            server_verified.database_subscription_interruption,
+            webui_enabled,
         ))
         .await?;
-        ServerCompiledLinked::new(
+
+        let _compiled_and_linked = ServerCompiledLinked::new(
             DeploymentId::generate(),
-            server_verified,
+            config,
+            server_verified.launch,
             &mut termination_watcher,
-            false,
+            params.suppress_type_checking_errors,
         )
         .await?;
+
         Ok(())
     }
 }
