@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.3](https://github.com/obeli-sk/obelisk/compare/v0.37.2...v0.37.3)
+
+### Fixed
+
+Fixed Garnix build automation that went wrong with the 0.37.2 release.
+
 ## [0.37.2](https://github.com/obeli-sk/obelisk/compare/v0.37.1...v0.37.2)
 
 This release adds support for specifying periodic and one-off executions directly in `deployment.toml`:
