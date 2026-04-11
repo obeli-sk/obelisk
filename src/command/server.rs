@@ -1465,6 +1465,7 @@ pub(crate) async fn switch_deployment(
 
 /// Write lock pretected switch to the new deployment
 #[instrument(skip_all, fields(%deployment_id))]
+#[expect(clippy::too_many_arguments)]
 async fn switch_hot_redeploy(
     server_compiled_linked: ServerCompiledLinked,
     db_conn: &dyn DbExternalApi,
