@@ -395,28 +395,39 @@ async fn write_wit_deps(
             .await
             .with_context(|| format!("cannot create directory {directory:?}"))?;
         let target_wit = directory.join(format!("{pkg_file_name}.wit"));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .create_new(!overwrite)
-            .open(&target_wit)
+        // Do not overwrite the file if it only differs in the header (version)
+        let old_content = tokio::fs::read_to_string(&target_wit)
             .await
-            .with_context(|| {
-                format!(
-                    "cannot open {target_wit:?} for writing{}",
-                    if !overwrite {
-                        ", try using `--overwrite`"
-                    } else {
-                        ""
-                    }
-                )
-            })?;
-        let content = format!("{OBELISK_WIT_HEADER} {PKG_VERSION}\n{content}");
-        file.write_all(content.as_bytes())
-            .await
-            .with_context(|| format!("cannot write to {target_wit:?}"))?;
-        println!("{target_wit:?} written");
+            .with_context(|| format!("cannot read {target_wit:?}"))?;
+        let old_content = old_content
+            .split_once('\n')
+            .map(|(_, rest)| rest)
+            .unwrap_or("");
+        if content != old_content {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .create_new(!overwrite)
+                .open(&target_wit)
+                .await
+                .with_context(|| {
+                    format!(
+                        "cannot open {target_wit:?} for writing{}",
+                        if !overwrite {
+                            ", try using `--overwrite`"
+                        } else {
+                            ""
+                        }
+                    )
+                })?;
+
+            let content = format!("{OBELISK_WIT_HEADER} {PKG_VERSION}\n{content}");
+            file.write_all(content.as_bytes())
+                .await
+                .with_context(|| format!("cannot write to {target_wit:?}"))?;
+            println!("{target_wit:?} written");
+        }
     }
     Ok(())
 }
