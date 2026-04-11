@@ -1,10 +1,6 @@
 builds:
-  - branch: latest
-    include:
-      - "packages.x86_64-linux.default"
-      - "packages.aarch64-linux.default"
-      - "packages.aarch64-darwin.default"
-
-  # Catch-all for all branches: overrides the default behavior
-  # so that unhandled branches evaluate to building nothing.
-  - include:
+  branch: latest
+  include:
+    - "packages.x86_64-linux.default"
+    - "packages.aarch64-linux.default"
+    - "packages.aarch64-darwin.default"
