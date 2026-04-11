@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.4](https://github.com/obeli-sk/obelisk/compare/v0.37.3...v0.37.4)
+
+### Fixed
+
+- Inject `webui` to deployment before constructing `http_servers_to_webhook_names` - ([8bf715d](https://github.com/obeli-sk/obelisk/commit/8bf715dd03258c35793a9560777844d2622e90b2))
+
+
 ## [0.37.3](https://github.com/obeli-sk/obelisk/compare/v0.37.2...v0.37.3)
 
 ### Fixed
