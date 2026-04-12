@@ -322,6 +322,21 @@ env_vars = [{{key = "WEBHOOK_TEST_ENV_VAR", value = "hello_from_webhook_env"}}]
 name = "test_generate_execution_id_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/generate_execution_id.js"
 routes = [{{ methods = ["GET"], route = "/generate-execution-id" }}]
+
+[[webhook_endpoint_js]]
+name = "test_body_text_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/body_text.js"
+routes = [{{ methods = ["POST"], route = "/body-text" }}]
+
+[[webhook_endpoint_js]]
+name = "test_body_json_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/body_json.js"
+routes = [{{ methods = ["POST"], route = "/body-json" }}]
+
+[[webhook_endpoint_js]]
+name = "test_body_form_data_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/body_form_data.js"
+routes = [{{ methods = ["POST"], route = "/body-form-data" }}]
 "#,
     );
     debug!("Deployment TOML:{deployment_contents}");
@@ -1334,6 +1349,59 @@ async fn webhook_js_generate_execution_id() {
     assert!(id1.starts_with("E_"), "id1 must have E_ prefix, got: {id1}");
     assert!(id2.starts_with("E_"), "id2 must have E_ prefix, got: {id2}");
     assert_ne!(id1, id2, "generated execution IDs must be unique");
+    server.shutdown().await;
+}
+
+// ---- Request body access ----
+
+#[tokio::test]
+async fn webhook_js_request_body_text() {
+    let server = TestServer::start(test_addr!(44)).await;
+    let resp = server
+        .client
+        .post(format!("{}/body-text", server.webhook_base_url))
+        .body("hello from body")
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(resp.text().await.unwrap(), "hello from body");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn webhook_js_request_body_json() {
+    let server = TestServer::start(test_addr!(45)).await;
+    let resp = server
+        .client
+        .post(format!("{}/body-json", server.webhook_base_url))
+        .header("content-type", "application/json")
+        .body(r#"{"name":"world","value":42}"#)
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["received"]["name"], "world");
+    assert_eq!(body["received"]["value"], 42);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn webhook_js_request_body_form_data() {
+    let server = TestServer::start(test_addr!(46)).await;
+    let resp = server
+        .client
+        .post(format!("{}/body-form-data", server.webhook_base_url))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("name=Alice&city=Wonderland")
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["name"], "Alice");
+    assert_eq!(body["city"], "Wonderland");
     server.shutdown().await;
 }
 

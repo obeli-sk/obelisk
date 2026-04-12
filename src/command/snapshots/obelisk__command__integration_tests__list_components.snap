@@ -184,5 +184,26 @@ expression: components
       "component_type": "webhook_endpoint",
       "name": "test_generate_execution_id_webhook"
     }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "webhook_endpoint",
+      "name": "test_body_text_webhook"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "webhook_endpoint",
+      "name": "test_body_json_webhook"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "webhook_endpoint",
+      "name": "test_body_form_data_webhook"
+    }
   }
 ]
