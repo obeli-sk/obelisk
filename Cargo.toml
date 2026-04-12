@@ -377,17 +377,17 @@ wasmparser = "0.245.1"
 wit-component = "0.245.1"
 
 # boa
-# boa_engine = { package="obeli-sk-boa-engine", version="1.0.0-obeli-sk.6", default-features = false }
-# boa_gc = { package="obeli-sk-boa-gc", version="1.0.0-obeli-sk.6" }
-# boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.6", default-features = false, features = ["fetch"] }
+boa_engine = { package="obeli-sk-boa-engine", version="1.0.0-obeli-sk.7", default-features = false }
+boa_gc = { package="obeli-sk-boa-gc", version="1.0.0-obeli-sk.7" }
+boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.7", default-features = false, features = ["fetch"] }
 
 # boa_engine = { path = "../wasm/boa/core/engine", default-features = false }
 # boa_gc = { path = "../wasm/boa/core/gc" }
 # boa_runtime = { path = "../wasm/boa/core/runtime", default-features = false, features = ["fetch"] }
 
-boa_engine = { git = "https://github.com/obeli-sk/boa", package = "boa_engine", rev = "9b145317", default-features = false }
-boa_gc = { git = "https://github.com/obeli-sk/boa", package = "boa_gc", rev = "9b145317" }
-boa_runtime = { git = "https://github.com/obeli-sk/boa", package = "boa_runtime", rev = "9b145317", default-features = false, features = ["fetch"] }
+# boa_engine = { git = "https://github.com/obeli-sk/boa", package = "boa_engine", rev = "9b145317", default-features = false }
+# boa_gc = { git = "https://github.com/obeli-sk/boa", package = "boa_gc", rev = "9b145317" }
+# boa_runtime = { git = "https://github.com/obeli-sk/boa", package = "boa_runtime", rev = "9b145317", default-features = false, features = ["fetch"] }
 
 # testing components
 wasip2 = "1.0.2"

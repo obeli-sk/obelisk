@@ -8,11 +8,11 @@ version = "0.37.4"
 dependencies = [
  "anyhow",
  "boa-common",
- "boa_engine",
- "boa_runtime",
  "futures-concurrency",
  "futures-lite 2.6.1",
  "http",
+ "obeli-sk-boa-engine",
+ "obeli-sk-boa-runtime",
  "serde_json",
  "tracing",
  "wit-bindgen 0.54.0",
@@ -392,171 +392,15 @@ dependencies = [
 name = "boa-common"
 version = "0.37.4"
 dependencies = [
- "boa_engine",
- "boa_gc",
- "boa_runtime",
  "futures-concurrency",
  "futures-lite 2.6.1",
  "hmac",
  "http",
+ "obeli-sk-boa-engine",
+ "obeli-sk-boa-gc",
+ "obeli-sk-boa-runtime",
  "sha2",
  "wstd",
-]
-
-[[package]]
-name = "boa_ast"
-version = "1.0.0-dev"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
-dependencies = [
- "bitflags",
- "boa_interner",
- "boa_macros",
- "boa_string",
- "indexmap 2.14.0",
- "num-bigint",
- "rustc-hash",
- "strum 0.28.0",
-]
-
-[[package]]
-name = "boa_engine"
-version = "1.0.0-dev"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
-dependencies = [
- "aligned-vec",
- "arrayvec",
- "async-channel",
- "bitflags",
- "boa_ast",
- "boa_gc",
- "boa_interner",
- "boa_macros",
- "boa_parser",
- "boa_string",
- "bytemuck",
- "cfg-if",
- "cow-utils",
- "dashmap",
- "dynify",
- "either",
- "fast-float2",
- "futures-concurrency",
- "futures-lite 2.6.1",
- "hashbrown 0.16.1",
- "icu_normalizer",
- "indexmap 2.14.0",
- "intrusive-collections",
- "itertools",
- "num-bigint",
- "num-integer",
- "num-traits",
- "num_enum",
- "oneshot",
- "pastey",
- "portable-atomic",
- "rand 0.10.0",
- "regress",
- "rustc-hash",
- "ryu-js",
- "serde",
- "serde_json",
- "small_btree",
- "static_assertions",
- "tag_ptr",
- "tap",
- "thin-vec",
- "thiserror 2.0.18",
- "time",
-]
-
-[[package]]
-name = "boa_gc"
-version = "1.0.0-dev"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
-dependencies = [
- "arrayvec",
- "boa_macros",
- "boa_string",
- "either",
- "hashbrown 0.16.1",
- "thin-vec",
-]
-
-[[package]]
-name = "boa_interner"
-version = "1.0.0-dev"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
-dependencies = [
- "boa_gc",
- "boa_macros",
- "hashbrown 0.16.1",
- "indexmap 2.14.0",
- "once_cell",
- "phf",
- "rustc-hash",
- "static_assertions",
-]
-
-[[package]]
-name = "boa_macros"
-version = "1.0.0-dev"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
-dependencies = [
- "cfg-if",
- "cow-utils",
- "proc-macro2",
- "quote",
- "syn",
- "synstructure",
-]
-
-[[package]]
-name = "boa_parser"
-version = "1.0.0-dev"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
-dependencies = [
- "bitflags",
- "boa_ast",
- "boa_interner",
- "boa_macros",
- "fast-float2",
- "icu_properties",
- "num-bigint",
- "num-traits",
- "regress",
- "rustc-hash",
-]
-
-[[package]]
-name = "boa_runtime"
-version = "1.0.0-dev"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
-dependencies = [
- "base64 0.22.1",
- "boa_engine",
- "boa_gc",
- "bytemuck",
- "either",
- "form_urlencoded",
- "futures",
- "futures-lite 2.6.1",
- "http",
- "rustc-hash",
- "serde_json",
- "url",
-]
-
-[[package]]
-name = "boa_string"
-version = "1.0.0-dev"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
-dependencies = [
- "fast-float2",
- "itoa",
- "pastey",
- "rustc-hash",
- "ryu-js",
- "static_assertions",
 ]
 
 [[package]]
@@ -2952,6 +2796,170 @@ dependencies = [
 ]
 
 [[package]]
+name = "obeli-sk-boa-ast"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e2fac833e8c14c146c53a0c4f0043f8833c86926abc6c15957130fa431c84e8"
+dependencies = [
+ "bitflags",
+ "indexmap 2.14.0",
+ "num-bigint",
+ "obeli-sk-boa-interner",
+ "obeli-sk-boa-macros",
+ "obeli-sk-boa-string",
+ "rustc-hash",
+ "strum 0.28.0",
+]
+
+[[package]]
+name = "obeli-sk-boa-engine"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "563b6d7275912b96111ea2ee1d004b90a61a1a373224034a2866cdcda9c2ffdf"
+dependencies = [
+ "aligned-vec",
+ "arrayvec",
+ "async-channel",
+ "bitflags",
+ "bytemuck",
+ "cfg-if",
+ "cow-utils",
+ "dashmap",
+ "dynify",
+ "either",
+ "fast-float2",
+ "futures-concurrency",
+ "futures-lite 2.6.1",
+ "hashbrown 0.16.1",
+ "icu_normalizer",
+ "indexmap 2.14.0",
+ "intrusive-collections",
+ "itertools",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "num_enum",
+ "obeli-sk-boa-ast",
+ "obeli-sk-boa-gc",
+ "obeli-sk-boa-interner",
+ "obeli-sk-boa-macros",
+ "obeli-sk-boa-parser",
+ "obeli-sk-boa-string",
+ "obeli-sk-small-btree",
+ "obeli-sk-tag-ptr",
+ "oneshot",
+ "pastey",
+ "portable-atomic",
+ "rand 0.10.0",
+ "regress",
+ "rustc-hash",
+ "ryu-js",
+ "serde",
+ "serde_json",
+ "static_assertions",
+ "tap",
+ "thin-vec",
+ "thiserror 2.0.18",
+ "time",
+]
+
+[[package]]
+name = "obeli-sk-boa-gc"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c10105a014d0b19d52e67c4803a073e3a8b8a4a6f311223d237ead05d60404e"
+dependencies = [
+ "arrayvec",
+ "either",
+ "hashbrown 0.16.1",
+ "obeli-sk-boa-macros",
+ "obeli-sk-boa-string",
+ "thin-vec",
+]
+
+[[package]]
+name = "obeli-sk-boa-interner"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fca2f7a466dc189a0297990c72f598d90f8dc5c148505cce8ac156f1f84a3a88"
+dependencies = [
+ "hashbrown 0.16.1",
+ "indexmap 2.14.0",
+ "obeli-sk-boa-gc",
+ "obeli-sk-boa-macros",
+ "once_cell",
+ "phf",
+ "rustc-hash",
+ "static_assertions",
+]
+
+[[package]]
+name = "obeli-sk-boa-macros"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "052bef50cc8bd1e3f61662f23bcbe8de174ef6c56cceda9a8c47fee3b5e1df43"
+dependencies = [
+ "cfg-if",
+ "cow-utils",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "synstructure",
+]
+
+[[package]]
+name = "obeli-sk-boa-parser"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9baddb4f2fbd3a5753db487bf1c8c2bb9724983130cacbfa26f123d593562f72"
+dependencies = [
+ "bitflags",
+ "fast-float2",
+ "icu_properties",
+ "num-bigint",
+ "num-traits",
+ "obeli-sk-boa-ast",
+ "obeli-sk-boa-interner",
+ "obeli-sk-boa-macros",
+ "regress",
+ "rustc-hash",
+]
+
+[[package]]
+name = "obeli-sk-boa-runtime"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab1042e4a9d5281a12121c9aa8c574649fbce9a78a7c50462e5ee1e68748719"
+dependencies = [
+ "base64 0.22.1",
+ "bytemuck",
+ "either",
+ "form_urlencoded",
+ "futures",
+ "futures-lite 2.6.1",
+ "http",
+ "obeli-sk-boa-engine",
+ "obeli-sk-boa-gc",
+ "rustc-hash",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "obeli-sk-boa-string"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff28635df03388e5921f32e49b6710f5a9dfae75c6870aa586376446de726c0e"
+dependencies = [
+ "fast-float2",
+ "itoa",
+ "pastey",
+ "rustc-hash",
+ "ryu-js",
+ "static_assertions",
+]
+
+[[package]]
 name = "obeli-sk-concepts"
 version = "0.37.4"
 dependencies = [
@@ -3126,6 +3134,21 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
 ]
+
+[[package]]
+name = "obeli-sk-small-btree"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2f2f369605a9b42ec7e1a4a7f6169591ef709a28f9898af00c3a26e9947de00"
+dependencies = [
+ "arrayvec",
+]
+
+[[package]]
+name = "obeli-sk-tag-ptr"
+version = "1.0.0-obeli-sk.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ece24ad8393257ced609693a3acc6f68d1b09da2a99b0ace33592031d7fc05c"
 
 [[package]]
 name = "obeli-sk-utils"
@@ -4862,14 +4885,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
-name = "small_btree"
-version = "0.1.0"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5030,11 +5045,6 @@ dependencies = [
  "windows-sys 0.59.0",
  "winx",
 ]
-
-[[package]]
-name = "tag_ptr"
-version = "0.1.0"
-source = "git+https://github.com/obeli-sk/boa?rev=9b145317#9b145317cb8312403e512501de9daae8e8bb61d8"
 
 [[package]]
 name = "tap"
@@ -6756,9 +6766,9 @@ version = "0.37.4"
 dependencies = [
  "anyhow",
  "boa-common",
- "boa_engine",
- "boa_runtime",
  "http",
+ "obeli-sk-boa-engine",
+ "obeli-sk-boa-runtime",
  "serde",
  "serde_json",
  "wit-bindgen 0.54.0",
@@ -7438,9 +7448,9 @@ version = "0.37.4"
 dependencies = [
  "anyhow",
  "boa-common",
- "boa_engine",
  "futures-concurrency",
  "futures-lite 2.6.1",
+ "obeli-sk-boa-engine",
  "serde_json",
  "wit-bindgen 0.54.0",
  "wit-bindgen-rust 0.54.0",
