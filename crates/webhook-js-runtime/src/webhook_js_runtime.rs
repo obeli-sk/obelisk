@@ -29,6 +29,19 @@
 //! }
 //! ```
 //!
+//! ## Reading the Request Body
+//! ```js
+//! // As plain text (returns Promise<string>)
+//! const text = await request.text();
+//!
+//! // As parsed JSON (returns Promise<any>)
+//! const data = await request.json();
+//!
+//! // As URL-encoded form data (returns Promise<object>)
+//! const form = await request.formData();
+//! const value = form["fieldName"];
+//! ```
+//!
 //! ## Scheduling Executions
 //! ```js
 //! // Generate execution ID first
@@ -103,11 +116,13 @@ use boa_common::esm::{EsmError, get_default_export, resolve_promise};
 use boa_common::helpers::{new_object, parse_ffqn};
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
+use boa_engine::class::Class;
 use boa_engine::{
     Context, JsArgs, JsNativeError, JsResult, JsValue, NativeFunction, Source, js_string,
     property::Attribute,
 };
 use boa_runtime::extensions::FetchExtension;
+use boa_runtime::fetch::request::JsRequest;
 use boa_runtime::fetch::response::JsResponse;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -150,46 +165,44 @@ async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Erro
         }
     };
 
-    // Convert request to JSON for JS
-    let request_json = request_to_json(&request);
+    // Destructure the wstd request into HTTP parts and body.
+    let (parts, mut incoming_body) = request.into_parts();
 
-    // Run JS and get response
-    run_js_handler_async(&js_source, &request_json).await
-}
+    // Build the request head (metadata only, no body yet).
+    let mut builder = http::Request::builder()
+        .method(parts.method.as_str())
+        .uri(parts.uri.to_string().as_str());
+    for (k, v) in &parts.headers {
+        builder = builder.header(k, v);
+    }
+    let http_request_head = match builder.body(Vec::<u8>::new()) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from(format!("Failed to construct request: {e}")))?);
+        }
+    };
 
-/// Convert HTTP request to JSON string for JS consumption.
-/// Headers are serialized as a flat array of `[name, value]` pairs so that
-/// duplicate header names are preserved and can be fed directly to `new Headers(...)`.
-fn request_to_json(request: &Request<Body>) -> String {
-    let method = request.method().as_str();
-    let uri = request.uri().to_string();
+    // Wrap the body as a lazy future: bytes are only read when JS calls text()/json()/formData().
+    let body_future = async move {
+        match incoming_body.contents().await {
+            Ok(bytes) => bytes.to_vec(),
+            Err(_) => Vec::new(),
+        }
+    };
+    let js_request = JsRequest::with_lazy_body(http_request_head, body_future);
 
-    let headers: Vec<(String, String)> = request
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or_default().to_string()))
-        .collect();
-
-    // For now, we don't read the body to keep it simple
-    // TODO: Add body reading support
-    let body = "";
-
-    serde_json::json!({
-        "method": method,
-        "url": uri,
-        "_headers": headers,
-        "body": body,
-    })
-    .to_string()
+    run_js_handler_async(&js_source, js_request).await
 }
 
 /// Run the JS handler and return the HTTP response.
 /// JS-level errors are converted to 500 responses; only transport errors propagate as `Err`.
 async fn run_js_handler_async(
     js_source: &str,
-    request_json: &str,
+    js_request: JsRequest,
 ) -> Result<Response<Body>, wstd::http::Error> {
-    match run_js_handler_inner(js_source, request_json).await {
+    match run_js_handler_inner(js_source, js_request).await {
         Ok(response) => Ok(response),
         Err(msg) => {
             log::error(&msg);
@@ -203,7 +216,7 @@ async fn run_js_handler_async(
 
 async fn run_js_handler_inner(
     js_source: &str,
-    request_json: &str,
+    js_request: JsRequest,
 ) -> Result<Response<Body>, String> {
     let executor = Rc::new(WasiJobExecutor::default());
     let mut context = Context::builder()
@@ -214,7 +227,7 @@ async fn run_js_handler_inner(
     // Set up console.log -> obelisk:log
     setup_console(&mut context, Logger).expect("console setup must work");
 
-    // Set up fetch
+    // Set up fetch (this also registers the Request and Response classes in the context)
     setup_fetch(&mut context).expect("fetch setup must work");
 
     // Set up crypto.subtle (HMAC-SHA-256/384/512)
@@ -222,6 +235,12 @@ async fn run_js_handler_inner(
 
     // Set up the obelisk global object with webhook support APIs
     setup_obelisk_api(&mut context).expect("obelisk API setup must work");
+
+    // Wrap the incoming request as a JS Request object so the handler receives a proper
+    // Request object with text(), json(), formData(), method, url, and headers.
+    let request_obj = JsRequest::from_data(js_request, &mut context)
+        .map_err(|e| format!("Failed to create JS Request object: {e}"))?;
+    let request_value = JsValue::from(request_obj);
 
     // We need to wrap context in RefCell for the async ESM loading
     let context = RefCell::new(&mut context);
@@ -238,14 +257,6 @@ async fn run_js_handler_inner(
             return Err("Default export is not callable".to_string());
         }
     };
-
-    // Parse the request JSON and wrap the flat `_headers` array into a proper `Headers` object.
-    let request_value = context
-        .borrow_mut()
-        .eval(Source::from_bytes(&format!(
-            "(()=>{{ const r={request_json}; r.headers=new Headers(r._headers); delete r._headers; return r; }})()"
-        )))
-        .map_err(|e| format!("Failed to parse request: {e}"))?;
 
     // Call the default export function with the request (may return a Promise for async handlers)
     let result = default_fn

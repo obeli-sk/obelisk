@@ -2984,6 +2984,98 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
+        async fn webhook_js_request_body_text() {
+            test_utils::set_up();
+            let js_source = r#"
+                export default async function handle(request) {
+                    const text = await request.text();
+                    return new Response(text, { headers: { "content-type": "text/plain" } });
+                }
+            "#;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+            let client = reqwest::Client::new();
+            let resp = client
+                .post(format!("http://{server_addr}/"))
+                .body("hello from body")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(resp.text().await.unwrap(), "hello from body");
+        }
+
+        #[tokio::test]
+        async fn webhook_js_request_body_json() {
+            test_utils::set_up();
+            let js_source = r"
+                export default async function handle(request) {
+                    const data = await request.json();
+                    return Response.json({ received: data });
+                }
+            ";
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+            let client = reqwest::Client::new();
+            let resp = client
+                .post(format!("http://{server_addr}/"))
+                .header("content-type", "application/json")
+                .body(r#"{"name":"world","value":42}"#)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            assert_eq!(body["received"]["name"], "world");
+            assert_eq!(body["received"]["value"], 42);
+        }
+
+        #[tokio::test]
+        async fn webhook_js_request_body_form_data() {
+            test_utils::set_up();
+            let js_source = r"
+                export default async function handle(request) {
+                    const form = await request.formData();
+                    return Response.json(form);
+                }
+            ";
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+            let client = reqwest::Client::new();
+            let resp = client
+                .post(format!("http://{server_addr}/"))
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body("name=Alice&city=Wonderland")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            assert_eq!(body["name"], "Alice");
+            assert_eq!(body["city"], "Wonderland");
+        }
+
+        #[tokio::test]
+        async fn webhook_js_request_body_empty() {
+            test_utils::set_up();
+            // GET request with no body — text() should return an empty string.
+            let js_source = r"
+                export default async function handle(request) {
+                    const text = await request.text();
+                    return new Response(JSON.stringify({ len: text.length }));
+                }
+            ";
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server(js_source).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            assert_eq!(body["len"], 0);
+        }
+
+        #[tokio::test]
         async fn webhook_js_generate_execution_id() {
             test_utils::set_up();
             let js_source = r#"
