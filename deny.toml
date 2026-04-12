@@ -62,6 +62,7 @@ skip = [
     { name = "fixedbitset", version = "0.4" },
     # hashbrown 0.15 is used by prost-build, regalloc2 (wasmtime), wasmparser 0.244
     { name = "hashbrown", version = "0.15" },
+    { name = "hashbrown", version = "0.16.1" },
     { name = "foldhash", version = "0.1" },
     # oci-wasm uses wit-component 0.244 (older wasm-tools suite)
     { name = "wasmparser", version = "0.244" },
