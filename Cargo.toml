@@ -20,9 +20,6 @@ utils.workspace = true
 val-json.workspace = true
 wasm-workers.workspace = true
 
-activity-js-runtime-builder = { workspace = true, optional = true } # Only for local development
-webhook-js-runtime-builder = { workspace = true, optional = true } # Only for local development
-workflow-js-runtime-builder = { workspace = true, optional = true } # Only for local development
 
 anyhow.workspace = true
 assert_matches.workspace = true
@@ -127,9 +124,9 @@ otlp = [
     "dep:opentelemetry-otlp",
     "dep:opentelemetry-semantic-conventions",
 ]
-"activity-js-local" = ["dep:activity-js-runtime-builder"]
-"webhook-js-local" = ["dep:webhook-js-runtime-builder"]
-"workflow-js-local" = ["dep:workflow-js-runtime-builder"]
+"activity-js-local" = []
+"webhook-js-local" = []
+"workflow-js-local" = []
 default = ["otlp"]
 
 [lints]
