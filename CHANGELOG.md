@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.5](https://github.com/obeli-sk/obelisk/compare/v0.37.4...v0.37.5)
+
+### Fixed
+
+- *(webhook-js)* Allow parsing request body via `text`, `json`, `form_data` - ([56f4a2c](https://github.com/obeli-sk/obelisk/commit/56f4a2ceff140682afd62cc065bcc070daa8d9ee))
+
+
 ## [0.37.4](https://github.com/obeli-sk/obelisk/compare/v0.37.3...v0.37.4)
 
 ### Fixed

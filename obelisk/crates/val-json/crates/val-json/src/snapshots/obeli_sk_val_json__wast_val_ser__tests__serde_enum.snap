@@ -1,8 +1,0 @@
----
-source: crates/val-json/src/wast_val_ser.rs
-expression: json
----
-{
-  "type": "enum { a-a, b }",
-  "value": "a_a"
-}
