@@ -2367,11 +2367,11 @@ async fn compile_and_link(
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_js_compile", component_id = %activity_js.component_id());
                 span.in_scope(|| {
-                    prespawn_js_activity(activity_js, &engines, activity_js_runnable).map(|(worker, component_config)| {
+                    prespawn_js_activity(activity_js, &engines, activity_js_runnable).map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
-                            frame_files: FrameFilesToSourceContent::new(),
+                            frame_files,
                         }
                     })
                 })
@@ -2798,9 +2798,10 @@ fn prespawn_js_activity(
     activity_js: ActivityJsConfigVerified,
     engines: &Engines,
     runnable_component: RunnableComponent,
-) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
+    let frame_files = activity_js.as_frame_sources();
 
     let inner = ActivityWorkerCompiled::new_with_config(
         runnable_component,
@@ -2820,11 +2821,13 @@ fn prespawn_js_activity(
     )
     .with_context(|| format!("cannot create JS activity worker for {component_id}"))?;
     let wit = worker.wit();
+
     Ok(WorkerCompiled::new_js_activity(
         worker,
         activity_js.exec_config,
         wit,
         activity_js.logs_store_min_level,
+        frame_files,
     ))
 }
 
@@ -3042,7 +3045,8 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         wit: String,
         logs_store_min_level: Option<LogLevel>,
-    ) -> (WorkerCompiled, ComponentConfig) {
+        frame_files: FrameFilesToSourceContent, // to be served by GetBacktraceSource
+    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -3061,6 +3065,7 @@ impl WorkerCompiled {
                 logs_store_min_level,
             },
             component,
+            frame_files,
         )
     }
 
