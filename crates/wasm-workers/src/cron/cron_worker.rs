@@ -6,8 +6,8 @@ use concepts::storage::{
 };
 use concepts::time::ClockFn;
 use concepts::{
-    ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, ParameterTypes,
-    Params, RETURN_TYPE_DUMMY, StrVariant,
+    ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, Name, Params,
+    StrVariant,
 };
 use executor::worker::{Worker, WorkerContext, WorkerResult, WorkerResultOk};
 use std::sync::Arc;
@@ -25,7 +25,6 @@ pub struct CronWorker {
     pub db_pool: Arc<dyn concepts::storage::DbPool>,
     #[debug(skip)]
     pub clock_fn: Box<dyn ClockFn>,
-    exported_functions: Vec<FunctionMetadata>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,17 +45,6 @@ impl CronWorker {
         db_pool: Arc<dyn concepts::storage::DbPool>,
         clock_fn: Box<dyn ClockFn>,
     ) -> Self {
-        let schedule_ffqn = FunctionFqn::new_arc(
-            format!("obelisk:schedule/{}", component_id.name).into(),
-            "tick".into(),
-        );
-        let exported_functions = vec![FunctionMetadata {
-            ffqn: schedule_ffqn,
-            parameter_types: ParameterTypes(Vec::new()),
-            return_type: RETURN_TYPE_DUMMY,
-            extension: None,
-            submittable: false,
-        }];
         Self {
             component_id,
             target_ffqn,
@@ -66,7 +54,6 @@ impl CronWorker {
             deployment_id,
             db_pool,
             clock_fn,
-            exported_functions,
         }
     }
 
@@ -87,12 +74,14 @@ impl CronWorker {
     }
 }
 
+/// Not read internally, only used for seed execution creation.
+/// FFQN starts with `obelisk-cron-` prefix for easy execution search.
 #[must_use]
 pub fn cron_ffqn(target: &FunctionFqn) -> FunctionFqn {
-    FunctionFqn::new_arc(
-        format!("{}-obelisk-cron", target.ifc_fqn).into(),
-        format!("{}-cron", target.function_name).into(),
-    )
+    FunctionFqn {
+        ifc_fqn: Name::new_arc(format!("obelisk-cron-{}", target.ifc_fqn).into()),
+        function_name: target.function_name.clone(),
+    }
 }
 
 #[async_trait]
@@ -173,7 +162,7 @@ impl Worker for CronWorker {
     }
 
     fn exported_functions_noext(&self) -> &[FunctionMetadata] {
-        &self.exported_functions
+        &[] // registry nor other components cannot directly interact with cron worker
     }
 }
 
@@ -338,20 +327,6 @@ mod tests {
             .unwrap()
             .expect("must have next fire time");
         assert_eq!(next, Utc.with_ymd_and_hms(2025, 1, 16, 12, 0, 0).unwrap());
-    }
-
-    #[test]
-    fn exported_functions_has_synthetic_ffqn() {
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
-        let sim_clock = SimClock::new(test_time());
-        let worker = make_worker(db_pool, parse_cron("0 * * * *"), sim_clock);
-        let fns = worker.exported_functions_noext();
-        assert_eq!(fns.len(), 1);
-        assert_eq!(
-            fns[0].ffqn.ifc_fqn.to_string(),
-            "obelisk:schedule/my_schedule"
-        );
-        assert_eq!(fns[0].ffqn.function_name.to_string(), "tick");
     }
 
     #[tokio::test]
