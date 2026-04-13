@@ -92,7 +92,7 @@
 //!
 //! ## Get Current Execution ID
 //! ```js
-//! const execId = obelisk.currentExecutionId();
+//! const execId = obelisk.executionIdCurrent();
 //! ```
 //!
 //! ## Console Logging
@@ -347,13 +347,13 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // obelisk.currentExecutionId()
+    // obelisk.executionIdCurrent()
     let current_execution_id_fn = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
         let exec_id = webhook_support::current_execution_id();
         Ok(JsValue::from(js_string!(exec_id.id)))
     });
     obelisk.set(
-        js_string!("currentExecutionId"),
+        js_string!("executionIdCurrent"),
         current_execution_id_fn.to_js_function(context.realm()),
         false,
         context,
