@@ -1599,26 +1599,6 @@ async fn spawn_tasks_and_threads(
         &server_compiled_linked,
     )
     .await;
-    {
-        let conn = db_pool.external_api_conn().await?;
-        for (component_digest, frame_files) in &server_compiled_linked.frame_files {
-            for (config_key, source) in frame_files {
-                // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
-                let (frame_key, is_suffix) = if let Some(stripped) = config_key.strip_prefix(".../")
-                {
-                    (format!("/{stripped}"), true)
-                } else {
-                    (config_key.clone(), false)
-                };
-                let res = conn
-                    .upsert_source_file(component_digest, &frame_key, is_suffix, source)
-                    .await;
-                if let Err(err) = res {
-                    warn!("Cannot store backtrace source {config_key:?} in DB: {err:?}");
-                }
-            }
-        }
-    }
 
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
