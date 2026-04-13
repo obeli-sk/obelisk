@@ -1548,6 +1548,7 @@ impl<'de> Deserialize<'de> for JsParamToml {
 pub(crate) struct ActivityJsConfigVerified {
     pub(crate) wasm_path: Arc<Path>, // same for all JS activities
     pub(crate) js_source: String,
+    pub(crate) js_file_name: String,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
@@ -1559,6 +1560,10 @@ pub(crate) struct ActivityJsConfigVerified {
 impl ActivityJsConfigVerified {
     pub fn component_id(&self) -> &ComponentId {
         &self.activity_config.component_id
+    }
+
+    pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
+        FrameFilesToSourceContent::from([(self.js_file_name.clone(), self.js_source.clone())])
     }
 }
 
@@ -1881,7 +1886,8 @@ impl ActivityJsComponentConfigCanonical {
             })
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
         let JsContent {
-            source: js_source, ..
+            source: js_source,
+            file_name: js_file_name,
         } = self
             .location
             .get_content(&wasm_cache_dir, self.content_digest.as_ref())
@@ -1938,6 +1944,7 @@ impl ActivityJsComponentConfigCanonical {
         Ok(ActivityJsConfigVerified {
             wasm_path,
             js_source,
+            js_file_name,
             ffqn: self.ffqn,
             params: parsed_params,
             return_type,

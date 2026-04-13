@@ -1599,26 +1599,6 @@ async fn spawn_tasks_and_threads(
         &server_compiled_linked,
     )
     .await;
-    {
-        let conn = db_pool.external_api_conn().await?;
-        for (component_digest, frame_files) in &server_compiled_linked.frame_files {
-            for (config_key, source) in frame_files {
-                // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
-                let (frame_key, is_suffix) = if let Some(stripped) = config_key.strip_prefix(".../")
-                {
-                    (format!("/{stripped}"), true)
-                } else {
-                    (config_key.clone(), false)
-                };
-                let res = conn
-                    .upsert_source_file(component_digest, &frame_key, is_suffix, source)
-                    .await;
-                if let Err(err) = res {
-                    warn!("Cannot store backtrace source {config_key:?} in DB: {err:?}");
-                }
-            }
-        }
-    }
 
     // Start components requiring a database
     let epoch_ticker = EpochTicker::spawn_new(
@@ -2387,11 +2367,11 @@ async fn compile_and_link(
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_js_compile", component_id = %activity_js.component_id());
                 span.in_scope(|| {
-                    prespawn_js_activity(activity_js, &engines, activity_js_runnable).map(|(worker, component_config)| {
+                    prespawn_js_activity(activity_js, &engines, activity_js_runnable).map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
-                            frame_files: FrameFilesToSourceContent::new(),
+                            frame_files,
                         }
                     })
                 })
@@ -2568,110 +2548,140 @@ async fn compile_and_link(
     // Abort/cancel safety:
     // If an error happens or Ctrl-C is pressed the whole process will shut down.
     let pre_spawns = futures_util::future::join_all(pre_spawns);
-    tokio::select! {
-        results_of_results = pre_spawns => {
-            let mut component_registry = ComponentConfigRegistry::default();
-            let mut workers_compiled = Vec::with_capacity(results_of_results.len());
-            let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
-            let mut all_frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)> = Vec::new();
-            for handle in results_of_results {
-                match handle?? {
-                    CompiledComponent::ActivityOrWorkflow { worker, component_config, frame_files } => {
-                        if !frame_files.is_empty() {
-                            all_frame_files.push((component_config.component_id.component_digest.clone(), frame_files));
-                        }
-                        component_registry.insert(component_config)?;
-                        workers_compiled.push(worker);
-                    },
-                    CompiledComponent::Webhook{ webhook_name, webhook_compiled, routes, frame_files } => {
-                        if !frame_files.is_empty() {
-                            all_frame_files.push((webhook_compiled.config.component_id.component_digest.clone(), frame_files));
-                        }
-                        let component = ComponentConfig {
-                            component_id: webhook_compiled.config.component_id.clone(),
-                            imports: webhook_compiled.imports().to_vec(),
-                            workflow_or_activity_config: None,
-                            wit: webhook_compiled.runnable_component.wasm_component.wit(),
-                            workflow_replay_info: None,
-                            wit_origin: WitOrigin::Wasm,
-                        };
-                        component_registry.insert(component)?;
-                        let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
-                        assert!(old.is_none());
-                    },
-                    CompiledComponent::ActivityStubOrExternal { component_config } => {
-                        component_registry.insert(component_config)?;
-                    },
-                }
-            }
-            // Register cron components in the registry (no WASM, no imports/exports)
-            for cron in &crons {
-                let component_config = ComponentConfig {
-                    component_id: cron.component_id.clone(),
-                    imports: vec![],
-                    workflow_or_activity_config: None,
-                    wit: String::new(), // does not matter, WIT is not exposed
-                    workflow_replay_info: None,
-                    wit_origin: WitOrigin::Synthesized,
-                };
-                component_registry.insert(component_config)?; // Mostly just for name uniqueness checking
-            }
-            let (component_registry_ro, supressed_errors) = component_registry.verify_registry();
-            let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
-            let mut workers_linked = workers_compiled
-                .into_iter()
-                .map(|worker| worker.link(&fn_registry))
-                .collect::<Result<Vec<_>,_>>()?;
-            // Resolve cron target FFQNs, type-check params, and create WorkerLinked entries
-            for cron in crons {
-                let (target_component_id, target_fn_metadata) = component_registry_ro
-                    .find_by_exported_ffqn(&cron.target_ffqn)
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "cron `{}` targets function `{}` which is not exported by any component",
-                        cron.component_id.name,
-                        cron.target_ffqn,
-                    ))?;
-                // Parse and type-check params against the target function's parameter types
-                let params = Params::from_json_values(
-                    Arc::from(cron.params_json),
-                    target_fn_metadata.parameter_types.iter().map(|pt| &pt.type_wrapper),
-                ).with_context(|| format!(
-                    "cron `{}`: params do not match target function `{}` parameter types",
-                    cron.component_id.name, cron.target_ffqn,
-                ))?;
-                workers_linked.push(WorkerLinked {
-                    worker: LinkedWorkerKind::Cron(ScheduleWorkerConfig {
-                        component_id: cron.component_id,
-                        target_ffqn: cron.target_ffqn,
-                        target_component_id: target_component_id.clone(),
-                        params,
-                        cron_schedule: cron.cron_schedule,
-                    }),
-                    exec_config: cron.exec_config,
-                    logs_store_min_level: None,
-                });
-            }
-            let webhooks_wasm_by_names = webhooks_compiled_by_names
-                .into_iter()
-                .map(|(name, (compiled, routes))|{
-                    let component_id = compiled.config.component_id.clone();
-                    compiled.link(&engines.webhook_engine, fn_registry.as_ref())
-                        .map(|instance| (name, (instance, routes)))
-                        .with_context(||format!("cannot compile {component_id}"))
-                })
-                .collect::<Result<IndexMap<_,_>,_>>()?;
-            Ok(Linked {
-                workers: workers_linked,
-                webhooks_wasm_by_names,
-             component_registry_ro,
-              supressed_errors,
-               all_frame_files})
-        },
+    let results_of_results = tokio::select! {
+        results_of_results = pre_spawns => results_of_results,
         _ = termination_watcher.changed() => {
             warn!("Received SIGINT, canceling while compiling the components");
             anyhow::bail!("canceling while compiling the components")
         }
+    };
+
+    let mut component_registry = ComponentConfigRegistry::default();
+    let mut workers_compiled = Vec::with_capacity(results_of_results.len());
+    let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
+    let mut all_frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)> = Vec::new();
+    for handle in results_of_results {
+        match handle?? {
+            CompiledComponent::ActivityOrWorkflow {
+                worker,
+                component_config,
+                frame_files,
+            } => {
+                if !frame_files.is_empty() {
+                    all_frame_files.push((
+                        component_config.component_id.component_digest.clone(),
+                        frame_files,
+                    ));
+                }
+                component_registry.insert(component_config)?;
+                workers_compiled.push(worker);
+            }
+            CompiledComponent::Webhook {
+                webhook_name,
+                webhook_compiled,
+                routes,
+                frame_files,
+            } => {
+                if !frame_files.is_empty() {
+                    all_frame_files.push((
+                        webhook_compiled
+                            .config
+                            .component_id
+                            .component_digest
+                            .clone(),
+                        frame_files,
+                    ));
+                }
+                let component = ComponentConfig {
+                    component_id: webhook_compiled.config.component_id.clone(),
+                    imports: webhook_compiled.imports().to_vec(),
+                    workflow_or_activity_config: None,
+                    wit: webhook_compiled.runnable_component.wasm_component.wit(),
+                    workflow_replay_info: None,
+                    wit_origin: WitOrigin::Wasm,
+                };
+                component_registry.insert(component)?;
+                let old =
+                    webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
+                assert!(old.is_none());
+            }
+            CompiledComponent::ActivityStubOrExternal { component_config } => {
+                component_registry.insert(component_config)?;
+            }
+        }
     }
+    // Register cron components in the registry (no WASM, no imports/exports)
+    for cron in &crons {
+        let component_config = ComponentConfig {
+            component_id: cron.component_id.clone(),
+            imports: vec![],
+            workflow_or_activity_config: None,
+            wit: String::new(), // does not matter, WIT is not exposed
+            workflow_replay_info: None,
+            wit_origin: WitOrigin::Synthesized,
+        };
+        component_registry.insert(component_config)?; // Mostly just for name uniqueness checking
+    }
+    let (component_registry_ro, supressed_errors) = component_registry.verify_registry();
+    let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
+    let mut workers_linked = workers_compiled
+        .into_iter()
+        .map(|worker| worker.link(&fn_registry))
+        .collect::<Result<Vec<_>, _>>()?;
+    // Resolve cron target FFQNs, type-check params, and create WorkerLinked entries
+    for cron in crons {
+        let (target_component_id, target_fn_metadata) = component_registry_ro
+            .find_by_exported_ffqn(&cron.target_ffqn)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cron `{}` targets function `{}` which is not exported by any component",
+                    cron.component_id.name,
+                    cron.target_ffqn,
+                )
+            })?;
+        // Parse and type-check params against the target function's parameter types
+        let params = Params::from_json_values(
+            Arc::from(cron.params_json),
+            target_fn_metadata
+                .parameter_types
+                .iter()
+                .map(|pt| &pt.type_wrapper),
+        )
+        .with_context(|| {
+            format!(
+                "cron `{}`: params do not match target function `{}` parameter types",
+                cron.component_id.name, cron.target_ffqn,
+            )
+        })?;
+        workers_linked.push(WorkerLinked {
+            worker: LinkedWorkerKind::Cron(ScheduleWorkerConfig {
+                component_id: cron.component_id,
+                target_ffqn: cron.target_ffqn,
+                target_component_id: target_component_id.clone(),
+                params,
+                cron_schedule: cron.cron_schedule,
+            }),
+            exec_config: cron.exec_config,
+            logs_store_min_level: None,
+        });
+    }
+    let webhooks_wasm_by_names = webhooks_compiled_by_names
+        .into_iter()
+        .map(|(name, (compiled, routes))| {
+            let component_id = compiled.config.component_id.clone();
+            compiled
+                .link(&engines.webhook_engine, fn_registry.as_ref())
+                .map(|instance| (name, (instance, routes)))
+                .with_context(|| format!("cannot compile {component_id}"))
+        })
+        .collect::<Result<IndexMap<_, _>, _>>()?;
+    Ok(Linked {
+        workers: workers_linked,
+        webhooks_wasm_by_names,
+        component_registry_ro,
+        supressed_errors,
+        all_frame_files,
+    })
 }
 /// Build a [`ComponentConfig`] for an inline-defined stub activity.
 ///
@@ -2788,9 +2798,10 @@ fn prespawn_js_activity(
     activity_js: ActivityJsConfigVerified,
     engines: &Engines,
     runnable_component: RunnableComponent,
-) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
+    let frame_files = activity_js.as_frame_sources();
 
     let inner = ActivityWorkerCompiled::new_with_config(
         runnable_component,
@@ -2810,11 +2821,13 @@ fn prespawn_js_activity(
     )
     .with_context(|| format!("cannot create JS activity worker for {component_id}"))?;
     let wit = worker.wit();
+
     Ok(WorkerCompiled::new_js_activity(
         worker,
         activity_js.exec_config,
         wit,
         activity_js.logs_store_min_level,
+        frame_files,
     ))
 }
 
@@ -3032,7 +3045,8 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         wit: String,
         logs_store_min_level: Option<LogLevel>,
-    ) -> (WorkerCompiled, ComponentConfig) {
+        frame_files: FrameFilesToSourceContent, // to be served by GetBacktraceSource
+    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -3051,6 +3065,7 @@ impl WorkerCompiled {
                 logs_store_min_level,
             },
             component,
+            frame_files,
         )
     }
 
