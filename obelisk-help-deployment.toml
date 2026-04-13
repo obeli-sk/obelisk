@@ -20,7 +20,6 @@
 # location = "oci://docker.io/repo/image:tag"
 # location = "gh://user/repo@release/my-component.wasm"
 # location = "gh://user/repo@latest/my-component.wasm"
-# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 # component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 ## Common executor settings - see above.
 ## Database storage setting for logs emitted by the component
@@ -91,7 +90,6 @@
 ## OCI references are NOT supported for JS activities.
 # location = "path/to/source.js"
 # location = "gh://user/repo@release/my-activity.js"
-# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash.
 # component_digest = "sha256:AA.."           # Optional. Override the component digest used for locking. If omitted, the digest is derived from the JS source, ffqn, and params.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
@@ -130,7 +128,6 @@
 # location = "path/to/wasm"
 # location = "oci://docker.io/repo/image:tag"
 # location = "gh://user/repo@release/my-component.wasm"
-# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 # component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 
 ### Stub Activity components configuration
@@ -151,7 +148,6 @@
 # location = "path/to/stub.wasm"
 # location = "oci://docker.io/repo/image:tag"
 # location = "gh://user/repo@release/my-component.wasm"
-# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 ## Note: component_digest override is not supported for stub activities, as the digest is not used for locking executions.
 ##
 ## Inline mode: define the function schema directly in TOML (no WASM file required).
@@ -172,7 +168,6 @@
 # location = "oci://docker.io/repo/image:tag"
 # location = "gh://user/repo@release/my-component.wasm"
 # location = "gh://user/repo@latest/my-component.wasm"
-# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 # component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 ## Common executor settings - see above.
 # logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
@@ -206,7 +201,6 @@
 ## OCI references are NOT supported for JS workflows.
 # location = "path/to/workflow.js"
 # location = "gh://user/repo@release/my-workflow.js"
-# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash.
 # component_digest = "sha256:AA.."           # Optional. Override the component digest used for locking. If omitted, the digest is derived from the JS source, ffqn, and params.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
@@ -239,7 +233,6 @@
 # location = "oci://docker.io/repo/image:tag"
 # location = "gh://user/repo@release/my-component.wasm"
 # location = "gh://user/repo@latest/my-component.wasm"
-# content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash. When the file is found in cache, network requests are skipped.
 # http_server = "external" # link to a `http_server`'s name (built-in default, or one defined in server.toml)
 ### Routes section
 ## An array of routes that will be matched against incoming requests.
@@ -281,7 +274,6 @@
 ## OCI references are NOT supported for JS webhook endpoints.
 # location = "path/to/webhook.js"
 # location = "gh://user/repo@release/my-webhook.js"
-# content_digest = "sha256:AA.."             # Optional. If specified, the JS file must have a matching hash.
 # http_server = "external"                   # link to a `http_server`'s name (built-in default, or one defined in server.toml)
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]  # Required. See Routes section above.
 ## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".
