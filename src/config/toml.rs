@@ -699,15 +699,10 @@ impl ComponentLocationToml {
     /// Fetch wasm file and calculate its content digest.
     ///
     /// Read wasm file either from local fs, or pull from an OCI registry and cache it.
-    /// Calculate the `content_digest`. File is not converted from Core to Component format.
-    /// If `expected_content_digest` is specified:
-    /// - try to find it in cache instead of download. (We trust that the cache was not tampered with).
-    /// - if downloaded, digests must match.
     pub(crate) async fn fetch(
         &self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-        _expected_digest: Option<&ContentDigest>,
     ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
         use utils::sha256sum::calculate_sha256_file;
 
@@ -843,10 +838,7 @@ impl ComponentCommon {
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
     ) -> Result<(ComponentCommonVerified, ContentDigest, PathBuf), anyhow::Error> {
-        let (content_digest, wasm_path) = self
-            .location
-            .fetch(wasm_cache_dir, metadata_dir, None)
-            .await?;
+        let (content_digest, wasm_path) = self.location.fetch(wasm_cache_dir, metadata_dir).await?;
 
         let verified = ComponentCommonVerified {
             name: self.name,
