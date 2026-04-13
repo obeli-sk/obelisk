@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.6](https://github.com/obeli-sk/obelisk/compare/v0.37.5...v0.37.6)
+
+### Added
+
+- *(activity-js)* Persist sources for better introspection - ([ff99b33](https://github.com/obeli-sk/obelisk/commit/ff99b3393cf2ca559a647e321b4d0d3078ddabdc))
+
+### Fixed
+
+- Unpublish cron workers from registry, make ffqn searchable - ([dd1baaf](https://github.com/obeli-sk/obelisk/commit/dd1baaf9779851889ff2cf7168ee99be341101b8))
+
+### Changed
+
+- *(web-api)* Return `upgraded` even if component digests match - ([b8ade35](https://github.com/obeli-sk/obelisk/commit/b8ade3584e4e52a4769b6f53b0ed3182d0735836))
+- *(webhook-js)* Rename `currentExecutionId` to `executionIdCurrent` - ([9ead241](https://github.com/obeli-sk/obelisk/commit/9ead241da8270bda65470e51bff73548f613d94b))
+
+
 ## [0.37.5](https://github.com/obeli-sk/obelisk/compare/v0.37.4...v0.37.5)
 
 ### Fixed
