@@ -178,7 +178,7 @@ impl Server {
                 clean_codegen_cache,
                 server_config,
                 deployment,
-                deployment_empty,
+                empty: deployment_empty,
                 suppress_type_checking_errors,
             } => {
                 Box::pin(run(
