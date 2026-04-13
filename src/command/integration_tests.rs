@@ -1214,7 +1214,7 @@ async fn webhook_js_hello() {
         .await
         .expect("webhook request failed");
     assert_eq!(resp.status().as_u16(), 200);
-    // Verify currentExecutionId is returned via x-execution-id header
+    // Verify executionIdCurrent is returned via x-execution-id header
     let exec_id = resp
         .headers()
         .get("x-execution-id")
