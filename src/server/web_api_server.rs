@@ -1755,12 +1755,7 @@ async fn execution_upgrade(
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(HttpResponse {
         status: StatusCode::OK,
-        message: if payload.old == payload.new && !payload.skip_determinism_check {
-            "replayed"
-        } else {
-            "upgraded"
-        }
-        .to_string(),
+        message: "upgraded".to_string(),
         accept,
     }
     .into_response())
