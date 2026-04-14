@@ -66,22 +66,19 @@
 //! ## Check Execution Status
 //! ```js
 //! const status = obelisk.getStatus(execId);
-//! // status.type = "pending" | "locked" | "blockedByJoinSet" | "finished"
-//! // If finished: status.finished = "ok" | "err" | "executionFailure"
+//! // status = "pending" | "locked" | "blockedByJoinSet" | "finished"
+//! // If finished: status.finishedStatus = "ok" | "err" | "executionFailure"
 //! ```
 //!
 //! ## Get Execution Result
 //! ```js
 //! // Blocking - waits until execution completes
 //! const result = obelisk.get(execId);
-//! // result = { ok: value } or { err: value }
+//! // result = { ok/err: value }
 //!
-//! // Non-blocking - returns immediately or throws if not finished
-//! try {
-//!     const result = obelisk.tryGet(execId);
-//! } catch (e) {
-//!     // "not finished yet" or "not found"
-//! }
+//! // Non-blocking - returns immediately
+//! const result = obelisk.tryGet(execId);
+//! // result = `{ pending: true }` or `{ ok/err: value }`
 //! ```
 //!
 //! ## Environment Variables
