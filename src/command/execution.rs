@@ -34,6 +34,55 @@ use tracing::instrument;
 impl args::Execution {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
+            args::Execution::List {
+                api_url,
+                ffqn,
+                show_derived,
+                hide_finished,
+                limit,
+                json,
+            } => execution_list(&api_url, ffqn, show_derived, hide_finished, limit, json).await,
+            args::Execution::Logs {
+                api_url,
+                execution_id,
+                show_derived,
+                level,
+                show_streams,
+                stream_type,
+                show_run_id,
+                after,
+                follow,
+                limit,
+                json,
+            } => {
+                let opts = LogsOpts::from_args(
+                    level,
+                    show_streams,
+                    &stream_type,
+                    show_derived,
+                    show_run_id,
+                    limit,
+                )?;
+                if follow {
+                    follow_logs(&api_url, &execution_id, &opts, after, json).await
+                } else {
+                    execution_logs_cmd(&api_url, execution_id, &opts, after, json).await
+                }
+            }
+            args::Execution::Events {
+                api_url,
+                execution_id,
+                from,
+                limit,
+                json,
+            } => execution_events_cmd(&api_url, execution_id, from, limit, json).await,
+            args::Execution::Responses {
+                api_url,
+                execution_id,
+                from,
+                limit,
+                json,
+            } => execution_responses_cmd(&api_url, execution_id, from, limit, json).await,
             args::Execution::Submit {
                 api_url,
                 execution_id,
@@ -453,6 +502,306 @@ async fn poll_get_status_stream(
         }
     }
     Ok(())
+}
+
+/// Send a GET request and forward the response body to stdout.
+async fn send_and_print(req: reqwest::RequestBuilder) -> anyhow::Result<()> {
+    let resp = req.send().await.context("failed to send request")?;
+    let status = resp.status();
+    if status.is_success() {
+        let body = resp.text().await.context("failed to read response body")?;
+        // Ensure output ends with a newline even when the server omits it (e.g. JSON).
+        if body.ends_with('\n') {
+            print!("{body}");
+        } else {
+            println!("{body}");
+        }
+        Ok(())
+    } else {
+        let body = resp.text().await.unwrap_or_default();
+        Err(anyhow::anyhow!("server returned {status}: {body}"))
+    }
+}
+
+async fn execution_list(
+    api_url: &str,
+    ffqn: Option<String>,
+    show_derived: bool,
+    hide_finished: bool,
+    limit: u16,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let accept = if json {
+        "application/json"
+    } else {
+        "text/plain"
+    };
+    let mut req = client
+        .get(format!("{api_url}/v1/executions"))
+        .header(ACCEPT, accept)
+        .query(&[("length", limit.to_string())]);
+    if let Some(ffqn) = ffqn {
+        req = req.query(&[("ffqn_prefix", ffqn)]);
+    }
+    if show_derived {
+        req = req.query(&[("show_derived", "true")]);
+    }
+    if hide_finished {
+        req = req.query(&[("hide_finished", "true")]);
+    }
+    send_and_print(req).await
+}
+
+/// Resolved log filter parameters shared between the one-shot and follow paths.
+/// `json` is intentionally excluded — it controls output format, not the query filter.
+struct LogsOpts {
+    /// Empty slice means `show_logs=false` (level was `off`).
+    levels: &'static [&'static str],
+    show_streams: bool,
+    stream_type_strs: Vec<&'static str>,
+    show_derived: bool,
+    show_run_id: bool,
+    limit: u16,
+}
+
+impl LogsOpts {
+    fn from_args(
+        level: args::LogLevelArg,
+        show_streams: bool,
+        stream_types: &[args::LogStreamTypeArg],
+        show_derived: bool,
+        show_run_id: bool,
+        limit: u16,
+    ) -> anyhow::Result<Self> {
+        use args::LogLevelArg;
+        let levels: &'static [&'static str] = match level {
+            LogLevelArg::Off => &[],
+            LogLevelArg::Trace => &["trace", "debug", "info", "warn", "error"],
+            LogLevelArg::Debug => &["debug", "info", "warn", "error"],
+            LogLevelArg::Info => &["info", "warn", "error"],
+            LogLevelArg::Warn => &["warn", "error"],
+            LogLevelArg::Error => &["error"],
+        };
+        if levels.is_empty() && !show_streams {
+            anyhow::bail!("either `--level` must not be `off`, or `--show-streams` must be set");
+        }
+        let stream_type_strs = stream_types
+            .iter()
+            .map(|st| match st {
+                args::LogStreamTypeArg::Stdout => "stdout",
+                args::LogStreamTypeArg::Stderr => "stderr",
+            })
+            .collect();
+        Ok(Self {
+            levels,
+            show_streams,
+            stream_type_strs,
+            show_derived,
+            show_run_id,
+            limit,
+        })
+    }
+
+    fn apply_to_request(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let show_logs = !self.levels.is_empty();
+        req = req.query(&[("show_logs", if show_logs { "true" } else { "false" })]);
+        if show_logs {
+            for level_str in self.levels {
+                req = req.query(&[("level", *level_str)]);
+            }
+        }
+        req = req.query(&[(
+            "show_streams",
+            if self.show_streams { "true" } else { "false" },
+        )]);
+        if self.show_streams {
+            for st in &self.stream_type_strs {
+                req = req.query(&[("stream_type", *st)]);
+            }
+        }
+        if self.show_derived {
+            req = req.query(&[("show_derived", "true")]);
+        }
+        if self.show_run_id {
+            req = req.query(&[("show_run_id", "true")]);
+        }
+        req
+    }
+}
+
+async fn execution_logs_cmd(
+    api_url: &str,
+    execution_id: ExecutionId,
+    opts: &LogsOpts,
+    after: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let accept = if json {
+        "application/json"
+    } else {
+        "text/plain"
+    };
+    let mut req = reqwest::Client::new()
+        .get(format!("{api_url}/v1/executions/{execution_id}/logs"))
+        .header(ACCEPT, accept)
+        .query(&[("length", opts.limit.to_string())]);
+    req = opts.apply_to_request(req);
+    if let Some(after) = after {
+        req = req
+            .query(&[("cursor", after.as_str())])
+            .query(&[("including_cursor", "false")])
+            .query(&[("direction", "newer")]);
+    }
+    send_and_print(req).await
+}
+
+async fn follow_logs(
+    api_url: &str,
+    execution_id: &ExecutionId,
+    opts: &LogsOpts,
+    initial_after: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
+    let status_url = format!("{api_url}/v1/executions/{execution_id}/status");
+    let accept = if json {
+        "application/json"
+    } else {
+        "text/plain"
+    };
+    let mut cursor: Option<String> = initial_after;
+
+    loop {
+        let mut req = client.get(&logs_url).header(ACCEPT, accept).query(&[
+            ("length", opts.limit.to_string()),
+            ("direction", "newer".into()),
+        ]);
+        req = opts.apply_to_request(req);
+        if let Some(ref c) = cursor {
+            req = req
+                .query(&[("cursor", c.as_str())])
+                .query(&[("including_cursor", "false")]);
+        }
+
+        let resp = req.send().await.context("failed to send logs request")?;
+        let resp_status = resp.status();
+        if !resp_status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("server returned {resp_status}: {body}"));
+        }
+
+        let body = resp.text().await.context("failed to read logs response")?;
+        let has_items = body.lines().any(|l| !l.is_empty());
+
+        if has_items {
+            if json {
+                // Parse only to extract cursor and emit JSONL; no text rendering.
+                let items: Vec<serde_json::Value> =
+                    serde_json::from_str(&body).context("failed to parse logs JSON")?;
+                for item in &items {
+                    println!(
+                        "{}",
+                        serde_json::to_string(item).context("failed to serialize log item")?
+                    );
+                }
+                if let Some(c) = items.last().and_then(|v| v["cursor"].as_str()) {
+                    cursor = Some(c.to_string());
+                }
+            } else {
+                // Forward server-rendered text directly; cursor is the timestamp
+                // at the start of the last non-empty line (always 30 chars wide).
+                print!("{body}");
+                cursor = body
+                    .lines()
+                    .rev()
+                    .find(|l| !l.is_empty())
+                    .and_then(|l| l.get(..30))
+                    .map(str::to_string);
+            }
+        }
+
+        // Check if the execution has finished.
+        let finished = {
+            let resp = client
+                .get(&status_url)
+                .header(ACCEPT, "application/json")
+                .send()
+                .await
+                .context("failed to get execution status")?;
+            let st = resp.status();
+            if !st.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(anyhow::anyhow!("status check returned {st}: {body}"));
+            }
+            let status_json: serde_json::Value = resp
+                .json()
+                .await
+                .context("failed to parse status response")?;
+            status_json["pending_state"]["status"].as_str() == Some("finished")
+        };
+
+        if finished && !has_items {
+            break;
+        }
+
+        if !has_items {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    Ok(())
+}
+
+async fn execution_events_cmd(
+    api_url: &str,
+    execution_id: ExecutionId,
+    from: Option<u32>,
+    limit: u16,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let accept = if json {
+        "application/json"
+    } else {
+        "text/plain"
+    };
+    let mut req = client
+        .get(format!("{api_url}/v1/executions/{execution_id}/events"))
+        .header(ACCEPT, accept)
+        .query(&[("length", limit.to_string())]);
+    if let Some(from) = from {
+        req = req
+            .query(&[("version", from.to_string())])
+            .query(&[("including_cursor", "true")]);
+    }
+    send_and_print(req).await
+}
+
+async fn execution_responses_cmd(
+    api_url: &str,
+    execution_id: ExecutionId,
+    from: Option<u32>,
+    limit: u16,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let accept = if json {
+        "application/json"
+    } else {
+        "text/plain"
+    };
+    let mut req = client
+        .get(format!("{api_url}/v1/executions/{execution_id}/responses"))
+        .header(ACCEPT, accept)
+        .query(&[("length", limit.to_string())]);
+    if let Some(from) = from {
+        req = req
+            .query(&[("cursor", from.to_string())])
+            .query(&[("including_cursor", "true")]);
+    }
+    send_and_print(req).await
 }
 
 impl CancelCommand {

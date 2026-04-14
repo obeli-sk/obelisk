@@ -913,6 +913,15 @@
             }
           },
           {
+            "name": "show_run_id",
+            "in": "query",
+            "description": "Include the run ID in text output",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "cursor",
             "in": "query",
             "description": "Cursor for pagination (`DateTime`, opaque)",
