@@ -18,9 +18,6 @@
 ## Location can be a file path or an OCI registry reference.
 # location = "path/to/wasm"
 # location = "oci://docker.io/repo/image:tag"
-# location = "gh://user/repo@release/my-component.wasm"
-# location = "gh://user/repo@latest/my-component.wasm"
-# component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 ## Common executor settings - see above.
 ## Database storage setting for logs emitted by the component
 # logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
@@ -89,8 +86,6 @@
 ## Supports local file paths.
 ## OCI references are NOT supported for JS activities.
 # location = "path/to/source.js"
-# location = "gh://user/repo@release/my-activity.js"
-# component_digest = "sha256:AA.."           # Optional. Override the component digest used for locking. If omitted, the digest is derived from the JS source, ffqn, and params.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
@@ -127,8 +122,6 @@
 # name = "name" # Required. Each component must be named.
 # location = "path/to/wasm"
 # location = "oci://docker.io/repo/image:tag"
-# location = "gh://user/repo@release/my-component.wasm"
-# component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 
 ### Stub Activity components configuration
 ### A stub activity is a placeholder function that never executes on its own.
@@ -147,8 +140,6 @@
 # name = "name" # Required. Each component must be named.
 # location = "path/to/stub.wasm"
 # location = "oci://docker.io/repo/image:tag"
-# location = "gh://user/repo@release/my-component.wasm"
-## Note: component_digest override is not supported for stub activities, as the digest is not used for locking executions.
 ##
 ## Inline mode: define the function schema directly in TOML (no WASM file required).
 # [[activity_stub]]
@@ -166,9 +157,6 @@
 # name = "name" # Required. Each component must be named.
 # location = "path/to/wasm"
 # location = "oci://docker.io/repo/image:tag"
-# location = "gh://user/repo@release/my-component.wasm"
-# location = "gh://user/repo@latest/my-component.wasm"
-# component_digest = "sha256:AA.." # Optional. Override the component digest used for locking. If omitted, the content digest of the WASM file is used.
 ## Common executor settings - see above.
 # logs_store_min_level = "debug" # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 
@@ -182,8 +170,6 @@
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
 # blocking_strategy = "await" # Default blocking strategy is "await"
 # blocking_strategy = { kind = "await", non_blocking_event_batching = 100 } # Number of non-blocking events that can be cached and written in a batch.
-
-# convert_core_module = true # Transparently convert Core WASM modules to WASM Components during startup.
 
 ## Map from frame symbol file names to corresponding file paths on local filesystem. Supports path prefixes on both sides.
 ## If frame symbol path starts with `...`, only the suffix will be used to find the matching source file.
@@ -200,8 +186,6 @@
 ## Supports local file paths.
 ## OCI references are NOT supported for JS workflows.
 # location = "path/to/workflow.js"
-# location = "gh://user/repo@release/my-workflow.js"
-# component_digest = "sha256:AA.."           # Optional. Override the component digest used for locking. If omitted, the digest is derived from the JS source, ffqn, and params.
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
@@ -231,8 +215,6 @@
 # name = "name" # Required. Each component must be named.
 # location = "path/to/wasm"
 # location = "oci://docker.io/repo/image:tag"
-# location = "gh://user/repo@release/my-component.wasm"
-# location = "gh://user/repo@latest/my-component.wasm"
 # http_server = "external" # link to a `http_server`'s name (built-in default, or one defined in server.toml)
 ### Routes section
 ## An array of routes that will be matched against incoming requests.
@@ -273,7 +255,6 @@
 ## Supports local file paths.
 ## OCI references are NOT supported for JS webhook endpoints.
 # location = "path/to/webhook.js"
-# location = "gh://user/repo@release/my-webhook.js"
 # http_server = "external"                   # link to a `http_server`'s name (built-in default, or one defined in server.toml)
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]  # Required. See Routes section above.
 ## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".
