@@ -85,6 +85,10 @@ impl Generate {
                 println!("{}", ExecutionId::generate());
                 Ok(())
             }
+            Generate::Prompt { description } => {
+                print!("{}", build_ai_prompt(&description));
+                Ok(())
+            }
         }
     }
 }
@@ -430,4 +434,72 @@ async fn write_wit_deps(
         }
     }
     Ok(())
+}
+
+const PREAMBLE: &str = "\
+You are helping write an Obelisk application. Obelisk is a durable workflow engine that runs \
+JS or Rust/WASM components as activities, workflows, and webhook endpoints, all wired together \
+in a `deployment.toml` file.
+
+Key concepts:
+- **Activities**: idempotent, side-effectful functions (HTTP calls, DB writes, …). \
+Auto-retried on failure or timeout.
+- **Workflows**: deterministic orchestration — call activities, sleep durably, fan-out with \
+join sets. Survive server crashes by replaying the execution log.
+- **Webhook endpoints**: HTTP handlers that can call activities and workflows synchronously \
+or schedule them fire-and-forget.
+- All functions are identified by an FFQN (`namespace:package/interface.function`) and typed \
+with WIT. JS components declare their types inline in `deployment.toml` — no WIT files needed.
+
+When generating an Obelisk application, produce:
+1. A `deployment.toml` with every component wired up.
+2. One `.js` file per component placed under conventional subdirectories \
+(`activity/`, `workflow/`, `webhook/`).
+3. A README.md showing how to run the server and interact with the application \
+(via CLI or webhook). Follow the conventions in the \
+\"Running an Obelisk application\" and \"Common pitfalls\" sections of the \
+js-patterns reference below.
+
+The sections below are the authoritative reference documentation:
+";
+
+const WIT_REFERENCE: &str = include_str!("../../assets/ai-prompt/wit-reference.md");
+const JS_COMPONENTS: &str = include_str!("../../assets/ai-prompt/js-components.md");
+const JS_ACTIVITIES: &str = include_str!("../../assets/ai-prompt/js-activities.md");
+const JS_WORKFLOWS: &str = include_str!("../../assets/ai-prompt/js-workflows.md");
+const JS_WEBHOOKS: &str = include_str!("../../assets/ai-prompt/js-webhooks.md");
+const JS_PATTERNS: &str = include_str!("../../assets/ai-prompt/js-patterns.md");
+const COMPONENTS_REPO: &str = include_str!("../../assets/ai-prompt/components-repo.md");
+
+fn build_ai_prompt(description: &str) -> String {
+    use crate::config::config_holder::OBELISK_HELP_DEPLOYMENT_TOML;
+    let mut parts: Vec<&str> = vec![
+        PREAMBLE,
+        "<wit_reference>\n",
+        WIT_REFERENCE,
+        "\n</wit_reference>\n\n",
+        "<js_components>\n",
+        JS_COMPONENTS,
+        "\n</js_components>\n\n",
+        "<js_activities>\n",
+        JS_ACTIVITIES,
+        "\n</js_activities>\n\n",
+        "<js_workflows>\n",
+        JS_WORKFLOWS,
+        "\n</js_workflows>\n\n",
+        "<js_webhooks>\n",
+        JS_WEBHOOKS,
+        "\n</js_webhooks>\n\n",
+        "<js_patterns>\n",
+        JS_PATTERNS,
+        "\n</js_patterns>\n\n",
+        "<deployment_toml_reference>\n```toml\n",
+        OBELISK_HELP_DEPLOYMENT_TOML,
+        "```\n</deployment_toml_reference>\n\n",
+        "<github.com/obeli-sk/components>\n",
+        COMPONENTS_REPO,
+        "\n</github.com/obeli-sk/components>\n\n",
+    ];
+    parts.extend_from_slice(&["<task>\n", description, "\n</task>\n"]);
+    parts.concat()
 }
