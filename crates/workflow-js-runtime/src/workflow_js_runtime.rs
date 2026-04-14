@@ -931,20 +931,7 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
                     ResponseId::DelayId(delay_id) => {
                         result_obj.set(js_string!("type"), js_string!("delay"), false, ctx)?;
                         result_obj.set(js_string!("id"), js_string!(delay_id.id), false, ctx)?;
-                        match result {
-                            Ok(()) => {
-                                result_obj.set(js_string!("ok"), true, false, ctx)?;
-                            }
-                            Err(()) => {
-                                result_obj.set(js_string!("ok"), false, false, ctx)?;
-                                result_obj.set(
-                                    js_string!("error"),
-                                    js_string!("cancelled"),
-                                    false,
-                                    ctx,
-                                )?;
-                            }
-                        }
+                        result_obj.set(js_string!("ok"), result.is_ok(), false, ctx)?;
                     }
                 }
 
