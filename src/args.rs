@@ -73,7 +73,7 @@ pub(crate) enum Subcommand {
     /// Run or verify the Obelisk server.
     #[command(subcommand)]
     Server(Server),
-    /// Submit, inspect, stub, or cancel executions against a running server.
+    /// Submit, inspect, stub, cancel, pause, or unpause executions against a running server.
     #[command(subcommand)]
     Execution(Execution),
     /// Inspect components or add/push them to an OCI registry.
@@ -569,6 +569,22 @@ pub(crate) enum Execution {
     },
     /// Request cancellation of a running activity or pending delay.
     Cancel(CancelCommand),
+    /// Pause a workflow execution, preventing it from being picked up until unpaused.
+    Pause {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Execution ID to pause.
+        execution_id: ExecutionId,
+    },
+    /// Resume a previously paused workflow execution.
+    Unpause {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Execution ID to unpause.
+        execution_id: ExecutionId,
+    },
 }
 
 pub(crate) mod params {

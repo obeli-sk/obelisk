@@ -141,6 +141,34 @@ impl args::Execution {
                 get_status(client, execution_id, opts).await
             }
             args::Execution::Cancel(cancel_request) => cancel_request.execute().await,
+            args::Execution::Pause {
+                api_url,
+                execution_id,
+            } => {
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_execution_repository_client(channel).await?;
+                client
+                    .pause_execution(tonic::Request::new(grpc_gen::PauseExecutionRequest {
+                        execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
+                    }))
+                    .await?;
+                println!("Paused");
+                Ok(())
+            }
+            args::Execution::Unpause {
+                api_url,
+                execution_id,
+            } => {
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_execution_repository_client(channel).await?;
+                client
+                    .unpause_execution(tonic::Request::new(grpc_gen::UnpauseExecutionRequest {
+                        execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
+                    }))
+                    .await?;
+                println!("Unpaused");
+                Ok(())
+            }
         }
     }
 }
