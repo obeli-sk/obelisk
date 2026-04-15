@@ -593,7 +593,7 @@ pub(crate) enum Execution {
         /// Execution ID to replay.
         execution_id: ExecutionId,
     },
-    /// Upgrade an execution to the current component version in the active deployment.
+    /// Upgrade a workflow execution to the current component version in the active deployment.
     ///
     /// Looks up the execution's FFQN, finds the component that exports it in the active
     /// deployment, and upgrades the execution from its current component digest to the new one.

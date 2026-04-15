@@ -174,9 +174,7 @@ impl args::Execution {
                 execution_id,
             } => {
                 let client = reqwest::Client::new();
-                let req = client.put(format!(
-                    "{api_url}/v1/executions/{execution_id}/replay"
-                ));
+                let req = client.put(format!("{api_url}/v1/executions/{execution_id}/replay"));
                 send_and_print(req).await
             }
             args::Execution::Upgrade {
@@ -922,13 +920,18 @@ async fn upgrade(
         .context("failed to read status stream")?
         .context("empty status stream")?;
 
-    let summary = match summary.message.context("missing message in status response")? {
+    let summary = match summary
+        .message
+        .context("missing message in status response")?
+    {
         grpc::grpc_gen::get_status_response::Message::Summary(s) => s,
         other => bail!("expected ExecutionSummary, got {other:?}"),
     };
 
     let ffqn = FunctionFqn::try_from(
-        summary.function_name.context("missing function_name in summary")?,
+        summary
+            .function_name
+            .context("missing function_name in summary")?,
     )
     .map_err(|e| anyhow::anyhow!("failed to parse ffqn: {e}"))?;
 
@@ -980,12 +983,8 @@ async fn upgrade(
         .upgrade_execution_component(tonic::Request::new(
             grpc_gen::UpgradeExecutionComponentRequest {
                 execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
-                expected_component_digest: Some(grpc_gen::ContentDigest {
-                    digest: old_digest,
-                }),
-                new_component_digest: Some(grpc_gen::ContentDigest {
-                    digest: new_digest,
-                }),
+                expected_component_digest: Some(grpc_gen::ContentDigest { digest: old_digest }),
+                new_component_digest: Some(grpc_gen::ContentDigest { digest: new_digest }),
                 skip_determinism_check,
             },
         ))
