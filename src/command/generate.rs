@@ -371,6 +371,7 @@ pub(crate) async fn generate_wit_deps(
         },
         ignore_missing_env_vars: true,
         suppress_type_checking_errors: true, // Just extracting WITs, not running components
+        suppress_linking_errors: true,       // Just extracting WITs, not running components
     };
     let prepared_dirs = prepare_dirs(&config, &verify_params.dir_params, &path_prefixes).await?;
     let engines = create_engines(&config, &prepared_dirs)?;
