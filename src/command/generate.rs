@@ -6,12 +6,16 @@ use crate::command::server::{
 };
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{ConfigHolder, load_deployment_toml};
+use crate::config::toml::{
+    ActivityExternalComponentConfigToml, ActivityStubComponentConfigToml, ComponentLocationToml,
+    JsLocationToml,
+};
 use crate::init::{self};
 use crate::project_dirs;
 use anyhow::Context;
 use concepts::{ComponentType, ExecutionId, PackageIfcFns, PkgFqn, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 use std::{borrow::Cow, path::PathBuf};
 use tokio::fs::OpenOptions;
@@ -71,6 +75,7 @@ impl Generate {
                 deployment,
                 output_directory,
                 overwrite,
+                skip_local,
             } => {
                 generate_wit_deps(
                     project_dirs(),
@@ -78,6 +83,7 @@ impl Generate {
                     deployment,
                     output_directory,
                     overwrite,
+                    skip_local,
                 )
                 .await
             }
@@ -301,14 +307,61 @@ pub(crate) async fn generate_wit_deps(
     deployment_path: PathBuf,
     output_directory: PathBuf,
     overwrite: bool,
+    skip_local: bool,
 ) -> Result<(), anyhow::Error> {
-    let deployment_toml = load_deployment_toml(deployment_path).await?;
+    let deployment = load_deployment_toml(deployment_path).await?;
+
+    let skipped_oci_component_names: HashSet<String> = if skip_local {
+        // When `--external-only` is set, build the set of component names that have an OCI location.
+        // Local components will be skipped during WIT extraction.
+        let deployment = &deployment.inner;
+        let mut skipped_names: HashSet<String> = HashSet::new();
+        for c in &deployment.activities_wasm {
+            if matches!(c.common.location, ComponentLocationToml::Path(_)) {
+                skipped_names.insert(c.common.name.to_string());
+            }
+        }
+        for c in &deployment.activities_stub {
+            if let ActivityStubComponentConfigToml::File(f) = c
+                && matches!(f.common.location, ComponentLocationToml::Path(_))
+            {
+                skipped_names.insert(f.common.name.to_string());
+            }
+        }
+        for c in &deployment.activities_external {
+            if let ActivityExternalComponentConfigToml::File(f) = c
+                && matches!(f.common.location, ComponentLocationToml::Path(_))
+            {
+                skipped_names.insert(f.common.name.to_string());
+            }
+        }
+        for c in &deployment.activities_js {
+            if matches!(c.location, JsLocationToml::Path(_)) {
+                skipped_names.insert(c.name.to_string());
+            }
+        }
+        for c in &deployment.workflows {
+            if matches!(c.common.location, ComponentLocationToml::Path(_)) {
+                skipped_names.insert(c.common.name.to_string());
+            }
+        }
+        for c in &deployment.workflows_js {
+            if matches!(c.location, JsLocationToml::Path(_)) {
+                skipped_names.insert(c.name.to_string());
+            }
+        }
+        // webhooks are skipped in any case
+        skipped_names
+    } else {
+        HashSet::new()
+    };
+
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
     let config = config_holder.load_config().await?;
     let _guard = init::init(&config)?;
     let path_prefixes = config_holder.path_prefixes;
     let path_prefixes = Arc::new(path_prefixes);
-    let deployment = crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml).await?;
+    let deployment = crate::config::toml::resolve_local_refs_to_canonical(&deployment).await?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let verify_params = VerifyParams {
@@ -348,7 +401,14 @@ pub(crate) async fn generate_wit_deps(
     // insertion time, so the two outputs can never collide on the same interface.
     let mut pkg_to_wit: HashMap<PkgFqn, String> = HashMap::new();
     let mut synthesized_exports: Vec<PackageIfcFns> = Vec::new();
-    for component in compiled_and_linked.component_registry_ro.list(true) {
+    for component in compiled_and_linked
+        .component_registry_ro
+        .list(true)
+        .into_iter()
+        .filter(|component| {
+            !skipped_oci_component_names.contains(component.component_id.name.as_ref())
+        })
+    {
         if let Some(importable) = &component.workflow_or_activity_config {
             match component.wit_origin {
                 WitOrigin::Synthesized => {

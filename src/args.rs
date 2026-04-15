@@ -225,6 +225,9 @@ pub(crate) enum Generate {
         /// Overwrite existing files.
         #[arg(long, short)]
         overwrite: bool,
+        /// Skip local-path components.
+        #[arg(long)]
+        skip_local: bool,
     },
     /// Generate a default server.toml.
     ServerConfig {
