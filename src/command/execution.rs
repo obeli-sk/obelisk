@@ -36,12 +36,24 @@ impl args::Execution {
         match self {
             args::Execution::List {
                 api_url,
-                ffqn,
+                ffqn_prefix: ffqn,
+                execution_id_prefix,
                 show_derived,
                 hide_finished,
                 limit,
                 json,
-            } => execution_list(&api_url, ffqn, show_derived, hide_finished, limit, json).await,
+            } => {
+                execution_list(
+                    &api_url,
+                    ffqn,
+                    execution_id_prefix,
+                    show_derived,
+                    hide_finished,
+                    limit,
+                    json,
+                )
+                .await
+            }
             args::Execution::Logs {
                 api_url,
                 execution_id,
@@ -526,6 +538,7 @@ async fn send_and_print(req: reqwest::RequestBuilder) -> anyhow::Result<()> {
 async fn execution_list(
     api_url: &str,
     ffqn: Option<String>,
+    execution_id_prefix: Option<String>,
     show_derived: bool,
     hide_finished: bool,
     limit: u16,
@@ -543,6 +556,9 @@ async fn execution_list(
         .query(&[("length", limit.to_string())]);
     if let Some(ffqn) = ffqn {
         req = req.query(&[("ffqn_prefix", ffqn)]);
+    }
+    if let Some(execution_id_prefix) = execution_id_prefix {
+        req = req.query(&[("execution_id_prefix", execution_id_prefix)]);
     }
     if show_derived {
         req = req.query(&[("show_derived", "true")]);
