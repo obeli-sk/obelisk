@@ -219,6 +219,7 @@ impl Server {
                         },
                         ignore_missing_env_vars,
                         suppress_type_checking_errors,
+                        suppress_linking_errors: false,
                     },
                     skip_db,
                 )
@@ -432,6 +433,7 @@ pub(crate) struct VerifyParams {
     pub(crate) dir_params: PrepareDirsParams,
     pub(crate) ignore_missing_env_vars: bool,
     pub(crate) suppress_type_checking_errors: bool,
+    pub(crate) suppress_linking_errors: bool,
 }
 
 pub(crate) async fn verify(
@@ -640,6 +642,7 @@ pub(crate) async fn deployment_verify_config_compile_link(
         server_verified.launch,
         termination_watcher,
         params.suppress_type_checking_errors,
+        params.suppress_linking_errors,
     )
     .await?;
     if compiled_and_linked.supressed_errors.is_none() {
@@ -897,6 +900,7 @@ pub(crate) async fn run_internal(
             },
             ignore_missing_env_vars: false,
             suppress_type_checking_errors: params.suppress_type_checking_errors,
+            suppress_linking_errors: false,
         },
         &mut termination_watcher,
     ))
@@ -1150,6 +1154,7 @@ impl ServerCompiledLinked {
         server_verified: ServerVerifiedLaunch,
         termination_watcher: &mut watch::Receiver<()>,
         suppress_type_checking_errors: bool,
+        suppress_linking_errors: bool,
     ) -> Result<Self, anyhow::Error> {
         let linked = compile_and_link(
             &server_verified.engines,
@@ -1167,6 +1172,7 @@ impl ServerCompiledLinked {
             server_verified.build_semaphore,
             server_verified.workflows_lock_extension_leeway,
             termination_watcher,
+            suppress_linking_errors,
         )
         .await?;
         if !suppress_type_checking_errors && linked.supressed_errors.is_some() {
@@ -1310,6 +1316,7 @@ pub(crate) async fn submit_deployment(
             },
             ignore_missing_env_vars: !verify,
             suppress_type_checking_errors: false,
+            suppress_linking_errors: false,
         },
         termination_watcher,
     )
@@ -1419,6 +1426,7 @@ pub(crate) async fn switch_deployment(
                 },
                 ignore_missing_env_vars: false,
                 suppress_type_checking_errors: false,
+                suppress_linking_errors: false,
             },
             termination_watcher,
         )
@@ -1448,6 +1456,7 @@ pub(crate) async fn switch_deployment(
                     },
                     ignore_missing_env_vars: false,
                     suppress_type_checking_errors: false,
+                    suppress_linking_errors: false,
                 },
                 termination_watcher,
             )
@@ -2264,6 +2273,7 @@ async fn compile_and_link(
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
     termination_watcher: &mut watch::Receiver<()>,
+    suppress_linking_errors: bool,
 ) -> Result<Linked, anyhow::Error> {
     let build_semaphore = build_semaphore.map(|permits| {
         semaphore::Semaphore::new(permits.try_into().expect("u64 must fit into usize"))
@@ -2348,13 +2358,7 @@ async fn compile_and_link(
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "activity_wasm_compile", component_id = %activity_wasm.component_id());
                 span.in_scope(|| {
-                    prespawn_activity(activity_wasm, &engines).map(|(worker, component_config)| {
-                        CompiledComponent::ActivityOrWorkflow {
-                            worker,
-                            component_config,
-                            frame_files: FrameFilesToSourceContent::new(),
-                        }
-                    })
+                    prespawn_activity_wasm(activity_wasm, &engines, suppress_linking_errors)
                 })
             })
         })
@@ -2367,7 +2371,7 @@ async fn compile_and_link(
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_js_compile", component_id = %activity_js.component_id());
                 span.in_scope(|| {
-                    prespawn_js_activity(activity_js, &engines, activity_js_runnable).map(|(worker, component_config, frame_files)| {
+                    prespawn_activity_js(activity_js, &engines, activity_js_runnable).map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -2429,7 +2433,7 @@ async fn compile_and_link(
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "workflow_compile", component_id = %workflow.component_id());
                 span.in_scope(|| {
-                    prespawn_workflow(workflow, &engines, workflows_lock_extension_leeway)
+                    prespawn_workflow_wasm(workflow, &engines, workflows_lock_extension_leeway)
                     .map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
@@ -2448,7 +2452,7 @@ async fn compile_and_link(
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
                 span.in_scope(|| {
-                    prespawn_js_workflow(workflow_js, &engines,workflow_js_runnable, workflows_lock_extension_leeway)
+                    prespawn_workflow_js(workflow_js, &engines,workflow_js_runnable, workflows_lock_extension_leeway)
                         .map(|(worker, component_config, frame_files)| {
                             CompiledComponent::ActivityOrWorkflow {
                                 worker,
@@ -2761,10 +2765,11 @@ mod semaphore {
     component_id = %activity.exec_config.component_id,
     wasm_path = ?activity.wasm_path,
 ))]
-fn prespawn_activity(
+fn prespawn_activity_wasm(
     activity: ActivityWasmConfigVerified,
     engines: &Engines,
-) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+    suppress_linking_errors: bool,
+) -> Result<CompiledComponent, anyhow::Error> {
     let component_id = activity.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
     debug!("Instantiating activity");
@@ -2773,28 +2778,63 @@ fn prespawn_activity(
     let runnable_component =
         RunnableComponent::new(activity.wasm_path, &engine, component_id.component_type)?;
     let wit = runnable_component.wasm_component.wit();
+    // Pre-extract WIT info before consuming runnable_component, so it is available
+    // as a fallback if linking fails and suppress_linking_errors is set.
+    let exports_ext = runnable_component
+        .wasm_component
+        .exim
+        .get_exports(true)
+        .to_vec();
+    let exports_hierarchy_ext = runnable_component
+        .wasm_component
+        .exim
+        .get_exports_hierarchy_ext()
+        .to_vec();
+    let imports_flat = runnable_component.wasm_component.exim.imports_flat.clone();
 
-    let worker = ActivityWorkerCompiled::new_with_config(
+    match ActivityWorkerCompiled::new_with_config(
         runnable_component,
         activity.activity_config,
         engine,
         Now.clone_box(),
         Arc::new(TokioSleep),
-    )
-    .with_context(|| format!("cannot compile {component_id}"))?;
-    let (worker, component_config) = WorkerCompiled::new_activity(
-        worker,
-        activity.exec_config,
-        wit,
-        activity.logs_store_min_level,
-    );
-    Ok((worker, component_config))
+    ) {
+        Ok(worker) => {
+            let (worker, component_config) = WorkerCompiled::new_activity(
+                worker,
+                activity.exec_config,
+                wit,
+                activity.logs_store_min_level,
+            );
+            Ok(CompiledComponent::ActivityOrWorkflow {
+                worker,
+                component_config,
+                frame_files: FrameFilesToSourceContent::new(),
+            })
+        }
+        Err(err) if suppress_linking_errors => {
+            warn!("Suppressing linking error for {component_id}: {err:#}");
+            let component_config = ComponentConfig {
+                component_id: activity.exec_config.component_id,
+                workflow_or_activity_config: Some(ComponentConfigImportable {
+                    exports_ext,
+                    exports_hierarchy_ext,
+                }),
+                imports: imports_flat,
+                wit,
+                workflow_replay_info: None,
+                wit_origin: WitOrigin::Wasm,
+            };
+            Ok(CompiledComponent::ActivityStubOrExternal { component_config })
+        }
+        Err(err) => Err(err).with_context(|| format!("cannot compile {component_id}")),
+    }
 }
 
 #[instrument(level = "debug", skip_all, fields(
     component_id = %activity_js.exec_config.component_id,
 ))]
-fn prespawn_js_activity(
+fn prespawn_activity_js(
     activity_js: ActivityJsConfigVerified,
     engines: &Engines,
     runnable_component: RunnableComponent,
@@ -2918,7 +2958,7 @@ async fn fetch_webhook_js_runtime(
     component_id = %workflow.exec_config.component_id,
     wasm_path = ?workflow.wasm_path,
 ))]
-fn prespawn_workflow(
+fn prespawn_workflow_wasm(
     workflow: WorkflowConfigVerified,
     engines: &Engines,
     workflows_lock_extension_leeway: Duration,
@@ -2947,7 +2987,7 @@ fn prespawn_workflow(
     component_id = %workflow_js.exec_config.component_id,
     wasm_path = ?workflow_js.wasm_path,
 ))]
-fn prespawn_js_workflow(
+fn prespawn_workflow_js(
     workflow_js: WorkflowJsConfigVerified,
     engines: &Engines,
     runnable_component: RunnableComponent,
@@ -3415,6 +3455,7 @@ mod tests {
             server_verified.launch,
             &mut termination_watcher,
             params.suppress_type_checking_errors,
+            params.suppress_linking_errors,
         )
         .await?;
 
