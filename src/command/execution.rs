@@ -141,6 +141,47 @@ impl args::Execution {
                 get_status(client, execution_id, opts).await
             }
             args::Execution::Cancel(cancel_request) => cancel_request.execute().await,
+            args::Execution::Pause {
+                api_url,
+                execution_id,
+            } => {
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_execution_repository_client(channel).await?;
+                client
+                    .pause_execution(tonic::Request::new(grpc_gen::PauseExecutionRequest {
+                        execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
+                    }))
+                    .await?;
+                println!("Paused");
+                Ok(())
+            }
+            args::Execution::Unpause {
+                api_url,
+                execution_id,
+            } => {
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_execution_repository_client(channel).await?;
+                client
+                    .unpause_execution(tonic::Request::new(grpc_gen::UnpauseExecutionRequest {
+                        execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
+                    }))
+                    .await?;
+                println!("Unpaused");
+                Ok(())
+            }
+            args::Execution::Replay {
+                api_url,
+                execution_id,
+            } => {
+                let client = reqwest::Client::new();
+                let req = client.put(format!("{api_url}/v1/executions/{execution_id}/replay"));
+                send_and_print(req).await
+            }
+            args::Execution::Upgrade {
+                api_url,
+                execution_id,
+                skip_determinism_check,
+            } => upgrade(&api_url, execution_id, skip_determinism_check).await,
         }
     }
 }
@@ -854,4 +895,102 @@ impl CancelCommand {
         }
         Ok(())
     }
+}
+
+async fn upgrade(
+    api_url: &str,
+    execution_id: ExecutionId,
+    skip_determinism_check: bool,
+) -> anyhow::Result<()> {
+    let channel = to_channel(api_url).await?;
+
+    // Step 1: fetch the execution summary to get current component digest and ffqn.
+    let mut exec_client = get_execution_repository_client(channel.clone()).await?;
+    let summary = exec_client
+        .get_status(tonic::Request::new(grpc_gen::GetStatusRequest {
+            execution_id: Some(grpc_gen::ExecutionId::from(execution_id.clone())),
+            follow: false,
+            send_finished_status: false,
+        }))
+        .await
+        .context("failed to get execution status")?
+        .into_inner()
+        .message()
+        .await
+        .context("failed to read status stream")?
+        .context("empty status stream")?;
+
+    let summary = match summary
+        .message
+        .context("missing message in status response")?
+    {
+        grpc::grpc_gen::get_status_response::Message::Summary(s) => s,
+        other => bail!("expected ExecutionSummary, got {other:?}"),
+    };
+
+    let ffqn = FunctionFqn::try_from(
+        summary
+            .function_name
+            .context("missing function_name in summary")?,
+    )
+    .map_err(|e| anyhow::anyhow!("failed to parse ffqn: {e}"))?;
+
+    let old_digest = summary
+        .component_digest
+        .context("missing component_digest in summary")?
+        .digest;
+
+    // Step 2: find the component that currently exports this ffqn.
+    let mut fn_client = get_fn_repository_client(channel.clone()).await?;
+    let components = fn_client
+        .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
+            function_name: Some(grpc_gen::FunctionName::from(&ffqn)),
+            component_digest: None,
+            extensions: false,
+        }))
+        .await
+        .context("failed to list components")?
+        .into_inner()
+        .components;
+
+    let new_digest = match components.as_slice() {
+        [] => bail!("no component in the active deployment exports `{ffqn}`"),
+        [component] => component
+            .component_id
+            .as_ref()
+            .and_then(|id| id.digest.as_ref())
+            .map(|d| d.digest.clone())
+            .context("component is missing digest")?,
+        _ => bail!(
+            "multiple components export `{ffqn}`: {:?}",
+            components
+                .iter()
+                .filter_map(|c| c.component_id.as_ref())
+                .map(|id| &id.name)
+                .collect::<Vec<_>>()
+        ),
+    };
+
+    if old_digest == new_digest {
+        println!("Already up to date ({old_digest})");
+        return Ok(());
+    }
+
+    println!("Upgrading from {old_digest} to {new_digest}");
+
+    // Step 3: perform the upgrade.
+    exec_client
+        .upgrade_execution_component(tonic::Request::new(
+            grpc_gen::UpgradeExecutionComponentRequest {
+                execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
+                expected_component_digest: Some(grpc_gen::ContentDigest { digest: old_digest }),
+                new_component_digest: Some(grpc_gen::ContentDigest { digest: new_digest }),
+                skip_determinism_check,
+            },
+        ))
+        .await
+        .context("upgrade failed")?;
+
+    println!("Upgraded");
+    Ok(())
 }
