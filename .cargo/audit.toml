@@ -1,6 +1,0 @@
-[advisories]
-# rustls-webpki 0.102.8 is pulled in by wasmtime-wasi-http 43.0.0 via rustls 0.22.4.
-# The 0.102.x branch has no patched release; the fix only exists in >=0.103.10.
-# Upgrading wasmtime to a version that uses rustls 0.23 is not yet possible.
-# Impact is limited: exploiting this CRL bug requires compromising a trusted CA.
-ignore = ["RUSTSEC-2026-0049"]
