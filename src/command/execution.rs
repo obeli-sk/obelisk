@@ -169,6 +169,16 @@ impl args::Execution {
                 println!("Unpaused");
                 Ok(())
             }
+            args::Execution::Replay {
+                api_url,
+                execution_id,
+            } => {
+                let client = reqwest::Client::new();
+                let req = client.put(format!(
+                    "{api_url}/v1/executions/{execution_id}/replay"
+                ));
+                send_and_print(req).await
+            }
         }
     }
 }

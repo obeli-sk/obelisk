@@ -73,7 +73,7 @@ pub(crate) enum Subcommand {
     /// Run or verify the Obelisk server.
     #[command(subcommand)]
     Server(Server),
-    /// Submit, inspect, stub, cancel, pause, or unpause executions against a running server.
+    /// Submit, inspect, stub, cancel, pause, unpause, or replay executions against a running server.
     #[command(subcommand)]
     Execution(Execution),
     /// Inspect components or add/push them to an OCI registry.
@@ -583,6 +583,14 @@ pub(crate) enum Execution {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
         /// Execution ID to unpause.
+        execution_id: ExecutionId,
+    },
+    /// Replay a workflow execution from its execution log, checking for non-determinism.
+    Replay {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Execution ID to replay.
         execution_id: ExecutionId,
     },
 }
