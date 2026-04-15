@@ -73,7 +73,7 @@ pub(crate) enum Subcommand {
     /// Run or verify the Obelisk server.
     #[command(subcommand)]
     Server(Server),
-    /// Submit, inspect, stub, cancel, pause, unpause, or replay executions against a running server.
+    /// Submit, inspect, stub, cancel, pause, unpause, replay, or upgrade executions against a running server.
     #[command(subcommand)]
     Execution(Execution),
     /// Inspect components or add/push them to an OCI registry.
@@ -592,6 +592,20 @@ pub(crate) enum Execution {
         api_url: String,
         /// Execution ID to replay.
         execution_id: ExecutionId,
+    },
+    /// Upgrade an execution to the current component version in the active deployment.
+    ///
+    /// Looks up the execution's FFQN, finds the component that exports it in the active
+    /// deployment, and upgrades the execution from its current component digest to the new one.
+    Upgrade {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Execution ID to upgrade.
+        execution_id: ExecutionId,
+        /// Skip the determinism check during upgrade.
+        #[arg(long)]
+        skip_determinism_check: bool,
     },
 }
 
