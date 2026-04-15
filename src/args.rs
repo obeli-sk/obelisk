@@ -379,8 +379,129 @@ impl FromStr for FunctionFqnOrShort {
     }
 }
 
+/// Minimum log level for `execution logs`.
+/// One of: `trace`, `debug`, `info`, `warn`, `error`, `off`.
+#[derive(Debug, Clone, Copy, strum::EnumString)]
+#[strum(serialize_all = "snake_case")]
+pub(crate) enum LogLevelArg {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    /// Disable structured log output. Use with `--show-streams`.
+    Off,
+}
+
+/// Log stream type for `execution logs`.
+/// One of: `stdout`, `stderr`.
+#[derive(Debug, Clone, Copy, strum::EnumString)]
+#[strum(serialize_all = "snake_case")]
+pub(crate) enum LogStreamTypeArg {
+    Stdout,
+    Stderr,
+}
+
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Execution {
+    /// List recent executions.
+    List {
+        /// Address of the obelisk server.
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Filter by function FFQN prefix.
+        /// Accepts any prefix of a fully-qualified function name, e.g.:
+        ///   `namespace:pkg/ifc.fn`, `namespace:pkg/ifc`, `namespace:pkg/`, `namespace:`
+        /// Short `.../ifc.fn` form is not supported.
+        #[arg(long, value_name = "FFQN_PREFIX")]
+        ffqn: Option<String>,
+        /// Include child (derived) executions spawned by workflows.
+        /// By default only top-level executions are shown.
+        #[arg(long)]
+        show_derived: bool,
+        /// Hide finished executions.
+        #[arg(long)]
+        hide_finished: bool,
+        /// Number of executions to return.
+        #[arg(long, default_value = "20")]
+        limit: u16,
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Fetch structured logs for an execution.
+    Logs {
+        /// Address of the obelisk server.
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Execution ID to fetch logs for.
+        #[arg(value_name = "EXECUTION_ID")]
+        execution_id: ExecutionId,
+        /// Include logs from child (derived) executions.
+        #[arg(long)]
+        show_derived: bool,
+        /// Minimum log level: trace, debug, info, warn, error, off.
+        /// `off` disables structured log output entirely (use with --show-streams).
+        #[arg(long, value_name = "LEVEL", default_value = "debug")]
+        level: LogLevelArg,
+        /// Include stdout/stderr stream output.
+        #[arg(long)]
+        show_streams: bool,
+        /// Filter stream output by type (stdout, stderr). Repeatable. Only with --show-streams.
+        #[arg(long, value_name = "TYPE", requires = "show_streams")]
+        stream_type: Vec<LogStreamTypeArg>,
+        /// Show the run ID in each log line.
+        #[arg(long)]
+        show_run_id: bool,
+        /// Only show entries created after this timestamp (RFC3339, e.g. 2026-04-14T10:00:00Z).
+        #[arg(long, value_name = "TIMESTAMP")]
+        after: Option<String>,
+        /// Poll for new log entries until the execution finishes.
+        #[arg(long)]
+        follow: bool,
+        /// Number of log entries to return per request (default: 20, max: 200).
+        #[arg(long, default_value = "20")]
+        limit: u16,
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Show the execution event log (history).
+    Events {
+        /// Address of the obelisk server.
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Execution ID.
+        #[arg(value_name = "EXECUTION_ID")]
+        execution_id: ExecutionId,
+        /// Start from this event version (inclusive).
+        #[arg(long, value_name = "VERSION")]
+        from: Option<u32>,
+        /// Number of events to return.
+        #[arg(long, default_value = "20")]
+        limit: u16,
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Show join-set responses for an execution (child results, delay completions).
+    Responses {
+        /// Address of the obelisk server.
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Execution ID.
+        #[arg(value_name = "EXECUTION_ID")]
+        execution_id: ExecutionId,
+        /// Start from this response cursor (inclusive).
+        #[arg(long, value_name = "CURSOR")]
+        from: Option<u32>,
+        /// Number of responses to return.
+        #[arg(long, default_value = "20")]
+        limit: u16,
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
+    },
     /// Submit a new execution and optionally follow its status stream until it finishes.
     Submit {
         /// Address of the obelisk server

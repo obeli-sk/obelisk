@@ -751,6 +751,9 @@ mod logs {
         /// Include logs from all derived executions
         #[serde(default)]
         show_derived: bool,
+        /// Include the run ID in text output
+        #[serde(default)]
+        show_run_id: bool,
 
         // pagination
         /// Cursor for pagination (`DateTime`, opaque)
@@ -871,19 +874,26 @@ mod logs {
         }
     }
 
-    #[derive(serde::Serialize, derive_more::Display, ToSchema)]
+    #[derive(serde::Serialize, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LogLevelSer {
-        #[display("TRACE")]
         Trace,
-        #[display("DEBUG")]
         Debug,
-        #[display("INFO")]
         Info,
-        #[display("WARN")]
         Warn,
-        #[display("ERROR")]
         Error,
+    }
+
+    impl Display for LogLevelSer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.pad(match self {
+                Self::Trace => "TRACE",
+                Self::Debug => "DEBUG",
+                Self::Info => "INFO",
+                Self::Warn => "WARN",
+                Self::Error => "ERROR",
+            })
+        }
     }
 
     impl From<LogLevel> for LogLevelSer {
@@ -898,13 +908,20 @@ mod logs {
         }
     }
 
-    #[derive(serde::Serialize, derive_more::Display, ToSchema)]
+    #[derive(serde::Serialize, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LogStreamTypeSer {
-        #[display("STDOUT")]
         Stdout,
-        #[display("STDERR")]
         Stderr,
+    }
+
+    impl Display for LogStreamTypeSer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.pad(match self {
+                Self::Stdout => "STDOUT",
+                Self::Stderr => "STDERR",
+            })
+        }
     }
 
     impl From<LogStreamType> for LogStreamTypeSer {
@@ -993,8 +1010,8 @@ mod logs {
             }
             AcceptHeader::Text => {
                 let mut output = String::new();
-                struct ExecId<'a>(bool, &'a ExecutionId);
-                impl Display for ExecId<'_> {
+                struct PrefixId<'a>(bool, &'a dyn Display);
+                impl Display for PrefixId<'_> {
                     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                         if self.0 {
                             write!(f, "{} ", self.1)
@@ -1013,10 +1030,10 @@ mod logs {
                             let level = LogLevelSer::from(level);
                             writeln!(
                                 &mut output,
-                                "{exec_id}{run_id} `{created_at}` [{level}] {message}",
-                                exec_id = ExecId(params.show_derived, &log.execution_id),
-                                run_id = log.run_id,
-                                created_at = created_at.to_rfc3339(),
+                                "{created_at} [{level:<6}] {run_id}{exec_id}{message}",
+                                created_at = created_at.format("%Y-%m-%dT%H:%M:%S%.9fZ"),
+                                run_id = PrefixId(params.show_run_id, &log.run_id),
+                                exec_id = PrefixId(params.show_derived, &log.execution_id),
                             )
                             .expect("writing to string");
                         }
@@ -1029,10 +1046,10 @@ mod logs {
                             let payload_utf8 = String::from_utf8_lossy(&payload);
                             writeln!(
                                 &mut output,
-                                "{exec_id}{run_id} `{created_at}` [{stream_type}] {payload_utf8}",
-                                exec_id = ExecId(params.show_derived, &log.execution_id),
-                                run_id = log.run_id,
-                                created_at = created_at.to_rfc3339(),
+                                "{created_at} [{stream_type:<6}] {run_id}{exec_id}{payload_utf8}",
+                                created_at = created_at.format("%Y-%m-%dT%H:%M:%S%.9fZ"),
+                                run_id = PrefixId(params.show_run_id, &log.run_id),
+                                exec_id = PrefixId(params.show_derived, &log.execution_id),
                             )
                             .expect("writing to string");
                         }
