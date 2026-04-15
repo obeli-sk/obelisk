@@ -296,7 +296,7 @@ prost = "0.14.3"
 prost-wkt-types = "0.7"
 quote = "1"
 rand = "0.9"
-refinery = { git = "https://github.com/tomasol/refinery.git", rev = "ebbb6e3", features = ["rusqlite", "tokio-postgres-rustls"] }
+refinery = { git = "https://github.com/tomasol/refinery.git", rev = "4108b33", features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls-no-provider",
@@ -309,7 +309,7 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 route-recognizer = "0.3.1"
 rstest = "0.26"
-rusqlite = { version = "0.38.0", features = [
+rusqlite = { version = "0.39.0", features = [
     "bundled",
     "chrono",
     "serde_json",
