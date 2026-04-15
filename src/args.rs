@@ -422,11 +422,14 @@ pub(crate) enum Execution {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
         /// Filter by function FFQN prefix.
-        /// Accepts any prefix of a fully-qualified function name, e.g.:
-        ///   `namespace:pkg/ifc.fn`, `namespace:pkg/ifc`, `namespace:pkg/`, `namespace:`
+        /// Accepts any prefix of a fully-qualified function name, e.g.: `namespace:`.
         /// Short `.../ifc.fn` form is not supported.
-        #[arg(long, value_name = "FFQN_PREFIX")]
-        ffqn: Option<String>,
+        #[arg(long = "ffqn", value_name = "FFQN_PREFIX")]
+        ffqn_prefix: Option<String>,
+        /// Filter by execution id prefix.
+        /// Useful to find all child executions if --show-derived flag is enabled.
+        #[arg(long = "execution_id", short, value_name = "EXECUTION_ID_PREFIX")]
+        execution_id_prefix: Option<String>,
         /// Include child (derived) executions spawned by workflows.
         /// By default only top-level executions are shown.
         #[arg(long)]

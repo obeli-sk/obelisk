@@ -369,7 +369,7 @@ obelisk execution list
 obelisk execution list --ffqn my-namespace:my-pkg/my-iface.my-fn
 
 # Include child executions (workflows, activities) spawned by a parent
-obelisk execution list --ffqn my-namespace:my-pkg/my-iface.my-fn --show-derived
+obelisk execution list --execution-id E_.. --show-derived
 ```
 
 ### Inspect logs
