@@ -1,4 +1,4 @@
-use crate::postgres_dao::ddl::{ADMIN_DB_NAME, T_METADATA_EXPECTED_SCHEMA_VERSION};
+use crate::postgres_dao::ddl::ADMIN_DB_NAME;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -61,249 +61,11 @@ fn get<'a, T: FromSql<'a>, I: RowIndex + std::fmt::Display + Copy>(
 }
 
 mod ddl {
-    use super::{STATE_LOCKED, STATE_PENDING_AT};
-    use concepts::storage::HISTORY_EVENT_TYPE_JOIN_NEXT;
-    use const_format::formatcp;
-
     pub const ADMIN_DB_NAME: &str = "postgres";
+}
 
-    pub const T_METADATA_EXPECTED_SCHEMA_VERSION: i32 = 3;
-
-    // T_METADATA
-    pub const CREATE_TABLE_T_METADATA: &str = r"
-CREATE TABLE IF NOT EXISTS t_metadata (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    schema_version INTEGER NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL
-);
-";
-
-    // T_EXECUTION_LOG
-    pub const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
-CREATE TABLE IF NOT EXISTS t_execution_log (
-    execution_id TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    json_value JSON NOT NULL,
-    version BIGINT NOT NULL CHECK (version >= 0),
-    variant TEXT NOT NULL,
-    join_set_id TEXT,
-    history_event_type TEXT GENERATED ALWAYS AS (json_value #>> '{history_event,event,type}') STORED,
-    PRIMARY KEY (execution_id, version)
-);
-";
-
-    // Indexes for t_execution_log
-    pub const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_version ON t_execution_log (execution_id, version);
-";
-
-    pub const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VARIANT: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant ON t_execution_log (execution_id, variant);
-";
-
-    pub const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_JOIN_SET: &str = const_format::formatcp!(
-        "CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_join_set ON t_execution_log
-        (execution_id, join_set_id, history_event_type) WHERE history_event_type='{}';",
-        HISTORY_EVENT_TYPE_JOIN_NEXT
-    );
-
-    // T_JOIN_SET_RESPONSE
-    pub const CREATE_TABLE_T_JOIN_SET_RESPONSE: &str = r"
-CREATE TABLE IF NOT EXISTS t_join_set_response (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    created_at TIMESTAMPTZ NOT NULL,
-    execution_id TEXT NOT NULL,
-    join_set_id TEXT NOT NULL,
-
-    delay_id TEXT,
-    delay_success BOOLEAN,
-
-    child_execution_id TEXT,
-    finished_version BIGINT CHECK (finished_version >= 0),
-
-    UNIQUE (execution_id, join_set_id, delay_id, child_execution_id)
-);
-";
-
-    // Indexes for t_join_set_response
-    pub const CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_id ON t_join_set_response (execution_id, id);
-";
-
-    pub const CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_CHILD_ID: &str = r"
-CREATE UNIQUE INDEX IF NOT EXISTS idx_join_set_response_unique_child_id
-ON t_join_set_response (child_execution_id) WHERE child_execution_id IS NOT NULL;
-";
-
-    pub const CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_DELAY_ID: &str = r"
-CREATE UNIQUE INDEX IF NOT EXISTS idx_join_set_response_unique_delay_id
-ON t_join_set_response (delay_id) WHERE delay_id IS NOT NULL;
-";
-
-    // T_STATE
-    pub const CREATE_TABLE_T_STATE: &str = r"
-CREATE TABLE IF NOT EXISTS t_state (
-    execution_id TEXT NOT NULL,
-    is_top_level BOOLEAN NOT NULL,
-    corresponding_version BIGINT NOT NULL CHECK (corresponding_version >= 0),
-    ffqn TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    component_id_input_digest BYTEA NOT NULL,
-    component_type TEXT NOT NULL,
-    first_scheduled_at TIMESTAMPTZ NOT NULL,
-    deployment_id TEXT NOT NULL,
-    is_paused BOOLEAN NOT NULL,
-
-    pending_expires_finished TIMESTAMPTZ NOT NULL,
-    state TEXT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
-    intermittent_event_count BIGINT NOT NULL CHECK (intermittent_event_count >=0),
-
-    max_retries BIGINT CHECK (max_retries >= 0),
-    retry_exp_backoff_millis BIGINT CHECK (retry_exp_backoff_millis >= 0),
-    last_lock_version BIGINT CHECK (last_lock_version >= 0),
-    executor_id TEXT,
-    run_id TEXT,
-
-    join_set_id TEXT,
-    join_set_closing BOOLEAN,
-
-    result_kind JSONB,
-
-    PRIMARY KEY (execution_id)
-);
-";
-
-    // Indexes for t_state
-    // For `get_pending_of_single_ffqn`
-    pub const IDX_T_STATE_LOCK_PENDING_BY_FFQN: &str = formatcp!(
-        "CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending_by_ffqn ON t_state (state, pending_expires_finished, ffqn) WHERE state = '{}';",
-        STATE_PENDING_AT
-    );
-    // For `get_pending_by_component_input_digest`
-    pub const IDX_T_STATE_LOCK_PENDING_BY_COMPONENT: &str = formatcp!(
-        "CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending_by_component ON t_state (state, pending_expires_finished, component_id_input_digest) WHERE state = '{}';",
-        STATE_PENDING_AT
-    );
-
-    pub const IDX_T_STATE_EXPIRED_LOCKS: &str = formatcp!(
-        "CREATE INDEX IF NOT EXISTS idx_t_state_expired_locks ON t_state (pending_expires_finished) WHERE state = '{}';",
-        STATE_LOCKED
-    );
-
-    pub const IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_execution_id_is_root ON t_state (execution_id, is_top_level);
-";
-
-    pub const IDX_T_STATE_FFQN: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_ffqn ON t_state (ffqn);
-";
-
-    pub const IDX_T_STATE_CREATED_AT: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_created_at ON t_state (created_at);
-";
-    // For `list_deployment_states`
-    pub const IDX_T_STATE_DEPLOYMENT_STATE: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_deployment_state ON t_state (deployment_id, state);
-";
-
-    // T_DELAY
-    pub const CREATE_TABLE_T_DELAY: &str = r"
-CREATE TABLE IF NOT EXISTS t_delay (
-    execution_id TEXT NOT NULL,
-    join_set_id TEXT NOT NULL,
-    delay_id TEXT NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (execution_id, join_set_id, delay_id)
-);
-";
-
-    // Backtrace
-
-    pub const CREATE_TABLE_T_WASM_BACKTRACE: &str = r"
-CREATE TABLE IF NOT EXISTS t_wasm_backtrace (
-    backtrace_hash BYTEA PRIMARY KEY,
-    wasm_backtrace JSONB NOT NULL
-);
-";
-
-    pub const CREATE_TABLE_T_EXECUTION_BACKTRACE: &str = r"
-CREATE TABLE IF NOT EXISTS t_execution_backtrace (
-    execution_id TEXT NOT NULL,
-    component_id JSONB NOT NULL,
-    version_min_including BIGINT NOT NULL CHECK (version_min_including >= 0),
-    version_max_excluding BIGINT NOT NULL CHECK (version_max_excluding >= 0),
-    backtrace_hash BYTEA NOT NULL,
-    PRIMARY KEY (execution_id, version_min_including, version_max_excluding),
-    FOREIGN KEY (backtrace_hash) REFERENCES t_wasm_backtrace(backtrace_hash)
-);
-";
-
-    pub const IDX_T_EXECUTION_BACKTRACE_EXECUTION_ID_VERSION: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_execution_backtrace_execution_id_version ON t_execution_backtrace (execution_id, version_min_including, version_max_excluding);
-";
-
-    // Source files
-    pub const CREATE_TABLE_T_SOURCE_FILE: &str = r"
-CREATE TABLE IF NOT EXISTS t_source_file (
-    content_hash BYTEA PRIMARY KEY,
-    content      TEXT NOT NULL
-);
-";
-    pub const CREATE_TABLE_T_COMPONENT_SOURCE: &str = r"
-CREATE TABLE IF NOT EXISTS t_component_source (
-    component_digest BYTEA   NOT NULL,
-    frame_key        TEXT    NOT NULL,
-    is_suffix        BOOLEAN NOT NULL,
-    content_hash     BYTEA   NOT NULL,
-    PRIMARY KEY (component_digest, frame_key, is_suffix),
-    FOREIGN KEY (content_hash) REFERENCES t_source_file(content_hash)
-);
-";
-
-    // Logs & Std sterams
-    pub const CREATE_TABLE_T_LOG: &str = r"
-CREATE TABLE IF NOT EXISTS t_log (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    execution_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    level INTEGER,
-    message TEXT,
-    stream_type INTEGER,
-    payload BYTEA
-);
-";
-    pub const IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_run_id_created_at ON t_log (execution_id, run_id, created_at);
-";
-    pub const IDX_T_LOG_EXECUTION_ID_CREATED_AT: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_log_execution_id_created_at ON t_log (execution_id, created_at);
-";
-
-    // T_DEPLOYMENT
-    pub const CREATE_TABLE_T_DEPLOYMENT: &str = r"
-CREATE TABLE IF NOT EXISTS t_deployment (
-    deployment_id TEXT     NOT NULL PRIMARY KEY,
-    created_at    TIMESTAMPTZ NOT NULL,
-    last_active_at TIMESTAMPTZ,
-    status        TEXT     NOT NULL DEFAULT 'inactive',
-    config_json      TEXT     NOT NULL,
-    obelisk_version  TEXT     NOT NULL,
-    created_by       TEXT
-);
-";
-    pub const IDX_T_DEPLOYMENT_STATUS: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_deployment_status ON t_deployment (status);
-";
-    // Enforces at most one active deployment at a time.
-    pub const IDX_T_DEPLOYMENT_SINGLE_ACTIVE: &str = r"
-CREATE UNIQUE INDEX IF NOT EXISTS idx_t_deployment_single_active ON t_deployment ((1)) WHERE status = 'active';
-";
-    // Enforces at most one enqueued deployment at a time.
-    pub const IDX_T_DEPLOYMENT_SINGLE_ENQUEUED: &str = r"
-CREATE UNIQUE INDEX IF NOT EXISTS idx_t_deployment_single_enqueued ON t_deployment ((1)) WHERE status = 'enqueued';
-";
+mod embedded {
+    refinery::embed_migrations!("migrations");
 }
 
 #[derive(Debug, Clone)]
@@ -504,94 +266,18 @@ impl PostgresPool {
             error!("Cannot create the database pool - {err:?}");
             InitializationError
         })?;
-        let client = pool.get().await.map_err(|err| {
+        let mut client = pool.get().await.map_err(|err| {
             error!("Cannot get a connection from the database pool - {err:?}");
             InitializationError
         })?;
 
-        let statements = vec![
-            ddl::CREATE_TABLE_T_METADATA,
-            ddl::CREATE_TABLE_T_EXECUTION_LOG,
-            ddl::CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION,
-            ddl::CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VARIANT,
-            ddl::CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_JOIN_SET,
-            ddl::CREATE_TABLE_T_JOIN_SET_RESPONSE,
-            ddl::CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
-            ddl::CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_CHILD_ID,
-            ddl::CREATE_INDEX_IDX_JOIN_SET_RESPONSE_UNIQUE_DELAY_ID,
-            ddl::CREATE_TABLE_T_STATE,
-            ddl::IDX_T_STATE_LOCK_PENDING_BY_FFQN,
-            ddl::IDX_T_STATE_LOCK_PENDING_BY_COMPONENT,
-            ddl::IDX_T_STATE_EXPIRED_LOCKS,
-            ddl::IDX_T_STATE_EXECUTION_ID_IS_TOP_LEVEL,
-            ddl::IDX_T_STATE_FFQN,
-            ddl::IDX_T_STATE_CREATED_AT,
-            ddl::IDX_T_STATE_DEPLOYMENT_STATE,
-            ddl::CREATE_TABLE_T_DELAY,
-            ddl::CREATE_TABLE_T_WASM_BACKTRACE,
-            ddl::CREATE_TABLE_T_EXECUTION_BACKTRACE,
-            ddl::IDX_T_EXECUTION_BACKTRACE_EXECUTION_ID_VERSION,
-            ddl::CREATE_TABLE_T_SOURCE_FILE,
-            ddl::CREATE_TABLE_T_COMPONENT_SOURCE,
-            ddl::CREATE_TABLE_T_LOG,
-            ddl::IDX_T_LOG_EXECUTION_ID_RUN_ID_CREATED_AT,
-            ddl::IDX_T_LOG_EXECUTION_ID_CREATED_AT,
-            ddl::CREATE_TABLE_T_DEPLOYMENT,
-            ddl::IDX_T_DEPLOYMENT_STATUS,
-            ddl::IDX_T_DEPLOYMENT_SINGLE_ACTIVE,
-            ddl::IDX_T_DEPLOYMENT_SINGLE_ENQUEUED,
-        ];
-
-        // Combine into one batch execution for atomicity per round-trip (or efficiency)
-        let batch_sql = statements.join("\n");
-        client.batch_execute(&batch_sql).await.map_err(|err| {
-            error!("Cannot run the DDL import - {err:?}");
-            InitializationError
-        })?;
-
-        let row = client
-            .query_opt(
-                "SELECT schema_version FROM t_metadata ORDER BY id DESC LIMIT 1",
-                &[],
-            )
+        embedded::migrations::runner()
+            .run_async(&mut **client)
             .await
             .map_err(|err| {
-                error!("Cannot select schema version - {err:?}");
+                error!("Cannot run migrations - {err:?}");
                 InitializationError
             })?;
-
-        // Postgres INTEGER maps to i32
-        let actual_version = match row {
-            Some(r) => Some(r.try_get::<_, i32>("schema_version").map_err(|e| {
-                error!("Failed to get schema_version column: {e}");
-                InitializationError
-            })?),
-            None => None,
-        };
-
-        match actual_version {
-            None => {
-                client
-                    .execute(
-                        "INSERT INTO t_metadata (schema_version, created_at) VALUES ($1, $2)",
-                        &[&(T_METADATA_EXPECTED_SCHEMA_VERSION), &Utc::now()],
-                    )
-                    .await
-                    .map_err(|err| {
-                        error!("Cannot insert schema version - {err:?}");
-                        InitializationError
-                    })?;
-            }
-            Some(actual_version) => {
-                // Fail on unexpected `schema_version`.
-                if (actual_version) != T_METADATA_EXPECTED_SCHEMA_VERSION {
-                    error!(
-                        "Wrong schema version, expected {T_METADATA_EXPECTED_SCHEMA_VERSION}, got {actual_version}"
-                    );
-                    return Err(InitializationError);
-                }
-            }
-        }
 
         debug!("Database schema initialized.");
 
