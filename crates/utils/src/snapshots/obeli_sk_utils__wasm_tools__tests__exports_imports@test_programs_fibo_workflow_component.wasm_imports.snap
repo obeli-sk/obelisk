@@ -73,19 +73,14 @@ expression: imports
     "ffqn": "obelisk:workflow/workflow-support@5.0.0.schedule-json",
     "parameter_types": [
       {
-        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
-        "name": "backtrace",
-        "wit_type": "option<wasm-backtrace>"
-      },
-      {
-        "type_wrapper": "option<record { timeout: option<variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }> }>",
-        "name": "config",
-        "wit_type": "option<submit-config>"
-      },
-      {
         "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "schedule-at",
+        "wit_type": "schedule-at"
       },
       {
         "type_wrapper": "record { interface-name: string, function-name: string }",
@@ -98,9 +93,14 @@ expression: imports
         "wit_type": "string"
       },
       {
-        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
-        "name": "schedule-at",
-        "wit_type": "schedule-at"
+        "type_wrapper": "option<record { timeout: option<variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }> }>",
+        "name": "config",
+        "wit_type": "option<submit-config>"
+      },
+      {
+        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
+        "name": "backtrace",
+        "wit_type": "option<wasm-backtrace>"
       }
     ],
     "return_type": {
@@ -121,11 +121,6 @@ expression: imports
         "wit_type": "borrow<join-set>"
       },
       {
-        "type_wrapper": "option<record { timeout: option<variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }> }>",
-        "name": "config",
-        "wit_type": "option<submit-config>"
-      },
-      {
         "type_wrapper": "record { interface-name: string, function-name: string }",
         "name": "function",
         "wit_type": "function"
@@ -134,6 +129,11 @@ expression: imports
         "type_wrapper": "string",
         "name": "params",
         "wit_type": "string"
+      },
+      {
+        "type_wrapper": "option<record { timeout: option<variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }> }>",
+        "name": "config",
+        "wit_type": "option<submit-config>"
       }
     ],
     "return_type": {

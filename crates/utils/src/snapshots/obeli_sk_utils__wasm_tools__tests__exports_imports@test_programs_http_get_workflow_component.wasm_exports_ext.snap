@@ -307,14 +307,14 @@ expression: exports
     "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-resp-schedule",
     "parameter_types": [
       {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      },
-      {
         "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
       }
     ],
     "return_type": {
@@ -330,14 +330,14 @@ expression: exports
     "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-schedule",
     "parameter_types": [
       {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      },
-      {
         "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
       }
     ],
     "return_type": {
@@ -353,14 +353,14 @@ expression: exports
     "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-schedule",
     "parameter_types": [
       {
-        "type_wrapper": "list<string>",
-        "name": "urls",
-        "wit_type": "list<string>"
-      },
-      {
         "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "list<string>",
+        "name": "urls",
+        "wit_type": "list<string>"
       }
     ],
     "return_type": {
@@ -376,6 +376,11 @@ expression: exports
     "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-stress-schedule",
     "parameter_types": [
       {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
         "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
@@ -384,11 +389,6 @@ expression: exports
         "type_wrapper": "u32",
         "name": "concurrency",
         "wit_type": "u32"
-      },
-      {
-        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
-        "name": "scheduled-at",
-        "wit_type": "schedule-at"
       }
     ],
     "return_type": {
@@ -404,14 +404,14 @@ expression: exports
     "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-schedule",
     "parameter_types": [
       {
-        "type_wrapper": "string",
-        "name": "url",
-        "wit_type": "string"
-      },
-      {
         "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
         "name": "scheduled-at",
         "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
       }
     ],
     "return_type": {
