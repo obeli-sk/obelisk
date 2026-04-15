@@ -460,6 +460,23 @@ When generating an Obelisk application, produce:
 \"Running an Obelisk application\" and \"Common pitfalls\" sections of the \
 js-patterns reference below.
 
+Key CLI commands:
+- `obelisk server verify -d deployment.toml --ignore-missing-env-vars` — validate config and compile components without \
+starting the server.
+- `obelisk server run -d deployment.toml` — start the server (omit `-d` on \
+subsequent restarts).
+- `obelisk execution submit <ffqn> '<json-args>'` — submit an execution; prints its ID.
+- `obelisk execution submit --follow <ffqn> '<json-args>'` — submit and block until finished.
+- `obelisk execution get --follow <id>` — follow a previously submitted execution.
+- `obelisk execution list [--ffqn <ffqn>] [-e <id> --show-derived]` — list executions; \
+filter by FFQN prefix or by execution ID (use `--show-derived` to include child executions).
+- `obelisk execution logs <id> --show-derived [--follow]` — fetch structured logs including child executions; \
+useful for debugging workflow trees.
+- `obelisk execution events <id>` — show the raw execution event log (history); useful for \
+diagnosing non-determinism.
+- `obelisk execution responses <id>` — show join-set responses (child results, delay completions) \
+for a workflow execution.
+
 The sections below are the authoritative reference documentation:
 ";
 
