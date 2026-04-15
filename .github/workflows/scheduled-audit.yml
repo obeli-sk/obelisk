@@ -1,0 +1,21 @@
+name: scheduled-audit
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Populate the nix store
+        run: nix develop --command echo
+
+      - name: cargo deny
+        run: nix develop --command cargo deny check

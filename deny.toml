@@ -89,4 +89,6 @@ ignore = [
     { id = "RUSTSEC-2024-0436" },
     # rustls-webpki 0.102.8 CVE locked inside wasmtime-wasi-http 43.x
     { id = "RUSTSEC-2026-0049" },
+    # rustls-webpki 0.102.8 CVE locked inside wasmtime-wasi-http 43.x
+    { id = "RUSTSEC-2026-0098" },
 ]
