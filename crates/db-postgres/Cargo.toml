@@ -18,7 +18,6 @@ anyhow.workspace = true
 assert_matches.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
-const_format.workspace = true
 deadpool-postgres.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
@@ -26,6 +25,7 @@ secrecy.workspace = true
 strum.workspace = true
 tokio-postgres.workspace = true
 rand.workspace = true
+refinery = { workspace = true, features = ["tokio-postgres"] }
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
