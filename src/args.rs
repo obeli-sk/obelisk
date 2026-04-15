@@ -244,6 +244,18 @@ pub(crate) enum Generate {
     },
     /// Generate a fresh random execution ID and print it to stdout.
     ExecutionId,
+    /// Print a prompt context for authoring an Obelisk application with a coding agent.
+    ///
+    /// Usage: obelisk generate prompt 'description of what to build' | claude
+    ///
+    /// Example:
+    ///   obelisk generate prompt 'Create a daily task that monitors the GitHub organization "obeli-sk". Fetch the list of public repositories,
+    ///     then in parallel fetch their dev-deps.txt files from the main branch. If a file exists and contains the line `obelisk someversion`,
+    ///     ensure the same version is used throughout the organization. If not, send an alert via Postmark.'
+    Prompt {
+        /// Description of the application to build.
+        description: String,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
