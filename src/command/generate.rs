@@ -462,7 +462,7 @@ async fn write_wit_deps(
         // Do not overwrite the file if it only differs in the header (version)
         let old_content = tokio::fs::read_to_string(&target_wit)
             .await
-            .with_context(|| format!("cannot read {target_wit:?}"))?;
+            .unwrap_or_default();
         let old_content = old_content
             .split_once('\n')
             .map(|(_, rest)| rest)
