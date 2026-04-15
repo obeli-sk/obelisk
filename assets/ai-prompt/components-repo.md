@@ -28,3 +28,15 @@ Webhooks are HTTP endpoint handlers that receive external events.
 | Component | Description |
 |-----------|-------------|
 | [webhook-fly-secrets-updater](fly/webhook-fly-secrets-updater) | WASM webhook that directly calls fly's secrets endpoint |
+
+## Adding components
+Use
+```sh
+obelisk component add oci://docker.io/repo/image:tag new_name --locked -d deployment.toml
+```
+to add a component to a local deployment file.
+
+Export WITs of all external components:
+```sh
+obelisk generate wit-deps -d deployment.toml --skip-local ./wit
+```
