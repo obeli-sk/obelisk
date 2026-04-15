@@ -66,9 +66,11 @@
 //! ## Sleep (Durable Timer)
 //! ```js
 //! // Sleep for a duration (persisted, survives restarts)
-//! obelisk.sleep({ seconds: 30 });
-//! obelisk.sleep({ minutes: 5 });
-//! obelisk.sleep({ milliseconds: 500 });
+//! // Returns a Date object representing the wake-up time.
+//! const wakeUp = obelisk.sleep({ seconds: 30 });  // Date
+//! const wakeUp = obelisk.sleep({ minutes: 5 });   // Date
+//! const wakeUp = obelisk.sleep({ milliseconds: 500 }); // Date
+//! console.log(wakeUp.toISOString()); // e.g. "2024-01-01T00:00:00.500Z"
 //! ```
 //!
 //! ## Random (Deterministic)
@@ -124,7 +126,10 @@ use boa_common::helpers::{new_object, parse_ffqn};
 use boa_engine::context::time::FixedClock;
 use boa_engine::{
     Context, JsArgs, JsError, JsNativeError, JsResult, JsValue, Module, NativeFunction, Source,
-    builtins::promise::PromiseState, js_string, object::builtins::JsFunction, property::Attribute,
+    builtins::promise::PromiseState,
+    js_string,
+    object::builtins::{JsDate, JsFunction},
+    property::Attribute,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -474,15 +479,10 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let backtrace = capture_backtrace(ctx);
         match sleep_bt(schedule, Some(&backtrace)) {
             Ok(dt) => {
-                let result = new_object(ctx);
-                result.set(js_string!("seconds"), JsValue::from(dt.seconds), false, ctx)?;
-                result.set(
-                    js_string!("nanoseconds"),
-                    JsValue::from(dt.nanoseconds),
-                    false,
-                    ctx,
-                )?;
-                Ok(result.into())
+                let ms = (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
+                let date = JsDate::new(ctx);
+                date.set_time(ms, ctx)?;
+                Ok(date.into())
             }
             Err(()) => Err(JsNativeError::error()
                 .with_message("Sleep was cancelled")

@@ -1892,4 +1892,43 @@ mod tests {
 
         db_close.close().await;
     }
+
+    /// Test: `obelisk.sleep()` returns a `Date` object representing the wake-up time.
+    /// - `advance_time(42ms)` → clock=42ms
+    /// - `tick()` → workflow calls `sleep({ milliseconds: 100 })`, yields at `expires_at=142ms`
+    /// - `advance_time(100ms)` → fires the timer (142ms ≤ 142ms)
+    /// - `tick()` → workflow resumes; sleep returns a Date whose `.getTime()` == 142
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_sleep_returns_date(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_sleep_date(params) {
+            const wakeUp = obelisk.sleep({ milliseconds: 100 });
+            return JSON.stringify({ ms: wakeUp.getTime() });
+        }";
+
+        let harness = JsWorkflowTestHarness::with_no_activities(
+            db_pool.clone(),
+            js_source,
+            "test-sleep-date",
+        )
+        .await;
+        harness.advance_time(Duration::from_millis(42)).await;
+        harness.tick().await; // workflow yields at sleep, expires_at=142ms
+        harness.advance_time(Duration::from_millis(100)).await; // fire the timer
+        harness.tick().await; // workflow resumes, sleep returns Date(142ms)
+
+        let result = harness.get_result_json().await;
+        assert_eq!(
+            json!(142),
+            result["ms"],
+            "sleep() should return a Date whose getTime() equals the wake-up ms: {result}"
+        );
+
+        db_close.close().await;
+    }
 }
