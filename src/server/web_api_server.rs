@@ -43,7 +43,7 @@ use tokio::{
     sync::{mpsc, watch},
 };
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{Instrument as _, Span, debug, info_span, instrument, trace, warn};
+use tracing::{Instrument as _, Span, debug, info, info_span, instrument, trace, warn};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
@@ -1652,7 +1652,7 @@ async fn execution_replay(
         .await
     };
     if let Err(err) = replay_res {
-        debug!("Replay failed: {err:?}");
+        info!("Replay failed: {err:?}");
         return Err(HttpResponse {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             message: format!("Replay failed: {err}"),
@@ -1754,7 +1754,7 @@ async fn execution_upgrade(
             .await
         };
         if let Err(err) = replay_res {
-            debug!("Replay failed: {err:?}");
+            info!("Replay failed: {err:?}");
             return Err(HttpResponse {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
                 message: format!("Replay failed: {err}"),
@@ -1884,15 +1884,12 @@ pub(crate) mod components {
         }
         if let Some(ffqn) = params.ffqn {
             components.retain(|c| {
-                c.workflow_or_activity_config
-                    .as_ref()
-                    .map(|exp| {
-                        exp.exports_ext
-                            .iter()
-                            .find(|fn_meta| fn_meta.ffqn == ffqn)
-                            .is_some()
-                    })
-                    .unwrap_or_default()
+                c.workflow_or_activity_config.as_ref().is_some_and(|exp| {
+                    exp.exports_ext
+                        .iter()
+                        .find(|fn_meta| fn_meta.ffqn == ffqn)
+                        .is_some()
+                })
             });
         }
         if let Some(ty) = params.r#type {

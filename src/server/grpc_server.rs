@@ -816,7 +816,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .await
         };
         if let Err(err) = replay_res {
-            debug!("Replay failed: {err:?}");
+            info!("Replay failed: {err:?}");
             return Err(tonic::Status::internal(format!("replay failed: {err}")));
         }
         Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {}))
@@ -890,7 +890,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .await
             };
             if let Err(err) = replay_res {
-                debug!("Replay failed: {err:?}");
+                info!("Replay failed: {err:?}");
                 return Err(tonic::Status::internal(format!("replay failed: {err}")));
             }
         }
@@ -1259,15 +1259,12 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
             .transpose()?
         {
             components.retain(|c| {
-                c.workflow_or_activity_config
-                    .as_ref()
-                    .map(|exp| {
-                        exp.exports_ext
-                            .iter()
-                            .find(|fn_meta| fn_meta.ffqn == ffqn)
-                            .is_some()
-                    })
-                    .unwrap_or_default()
+                c.workflow_or_activity_config.as_ref().is_some_and(|exp| {
+                    exp.exports_ext
+                        .iter()
+                        .find(|fn_meta| fn_meta.ffqn == ffqn)
+                        .is_some()
+                })
             });
         }
 
