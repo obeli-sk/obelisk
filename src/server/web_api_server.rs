@@ -43,7 +43,7 @@ use tokio::{
     sync::{mpsc, watch},
 };
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{Instrument as _, Span, debug, info_span, instrument, trace, warn};
+use tracing::{Instrument as _, Span, debug, info, info_span, instrument, trace, warn};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
@@ -1652,7 +1652,7 @@ async fn execution_replay(
         .await
     };
     if let Err(err) = replay_res {
-        debug!("Replay failed: {err:?}");
+        info!("Replay failed: {err:?}");
         return Err(HttpResponse {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             message: format!("Replay failed: {err}"),
@@ -1754,7 +1754,7 @@ async fn execution_upgrade(
             .await
         };
         if let Err(err) = replay_res {
-            debug!("Replay failed: {err:?}");
+            info!("Replay failed: {err:?}");
             return Err(HttpResponse {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
                 message: format!("Replay failed: {err}"),
@@ -1804,6 +1804,9 @@ pub(crate) mod components {
         /// Filter by component digest
         #[param(value_type = Option<String>)]
         digest: Option<ComponentDigest>,
+        /// Filter by function
+        #[param(value_type = Option<String>)]
+        ffqn: Option<FunctionFqn>,
         /// Include exports in response
         #[serde(default)]
         exports: bool,
@@ -1878,6 +1881,16 @@ pub(crate) mod components {
         }
         if let Some(digest) = params.digest {
             components.retain(|c| c.component_id.component_digest == digest);
+        }
+        if let Some(ffqn) = params.ffqn {
+            components.retain(|c| {
+                c.workflow_or_activity_config.as_ref().is_some_and(|exp| {
+                    exp.exports_ext
+                        .iter()
+                        .find(|fn_meta| fn_meta.ffqn == ffqn)
+                        .is_some()
+                })
+            });
         }
         if let Some(ty) = params.r#type {
             components.retain(|c| c.component_id.component_type == ty);

@@ -816,7 +816,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .await
         };
         if let Err(err) = replay_res {
-            debug!("Replay failed: {err:?}");
+            info!("Replay failed: {err:?}");
             return Err(tonic::Status::internal(format!("replay failed: {err}")));
         }
         Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {}))
@@ -890,7 +890,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .await
             };
             if let Err(err) = replay_res {
-                debug!("Replay failed: {err:?}");
+                info!("Replay failed: {err:?}");
                 return Err(tonic::Status::internal(format!("replay failed: {err}")));
             }
         }
@@ -1244,20 +1244,33 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
             .await
             .component_registry_ro
             .clone();
-        let all_components = component_registry_ro.list(request.extensions);
-        let component_digest = request
+        let mut components = component_registry_ro.list(request.extensions);
+
+        if let Some(digest) = request
             .component_digest
             .map(ComponentDigest::try_from)
-            .transpose()?;
-        let mut res_components = Vec::with_capacity(all_components.len());
-        for component in all_components
-            .into_iter()
-            .filter(|component| match &component_digest {
-                None => true,
-                Some(filter) if *filter == component.component_id.component_digest => true,
-                Some(_) => false,
-            })
+            .transpose()?
         {
+            components.retain(|c| c.component_id.component_digest == digest);
+        }
+        if let Some(ffqn) = request
+            .function_name
+            .map(FunctionFqn::try_from)
+            .transpose()?
+        {
+            components.retain(|c| {
+                c.workflow_or_activity_config.as_ref().is_some_and(|exp| {
+                    exp.exports_ext
+                        .iter()
+                        .find(|fn_meta| fn_meta.ffqn == ffqn)
+                        .is_some()
+                })
+            });
+        }
+
+        let mut grpc_components = Vec::with_capacity(components.len());
+        for component in components {
+            // Transform to gRPC Component.
             let res_component = grpc_gen::Component {
                 component_id: Some(component.component_id.into()),
                 exports: component
@@ -1268,10 +1281,10 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
                     .unwrap_or_default(),
                 imports: list_fns(component.imports),
             };
-            res_components.push(res_component);
+            grpc_components.push(res_component);
         }
         Ok(tonic::Response::new(grpc_gen::ListComponentsResponse {
-            components: res_components,
+            components: grpc_components,
         }))
     }
 
