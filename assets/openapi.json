@@ -49,6 +49,15 @@
             }
           },
           {
+            "name": "ffqn",
+            "in": "query",
+            "description": "Filter by function",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "exports",
             "in": "query",
             "description": "Include exports in response",

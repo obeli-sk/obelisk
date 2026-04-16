@@ -1804,6 +1804,9 @@ pub(crate) mod components {
         /// Filter by component digest
         #[param(value_type = Option<String>)]
         digest: Option<ComponentDigest>,
+        /// Filter by function
+        #[param(value_type = Option<String>)]
+        ffqn: Option<FunctionFqn>,
         /// Include exports in response
         #[serde(default)]
         exports: bool,
@@ -1878,6 +1881,19 @@ pub(crate) mod components {
         }
         if let Some(digest) = params.digest {
             components.retain(|c| c.component_id.component_digest == digest);
+        }
+        if let Some(ffqn) = params.ffqn {
+            components.retain(|c| {
+                c.workflow_or_activity_config
+                    .as_ref()
+                    .map(|exp| {
+                        exp.exports_ext
+                            .iter()
+                            .find(|fn_meta| fn_meta.ffqn == ffqn)
+                            .is_some()
+                    })
+                    .unwrap_or_default()
+            });
         }
         if let Some(ty) = params.r#type {
             components.retain(|c| c.component_id.component_type == ty);
