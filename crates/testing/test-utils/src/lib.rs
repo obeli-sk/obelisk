@@ -56,7 +56,7 @@ where
         }
 
         // target
-        write!(&mut writer, " Target({}) ", metadata.target(),)?;
+        write!(&mut writer, " Target({}) ", metadata.target())?;
 
         // Format all the spans in the event's span context.
         if let Some(scope) = ctx.event_scope() {

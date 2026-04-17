@@ -281,13 +281,13 @@ fn run_cargo_build(
     let target = dst_target_dir
         .join(tripple)
         .join(profile)
-        .join(format!("{name_snake_case}.wasm",));
+        .join(format!("{name_snake_case}.wasm"));
     assert!(target.exists(), "Target path must exist: {target:?}");
     if is_transformation_to_wasm_component_needed(tripple) {
         let target_transformed = dst_target_dir
             .join(tripple)
             .join(profile)
-            .join(format!("{name_snake_case}_component.wasm",));
+            .join(format!("{name_snake_case}_component.wasm"));
         let mut cmd = Command::new("wasm-tools");
         cmd.arg("component")
             .arg("new")
