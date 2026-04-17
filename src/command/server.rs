@@ -595,7 +595,7 @@ pub(crate) async fn server_verify(
         let version_req = semver::VersionReq::parse(version_req_str)
             .with_context(|| format!("Invalid obelisk-version requirement: {version_req_str}"))?;
         let current_version = semver::Version::parse(PKG_VERSION)
-            .with_context(|| format!("Invalid current version: {PKG_VERSION}",))?;
+            .with_context(|| format!("Invalid current version: {PKG_VERSION}"))?;
         if !version_req.matches(&current_version) {
             bail!(
                 "Obelisk version mismatch: config requires {version_req_str}, but running version is {PKG_VERSION}",

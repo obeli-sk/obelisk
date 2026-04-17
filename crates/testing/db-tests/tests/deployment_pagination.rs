@@ -81,7 +81,7 @@ async fn lock_execution(
     let component_id = ComponentId::dummy_activity();
     let executor_id = ExecutorId::generate();
     let run_id = RunId::generate();
-    let lock_expiry = Duration::from_secs(60);
+    let lock_expiry = Duration::from_mins(1);
 
     let locked = db_connection
         .lock_one(

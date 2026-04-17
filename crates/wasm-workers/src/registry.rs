@@ -90,7 +90,7 @@ impl ComponentConfigRegistry {
         // verify that the component is not already present by name
         if self.inner.names_to_components.contains_key(name) {
             return Err(ComponentInsertionError(
-                format!("component with name `{name}` is already registered",).into(),
+                format!("component with name `{name}` is already registered").into(),
             ));
         }
 

@@ -2756,7 +2756,7 @@ pub(crate) mod webhook {
                         .into_iter()
                         .map(|method| {
                             http::Method::from_bytes(method.as_bytes())
-                                .with_context(|| format!("cannot parse route method `{method}`",))
+                                .with_context(|| format!("cannot parse route method `{method}`"))
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     Self { methods, route }

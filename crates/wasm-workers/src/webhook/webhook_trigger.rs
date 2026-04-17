@@ -2144,7 +2144,7 @@ pub(crate) mod tests {
                 iterations: u32,
                 expected_status_code: u16,
             ) -> String {
-                let resp = reqwest::get(format!("http://{server_addr}/fibo/{n}/{iterations}",))
+                let resp = reqwest::get(format!("http://{server_addr}/fibo/{n}/{iterations}"))
                     .await
                     .unwrap();
                 assert_eq!(resp.status().as_u16(), expected_status_code);

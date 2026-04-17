@@ -1996,7 +1996,7 @@ async fn pause_and_unpause_should_work(database: Database) {
     let api_conn = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
-    let original_scheduled_at = sim_clock.now() + Duration::from_secs(60);
+    let original_scheduled_at = sim_clock.now() + Duration::from_mins(1);
     // Create with a future scheduled time
     db_connection
         .create(CreateRequest {
@@ -2475,7 +2475,7 @@ async fn pause_with_pending_delay_then_response_then_unpause_should_be_pending(d
 
     // Submit delay request
     let delay_id = DelayId::new(&execution_id, &join_set_id);
-    let delay_duration = Duration::from_secs(60);
+    let delay_duration = Duration::from_mins(1);
     db_connection
         .append(
             execution_id.clone(),
