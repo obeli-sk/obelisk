@@ -1,23 +1,41 @@
 use super::workflow_worker::JoinNextBlockingStrategy;
+use crate::activity::cancel_registry::CancelRegistry;
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId,
+    prefixed_ulid::DelayId,
     storage::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
-        AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ResponseCursor, ResponseWithCursor,
-        TimeoutOutcome, Version,
+        AppendResponseToExecution, BacktraceInfo, CancelOutcome, CreateRequest, DbConnection,
+        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ResponseCursor,
+        ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
 use tracing::{debug, instrument, warn};
 
 pub(crate) struct CachingDbConnection {
-    pub(crate) db_connection: Box<dyn DbConnection>,
+    db_connection: Box<dyn DbConnection>,
     pub(crate) execution_id: ExecutionId,
     pub(crate) caching_buffer: Option<CachingBuffer>,
     pub(crate) version: Version,
 }
+impl CachingDbConnection {
+    pub(crate) fn new(
+        db_connection: Box<dyn DbConnection>,
+        execution_id: ExecutionId,
+        caching_buffer: Option<CachingBuffer>,
+        version: Version,
+    ) -> CachingDbConnection {
+        CachingDbConnection {
+            db_connection,
+            execution_id,
+            caching_buffer,
+            version,
+        }
+    }
+}
+
 pub(crate) enum CacheableDbEvent {
     SubmitChildExecution {
         request: AppendRequest,
@@ -412,6 +430,27 @@ impl CachingDbConnection {
             debug!("Flushing the non-blocking event cache finished");
         }
         Ok(())
+    }
+
+    pub(crate) async fn cancel_activity(
+        &mut self,
+        cancel_registry: &CancelRegistry,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        self.flush_non_blocking_event_cache(cancelled_at).await?;
+        cancel_registry
+            .cancel_activity(self.db_connection.as_ref(), execution_id, cancelled_at)
+            .await
+    }
+
+    pub(crate) async fn cancel_delay(
+        &mut self,
+        delay_id: DelayId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        self.flush_non_blocking_event_cache(cancelled_at).await?;
+        storage::cancel_delay(self.db_connection.as_ref(), delay_id, cancelled_at).await
     }
 }
 

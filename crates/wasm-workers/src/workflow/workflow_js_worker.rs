@@ -8,6 +8,7 @@ use super::workflow_worker::{ReplayError, WorkflowConfig, WorkflowWorker, Workfl
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryForReplay};
+use crate::workflow::workflow_ctx::ReplayKind;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{DbConnection, DbPool, Locked};
@@ -369,7 +370,6 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
-        let is_finished = log.is_finished();
 
         // Transform the stored params to the workflow-js-runtime format
         let _original_ffqn = log.ffqn().clone();
@@ -407,6 +407,11 @@ impl WorkflowJsWorker {
         )
         .expect("types checked at compile time");
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false); // TODO: consider using current exec's watcher
+        let replay_kind = if log.is_finished() {
+            ReplayKind::Finished
+        } else {
+            ReplayKind::Unfinished
+        };
         let ctx = WorkerContext {
             execution_id,
             metadata: ExecutionMetadata::empty(),
@@ -444,11 +449,7 @@ impl WorkflowJsWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        worker
-            .run_internal(ctx, is_finished)
-            .await
-            .map(|_| ())
-            .map_err(ReplayError::from)
+        worker.replay_internal(ctx, Some(replay_kind)).await
     }
 }
 

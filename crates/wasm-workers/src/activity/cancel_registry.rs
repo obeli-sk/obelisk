@@ -102,7 +102,7 @@ impl CancelRegistry {
     }
 
     /// It is the responsibility of the caller to check that the execution belongs to an activity!
-    pub async fn cancel(
+    pub async fn cancel_activity(
         &self,
         db_connection: &dyn DbConnection,
         execution_id: &ExecutionId,

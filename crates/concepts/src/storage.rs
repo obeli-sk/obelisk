@@ -81,6 +81,16 @@ impl ExecutionLog {
     }
 
     #[must_use]
+    pub fn get_create_request(&self) -> CreateRequest {
+        assert_matches!(self.events.first().cloned(), Some(ExecutionEvent {
+            event:ExecutionRequest::Created{
+                ffqn,params,parent,scheduled_at,component_id,deployment_id,metadata,scheduled_by},
+                created_at, .. }) => CreateRequest { created_at, execution_id:
+                    self.execution_id.clone(), ffqn, params, parent, scheduled_at,
+                    component_id, deployment_id, metadata, scheduled_by })
+    }
+
+    #[must_use]
     pub fn ffqn(&self) -> &FunctionFqn {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionRequest::Created { ffqn, .. },
@@ -1464,8 +1474,8 @@ pub trait DbConnection: DbExecutor {
         outcome: Result<(), ()>, // Successfully finished - `Ok(())` or cancelled - `Err(())`
     ) -> Result<AppendDelayResponseOutcome, DbErrorWrite>;
 
-    /// Append a batch of events to an existing execution log, and append a response to a parent execution.
-    /// The batch cannot contain [`ExecutionRequest::Created`].
+    /// Append a batch of events to an existing execution log.
+    /// The batch must not contain [`ExecutionRequest::Created`].
     async fn append_batch(
         &self,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
@@ -1475,7 +1485,7 @@ pub trait DbConnection: DbExecutor {
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     /// Append one or more events to the parent execution log, and create zero or more child execution logs.
-    /// The batch cannot contain [`ExecutionRequest::Created`].
+    /// The batch must not contain [`ExecutionRequest::Created`].
     async fn append_batch_create_new_execution(
         &self,
         current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
@@ -1746,12 +1756,12 @@ pub async fn stub_execution(
 pub async fn cancel_delay(
     db_connection: &dyn DbConnection,
     delay_id: DelayId,
-    created_at: DateTime<Utc>,
+    cancelled_at: DateTime<Utc>,
 ) -> Result<CancelOutcome, DbErrorWrite> {
     let (parent_execution_id, join_set_id) = delay_id.split_to_parts();
     db_connection
         .append_delay_response(
-            created_at,
+            cancelled_at,
             parent_execution_id,
             join_set_id,
             delay_id,
