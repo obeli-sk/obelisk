@@ -104,10 +104,13 @@ pub(crate) enum ApplyError {
     ConstraintViolation(StrVariant),
     #[error("executor closing")]
     ExecutorClosing,
+    #[error("replay finished")]
+    ReplayFinished,
 }
 
 #[expect(clippy::struct_field_names)]
 pub(crate) struct EventHistory {
+    replaying_unfinished_execution: bool,
     deployment_id: DeploymentId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     // Contains requests (events produced by the workflow)
@@ -134,7 +137,10 @@ pub(crate) struct EventHistory {
 enum FindMatchingResponse {
     Found(ChildReturnValue),
     NotFound,
-    FoundRequestButNotResponse,
+    FoundRequestButNotResponse {
+        join_next_idx: usize,
+        join_next_version: Version,
+    },
 }
 
 impl EventHistory {
@@ -151,8 +157,10 @@ impl EventHistory {
         lock_extension: Option<Duration>,
         subscription_interruption: Option<Duration>,
         worker_span: Span,
+        replaying_unfinished_execution: bool,
     ) -> EventHistory {
         EventHistory {
+            replaying_unfinished_execution,
             deployment_id,
             index_child_exe_to_processed_response_idx: HashMap::default(),
             index_child_exe_to_ffqn: HashMap::default(),
@@ -428,11 +436,9 @@ impl EventHistory {
                 }
             }
             info!("Giving up on waiting for response");
-            Err(ApplyError::InterruptDbUpdated)
-        } else {
-            debug!(join_set_id = %join_next_variant.join_set_id(),  "Interrupting on {join_next_variant:?}");
-            Err(ApplyError::InterruptDbUpdated)
         }
+        debug!(join_set_id = %join_next_variant.join_set_id(),  "Interrupting on {join_next_variant:?}");
+        Err(ApplyError::InterruptDbUpdated)
     }
 
     // Transforms `join_set_close_inner` error to `WorkflowFunctionError` so
@@ -477,10 +483,9 @@ impl EventHistory {
             if let ResponseId::ChildExecutionId(child_execution_id_derived) = response_id
                 && component_type.is_activity()
             {
-                let res = self
-                    .cancel_registry
-                    .cancel(
-                        db_connection.db_connection.as_ref(),
+                let res = db_connection
+                    .cancel_activity(
+                        &self.cancel_registry,
                         &ExecutionId::Derived(child_execution_id_derived.clone()),
                         called_at,
                     )
@@ -490,12 +495,9 @@ impl EventHistory {
                 }
             } else if let ResponseId::DelayId(delay_id) = response_id {
                 debug!("Cancelling {delay_id}");
-                let res = storage::cancel_delay(
-                    db_connection.db_connection.as_ref(),
-                    delay_id.clone(),
-                    called_at,
-                )
-                .await;
+                let res = db_connection
+                    .cancel_delay(delay_id.clone(), called_at)
+                    .await;
                 if let Err(err) = res {
                     // This means that the watcher expired the delay in the mean time.
                     trace!("Ignoring failure to cancel {delay_id} - {err:?}");
@@ -564,9 +566,16 @@ impl EventHistory {
                     assert_eq!(idx, 0, "NotFound must be returned on the first key");
                     return Ok(None);
                 }
-                FindMatchingResponse::FoundRequestButNotResponse => {
+                FindMatchingResponse::FoundRequestButNotResponse {
+                    join_next_idx,
+                    join_next_version,
+                } => {
+                    // JoinNext is still unprocessed. This is the only exception when replay is considered finished.
+                    if join_next_idx == self.event_history.len() - 1 {
+                        return Err(ApplyError::ReplayFinished);
+                    }
                     unreachable!(
-                        "FoundRequestButNotResponse in find_matching_atomic - {event_call:?}"
+                        "bug in executor: FoundRequestButNotResponse in find_matching_atomic - {event_call:?}, {join_next_idx}, {join_next_version}"
                     );
                 }
                 FindMatchingResponse::Found(found) => {
@@ -579,13 +588,13 @@ impl EventHistory {
         unreachable!()
     }
 
-    fn first_unprocessed_request(&self) -> Option<(usize, &HistoryEvent, &Version)> {
+    fn first_unprocessed_request(&self) -> Option<(usize, &HistoryEvent, Version)> {
         self.event_history
             .iter()
             .enumerate()
             .find_map(|(idx, (event, status, version))| {
                 if *status == Unprocessed {
-                    Some((idx, event, version))
+                    Some((idx, event, version.clone()))
                 } else {
                     None
                 }
@@ -599,6 +608,7 @@ impl EventHistory {
         })
     }
 
+    // Only called from `process_event_by_key`
     fn mark_next_unprocessed_response(
         &'_ mut self,
         parent_event_idx: usize, // needs to be marked as Processed as well if found
@@ -668,15 +678,30 @@ impl EventHistory {
         }
     }
 
+    // Only entry point to marking events as processed.
     fn process_event_by_key(
         &mut self,
         key: &DeterministicKey,
     ) -> Result<FindMatchingResponse, ApplyError> {
-        let Some((found_idx, found_request_event, _version)) = self.first_unprocessed_request()
+        let resp = self.process_event_by_key_inner(key)?;
+        if self.replaying_unfinished_execution && !self.has_unprocessed_requests() {
+            return Err(ApplyError::ReplayFinished);
+        }
+        Ok(resp)
+    }
+
+    fn process_event_by_key_inner(
+        &mut self,
+        key: &DeterministicKey,
+    ) -> Result<FindMatchingResponse, ApplyError> {
+        let Some((found_idx, found_request_event, found_version)) =
+            self.first_unprocessed_request()
         else {
             return Ok(FindMatchingResponse::NotFound);
         };
-        trace!("Finding match for {key:?}, [{found_idx}] {found_request_event:?}");
+        trace!(
+            "Finding match for {key:?}, [{found_idx}, v{found_version}] {found_request_event:?}"
+        );
         match (key, found_request_event) {
             (
                 DeterministicKey::CreateJoinSet { join_set_id },
@@ -860,7 +885,10 @@ impl EventHistory {
                             ChildReturnValue::JoinNextRequestingFfqn(Err(function_mismatch)),
                         ))
                     }
-                    None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
+                    None => Ok(FindMatchingResponse::FoundRequestButNotResponse {
+                        join_next_idx: found_idx,
+                        join_next_version: found_version,
+                    }),
                 }
             }
 
@@ -887,7 +915,10 @@ impl EventHistory {
                             result,
                         }))
                     }
-                    None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
+                    None => Ok(FindMatchingResponse::FoundRequestButNotResponse {
+                        join_next_idx: found_idx,
+                        join_next_version: found_version,
+                    }),
                     Some(JoinSetResponseEnriched::ChildExecutionFinished { .. }) => unreachable!(
                         "DeterministicKey::JoinNextDelay is emitted only on one-shot join sets"
                     ),
@@ -935,7 +966,10 @@ impl EventHistory {
                             (ResponseId::DelayId(delay_id.clone()), result),
                         ))))
                     }
-                    None => Ok(FindMatchingResponse::FoundRequestButNotResponse), // no progress, still at JoinNext
+                    None => Ok(FindMatchingResponse::FoundRequestButNotResponse {
+                        join_next_idx: found_idx,
+                        join_next_version: found_version,
+                    }),
                 }
             }
 
@@ -3776,12 +3810,12 @@ mod tests {
             .unwrap();
 
         let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let caching_db_connection = CachingDbConnection {
+        let caching_db_connection = CachingDbConnection::new(
             db_connection,
             execution_id,
-            caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
-            version: exec_log.next_version.clone(),
-        };
+            CachingBuffer::new(join_next_blocking_strategy),
+            exec_log.next_version.clone(),
+        );
         let cancel_registry = CancelRegistry::new();
         let event_history = EventHistory::new(
             DEPLOYMENT_ID_DUMMY,
@@ -3802,6 +3836,7 @@ mod tests {
             None, // lock_extension
             None, // subscription_interruption
             info_span!("worker-test"),
+            false, // replaying_unfinished_execution
         );
 
         (event_history, caching_db_connection)

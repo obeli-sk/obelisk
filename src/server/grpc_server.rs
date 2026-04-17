@@ -719,7 +719,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     ));
                 }
                 self.cancel_registry
-                    .cancel(conn.as_ref(), &execution_id, executed_at)
+                    .cancel_activity(conn.as_ref(), &execution_id, executed_at)
                     .await
                     .to_status()?
             }

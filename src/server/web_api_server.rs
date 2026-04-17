@@ -550,7 +550,7 @@ async fn execution_cancel(
     let executed_at = Now.now();
     let outcome = state
         .cancel_registry
-        .cancel(conn.as_ref(), &execution_id, executed_at)
+        .cancel_activity(conn.as_ref(), &execution_id, executed_at)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())

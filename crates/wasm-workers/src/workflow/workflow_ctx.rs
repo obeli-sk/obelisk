@@ -75,11 +75,14 @@ pub(crate) enum WorkflowFunctionError {
     LockExpired,
     #[error("executor closing")]
     ExecutorClosing,
+    #[error("replay finished")]
+    ReplayFinished,
 }
 
 #[derive(Debug)]
 pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
+    ReplayFinished,
     // retriable:
     InterruptDbUpdated,
     LockExpired,
@@ -116,6 +119,7 @@ impl WorkflowFunctionError {
             }
             WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
             WorkflowFunctionError::ExecutorClosing => WorkerPartialResult::ExecutorClosing,
+            WorkflowFunctionError::ReplayFinished => WorkerPartialResult::ReplayFinished,
         }
     }
 }
@@ -132,6 +136,7 @@ impl From<ApplyError> for WorkflowFunctionError {
                 WorkflowFunctionError::ConstraintViolation(reason)
             }
             ApplyError::ExecutorClosing => WorkflowFunctionError::ExecutorClosing,
+            ApplyError::ReplayFinished => WorkflowFunctionError::ReplayFinished,
         }
     }
 }
@@ -146,7 +151,7 @@ pub(crate) struct WorkflowCtx {
     pub(crate) resource_table: wasmtime::component::ResourceTable,
     backtrace_persist: bool,
     wasi_ctx: WasiCtx,
-    is_replaying_finished: bool,
+    is_replay: bool, // Used for lowering logs to trace
 }
 
 #[derive(derive_more::Debug)]
@@ -846,6 +851,12 @@ impl WasiView for WorkflowCtx {
 
 const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@5.0.0";
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReplayKind {
+    Finished,
+    Unfinished,
+}
+
 impl WorkflowCtx {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -865,7 +876,7 @@ impl WorkflowCtx {
         lock_extension: Option<Duration>,
         subscription_interruption: Option<Duration>,
         logs_storage_config: Option<LogStrageConfig>,
-        is_replaying_finished: bool,
+        is_replay: Option<ReplayKind>,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -888,6 +899,7 @@ impl WorkflowCtx {
                 lock_extension,
                 subscription_interruption,
                 worker_span.clone(),
+                is_replay == Some(ReplayKind::Unfinished),
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -900,7 +912,7 @@ impl WorkflowCtx {
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace_persist,
             wasi_ctx: wasi_ctx_builder.build(),
-            is_replaying_finished,
+            is_replay: is_replay.is_some(),
         }
     }
 
@@ -2662,7 +2674,7 @@ pub(crate) mod workflow_support {
 }
 
 fn trace_on_replay(ctx: &mut WorkflowCtx, level: LogLevel, message: String) {
-    if ctx.event_history.has_unprocessed_requests() || ctx.is_replaying_finished {
+    if ctx.event_history.has_unprocessed_requests() || ctx.is_replay {
         ctx.component_logger
             .log(LogLevel::Trace, format!("(replay) {message}"));
     } else {
@@ -2781,7 +2793,9 @@ pub(crate) mod tests {
                 WorkerPartialResult::DbError(db_err) => {
                     Err(executor::worker::WorkerError::DbError(db_err))
                 }
-                WorkerPartialResult::LockExpired | WorkerPartialResult::ExecutorClosing => {
+                WorkerPartialResult::LockExpired
+                | WorkerPartialResult::ExecutorClosing
+                | WorkerPartialResult::ReplayFinished => {
                     unreachable!()
                 }
             }
@@ -2879,12 +2893,12 @@ pub(crate) mod tests {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
             let join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt; // Cannot Await: when moving time forward both worker and timers watcher would race.
-            let caching_db_connection = CachingDbConnection {
-                db_connection: self.db_pool.connection().await.unwrap(),
-                execution_id: ctx.execution_id.clone(),
-                caching_buffer: CachingBuffer::new(join_next_blocking_strategy),
-                version: ctx.version,
-            };
+            let caching_db_connection = CachingDbConnection::new(
+                self.db_pool.connection().await.unwrap(),
+                ctx.execution_id.clone(),
+                CachingBuffer::new(join_next_blocking_strategy),
+                ctx.version,
+            );
 
             let cancel_registry = CancelRegistry::new();
             let mut workflow_ctx = WorkflowCtx::new(
@@ -2909,7 +2923,7 @@ pub(crate) mod tests {
                 Some(Duration::from_secs(1)), // lock extension
                 None,                         // subscription_interruption
                 None,                         // logs_storage_config,
-                false,                        // is_finished
+                None,                         // is_replay
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");

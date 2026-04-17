@@ -83,6 +83,7 @@ ffqn = "testing:integration/workflow-call-stub.call-stub"
 params = [
   { name = "id", type = "u64" },
 ]
+return_type = "result<string, string>"
 
 [[activity_stub]]
 name = "test_inline_stub"
@@ -99,6 +100,7 @@ name = "workflow_busy_sleep"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy-sleep.js"
 ffqn = "testing:integration/workflow-busy.busy"
 params = []
+return_type = "result<string, string>"
 
 [[activity_js]]
 name = "activity_busy_sleep"

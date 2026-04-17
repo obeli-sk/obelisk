@@ -5,7 +5,7 @@ use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
-use crate::workflow::workflow_ctx::{ImportedFnCall, WorkerPartialResult};
+use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -20,6 +20,7 @@ use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
+use itertools::Either;
 use std::future;
 use std::ops::Deref;
 use std::time::Duration;
@@ -380,6 +381,7 @@ enum WorkerResultRefactored {
     DbError(DbErrorWrite),
     LockExpired(WorkflowCtx),
     ExecutorClosing(WorkflowCtx),
+    ReplayFinished,
 }
 
 type CallFuncResult = Result<(SupportedFunctionReturnValue, WorkflowCtx), RunError>;
@@ -426,11 +428,13 @@ enum PrepareFuncOk {
     },
 }
 
+pub(crate) struct ReplayFinished;
+
 impl WorkflowWorker {
     async fn prepare_func(
         &self,
         ctx: WorkerContext,
-        is_replaying_finished: bool,
+        is_replay: Option<ReplayKind>,
     ) -> Result<PrepareFuncOk, WorkflowError> {
         assert_eq!(self.config.component_id, ctx.locked_event.component_id);
 
@@ -450,12 +454,12 @@ impl WorkflowWorker {
 
         let version_at_start = ctx.version.clone();
         let seed = ctx.execution_id.random_seed();
-        let db_connection = CachingDbConnection {
-            db_connection: self.db_pool.connection().await.unwrap(),
-            execution_id: ctx.execution_id.clone(),
-            caching_buffer: CachingBuffer::new(self.config.join_next_blocking_strategy),
-            version: ctx.version,
-        };
+        let db_connection = CachingDbConnection::new(
+            self.db_pool.connection().await.unwrap(),
+            ctx.execution_id.clone(),
+            CachingBuffer::new(self.config.join_next_blocking_strategy),
+            ctx.version,
+        );
         let workflow_ctx = WorkflowCtx::new(
             self.deployment_id,
             db_connection,
@@ -473,7 +477,7 @@ impl WorkflowWorker {
             self.config.lock_extension,
             self.config.subscription_interruption,
             self.logs_storage_config.clone(),
-            is_replaying_finished,
+            is_replay,
         );
 
         let mut store = Store::new(&self.engine, workflow_ctx);
@@ -636,7 +640,7 @@ impl WorkflowWorker {
         worker_span: &Span,
         execution_deadline: DateTime<Utc>,
         assigned_fuel: Option<u64>,
-    ) -> Result<WorkerResultOk, WorkflowError> {
+    ) -> Result<Either<WorkerResultOk, ReplayFinished>, WorkflowError> {
         // call_func
         let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         let res = Self::call_func(store, func, component_func, params, assigned_fuel).await;
@@ -647,14 +651,17 @@ impl WorkflowWorker {
         match worker_result_refactored {
             WorkerResultRefactored::Ok(retval, mut workflow_ctx) => {
                 match Self::close_join_sets(&mut workflow_ctx).await {
-                    Ok(CloseJoinSetOk::Ok) => Ok(WorkerResultOk::RunFinished {
-                        retval,
-                        version: workflow_ctx.db_connection.version.clone(),
-                        http_client_traces: None,
-                    }),
-                    Ok(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher) => {
-                        Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+                    Ok(Either::Left(CloseJoinSetOk::Ok)) => {
+                        Ok(Either::Left(WorkerResultOk::RunFinished {
+                            retval,
+                            version: workflow_ctx.db_connection.version.clone(),
+                            http_client_traces: None,
+                        }))
                     }
+                    Ok(Either::Left(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher)) => {
+                        Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher))
+                    }
+                    Ok(Either::Right(ReplayFinished)) => Ok(Either::Right(ReplayFinished)),
                     Err(closing_err) => {
                         debug!("Error while closing join sets {closing_err:?}");
                         Err(closing_err)
@@ -663,12 +670,12 @@ impl WorkflowWorker {
             }
             WorkerResultRefactored::DbUpdatedByWorkerOrWatcher => {
                 // Made some progress.
-                Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+                Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher))
             }
             WorkerResultRefactored::FatalError(err, mut workflow_ctx) => {
                 // Even on fatal error we try to cancel activities and wait for workflows.
                 match Self::close_join_sets(&mut workflow_ctx).await {
-                    Ok(CloseJoinSetOk::Ok | CloseJoinSetOk::DbUpdatedByWorkerOrWatcher) => {
+                    Ok(_) => {
                         // Propagate the original error
                         Err(WorkflowError::FatalError(
                             err,
@@ -708,6 +715,7 @@ impl WorkflowWorker {
                     workflow_ctx.db_connection.version.clone(),
                 ))
             }
+            WorkerResultRefactored::ReplayFinished => Ok(Either::Right(ReplayFinished)),
         }
     }
 
@@ -774,6 +782,7 @@ impl WorkflowWorker {
                         // logged in epoch callback
                         WorkerResultRefactored::ExecutorClosing(workflow_ctx)
                     }
+                    WorkerPartialResult::ReplayFinished => WorkerResultRefactored::ReplayFinished,
                 }
             }
             Err(RunError::ResultParsingError(err, mut workflow_ctx)) => {
@@ -792,10 +801,12 @@ impl WorkflowWorker {
 
     async fn close_join_sets(
         workflow_ctx: &mut WorkflowCtx,
-    ) -> Result<CloseJoinSetOk, WorkflowError> {
+    ) -> Result<Either<CloseJoinSetOk, ReplayFinished>, WorkflowError> {
         match workflow_ctx.join_sets_close_on_finish().await {
-            Ok(()) => Ok(CloseJoinSetOk::Ok),
-            Err(ApplyError::InterruptDbUpdated) => Ok(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher),
+            Ok(()) => Ok(Either::Left(CloseJoinSetOk::Ok)),
+            Err(ApplyError::InterruptDbUpdated) => {
+                Ok(Either::Left(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher))
+            }
 
             Err(ApplyError::DbError(db_error)) => Err(WorkflowError::DbError(db_error)),
             Err(ApplyError::NondeterminismDetected(detail)) => Err(WorkflowError::FatalError(
@@ -809,14 +820,40 @@ impl WorkflowWorker {
             Err(ApplyError::ExecutorClosing) => Err(WorkflowError::ExecutorClosing(
                 workflow_ctx.db_connection.version.clone(),
             )),
+            Err(ApplyError::ReplayFinished) => Ok(Either::Right(ReplayFinished)),
+        }
+    }
+
+    pub(crate) async fn replay_internal(
+        &self,
+        ctx: WorkerContext,
+        is_replay: Option<ReplayKind>,
+    ) -> Result<(), ReplayError> {
+        match self.run_internal(ctx, is_replay).await {
+            Ok(Either::Left(WorkerResultOk::RunFinished { .. })) => {
+                debug!("Replay finished returning a value");
+                Ok(())
+            }
+            Ok(Either::Right(ReplayFinished)) => {
+                debug!("Replay concluded, execution is in progress");
+                Ok(())
+            }
+            Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher)) => {
+                debug!("Replay concluded asking for interrupt"); // Response did not arrive yet.
+                Ok(())
+            }
+            Err(err) => {
+                debug!("Replay failed: {err:?}");
+                Err(ReplayError::from(err))
+            }
         }
     }
 
     pub(crate) async fn run_internal(
         &self,
         ctx: WorkerContext,
-        is_replaying_finished: bool,
-    ) -> Result<WorkerResultOk, WorkflowError> {
+        is_replay: Option<ReplayKind>,
+    ) -> Result<Either<WorkerResultOk, ReplayFinished>, WorkflowError> {
         ctx.worker_span.in_scope(|| info!("Execution run started"));
         if !ctx.can_be_retried {
             warn!(
@@ -825,7 +862,7 @@ impl WorkflowWorker {
         }
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
-        match self.prepare_func(ctx, is_replaying_finished).await? {
+        match self.prepare_func(ctx, is_replay).await? {
             PrepareFuncOk::Finished {
                 store,
                 func,
@@ -844,7 +881,7 @@ impl WorkflowWorker {
                 .await
             }
             PrepareFuncOk::DbUpdatedByWorkerOrWatcher => {
-                Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+                Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher))
             }
         }
     }
@@ -862,8 +899,7 @@ impl WorkflowWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> Result<(), ReplayError> {
-        let clock_fn = ConstClock(DateTime::from_timestamp_nanos(0));
-
+        let clock_fn = ConstClock(DateTime::UNIX_EPOCH);
         let config = WorkflowConfig {
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             backtrace_persist: false,
@@ -878,10 +914,16 @@ impl WorkflowWorker {
             .get(&execution_id)
             .await
             .map_err(DbErrorWrite::from)?;
-        let is_finished = log.is_finished();
-        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false); // TODO: consider using current exec's watcher
+        let replay_kind = if log.is_finished() {
+            ReplayKind::Finished
+        } else {
+            ReplayKind::Unfinished
+        };
+        // TODO: consider using current exec's watcher for faster cancellation
+        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let db_pool = Arc::new(InMemoryPool::new());
         let ctx = WorkerContext {
-            execution_id,
+            execution_id: execution_id.clone(),
             metadata: ExecutionMetadata::empty(),
             ffqn: log.ffqn().clone(),
             params: log.params().clone(),
@@ -909,7 +951,7 @@ impl WorkflowWorker {
             clock_fn.clone_box(),
         )?;
         let linked = compiled.link(fn_registry)?;
-        let db_pool = Arc::new(InMemoryPool::new());
+
         let worker = linked.into_worker(
             deployment_id,
             db_pool,
@@ -917,11 +959,7 @@ impl WorkflowWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        worker
-            .run_internal(ctx, is_finished)
-            .await
-            .map(|_| ())
-            .map_err(ReplayError::from)
+        worker.replay_internal(ctx, Some(replay_kind)).await
     }
 }
 
@@ -978,11 +1016,12 @@ impl Worker for WorkflowWorker {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         match self
             .run_internal(
-                ctx, false, // not replaying a finished execution.
+                ctx, None, //is_replay
             )
             .await
         {
-            Ok(ok) => WorkerResult::Ok(ok),
+            Ok(Either::Left(ok)) => WorkerResult::Ok(ok),
+            Ok(Either::Right(_)) => unreachable!("replay was not requested"),
             Err(workflow_err) => WorkerResult::Err(WorkerError::from(workflow_err)),
         }
     }
@@ -1072,6 +1111,7 @@ pub(crate) mod tests {
     use test_db_macro::expand_enum_database;
     use test_utils::ExecutionLogSanitized;
     use test_utils::sim_clock::SimClock;
+    use tokio::sync::mpsc;
     use tracing::debug;
     use tracing::info_span;
     use val_json::{
@@ -1126,37 +1166,62 @@ pub(crate) mod tests {
         fn_registry: &Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
     ) -> Arc<WorkflowWorker> {
+        compile_workflow_worker_runnable(
+            wasm_path,
+            db_pool,
+            clock_fn,
+            join_next_blocking_strategy,
+            fn_registry,
+            cancel_registry,
+        )
+        .await
+        .0
+    }
+
+    pub(crate) async fn compile_workflow_worker_runnable(
+        wasm_path: &str,
+        db_pool: Arc<dyn DbPool>,
+        clock_fn: Box<dyn ClockFn>,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        fn_registry: &Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
+    ) -> (Arc<WorkflowWorker>, RunnableComponent) {
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (runnable_component, component_id) =
             compile_workflow_with_engine(wasm_path, &workflow_engine).await;
-        Arc::new(
-            WorkflowWorkerCompiled::new_with_config(
-                runnable_component,
-                WorkflowConfig {
-                    component_id,
-                    join_next_blocking_strategy,
-                    backtrace_persist: false,
-                    stub_wasi: false,
-                    fuel: None,
-                    lock_extension: None,
-                    subscription_interruption: None,
-                },
-                workflow_engine,
-                clock_fn.clone_box(),
-            )
-            .unwrap()
-            .link(fn_registry.clone())
-            .unwrap()
-            .into_worker(
-                DEPLOYMENT_ID_DUMMY,
-                db_pool,
-                Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn)),
-                cancel_registry,
-                None, // logs_storage_config
+        (
+            Arc::new(
+                WorkflowWorkerCompiled::new_with_config(
+                    runnable_component.clone(),
+                    WorkflowConfig {
+                        component_id,
+                        join_next_blocking_strategy,
+                        backtrace_persist: false,
+                        stub_wasi: false,
+                        fuel: None,
+                        lock_extension: None,
+                        subscription_interruption: None,
+                    },
+                    workflow_engine,
+                    clock_fn.clone_box(),
+                )
+                .unwrap()
+                .link(fn_registry.clone())
+                .unwrap()
+                .into_worker(
+                    DEPLOYMENT_ID_DUMMY,
+                    db_pool,
+                    Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn)),
+                    cancel_registry,
+                    None, // logs_storage_config
+                ),
             ),
+            runnable_component,
         )
     }
+
+    const LOCK_EXPIRY_WORKFLOW: Duration = Duration::from_secs(1);
 
     async fn new_workflow_exec_task(
         db_pool: Arc<dyn DbPool>,
@@ -1179,7 +1244,7 @@ pub(crate) mod tests {
         info!("Instantiated worker");
         let exec_config = ExecConfig {
             batch_size: 1,
-            lock_expiry: Duration::from_secs(3),
+            lock_expiry: LOCK_EXPIRY_WORKFLOW,
             tick_sleep: TICK_SLEEP,
             component_id: worker.config.component_id.clone(),
             task_limiter: None,
@@ -1330,7 +1395,7 @@ pub(crate) mod tests {
         assert_eq!(1, executed_workflows.len());
 
         let res = db_connection
-            .wait_for_finished_result(&execution_id, None)
+            .get_finished_result(&execution_id)
             .await
             .unwrap();
         let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
@@ -3527,5 +3592,180 @@ pub(crate) mod tests {
         let result =
             assert_matches!(result, SupportedFunctionReturnValue::ExecutionError(err) => err);
         assert_matches!(result.kind, ExecutionFailureKind::Cancelled);
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn fibo_workflow_each_stage_replay(db: Database) {
+        let sim_clock = SimClock::epoch();
+        let (_guard, db_pool, db_close) = db.set_up().await;
+        fibo_workflow_each_stage_replay_inner(db_pool.clone(), sim_clock).await;
+        db_close.close().await;
+    }
+
+    async fn fibo_workflow_each_stage_replay_inner(db_pool: Arc<dyn DbPool>, sim_clock: SimClock) {
+        const INPUT_ITERATIONS: u32 = 1;
+        test_utils::set_up();
+
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (workflow_runnable, workflow_component_id) = compile_workflow_with_engine(
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+            &workflow_engine,
+        )
+        .await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            (workflow_runnable.clone(), workflow_component_id),
+        ]);
+        let cancel_registry = CancelRegistry::new();
+        let workflow_exec = new_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            cancel_registry,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+        // Create an execution.
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: FIBOA_WORKFLOW_FFQN,
+                params: Params::from_json_values_test(vec![
+                    json!(FIBO_10_INPUT),
+                    json!(INPUT_ITERATIONS),
+                ]),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+            })
+            .await
+            .unwrap();
+
+        let (log_sender, _log_storage_recv) = mpsc::channel(100);
+        // Replay just after creating
+        WorkflowWorker::replay(
+            DeploymentId::generate(),
+            workflow_exec.config.component_id.clone(),
+            workflow_runnable.wasmtime_component.clone(),
+            &workflow_runnable.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_connection.as_ref(),
+            execution_id.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender: log_sender.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        info!("Should end as BlockedByJoinSet");
+
+        let executed_workflows = workflow_exec
+            .tick_test(sim_clock.now(), RunId::generate())
+            .await;
+
+        assert_eq!(1, executed_workflows.wait_for_tasks().await.len());
+
+        // Replay before activity has finished
+        WorkflowWorker::replay(
+            DeploymentId::generate(),
+            workflow_exec.config.component_id.clone(),
+            workflow_runnable.wasmtime_component.clone(),
+            &workflow_runnable.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_connection.as_ref(),
+            execution_id.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender: log_sender.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        info!("Execution should call the activity and finish");
+
+        let activity_exec = new_activity_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            TokioSleep,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+        let executed_activities = activity_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(1, executed_activities.len());
+
+        // Replay after activity has finished but before the response was processed
+        WorkflowWorker::replay(
+            DeploymentId::generate(),
+            workflow_exec.config.component_id.clone(),
+            workflow_runnable.wasmtime_component.clone(),
+            &workflow_runnable.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_connection.as_ref(),
+            execution_id.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender: log_sender.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        sim_clock.move_time_forward(LOCK_EXPIRY_WORKFLOW); // another lock will be appended when the current one expires
+
+        let executed_workflows = workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        assert_eq!(1, executed_workflows.len());
+
+        let res = db_connection
+            .get_finished_result(&execution_id)
+            .await
+            .unwrap();
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
+
+        let fibo = assert_matches!(res,
+            WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
+        assert_eq!(FIBO_10_OUTPUT, fibo);
+
+        // Replay after workflow was finished
+        WorkflowWorker::replay(
+            DeploymentId::generate(),
+            workflow_exec.config.component_id.clone(),
+            workflow_runnable.wasmtime_component.clone(),
+            &workflow_runnable.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_connection.as_ref(),
+            execution_id.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender: log_sender.clone(),
+            }),
+        )
+        .await
+        .unwrap();
     }
 }
