@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.7](https://github.com/obeli-sk/obelisk/compare/v0.37.6...v0.37.7)
+
+### Added
+
+- *(cli)* Add `--skip-local` switch to `generate wit-deps` - ([2b0e045](https://github.com/obeli-sk/obelisk/commit/2b0e0457757cf71bdda4d20aa42ccc631a6d3ac8))
+- *(cli)* Add execution upgrade - ([881bc63](https://github.com/obeli-sk/obelisk/commit/881bc6322b3df00afd99363360872c14f362dd1e))
+- *(cli)* Add replay - ([51ad2d5](https://github.com/obeli-sk/obelisk/commit/51ad2d550efbb87b1f61911ed74e8a4ed739eceb))
+- *(cli)* Add pause/unpause - ([38ee34a](https://github.com/obeli-sk/obelisk/commit/38ee34a0c41dc6083ea016a714678d7fbdf1f3b6))
+- *(cli)* Allow filtering by execution id prefix in `execution list` - ([057174b](https://github.com/obeli-sk/obelisk/commit/057174ba0c008ba66384d99c7a951b22738ddea1))
+- *(cli,webui)* Add `logs`, `events`, `responses`, `list` commands to `execution` - ([f4e0fe3](https://github.com/obeli-sk/obelisk/commit/f4e0fe31d21f73cec26a06778198c374f99b44f1))
+- *(webapi)* Allow filtering by ffqn in `/components` - ([c438b3d](https://github.com/obeli-sk/obelisk/commit/c438b3d710a6ebb7acfc9eae8ab9e1b518ad0578))
+- *(workflow-js)* Return `Date` object on `obelisk.sleep` - ([9652d98](https://github.com/obeli-sk/obelisk/commit/9652d985e9865c17ea1a6ec5024a4abba8cbbf0f))
+
+### Fixed
+
+- *(cli)* Avoid failing on missing old files in `generate wit-deps` - ([7f1c7e8](https://github.com/obeli-sk/obelisk/commit/7f1c7e80a3186e7f7756208b970f8519cf227ef8))
+- *(grpc)* Apply filtering by `FunctionName` in `ListComponents` - ([7973620](https://github.com/obeli-sk/obelisk/commit/79736202686d6dd5433cb73dfff498df65e4e695))
+- Fix replaying of unfinished executions - ([7a49db7](https://github.com/obeli-sk/obelisk/commit/7a49db7e7d2ec0107f3b0650b270c31754d0520a))
+- *(cli)* Suppress linking errors on `generate wit-deps` - ([860896c](https://github.com/obeli-sk/obelisk/commit/860896ca5a30b8aa7aed07df938655e4fadbe945))
+
+
 ## [0.37.6](https://github.com/obeli-sk/obelisk/compare/v0.37.5...v0.37.6)
 
 ### Added
