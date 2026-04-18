@@ -39,12 +39,14 @@ export default function serial() {
 ## `obelisk.sleep` — persistent sleep
 
 Pauses the workflow durably — the sleep position is saved to the execution log. If the server
-crashes mid-sleep and restarts, the sleep resumes where it left off.
+crashes mid-sleep and restarts, the sleep resumes where it left off. Returns a `Date` object
+representing the time at which the sleep expired.
 
 ```javascript
 obelisk.sleep({ milliseconds: 300 });
 obelisk.sleep({ seconds: 1 });
-obelisk.sleep({ minutes: 5 });
+const wakeTime = obelisk.sleep({ minutes: 5 }); // returns Date of wake-up
+console.log(`Resumed at ${wakeTime.toISOString()}`);
 ```
 
 ## Join sets — parallel submission
