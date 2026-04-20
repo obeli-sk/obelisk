@@ -173,6 +173,7 @@ impl TryFrom<wasmtime::component::Val> for WastVal {
             Val::Future(_) => Err(WastValConversionError("future")),
             Val::Stream(_) => Err(WastValConversionError("stream")),
             Val::ErrorContext(_) => Err(WastValConversionError("error-context")),
+            Val::Map(_) => Err(WastValConversionError("map")),
         }
     }
 }
