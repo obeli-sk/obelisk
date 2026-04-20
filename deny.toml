@@ -39,14 +39,12 @@ skip = [
     { name = "thiserror", version = "1" },
     { name = "thiserror-impl", version = "1" },
     { name = "wast", version = "35" },
+    # val-json uses wast 246 for test parsing; wasmtime/wat test infra uses wast 247
+    { name = "wast", version = "246" },
     # wasmtime-internal-cache uses toml 0.9 and its transitive deps
     { name = "toml", version = "0.9" },
     { name = "toml_datetime", version = "0.7" },
     { name = "winnow", version = "0.7" },
-    # wasmtime-wasi-http uses rustls 0.22 and tokio-rustls 0.25
-    { name = "rustls", version = "0.22" },
-    { name = "rustls-webpki", version = "0.102" },
-    { name = "tokio-rustls", version = "0.25" },
     # wasmtime-wasi uses cap-rand which requires rand 0.8 and its transitive deps
     { name = "rand", version = "0.8" },
     { name = "rand_core", version = "0.6" },
@@ -54,6 +52,9 @@ skip = [
     { name = "getrandom", version = "0.2" },
     # rand 0.9 uses getrandom 0.3; we directly depend on getrandom 0.4
     { name = "getrandom", version = "0.3" },
+    # obelisk uses rand 0.9; postgres-protocol requires rand 0.10
+    { name = "rand", version = "0.9" },
+    { name = "rand_core", version = "0.9" },
     # wasmtime-wasi uses system-interface which requires rustix 0.38
     { name = "rustix", version = "0.38" },
     { name = "linux-raw-sys", version = "0.4" },
@@ -64,12 +65,23 @@ skip = [
     { name = "hashbrown", version = "0.15" },
     { name = "hashbrown", version = "0.16.1" },
     { name = "foldhash", version = "0.1" },
+    # obelisk uses sha2 0.10 RustCrypto suite; postgres-protocol requires sha2 0.11
+    { name = "sha2", version = "0.10" },
+    { name = "digest", version = "0.10" },
+    { name = "block-buffer", version = "0.10" },
+    { name = "crypto-common", version = "0.1" },
+    { name = "cpufeatures", version = "0.2" },
     # oci-wasm uses wit-component 0.244 (older wasm-tools suite)
     { name = "wasmparser", version = "0.244" },
     { name = "wasm-encoder", version = "0.244" },
     { name = "wasm-metadata", version = "0.244" },
     { name = "wit-component", version = "0.244" },
     { name = "wit-parser", version = "0.244" },
+    # wasmtime core (wasmtime-environ, wasm-compose) uses wasm-tools 0.246;
+    # wit-bindgen 0.57 and wat bring in 0.247 — canonical is 0.247, these are skipped
+    { name = "wasmparser", version = "0.246" },
+    { name = "wasm-encoder", version = "0.246" },
+    { name = "wit-parser", version = "0.246" },
     # oci-spec (via oci-client) requires strum 0.27 and darling 0.20
     { name = "strum", version = "0.27" },
     { name = "strum_macros", version = "0.27" },
@@ -87,10 +99,4 @@ skip = [
 ignore = [
     # paste is unmaintained; also pulled in by utoipa-axum so unavoidable
     { id = "RUSTSEC-2024-0436" },
-    # rustls-webpki 0.102.8 CVE locked inside wasmtime-wasi-http 43.x
-    { id = "RUSTSEC-2026-0049" },
-    # rustls-webpki 0.102.8 CVE locked inside wasmtime-wasi-http 43.x
-    { id = "RUSTSEC-2026-0098" },
-    # rustls-webpki 0.102.8 CVE locked inside wasmtime-wasi-http 43.x
-    { id = "RUSTSEC-2026-0099" },
 ]
