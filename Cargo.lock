@@ -4297,7 +4297,7 @@ dependencies = [
 [[package]]
 name = "refinery"
 version = "0.9.0"
-source = "git+https://github.com/tomasol/refinery.git?rev=4108b33#4108b33546e80faedcfad157c519e98792bc7daa"
+source = "git+https://github.com/tomasol/refinery.git?rev=ed38fc5#ed38fc5e458fa4cde86655a5eb97ff7051616ea9"
 dependencies = [
  "refinery-core",
  "refinery-macros",
@@ -4306,7 +4306,7 @@ dependencies = [
 [[package]]
 name = "refinery-core"
 version = "0.9.0"
-source = "git+https://github.com/tomasol/refinery.git?rev=4108b33#4108b33546e80faedcfad157c519e98792bc7daa"
+source = "git+https://github.com/tomasol/refinery.git?rev=ed38fc5#ed38fc5e458fa4cde86655a5eb97ff7051616ea9"
 dependencies = [
  "async-trait",
  "cfg-if",
@@ -4330,7 +4330,7 @@ dependencies = [
 [[package]]
 name = "refinery-macros"
 version = "0.9.0"
-source = "git+https://github.com/tomasol/refinery.git?rev=4108b33#4108b33546e80faedcfad157c519e98792bc7daa"
+source = "git+https://github.com/tomasol/refinery.git?rev=ed38fc5#ed38fc5e458fa4cde86655a5eb97ff7051616ea9"
 dependencies = [
  "proc-macro2",
  "quote",
