@@ -57,19 +57,6 @@ routes = [{ methods = ["GET"], route = "/sleep/:SECONDS" }]
 backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/sleep/webhook/src/lib.rs" }
 
 [[activity_wasm]]
-name = "test_programs_dir_activity"
-location = "${DEPLOYMENT_DIR}/target/release_testprograms/wasm32-wasip2/release_testprograms/test_programs_dir_activity.wasm"
-max_retries = 1
-directories = { enabled = true, reuse_on_retry = true }
-
-[[activity_wasm]]
-name = "test_programs_process_activity"
-location = "${DEPLOYMENT_DIR}/target/release_testprograms/wasm32-wasip2/release_testprograms/test_programs_process_activity.wasm"
-max_retries = 0
-directories = { enabled = true, reuse_on_retry = false, process_provider = "native" }
-env_vars = ["PATH"]                                                                                     # Needed for spawning subprocesses.
-
-[[activity_wasm]]
 name = "test_programs_serde_activity"
 location = "${DEPLOYMENT_DIR}/target/release_testprograms/wasm32-wasip2/release_testprograms/test_programs_serde_activity.wasm"
 max_retries = 0

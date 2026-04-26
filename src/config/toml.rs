@@ -38,7 +38,7 @@ use wasm_workers::cron::cron_worker::CronOrOnce;
 use wasm_workers::http_hooks::ConfigSectionHint;
 use wasm_workers::http_request_policy::HostPatternError;
 use wasm_workers::{
-    activity::activity_worker::{ActivityConfig, ActivityDirectoriesConfig, ProcessProvider},
+    activity::activity_worker::ActivityConfig,
     envvar::EnvVar,
     http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern, ReplacementLocation},
     std_output_stream::StdOutputConfig,
@@ -238,8 +238,6 @@ pub(crate) struct ServerConfigToml {
     pub(crate) external: ExternalServerConfig,
     #[serde(default, rename = "wasm")]
     pub(crate) wasm_global_config: WasmGlobalConfigToml,
-    #[serde(default, rename = "activities")]
-    pub(crate) activities_global_config: ActivitiesGlobalConfigToml,
     #[serde(default, rename = "workflows")]
     pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
     #[serde(default)]
@@ -507,21 +505,6 @@ impl Default for WasmGlobalBacktrace {
     }
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivitiesGlobalConfigToml {
-    directories: ActivitiesDirectoriesGlobalConfigToml,
-}
-impl ActivitiesGlobalConfigToml {
-    pub(crate) fn get_directories(&self) -> Option<&ActivitiesDirectoriesGlobalConfigToml> {
-        if self.directories.enabled {
-            Some(&self.directories)
-        } else {
-            None
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
@@ -532,67 +515,6 @@ impl Default for WorkflowsGlobalConfigToml {
     fn default() -> WorkflowsGlobalConfigToml {
         WorkflowsGlobalConfigToml {
             lock_extension_leeway: default_workflows_lock_extension_leeway(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivitiesDirectoriesGlobalConfigToml {
-    #[serde(default = "default_activities_directories_enabled")]
-    enabled: bool,
-    #[serde(default = "default_activities_directories_parent_directory")]
-    parent_directory: String,
-    #[serde(default)]
-    cleanup: ActivitiesDirectoriesCleanupConfigToml,
-}
-impl Default for ActivitiesDirectoriesGlobalConfigToml {
-    fn default() -> Self {
-        Self {
-            enabled: default_activities_directories_enabled(),
-            parent_directory: default_activities_directories_parent_directory(),
-            cleanup: ActivitiesDirectoriesCleanupConfigToml::default(),
-        }
-    }
-}
-impl ActivitiesDirectoriesGlobalConfigToml {
-    pub(crate) async fn get_parent_directory(
-        &self,
-        path_prefixes: &PathPrefixes,
-    ) -> Result<Arc<Path>, anyhow::Error> {
-        assert!(self.enabled); // see `ActivitiesGlobalConfigToml::get_directories`
-        path_prefixes
-            .server_config_replace_path_prefix_mkdir(&self.parent_directory)
-            .await
-            .map(Arc::from)
-    }
-
-    pub(crate) fn get_cleanup(&self) -> Option<ActivitiesDirectoriesCleanupConfigToml> {
-        assert!(self.enabled); // see `ActivitiesGlobalConfigToml::get_directories`
-        if self.cleanup.enabled {
-            Some(self.cleanup)
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivitiesDirectoriesCleanupConfigToml {
-    #[serde(default = "default_dir_cleanup_enabled")]
-    pub(crate) enabled: bool,
-    #[serde(default = "default_dir_cleanup_run_every")]
-    pub(crate) run_every: DurationConfig,
-    #[serde(default = "default_dir_cleanup_older_than")]
-    pub(crate) older_than: DurationConfig,
-}
-impl Default for ActivitiesDirectoriesCleanupConfigToml {
-    fn default() -> Self {
-        Self {
-            enabled: default_dir_cleanup_enabled(),
-            run_every: default_dir_cleanup_run_every(),
-            older_than: default_dir_cleanup_older_than(),
         }
     }
 }
@@ -963,8 +885,6 @@ pub(crate) struct ActivityWasmComponentConfigToml {
     pub(crate) forward_stderr: ComponentStdOutputToml,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
-    #[serde(default)]
-    pub(crate) directories: ActivityDirectoriesConfigToml,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
@@ -1347,33 +1267,6 @@ impl ActivityExternalComponentConfigToml {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivityDirectoriesConfigToml {
-    #[serde(default)]
-    enabled: bool,
-    #[serde(default)]
-    reuse_on_retry: bool,
-    #[serde(default)]
-    process_provider: ActivityDirectoriesProcessProvider,
-}
-
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ActivityDirectoriesProcessProvider {
-    #[default]
-    None,
-    Native,
-}
-impl From<ActivityDirectoriesProcessProvider> for Option<ProcessProvider> {
-    fn from(value: ActivityDirectoriesProcessProvider) -> Self {
-        match value {
-            ActivityDirectoriesProcessProvider::None => None,
-            ActivityDirectoriesProcessProvider::Native => Some(ProcessProvider::Native),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct ActivityWasmConfigVerified {
     pub(crate) wasm_path: PathBuf,
@@ -1395,7 +1288,6 @@ impl ActivityWasmComponentConfigToml {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
-        parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
@@ -1407,21 +1299,6 @@ impl ActivityWasmComponentConfigToml {
 
         // Validate no collision between env_vars and secret env names
         validate_no_env_collision(&env_vars, &allowed_hosts)?;
-
-        let directories_config = match (parent_preopen_dir, self.directories.enabled) {
-            (Some(parent_preopen_dir), true) => Some(ActivityDirectoriesConfig {
-                parent_preopen_dir,
-                reuse_on_retry: self.directories.reuse_on_retry,
-                process_provider: self.directories.process_provider.into(),
-            }),
-            (None, true) => {
-                bail!(
-                    "`directories.enabled` set to true for activity `{}` while the global setting `activities.directories.enabled` is false",
-                    common.name.0
-                );
-            }
-            (_, false) => None,
-        };
 
         let component_digest = self
             .component_digest
@@ -1436,7 +1313,6 @@ impl ActivityWasmComponentConfigToml {
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
             env_vars,
-            directories_config,
             fuel,
             allowed_hosts,
             config_section_hint: ConfigSectionHint::ActivityWasm,
@@ -1932,7 +1808,6 @@ impl ActivityJsComponentConfigCanonical {
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
             env_vars,
-            directories_config: None,
             fuel,
             allowed_hosts,
             config_section_hint: ConfigSectionHint::ActivityJs,
@@ -3265,24 +3140,6 @@ fn default_sqlite_queue_capacity() -> usize {
 fn default_workflows_lock_extension_leeway() -> DurationConfig {
     DurationConfig::Milliseconds(100)
 }
-fn default_activities_directories_enabled() -> bool {
-    false
-}
-
-fn default_activities_directories_parent_directory() -> String {
-    "${TEMP_DIR}/obelisk".to_string()
-}
-
-fn default_dir_cleanup_run_every() -> DurationConfig {
-    DurationConfig::Minutes(1)
-}
-fn default_dir_cleanup_older_than() -> DurationConfig {
-    DurationConfig::Minutes(5)
-}
-fn default_dir_cleanup_enabled() -> bool {
-    true
-}
-
 fn default_timers_watcher_enabled() -> bool {
     true
 }

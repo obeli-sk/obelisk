@@ -689,56 +689,6 @@ impl ExecTask {
                             )
                         }
                     }
-                    WorkerError::ActivityPreopenedDirError {
-                        reason,
-                        detail,
-                        version,
-                    } => {
-                        let http_client_traces = None;
-                        if let Some(duration) = can_be_retried {
-                            let expires_at = result_obtained_at + duration;
-                            debug!(
-                                "Retrying activity with ActivityPreopenedDirError `{reason}` execution after {duration:?} at {expires_at}"
-                            );
-                            (
-                                ExecutionRequest::TemporarilyFailed {
-                                    reason: StrVariant::from(reason_generic),
-                                    backoff_expires_at: expires_at,
-                                    detail: Some(detail),
-                                    http_client_traces,
-                                },
-                                None,
-                                version,
-                            )
-                        } else {
-                            info!(
-                                "Activity with ActivityPreopenedDirError `{reason}` marked as permanent failure - {reason_generic}"
-                            );
-                            let result = SupportedFunctionReturnValue::ExecutionError(
-                                FinishedExecutionError {
-                                    reason: Some(reason_generic),
-                                    kind: ExecutionFailureKind::Uncategorized,
-                                    detail: Some(detail),
-                                },
-                            );
-                            let child_finished =
-                                parent.map(|(parent_execution_id, parent_join_set)| {
-                                    ChildFinishedResponse {
-                                        parent_execution_id,
-                                        parent_join_set,
-                                        result: result.clone(),
-                                    }
-                                });
-                            (
-                                ExecutionRequest::Finished {
-                                    retval: result,
-                                    http_client_traces,
-                                },
-                                child_finished,
-                                version,
-                            )
-                        }
-                    }
                     WorkerError::LimitReached {
                         reason,
                         version: new_version,

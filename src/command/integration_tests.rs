@@ -32,7 +32,6 @@ use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use std::fmt::Write as _;
-use std::sync::Arc;
 use std::{path::PathBuf, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
 use tracing::debug;
@@ -368,7 +367,6 @@ impl TestServer {
         let config = config_holder.load_config().await.unwrap();
 
         let deployment_toml = load_deployment_toml(deployment_path).await.unwrap();
-        let path_prefixes = config_holder.path_prefixes;
 
         let (termination_sender, termination_watcher) = watch::channel(());
 
@@ -378,7 +376,7 @@ impl TestServer {
             suppress_type_checking_errors: false,
         };
 
-        let prepared_dirs = prepare_dirs(&config, &params.dir_params, &path_prefixes)
+        let prepared_dirs = prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes)
             .await
             .unwrap();
 
@@ -386,7 +384,7 @@ impl TestServer {
             Box::pin(run_internal(
                 config,
                 Some(deployment_toml),
-                Arc::new(path_prefixes),
+                config_holder.path_prefixes,
                 params,
                 prepared_dirs,
                 termination_watcher,

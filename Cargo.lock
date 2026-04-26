@@ -3306,7 +3306,6 @@ dependencies = [
  "indexmap 2.14.0",
  "insta",
  "itertools",
- "libc",
  "obeli-db-tests",
  "obeli-sk-concepts",
  "obeli-sk-db-mem",
@@ -3325,14 +3324,12 @@ dependencies = [
  "strum 0.28.0",
  "tempfile",
  "test-db-macro",
- "test-programs-dir-activity-builder",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-webhook-builder",
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",
  "test-programs-http-get-webhook-builder",
  "test-programs-http-get-workflow-builder",
- "test-programs-process-activity-builder",
  "test-programs-serde-activity-builder",
  "test-programs-serde-workflow-builder",
  "test-programs-sleep-activity-builder",
@@ -5128,22 +5125,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-programs-dir-activity"
-version = "0.37.7"
-dependencies = [
- "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
-]
-
-[[package]]
-name = "test-programs-dir-activity-builder"
-version = "0.37.7"
-dependencies = [
- "obelisk-component-builder",
-]
-
-[[package]]
 name = "test-programs-fibo-activity"
 version = "0.37.7"
 dependencies = [
@@ -5255,25 +5236,6 @@ dependencies = [
 
 [[package]]
 name = "test-programs-http-get-workflow-builder"
-version = "0.37.7"
-dependencies = [
- "obelisk-component-builder",
-]
-
-[[package]]
-name = "test-programs-process-activity"
-version = "0.37.7"
-dependencies = [
- "anyhow",
- "futures-concurrency",
- "wasip2",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
- "wstd",
-]
-
-[[package]]
-name = "test-programs-process-activity-builder"
 version = "0.37.7"
 dependencies = [
  "obelisk-component-builder",

@@ -25,14 +25,6 @@ const OBELISK_TYPES_VERSION: &str = formatcp!(
 );
 const OBELISK_TYPES_PACKAGE_NAME: &str = formatcp!("obelisk:types@{OBELISK_TYPES_VERSION}");
 
-pub const WIT_OBELISK_ACTIVITY_PACKAGE_PROCESS: [&str; 3] = [
-    "obelisk_activity@1.0.0",
-    "obelisk_activity@1.0.0.wit",
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_activity@1.0.0/obelisk_activity@1.0.0.wit"
-    )),
-];
 pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
     "obelisk_log@1.0.0",
     "obelisk_log@1.0.0.wit",

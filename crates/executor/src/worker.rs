@@ -66,12 +66,6 @@ pub enum WorkerError {
         version: Version,
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
-    #[error("{reason}")]
-    ActivityPreopenedDirError {
-        reason: String,
-        detail: String,
-        version: Version,
-    },
     /// Resources are exhausted.
     /// Executor must mark the execution as Unlocked.
     /// This event does not increase temporary event count.

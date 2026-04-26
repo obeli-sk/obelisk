@@ -1,6 +1,4 @@
 use super::activity_ctx::{self, ActivityCtx};
-use super::activity_ctx_process::process_support_outer::v1_0_0::obelisk::activity::process as process_support;
-use crate::activity::activity_ctx::ActivityPreopenIoError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
@@ -13,18 +11,16 @@ use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::storage::{LogInfoAppendRow, LogStreamType, Version};
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{
-    ComponentId, FunctionFqn, PackageIfcFns, Params, StrVariant, SupportedFunctionReturnValue,
-    TrapKind,
+    ComponentId, FunctionFqn, PackageIfcFns, Params, SupportedFunctionReturnValue, TrapKind,
 };
 use concepts::{FunctionMetadata, ResultParsingError};
 use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{error, info, trace};
+use tracing::{info, trace};
 use utils::wasm_tools::ExIm;
 use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
 use wasmtime::{Engine, component::Val};
@@ -36,23 +32,10 @@ pub struct ActivityConfig {
     pub forward_stdout: Option<StdOutputConfig>,
     pub forward_stderr: Option<StdOutputConfig>,
     pub env_vars: Arc<[EnvVar]>,
-    pub directories_config: Option<ActivityDirectoriesConfig>,
     pub fuel: Option<u64>,
     pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
     /// The TOML config section type for error messages
     pub config_section_hint: ConfigSectionHint,
-}
-
-#[derive(Clone, Debug)]
-pub struct ActivityDirectoriesConfig {
-    pub parent_preopen_dir: Arc<Path>,
-    pub reuse_on_retry: bool,
-    pub process_provider: Option<ProcessProvider>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum ProcessProvider {
-    Native,
 }
 
 #[derive(derive_more::Debug)]
@@ -87,32 +70,10 @@ impl ActivityWorkerCompiled {
         // obelisk:log
         log_activities::obelisk::log::log::add_to_linker::<_, ActivityCtx>(&mut linker, |x| x)
             .map_err(|err| WasmFileError::linking_error("cannot link obelisk:log", err))?;
-        // obelisk:activity/process
-        match config
-            .directories_config
-            .as_ref()
-            .and_then(|dir| dir.process_provider.as_ref())
-        {
-            Some(ProcessProvider::Native) => {
-                process_support::add_to_linker::<_, ActivityCtx>(&mut linker, |x| x).map_err(
-                    |err| WasmFileError::linking_error("cannot link process support", err),
-                )?;
-            }
-            None => {}
-        }
         // Attempt to pre-instantiate to catch missing imports
         let instance_pre = linker
             .instantiate_pre(&runnable_component.wasmtime_component)
-            .map_err(|err| {
-                let reason = if err.to_string()
-                    == "component imports instance `obelisk:activity/process@1.0.0`, but a matching implementation was not found in the linker"
-                {
-                    "activity comopnent imports Process API, but it is not enabled. Use e.g. `directories  = { enabled = true, process_provider = \"native\"}`".to_string().into()
-                } else {
-                    StrVariant::Static("cannot link activity")
-                };
-                WasmFileError::linking_error(reason, err)}
-            )?;
+            .map_err(|err| WasmFileError::linking_error("cannot link activity", err))?;
 
         let exported_ffqn_to_index = RunnableComponent::index_exported_functions(
             &runnable_component.wasmtime_component,
@@ -233,7 +194,7 @@ impl Worker for ActivityWorker {
         let version = ctx.version.clone();
         let worker_span = ctx.worker_span.clone();
 
-        let (mut store, deadline_duration) = match self.create_store(ctx, started_at).await {
+        let (mut store, deadline_duration) = match self.create_store(ctx, started_at) {
             Ok(store) => store,
             Err(err) => return WorkerResult::Err(err),
         };
@@ -306,47 +267,11 @@ struct CallFuncParams {
 }
 
 impl ActivityWorker {
-    async fn create_store(
+    fn create_store(
         &self,
         ctx: WorkerContext,
         started_at: DateTime<Utc>,
     ) -> Result<(Store<ActivityCtx>, Duration /* deadline duration*/), WorkerError> {
-        let preopened_dir = if let Some(directories_config) = &self.config.directories_config {
-            let preopened_dir = directories_config
-                .parent_preopen_dir
-                .join(ctx.execution_id.to_string());
-            if !directories_config.reuse_on_retry {
-                // Attempt to `rm -rf` before (re)creating the directory.
-                match tokio::fs::remove_dir_all(&preopened_dir).await {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => {
-                        error!(
-                            "Cannot remove old preopened directory that is in the way - {err:?}"
-                        );
-                        return Err(WorkerError::ActivityPreopenedDirError {
-                            reason: format!(
-                                "cannot remove old preopened directory that is in the way - {err}"
-                            ),
-                            detail: format!("{err:?}"),
-                            version: ctx.version.clone(),
-                        });
-                    }
-                }
-            }
-            let res = tokio::fs::create_dir_all(&preopened_dir).await;
-            if let Err(err) = res {
-                error!("cannot create preopened directory - {err:?}");
-                return Err(WorkerError::ActivityPreopenedDirError {
-                    reason: format!("cannot create preopened directory - {err}"),
-                    detail: format!("{err:?}"),
-                    version: ctx.version.clone(),
-                });
-            }
-            Some(preopened_dir)
-        } else {
-            None
-        };
         let lock_expires_at = ctx.locked_event.lock_expires_at;
         let worker_span = ctx.worker_span.clone();
         let version = ctx.version.clone();
@@ -360,27 +285,15 @@ impl ActivityWorker {
             .as_ref()
             .map(|it| it.build(&ctx.execution_id, ctx.locked_event.run_id));
 
-        let mut store = match activity_ctx::store(
+        let mut store = activity_ctx::store(
             &self.engine,
             ctx,
             &self.config,
             self.clock_fn.clone_box(),
-            preopened_dir,
             stdout,
             stderr,
             self.logs_storage_config.clone(),
-        ) {
-            Ok(store) => store,
-            Err(ActivityPreopenIoError { err }) => {
-                return Err(WorkerError::ActivityPreopenedDirError {
-                    reason: format!(
-                        "not found although preopened directory was just created - {err}"
-                    ),
-                    detail: format!("{err:?}"),
-                    version,
-                });
-            }
-        };
+        );
 
         // Set fuel.
         if let Some(fuel) = self.config.fuel {
@@ -628,10 +541,10 @@ pub(crate) mod tests {
     use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
     use assert_matches::assert_matches;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
+    use concepts::storage::Locked;
     use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
     use concepts::storage::{DbPool, TimeoutOutcome};
     use concepts::storage::{ExecutionRequest, Version};
-    use concepts::storage::{Locked, LockedBy, PendingState, PendingStatePendingAt};
     use concepts::time::Now;
     use concepts::time::TokioSleep;
     use concepts::{ComponentRetryConfig, ComponentType};
@@ -675,7 +588,7 @@ pub(crate) mod tests {
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
-            directories_config: None,
+
             fuel: None,
             allowed_hosts: Arc::from([]),
             config_section_hint: ConfigSectionHint::ActivityWasm,
@@ -691,7 +604,7 @@ pub(crate) mod tests {
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
-            directories_config: None,
+
             fuel: None,
             allowed_hosts: Arc::from(vec![AllowedHostConfig {
                 pattern: HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods)
@@ -1821,7 +1734,7 @@ pub(crate) mod tests {
                     forward_stdout: None,
                     forward_stderr: None,
                     env_vars: Arc::from([]),
-                    directories_config: None,
+
                     fuel: None,
                     allowed_hosts: Arc::from(vec![AllowedHostConfig {
                         pattern: host_pattern,
@@ -1924,325 +1837,6 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest]
-    #[tokio::test]
-    async fn preopened_dir_sanity(
-        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-        locking_strategy: LockingStrategy,
-    ) {
-        test_utils::set_up();
-        let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection().await.unwrap();
-        let parent_preopen_tempdir = tempfile::tempdir().unwrap();
-        let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
-        let retry_config = ComponentRetryConfig {
-            max_retries: Some(1), // should fail in first try
-            retry_exp_backoff: Duration::ZERO,
-        };
-        let exec = new_activity_with_config(
-            db_pool.clone(),
-            test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
-            sim_clock.clone_box(),
-            TokioSleep,
-            move |component_id| ActivityConfig {
-                component_id,
-                forward_stdout: None,
-                forward_stderr: None,
-                env_vars: Arc::default(),
-                directories_config: Some(ActivityDirectoriesConfig {
-                    parent_preopen_dir,
-                    reuse_on_retry: true, // relies on continuing in the same folder
-                    process_provider: None,
-                }),
-                fuel: None,
-                allowed_hosts: Arc::from([]),
-                config_section_hint: ConfigSectionHint::ActivityWasm,
-            },
-            retry_config,
-            locking_strategy,
-        )
-        .await;
-        // Create an execution.
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: FunctionFqn::new_static_tuple(
-                    test_programs_dir_activity_builder::exports::testing::dir::dir::IO,
-                ),
-                params: Params::empty(),
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                component_id: exec.config.component_id.clone(),
-
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
-        let run_id = RunId::generate();
-        let executed = exec.tick_test_await(sim_clock.now(), run_id).await;
-        assert_eq!(vec![execution_id.clone()], executed);
-        // First execution should have failed
-        let pending_state = db_connection
-            .get_pending_state(&execution_id)
-            .await
-            .unwrap()
-            .pending_state;
-        let (scheduled_at, found_run_id) = assert_matches!(pending_state,
-                PendingState::PendingAt(PendingStatePendingAt {
-                    scheduled_at,
-                    last_lock: Some(LockedBy { executor_id: _, run_id }),
-                })
-            => (scheduled_at, run_id));
-        // retry_exp_backoff is 0
-        assert_eq!(sim_clock.now(), scheduled_at);
-        assert_eq!(run_id, found_run_id);
-
-        let executed = exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-        assert_eq!(vec![execution_id.clone()], executed);
-
-        // Check the result.
-        let res = db_connection
-            .wait_for_finished_result(
-                &execution_id,
-                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
-            )
-            .await
-            .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok(..));
-
-        db_close.close().await;
-    }
-
-    #[rstest::rstest(
-            ffqn => [FunctionFqn::new_static_tuple(
-                    test_programs_process_activity_builder::exports::testing::process::process::TOUCH,
-                ), FunctionFqn::new_static_tuple(
-                    test_programs_process_activity_builder::exports::testing::process::process::KILL,
-                ),
-                FunctionFqn::new_static_tuple(
-                    test_programs_process_activity_builder::exports::testing::process::process::STDIO,
-                )],
-        )]
-    #[tokio::test]
-    async fn process_sanity(
-        ffqn: FunctionFqn,
-        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-        locking_strategy: LockingStrategy,
-    ) {
-        test_utils::set_up();
-        let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection().await.unwrap();
-        let parent_preopen_tempdir = tempfile::tempdir().unwrap();
-        let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
-        let exec = new_activity_with_config(
-            db_pool.clone(),
-            test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
-            sim_clock.clone_box(),
-            TokioSleep,
-            move |component_id| ActivityConfig {
-                component_id,
-                forward_stdout: Some(StdOutputConfig::Stderr),
-                forward_stderr: Some(StdOutputConfig::Stderr),
-                env_vars: Arc::default(),
-                directories_config: Some(ActivityDirectoriesConfig {
-                    parent_preopen_dir,
-                    reuse_on_retry: false,
-                    process_provider: Some(ProcessProvider::Native),
-                }),
-                fuel: None,
-                allowed_hosts: Arc::from([]),
-                config_section_hint: ConfigSectionHint::ActivityWasm,
-            },
-            ComponentRetryConfig::ZERO,
-            locking_strategy,
-        )
-        .await;
-        // Create an execution.
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn,
-                params: Params::empty(),
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                component_id: exec.config.component_id.clone(),
-
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-            })
-            .await
-            .unwrap();
-        let executed = exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-        assert_eq!(vec![execution_id.clone()], executed);
-        // Check the result.
-        let res = db_connection
-            .wait_for_finished_result(
-                &execution_id,
-                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
-            )
-            .await
-            .unwrap();
-        assert_matches!(res, SupportedFunctionReturnValue::Ok(..));
-        db_close.close().await;
-    }
-
-    #[tokio::test]
-    async fn process_api_not_enabled_should_produce_meaningful_error() {
-        test_utils::set_up();
-        let sim_clock = SimClock::default();
-
-        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
-
-        let (wasm_component, component_id) = compile_activity_with_engine(
-            test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
-            &engine,
-            ComponentType::Activity,
-        )
-        .await;
-
-        let err = ActivityWorkerCompiled::new_with_config(
-            wasm_component,
-            ActivityConfig {
-                component_id,
-                forward_stdout: Some(StdOutputConfig::Stderr),
-                forward_stderr: Some(StdOutputConfig::Stderr),
-                env_vars: Arc::default(),
-                directories_config: None,
-                fuel: None,
-                allowed_hosts: Arc::from([]),
-                config_section_hint: ConfigSectionHint::ActivityWasm,
-            },
-            engine,
-            sim_clock.clone_box(),
-            Arc::new(TokioSleep),
-        )
-        .unwrap_err();
-        let reason = assert_matches!(err, WasmFileError::LinkingError { reason, .. } => reason);
-        assert_eq!(
-            r#"activity comopnent imports Process API, but it is not enabled. Use e.g. `directories  = { enabled = true, process_provider = "native"}`"#,
-            reason.to_string()
-        );
-    }
-
-    #[cfg(unix)]
-    async fn is_process_running(pid: u32) -> bool {
-        let output = tokio::process::Command::new("ps")
-            .arg("a")
-            .output()
-            .await
-            .unwrap();
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        stdout.lines().any(|line| {
-            line.split_whitespace()
-                .next()
-                .is_some_and(|field| field == pid.to_string())
-        })
-    }
-
-    #[cfg(unix)]
-    #[rstest]
-    #[tokio::test]
-    async fn process_group_cleanup(
-        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
-        locking_strategy: LockingStrategy,
-    ) {
-        test_utils::set_up();
-        let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
-        let db_connection = db_pool.connection().await.unwrap();
-        let parent_preopen_tempdir = tempfile::tempdir().unwrap();
-        let parent_preopen_dir = Arc::from(parent_preopen_tempdir.path());
-        let exec = new_activity_with_config(
-            db_pool.clone(),
-            test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
-            sim_clock.clone_box(),
-            TokioSleep,
-            move |component_id| ActivityConfig {
-                component_id,
-                forward_stdout: None,
-                forward_stderr: None,
-                env_vars: Arc::from([EnvVar {
-                    key: "PATH".to_string(),
-                    val: std::env::var("PATH").unwrap(),
-                }]),
-                directories_config: Some(ActivityDirectoriesConfig {
-                    parent_preopen_dir,
-                    reuse_on_retry: false,
-                    process_provider: Some(ProcessProvider::Native),
-                }),
-                fuel: None,
-                allowed_hosts: Arc::from([]),
-                config_section_hint: ConfigSectionHint::ActivityWasm,
-            },
-            ComponentRetryConfig::ZERO,
-            locking_strategy,
-        )
-        .await;
-        // Create an execution.
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id: execution_id.clone(),
-                    ffqn: FunctionFqn::new_static_tuple(
-                        test_programs_process_activity_builder::exports::testing::process::process::EXEC_SLEEP,
-                    ),
-                    params: Params::empty(),
-                    parent: None,
-                    metadata: concepts::ExecutionMetadata::empty(),
-                    scheduled_at: created_at,
-                    component_id: exec.config.component_id.clone(),
-
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    scheduled_by: None,
-                })
-                .await
-                .unwrap();
-        let executed = exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-        assert_eq!(vec![execution_id.clone()], executed);
-        // Check the result.
-        let res = db_connection
-            .wait_for_finished_result(
-                &execution_id,
-                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
-            )
-            .await
-            .unwrap();
-        let sleep_pid = assert_matches!(res,
-                SupportedFunctionReturnValue::Ok(Some(WastValWithType {value,
-                    r#type: _})) => value);
-        let sleep_pid = assert_matches!(sleep_pid, WastVal::U32(val) => val);
-        debug!("Sleep pid: {sleep_pid}");
-
-        // Test that the process was killed
-        let mut attempt = 0;
-        while is_process_running(sleep_pid).await {
-            assert!(attempt < 5, "failed after 5 attemtps");
-            attempt += 1;
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-
-        db_close.close().await;
-    }
-
     #[rstest::rstest(
             param => [
                 r#"{"image": "foo", "a": false, "b":false}"#,
@@ -2268,7 +1862,7 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
-                directories_config: None,
+
                 fuel: None,
                 allowed_hosts: Arc::from([]),
                 config_section_hint: ConfigSectionHint::ActivityWasm,
@@ -2336,7 +1930,7 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
-                directories_config: None,
+
                 fuel: None,
                 allowed_hosts: Arc::from([]),
                 config_section_hint: ConfigSectionHint::ActivityWasm,
@@ -2409,7 +2003,7 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
-                directories_config: None,
+
                 fuel: None,
                 allowed_hosts: Arc::from([]),
                 config_section_hint: ConfigSectionHint::ActivityWasm,

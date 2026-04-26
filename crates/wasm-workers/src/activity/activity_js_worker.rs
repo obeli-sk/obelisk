@@ -386,7 +386,6 @@ mod tests {
                 forward_stdout: None,
                 forward_stderr: None,
                 env_vars: Arc::from([]),
-                directories_config: None,
                 fuel: None,
                 allowed_hosts: Arc::from(self.allowed_hosts),
                 config_section_hint: ConfigSectionHint::ActivityJs,

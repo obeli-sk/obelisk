@@ -1,5 +1,3 @@
-activities.directories.enabled = true
-
 [log.file]
 level = "info,obeli_sk_wasm_workers=debug"
 enabled = true

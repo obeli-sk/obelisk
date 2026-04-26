@@ -16,7 +16,6 @@ use anyhow::Context;
 use concepts::{ComponentType, ExecutionId, PackageIfcFns, PkgFqn, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::{HashMap, HashSet};
-use std::sync::Arc;
 use std::{borrow::Cow, path::PathBuf};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
@@ -244,10 +243,7 @@ pub(crate) async fn generate_support_wits(
 ) -> Result<(), anyhow::Error> {
     let files = match component_type {
         ComponentType::Activity => {
-            vec![
-                wit::WIT_OBELISK_ACTIVITY_PACKAGE_PROCESS,
-                wit::WIT_OBELISK_LOG_PACKAGE,
-            ]
+            vec![wit::WIT_OBELISK_LOG_PACKAGE]
         }
         ComponentType::Workflow => vec![
             wit::WIT_OBELISK_TYPES_PACKAGE,
@@ -359,8 +355,6 @@ pub(crate) async fn generate_wit_deps(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
     let config = config_holder.load_config().await?;
     let _guard = init::init(&config)?;
-    let path_prefixes = config_holder.path_prefixes;
-    let path_prefixes = Arc::new(path_prefixes);
     let deployment = crate::config::toml::resolve_local_refs_to_canonical(&deployment).await?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
@@ -373,10 +367,15 @@ pub(crate) async fn generate_wit_deps(
         suppress_type_checking_errors: true, // Just extracting WITs, not running components
         suppress_linking_errors: true,       // Just extracting WITs, not running components
     };
-    let prepared_dirs = prepare_dirs(&config, &verify_params.dir_params, &path_prefixes).await?;
+    let prepared_dirs = prepare_dirs(
+        &config,
+        &verify_params.dir_params,
+        &config_holder.path_prefixes,
+    )
+    .await?;
     let engines = create_engines(&config, &prepared_dirs)?;
 
-    let server_verified = Box::pin(server_verify(config, engines, path_prefixes)).await?;
+    let server_verified = Box::pin(server_verify(config, engines)).await?;
     let compiled_and_linked = deployment_verify_config_compile_link(
         server_verified,
         &prepared_dirs,

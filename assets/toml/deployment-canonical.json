@@ -71,31 +71,6 @@
     "webhooks_js"
   ],
   "$defs": {
-    "ActivityDirectoriesConfigToml": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": false
-        },
-        "process_provider": {
-          "$ref": "#/$defs/ActivityDirectoriesProcessProvider",
-          "default": "none"
-        },
-        "reuse_on_retry": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "additionalProperties": false
-    },
-    "ActivityDirectoriesProcessProvider": {
-      "type": "string",
-      "enum": [
-        "none",
-        "native"
-      ]
-    },
     "ActivityExternalComponentConfigToml": {
       "anyOf": [
         {
@@ -293,14 +268,6 @@
             "null"
           ],
           "default": null
-        },
-        "directories": {
-          "$ref": "#/$defs/ActivityDirectoriesConfigToml",
-          "default": {
-            "enabled": false,
-            "process_provider": "none",
-            "reuse_on_retry": false
-          }
         },
         "env_vars": {
           "type": "array",

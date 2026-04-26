@@ -41,14 +41,6 @@
 # parallel_compilation = true                    # Enable (default) or disable parallel AOT compilation of each WASM component.
 # debug = false                                  # Enable debugging of WASM components: Instruct wasmtime to emit DWARF debug info and disable cranelift optimizations.
 
-## Global Preopened Directories Configuration
-# [activities.directories]
-# enabled = false                           # Disabled by default.
-# parent_directory = "${TEMP_DIR}/obelisk"  # Make sure the folder is not on a RAM-backed filesystem if you plan to write large files.
-# cleanup.enabled = true                    # Periodic cleanup job can be disabled, it is enabled by default.
-# cleanup.run_every.minutes = 1             # Run the cleanup every minute by default.
-# cleanup.older_than.minutes = 5            # Delete folders belonging to executions that finished 5 minutes earlier by default.
-
 ## Global Workflow Configuration
 # [workflows]
 # lock_extension_leeway.milliseconds = 100 # Starts extending the lock a little before it expires, specifically at expires_at minus the configured leeway.
