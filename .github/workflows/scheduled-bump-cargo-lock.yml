@@ -16,6 +16,8 @@ permissions:
 jobs:
   bump-cargo-lock:
     runs-on: ubuntu-24.04
+    env:
+      DEVSHELL: .    
     strategy:
       fail-fast: false
       matrix:
@@ -40,11 +42,11 @@ jobs:
 
       - name: Populate the nix store
         run: |
-          nix develop --command echo
+          nix develop $DEVSHELL --command echo
 
       - name: Bump Cargo.lock, Cargo.toml
         run: |
-          nix develop --command ${{ matrix.cmd }}
+          nix develop $DEVSHELL --command ${{ matrix.cmd }}
 
       - name: Configure Git
         run: |
