@@ -404,17 +404,18 @@ pub(crate) enum LogLevelArg {
     Info,
     Warn,
     Error,
-    /// Disable structured log output. Use with `--show-streams`.
+    /// Disable structured log output.
     Off,
 }
 
 /// Log stream type for `execution logs`.
-/// One of: `stdout`, `stderr`.
+/// One of: `stdout`, `stderr`, `none`.
 #[derive(Debug, Clone, Copy, strum::EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub(crate) enum LogStreamTypeArg {
     Stdout,
     Stderr,
+    None,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -459,15 +460,14 @@ pub(crate) enum Execution {
         #[arg(long)]
         show_derived: bool,
         /// Minimum log level: trace, debug, info, warn, error, off.
-        /// `off` disables structured log output entirely (use with --show-streams).
+        /// `off` disables structured log output entirely.
         #[arg(long, value_name = "LEVEL", default_value = "debug")]
         level: LogLevelArg,
-        /// Include stdout/stderr stream output.
-        #[arg(long)]
-        show_streams: bool,
-        /// Filter stream output by type (stdout, stderr). Repeatable. Only with --show-streams.
-        #[arg(long, value_name = "TYPE", requires = "show_streams")]
-        stream_type: Vec<LogStreamTypeArg>,
+        /// Select which stream output to show: stdout, stderr, none.
+        /// If not specified, both stdout and stderr are shown.
+        /// Use `none` to hide all stream output.
+        #[arg(long, value_name = "TYPE")]
+        stream_type: Option<LogStreamTypeArg>,
         /// Show the run ID in each log line.
         #[arg(long)]
         show_run_id: bool,

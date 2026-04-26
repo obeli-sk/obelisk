@@ -59,7 +59,6 @@ impl args::Execution {
                 execution_id,
                 show_derived,
                 level,
-                show_streams,
                 stream_type,
                 show_run_id,
                 after,
@@ -67,14 +66,8 @@ impl args::Execution {
                 limit,
                 json,
             } => {
-                let opts = LogsOpts::from_args(
-                    level,
-                    show_streams,
-                    &stream_type,
-                    show_derived,
-                    show_run_id,
-                    limit,
-                )?;
+                let opts =
+                    LogsOpts::from_args(level, stream_type, show_derived, show_run_id, limit)?;
                 if follow {
                     follow_logs(&api_url, &execution_id, &opts, after, json).await
                 } else {
@@ -610,13 +603,29 @@ async fn execution_list(
     send_and_print(req).await
 }
 
+#[derive(Debug, Clone, Copy)]
+enum StreamType {
+    Stdout,
+    Stderr,
+}
+
+impl StreamType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
 /// Resolved log filter parameters shared between the one-shot and follow paths.
 /// `json` is intentionally excluded — it controls output format, not the query filter.
 struct LogsOpts {
     /// Empty slice means `show_logs=false` (level was `off`).
     levels: &'static [&'static str],
-    show_streams: bool,
-    stream_type_strs: Vec<&'static str>,
+    /// Empty means `show_streams=false` (`--stream-type none`).
+    /// Defaults to `[Stdout, Stderr]` when no `--stream-type` is given.
+    stream_types: Vec<StreamType>,
     show_derived: bool,
     show_run_id: bool,
     limit: u16,
@@ -625,8 +634,7 @@ struct LogsOpts {
 impl LogsOpts {
     fn from_args(
         level: args::LogLevelArg,
-        show_streams: bool,
-        stream_types: &[args::LogStreamTypeArg],
+        stream_type_arg: Option<args::LogStreamTypeArg>,
         show_derived: bool,
         show_run_id: bool,
         limit: u16,
@@ -640,20 +648,20 @@ impl LogsOpts {
             LogLevelArg::Warn => &["warn", "error"],
             LogLevelArg::Error => &["error"],
         };
-        if levels.is_empty() && !show_streams {
-            anyhow::bail!("either `--level` must not be `off`, or `--show-streams` must be set");
+        let stream_types = match stream_type_arg {
+            None => vec![StreamType::Stdout, StreamType::Stderr],
+            Some(args::LogStreamTypeArg::Stdout) => vec![StreamType::Stdout],
+            Some(args::LogStreamTypeArg::Stderr) => vec![StreamType::Stderr],
+            Some(args::LogStreamTypeArg::None) => vec![],
+        };
+        if levels.is_empty() && stream_types.is_empty() {
+            anyhow::bail!(
+                "either `--level` must not be `off`, or `--stream-type` must not be `none`"
+            );
         }
-        let stream_type_strs = stream_types
-            .iter()
-            .map(|st| match st {
-                args::LogStreamTypeArg::Stdout => "stdout",
-                args::LogStreamTypeArg::Stderr => "stderr",
-            })
-            .collect();
         Ok(Self {
             levels,
-            show_streams,
-            stream_type_strs,
+            stream_types,
             show_derived,
             show_run_id,
             limit,
@@ -668,14 +676,10 @@ impl LogsOpts {
                 req = req.query(&[("level", *level_str)]);
             }
         }
-        req = req.query(&[(
-            "show_streams",
-            if self.show_streams { "true" } else { "false" },
-        )]);
-        if self.show_streams {
-            for st in &self.stream_type_strs {
-                req = req.query(&[("stream_type", *st)]);
-            }
+        let show_streams = !self.stream_types.is_empty();
+        req = req.query(&[("show_streams", if show_streams { "true" } else { "false" })]);
+        for st in &self.stream_types {
+            req = req.query(&[("stream_type", st.as_str())]);
         }
         if self.show_derived {
             req = req.query(&[("show_derived", "true")]);
