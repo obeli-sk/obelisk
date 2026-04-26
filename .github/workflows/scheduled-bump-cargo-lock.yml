@@ -46,6 +46,7 @@ jobs:
 
       - name: Bump Cargo.lock, Cargo.toml
         run: |
+          nix develop $DEVSHELL --command cargo update
           nix develop $DEVSHELL --command ${{ matrix.cmd }}
 
       - name: Configure Git
@@ -78,4 +79,3 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN_PR_RW }}
-
