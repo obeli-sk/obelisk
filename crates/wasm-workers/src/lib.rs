@@ -14,7 +14,6 @@ pub mod http_request_policy;
 pub(crate) mod js_worker_utils;
 pub mod log_db_forwarder;
 pub(crate) mod policy_builder;
-pub mod preopens_cleaner;
 pub mod registry;
 pub mod std_output_stream;
 #[cfg(any(test, feature = "test"))]
@@ -134,8 +133,6 @@ pub(crate) mod tests {
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-            test_programs_dir_activity_builder::TEST_PROGRAMS_DIR_ACTIVITY,
-            test_programs_process_activity_builder::TEST_PROGRAMS_PROCESS_ACTIVITY,
             activity_js_runtime_builder::ACTIVITY_JS_RUNTIME,
             ])]
         #[tokio::test]

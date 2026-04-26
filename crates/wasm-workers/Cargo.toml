@@ -30,7 +30,6 @@ hyper-util.workspace = true
 hyper.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
-libc.workspace = true
 rand.workspace = true
 route-recognizer.workspace = true
 secrecy.workspace = true
@@ -60,14 +59,12 @@ db-sqlite = { workspace = true, features = ["tempfile"] }
 db-tests.workspace = true
 executor = { workspace = true, features = ["test"] }
 test-db-macro.workspace = true
-test-programs-dir-activity-builder.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-webhook-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-programs-http-get-activity-builder.workspace = true
 test-programs-http-get-webhook-builder.workspace = true
 test-programs-http-get-workflow-builder.workspace = true
-test-programs-process-activity-builder.workspace = true
 test-programs-serde-activity-builder.workspace = true
 test-programs-serde-workflow-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true

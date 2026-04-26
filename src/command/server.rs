@@ -5,8 +5,6 @@ use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::config_holder::load_deployment_toml;
 use crate::config::env_var::EnvVarConfig;
-use crate::config::toml::ActivitiesDirectoriesCleanupConfigToml;
-use crate::config::toml::ActivitiesDirectoriesGlobalConfigToml;
 use crate::config::toml::ActivityExternalConfigVerified;
 use crate::config::toml::ActivityJsConfigVerified;
 use crate::config::toml::ActivityStubConfigVerified;
@@ -121,7 +119,6 @@ use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::log_db_forwarder;
-use wasm_workers::preopens_cleaner::PreopensCleaner;
 use wasm_workers::registry::ComponentConfig;
 use wasm_workers::registry::ComponentConfigImportable;
 use wasm_workers::registry::ComponentConfigRegistry;
@@ -400,26 +397,24 @@ pub(crate) async fn run(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
-    let (deployment_toml, path_prefixes) = if let Some(deployment_path) = deployment {
+    let deployment_toml = if let Some(deployment_path) = deployment {
         let toml = load_deployment_toml(deployment_path).await?;
-        (Some(toml), config_holder.path_prefixes)
+        Some(toml)
     } else if deployment_empty {
-        (
-            Some(DeploymentTomlValidated::default()),
-            config_holder.path_prefixes,
-        )
+        Some(DeploymentTomlValidated::default())
     } else {
-        (None, config_holder.path_prefixes)
+        None
     };
 
     let (termination_sender, termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
 
-    let prepared_dirs = prepare_dirs(&config, &params.dir_params, &path_prefixes).await?;
+    let prepared_dirs =
+        prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes).await?;
     Box::pin(run_internal(
         config,
         deployment_toml,
-        Arc::new(path_prefixes),
+        config_holder.path_prefixes,
         params,
         prepared_dirs,
         termination_watcher,
@@ -447,27 +442,30 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
-    let path_prefixes = config_holder.path_prefixes;
     let deployment_toml_opt = if let Some(deployment_path) = deployment {
         Some(load_deployment_toml(deployment_path).await?)
     } else {
         None
     };
-    let path_prefixes = Arc::new(path_prefixes);
     let deployment = if let Some(toml) = deployment_toml_opt {
         crate::config::toml::resolve_local_refs_to_canonical(&toml).await?
     } else {
-        get_deployment_canonical_from_db(&config.database, &path_prefixes).await?
+        get_deployment_canonical_from_db(&config.database, &config_holder.path_prefixes).await?
     };
     let deployment_id = DeploymentId::generate();
     let (termination_sender, mut termination_watcher) = watch::channel(());
-    let prepared_dirs = prepare_dirs(&config, &verify_params.dir_params, &path_prefixes).await?;
+    let prepared_dirs = prepare_dirs(
+        &config,
+        &verify_params.dir_params,
+        &config_holder.path_prefixes,
+    )
+    .await?;
     let engines = create_engines(&config, &prepared_dirs)?;
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     if !skip_db {
-        verify_db_schema(&config.database, &path_prefixes).await?;
+        verify_db_schema(&config.database, &config_holder.path_prefixes).await?;
     }
-    let server_verified = Box::pin(server_verify(config, engines, path_prefixes)).await?;
+    let server_verified = Box::pin(server_verify(config, engines)).await?;
     deployment_verify_config_compile_link(
         server_verified,
         &prepared_dirs,
@@ -587,7 +585,6 @@ pub(crate) struct PreparedDirs {
 pub(crate) async fn server_verify(
     config: ServerConfigToml,
     engines: Engines,
-    path_prefixes: Arc<PathPrefixes>,
 ) -> Result<ServerVerified, anyhow::Error> {
     info!("Verifying server configuration");
     // Check obelisk-version compatibility if specified
@@ -604,7 +601,7 @@ pub(crate) async fn server_verify(
         info!("Obelisk version {PKG_VERSION} matches requirement {version_req_str}",);
     }
     // Verify server
-    Box::pin(ServerVerified::new(engines, config, path_prefixes)).await
+    Box::pin(ServerVerified::new(engines, config)).await
 }
 
 /// Verifies configuration without database schema check.
@@ -626,7 +623,6 @@ pub(crate) async fn deployment_verify_config_compile_link(
         prepared_dirs.metadata_dir.clone(),
         params.ignore_missing_env_vars,
         server_verified.global_backtrace_persist,
-        server_verified.launch.parent_preopen_dir.clone(),
         server_verified.global_executor_instance_limiter,
         server_verified.fuel,
         termination_watcher,
@@ -772,7 +768,7 @@ pub(crate) fn create_engines(
 pub(crate) async fn run_internal(
     config: ServerConfigToml,
     deployment: Option<DeploymentTomlValidated>,
-    path_prefixes: Arc<PathPrefixes>,
+    path_prefixes: PathPrefixes,
     params: RunParams,
     prepared_dirs: PreparedDirs,
     mut termination_watcher: watch::Receiver<()>,
@@ -887,7 +883,7 @@ pub(crate) async fn run_internal(
         }
     };
     let engines = create_engines(&config, &prepared_dirs)?;
-    let server_verified = server_verify(config, engines, path_prefixes).await?;
+    let server_verified = server_verify(config, engines).await?;
     let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
         server_verified.clone(),
         &prepared_dirs,
@@ -1045,8 +1041,6 @@ pub(crate) struct ServerVerified {
 #[derive(Clone)]
 struct ServerVerifiedLaunch {
     engines: Engines,
-    parent_preopen_dir: Option<Arc<Path>>,
-    activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
 }
@@ -1056,7 +1050,6 @@ impl ServerVerified {
     async fn new(
         engines: Engines,
         config: ServerConfigToml,
-        path_prefixes: Arc<PathPrefixes>,
     ) -> Result<ServerVerified, anyhow::Error> {
         debug!("Using server toml: {config:#?}");
         let mut http_servers = config.http_servers;
@@ -1084,19 +1077,6 @@ impl ServerVerified {
         let workflows_lock_extension_leeway =
             config.workflows_global_config.lock_extension_leeway.into();
         let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
-        let parent_preopen_dir = OptionFuture::from(
-            config
-                .activities_global_config
-                .get_directories()
-                .map(|dirs| dirs.get_parent_directory(&path_prefixes)),
-        )
-        .await
-        .transpose()
-        .context("error resolving `activities.directories.parent_directory`")?;
-        let activities_cleanup = config
-            .activities_global_config
-            .get_directories()
-            .and_then(ActivitiesDirectoriesGlobalConfigToml::get_cleanup);
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
         let global_executor_instance_limiter = config
             .wasm_global_config
@@ -1107,8 +1087,6 @@ impl ServerVerified {
         Ok(Self {
             launch: ServerVerifiedLaunch {
                 engines,
-                parent_preopen_dir,
-                activities_cleanup,
                 build_semaphore,
                 workflows_lock_extension_leeway,
             },
@@ -1140,8 +1118,6 @@ pub(crate) struct ServerCompiledLinked {
     engines: Engines,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     pub(crate) workers_linked: Vec<WorkerLinked>,
-    parent_preopen_dir: Option<Arc<Path>>,
-    activities_cleanup: Option<ActivitiesDirectoriesCleanupConfigToml>,
     pub(crate) http_servers_to_webhooks_and_state: HttpServersToWebhooksAndState,
     supressed_errors: Option<String>,
     frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)>,
@@ -1212,8 +1188,6 @@ impl ServerCompiledLinked {
             workers_linked: linked.workers,
             component_registry_ro: linked.component_registry_ro,
             engines: server_verified.engines,
-            parent_preopen_dir: server_verified.parent_preopen_dir,
-            activities_cleanup: server_verified.activities_cleanup,
             http_servers_to_webhooks_and_state,
             supressed_errors: linked.supressed_errors,
             frame_files: linked.all_frame_files,
@@ -1640,22 +1614,6 @@ async fn spawn_tasks_and_threads(
         .create_missing_cron_seeds(&db_pool, deployment_id)
         .await?;
 
-    let preopens_cleaner = if let (Some(parent_preopen_dir), Some(activities_cleanup)) = (
-        server_compiled_linked.parent_preopen_dir,
-        server_compiled_linked.activities_cleanup,
-    ) {
-        Some(PreopensCleaner::spawn_task(
-            activities_cleanup.older_than.into(),
-            parent_preopen_dir,
-            activities_cleanup.run_every.into(),
-            Arc::new(TokioSleep),
-            Now.clone_box(),
-            db_pool.clone(),
-        ))
-    } else {
-        None
-    };
-
     // Spawn Log -> Db Forwarder
     let (log_forwarder_sender, log_db_forarder) = {
         let (log_forwarder_sender, receiver) = mpsc::channel(1000); // TODO: make configurable
@@ -1717,7 +1675,6 @@ async fn spawn_tasks_and_threads(
         cancel_watcher,
         http_servers_handles,
         epoch_ticker,
-        preopens_cleaner,
         log_db_forarder,
         engines: server_compiled_linked.engines,
         log_forwarder_sender,
@@ -1739,7 +1696,6 @@ struct ServerInit {
     cancel_watcher: Option<AbortOnDropHandle>,
     http_servers_handles: Vec<AbortOnDropHandle>,
     epoch_ticker: EpochTicker,
-    preopens_cleaner: Option<AbortOnDropHandle>,
     log_db_forarder: AbortOnDropHandle,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     webhook_registry: Arc<WebhookRegistry>,
@@ -1759,7 +1715,6 @@ impl ServerInit {
             cancel_watcher,
             http_servers_handles,
             epoch_ticker,
-            preopens_cleaner,
             log_db_forarder,
             log_forwarder_sender,
             webhook_registry,
@@ -1780,7 +1735,6 @@ impl ServerInit {
         drop(cancel_watcher);
         drop(http_servers_handles);
         drop(epoch_ticker);
-        drop(preopens_cleaner);
         drop(engines);
         drop(webhook_registry);
         drop(log_forwarder_sender);
@@ -1895,7 +1849,6 @@ impl ConfigVerified {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         global_backtrace_persist: bool,
-        parent_preopen_dir: Option<Arc<Path>>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
         termination_watcher: &mut watch::Receiver<()>,
@@ -1997,7 +1950,6 @@ impl ConfigVerified {
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
                             ignore_missing_env_vars,
-                            parent_preopen_dir.clone(),
                             global_executor_instance_limiter.clone(),
                             fuel,
                         )
@@ -3362,7 +3314,7 @@ mod tests {
     };
     use directories::BaseDirs;
     use rstest::rstest;
-    use std::{path::PathBuf, sync::Arc};
+    use std::path::PathBuf;
     use tokio::sync::watch;
 
     fn get_workspace_dir() -> PathBuf {
@@ -3418,17 +3370,20 @@ mod tests {
         let config = config_holder.load_config().await?;
 
         let deployment_toml = load_deployment_toml(workspace.join(deployment_toml)).await?;
-        let path_prefixes = Arc::new(config_holder.path_prefixes);
 
         let deployment =
             crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml).await?;
 
-        let prepared_dirs =
-            prepare_dirs(&config, &PrepareDirsParams::default(), &path_prefixes).await?;
+        let prepared_dirs = prepare_dirs(
+            &config,
+            &PrepareDirsParams::default(),
+            &config_holder.path_prefixes,
+        )
+        .await?;
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(engines, config, path_prefixes)).await?;
+        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
         let params = VerifyParams::default();
         let webui_enabled = None;
 
@@ -3440,7 +3395,6 @@ mod tests {
             prepared_dirs.metadata_dir.clone(),
             params.ignore_missing_env_vars,
             server_verified.global_backtrace_persist,
-            server_verified.launch.parent_preopen_dir.clone(),
             server_verified.global_executor_instance_limiter,
             server_verified.fuel,
             &mut termination_watcher,

@@ -1,5 +1,3 @@
-activities.directories.enabled = true
-
 database.postgres.host =     "${POSTGRES_HOST}"
 database.postgres.user =     "${POSTGRES_USER}"
 database.postgres.password = "${POSTGRES_PASSWORD}"

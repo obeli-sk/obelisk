@@ -1,5 +1,0 @@
-package testing:dir;
-
-interface dir {
-    io: func() -> result<_, string>;
-}
