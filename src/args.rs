@@ -15,6 +15,7 @@ pub(crate) enum TomlComponentType {
     ActivityStub,
     ActivityExternal,
     ActivityJs,
+    ActivityExec,
     WorkflowWasm,
     WorkflowJs,
     WebhookEndpointWasm,

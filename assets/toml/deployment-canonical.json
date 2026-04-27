@@ -4,6 +4,12 @@
   "description": "Canonical deployment configuration — no local file paths.\nUsed for hash computation, wire format, and DB storage.",
   "type": "object",
   "properties": {
+    "activities_exec": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActivityExecComponentConfigCanonical"
+      }
+    },
     "activities_external": {
       "type": "array",
       "items": {
@@ -65,12 +71,108 @@
     "activities_stub",
     "activities_external",
     "activities_js",
+    "activities_exec",
     "workflows",
     "workflows_js",
     "webhooks",
     "webhooks_js"
   ],
   "$defs": {
+    "ActivityExecComponentConfigCanonical": {
+      "description": "Canonical form of `ActivityExecComponentConfigToml`.",
+      "type": "object",
+      "properties": {
+        "component_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml"
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml"
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml"
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_retries": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          }
+        },
+        "program": {
+          "$ref": "#/$defs/ExecProgramCanonical"
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig"
+        },
+        "return_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secrets": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecSecretsToml"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "program",
+        "ffqn",
+        "params",
+        "exec",
+        "max_retries",
+        "retry_exp_backoff",
+        "forward_stdout",
+        "forward_stderr",
+        "logs_store_min_level",
+        "env_vars",
+        "max_output_bytes"
+      ]
+    },
     "ActivityExternalComponentConfigToml": {
       "anyOf": [
         {
@@ -630,6 +732,53 @@
       },
       "additionalProperties": false
     },
+    "ExecProgramCanonical": {
+      "description": "Program specification for exec activities (canonical/wire form).\n`Include` has been resolved to `Inline`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "external": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "external"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "inline": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "inline"
+          ]
+        }
+      ]
+    },
+    "ExecSecretsToml": {
+      "description": "Secrets configuration for exec activities.",
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "description": "Secret entries resolved from environment variables.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SecretEnvVarToml"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "JsLocationCanonical": {
       "description": "Canonical JS location — no local file paths.\nUsed for hash computation, wire format in deployment submission, and DB storage.",
       "oneOf": [
@@ -723,6 +872,25 @@
         "headers",
         "body",
         "params"
+      ]
+    },
+    "SecretEnvVarToml": {
+      "description": "Secret entry: resolved from environment variables at startup.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name used to reference this secret in the `secrets.stdin` function.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value supporting `${VAR}` interpolation from host environment.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
       ]
     },
     "WebhookJsComponentConfigCanonical": {

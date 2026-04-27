@@ -71,6 +71,8 @@ pub(crate) struct DeploymentToml {
     pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
     #[serde(default, rename = "activity_js")]
     pub(crate) activities_js: Vec<ActivityJsComponentConfigToml>,
+    #[serde(default, rename = "activity_exec")]
+    pub(crate) activities_exec: Vec<ActivityExecComponentConfigToml>,
     #[serde(default, rename = "workflow_wasm")]
     pub(crate) workflows: Vec<WorkflowWasmComponentConfigToml>,
     #[serde(default, rename = "workflow_js")]
@@ -152,6 +154,14 @@ impl DeploymentToml {
                 expand_str(p);
             }
         }
+        for c in &mut self.activities_exec {
+            if let ExecProgramToml::Include(p) = &mut c.program {
+                expand_str(p);
+            }
+            if let Some(cwd) = &mut c.cwd {
+                expand_str(cwd);
+            }
+        }
         for c in &mut self.workflows {
             expand_loc(&mut c.common.location);
             expand_backtrace(&mut c.backtrace);
@@ -193,6 +203,11 @@ impl DeploymentToml {
                 self.activities_js
                     .iter()
                     .map(|c| (c.name.0.as_ref(), TomlComponentType::ActivityJs)),
+            )
+            .chain(
+                self.activities_exec
+                    .iter()
+                    .map(|c| (c.name.0.as_ref(), TomlComponentType::ActivityExec)),
             )
             .chain(
                 self.workflows
@@ -1443,6 +1458,267 @@ impl ActivityJsConfigVerified {
     }
 }
 
+// --- activity_exec config ---
+
+/// Program specification for exec activities (TOML input form).
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) enum ExecProgramToml {
+    /// Explicit argv. The first element is the executable; remaining elements are fixed arguments.
+    /// Activity params are JSON-serialized and appended as trailing args.
+    #[serde(rename = "external")]
+    External(Vec<String>),
+    /// Inline script content. Written to a temp file at each execution.
+    /// Activity params are appended as args.
+    #[serde(rename = "inline")]
+    Inline(String),
+    /// File path to include. Resolved to `inline` at canonicalization time.
+    /// Supports `${DEPLOYMENT_DIR}/` prefix.
+    #[serde(rename = "include")]
+    Include(String),
+}
+
+/// Program specification for exec activities (canonical/wire form).
+/// `Include` has been resolved to `Inline`.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) enum ExecProgramCanonical {
+    #[serde(rename = "external")]
+    External(Vec<String>),
+    #[serde(rename = "inline")]
+    Inline(String),
+}
+
+/// Secret entry: resolved from environment variables at startup.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SecretEnvVarToml {
+    /// Name used to reference this secret in the `secrets.stdin` function.
+    pub(crate) name: String,
+    /// Value supporting `${VAR}` interpolation from host environment.
+    #[serde(default)]
+    pub(crate) value: String,
+}
+
+/// Secrets configuration for exec activities.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExecSecretsToml {
+    /// Secret entries resolved from environment variables.
+    #[serde(default)]
+    pub(crate) env_vars: Vec<SecretEnvVarToml>,
+}
+
+const fn default_max_output_bytes() -> u64 {
+    1024
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivityExecComponentConfigToml {
+    pub(crate) name: ConfigName,
+    /// Program specification. Exactly one of `external`, `inline`, or `include`.
+    pub(crate) program: ExecProgramToml,
+    #[schemars(with = "String")]
+    pub(crate) ffqn: FunctionFqn,
+    /// Custom parameters for the exec activity.
+    /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
+    #[serde(default)]
+    pub(crate) params: Vec<JsParamToml>,
+    /// WIT return type. Defaults to `result`.
+    #[serde(default)]
+    pub(crate) return_type: Option<String>,
+    /// Override the auto-computed component digest used for locking.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) component_digest: Option<ComponentDigest>,
+    #[serde(default)]
+    pub(crate) exec: ExecConfigToml,
+    #[serde(default = "default_max_retries")]
+    pub(crate) max_retries: u32,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) retry_exp_backoff: DurationConfig,
+    #[serde(default)]
+    pub(crate) forward_stdout: ComponentStdOutputToml,
+    #[serde(default)]
+    pub(crate) forward_stderr: ComponentStdOutputToml,
+    #[serde(default)]
+    pub(crate) logs_store_min_level: LogLevelToml,
+    #[serde(default)]
+    pub(crate) env_vars: Vec<EnvVarConfig>,
+    /// Working directory for the child process. Supports `${DEPLOYMENT_DIR}/`.
+    /// Defaults to the server's working directory.
+    #[serde(default)]
+    pub(crate) cwd: Option<String>,
+    /// Maximum bytes per stream (stdout/stderr). Excess is truncated and execution fails.
+    #[serde(default = "default_max_output_bytes")]
+    pub(crate) max_output_bytes: u64,
+    /// Secrets pushed to stdin. See `ExecSecretsToml`.
+    #[serde(default)]
+    pub(crate) secrets: Option<ExecSecretsToml>,
+}
+
+/// Canonical form of `ActivityExecComponentConfigToml`.
+#[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivityExecComponentConfigCanonical {
+    pub(crate) name: ConfigName,
+    pub(crate) program: ExecProgramCanonical,
+    pub(crate) ffqn: FunctionFqn,
+    pub(crate) params: Vec<JsParamToml>,
+    pub(crate) return_type: Option<String>,
+    pub(crate) component_digest: Option<ComponentDigest>,
+    pub(crate) exec: ExecConfigToml,
+    pub(crate) max_retries: u32,
+    pub(crate) retry_exp_backoff: DurationConfig,
+    pub(crate) forward_stdout: ComponentStdOutputToml,
+    pub(crate) forward_stderr: ComponentStdOutputToml,
+    pub(crate) logs_store_min_level: LogLevelToml,
+    pub(crate) env_vars: Vec<EnvVarConfig>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) max_output_bytes: u64,
+    pub(crate) secrets: Option<ExecSecretsToml>,
+}
+
+impl ActivityExecComponentConfigCanonical {
+    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
+    pub(crate) fn fetch_and_verify(
+        self,
+        ignore_missing_env_vars: bool,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    ) -> Result<ActivityExecConfigVerified, anyhow::Error> {
+        let parsed_params = self
+            .params
+            .iter()
+            .map(|p| {
+                let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
+                    .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
+                Ok(concepts::ParameterType {
+                    type_wrapper: tw,
+                    name: StrVariant::from(p.name.clone()),
+                    wit_type: StrVariant::from(p.wit_type.clone()),
+                })
+            })
+            .collect::<Result<Vec<_>, anyhow::Error>>()?;
+        const DEFAULT_RETURN_TYPE: &str = "result";
+        let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
+        let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
+            .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
+        let return_type = concepts::ReturnType::detect(
+            return_type_tw,
+            StrVariant::from(return_type_str.to_string()),
+        );
+        let return_type = match return_type {
+            ReturnType::Extendable(rt) => rt,
+            ReturnType::NonExtendable(_) => bail!(
+                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
+                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
+            ),
+        };
+        let program_bytes = match &self.program {
+            ExecProgramCanonical::External(argv) => argv.join("\0"),
+            ExecProgramCanonical::Inline(script) => script.clone(),
+        };
+        let component_digest = self.component_digest.unwrap_or_else(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(b"activity_exec:");
+            hasher.update(program_bytes.as_bytes());
+            hasher.update(self.ffqn.to_string().as_bytes());
+            for p in &parsed_params {
+                hasher.update(p.wit_type.as_ref().as_bytes());
+            }
+            hasher.update(return_type.wit_type.as_bytes());
+            let hash: [u8; 32] = hasher.finalize().into();
+            ComponentDigest(Digest(hash))
+        });
+        let component_id = ComponentId::new(
+            ComponentType::Activity,
+            StrVariant::from(self.name),
+            component_digest,
+        )?;
+        let env_vars = if self.env_vars.is_empty() {
+            // Default to exposing PATH so scripts can find standard tools.
+            resolve_env_vars_plaintext(
+                vec![EnvVarConfig::KeyValue {
+                    key: "PATH".to_string(),
+                    value: "${PATH:-}".to_string(), // Never fails
+                }],
+                ignore_missing_env_vars,
+            )?
+        } else {
+            resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?
+        };
+        let resolved_secrets = if let Some(secrets) = self.secrets {
+            let mut resolved = indexmap::IndexMap::new();
+            for secret in secrets.env_vars {
+                let val = interpolate_env_vars_secret(&secret.value)
+                    .map_err(|e| anyhow!("failed to resolve secret `{}`: {e}", secret.name))?;
+                resolved.insert(secret.name, val);
+            }
+            if resolved.is_empty() {
+                None
+            } else {
+                Some(ResolvedExecSecrets { env_vars: resolved })
+            }
+        } else {
+            None
+        };
+        let retry_config = ComponentRetryConfig {
+            max_retries: Some(self.max_retries),
+            retry_exp_backoff: self.retry_exp_backoff.into(),
+        };
+        Ok(ActivityExecConfigVerified {
+            program: self.program,
+            ffqn: self.ffqn,
+            params: parsed_params,
+            return_type,
+            env_vars,
+            cwd: self.cwd,
+            max_output_bytes: self.max_output_bytes,
+            forward_stdout: self.forward_stdout.into(),
+            forward_stderr: self.forward_stderr.into(),
+            secrets: resolved_secrets,
+            component_id: component_id.clone(),
+            exec_config: self.exec.into_exec_exec_config(
+                component_id,
+                global_executor_instance_limiter,
+                retry_config,
+            )?,
+            logs_store_min_level: self.logs_store_min_level.into(),
+        })
+    }
+}
+
+/// Resolved secrets for exec activities. Secret values are stored in `SecretString`.
+#[derive(derive_more::Debug)]
+pub(crate) struct ResolvedExecSecrets {
+    /// Resolved secret env vars: name → secret value.
+    pub(crate) env_vars: indexmap::IndexMap<String, secrecy::SecretString>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ActivityExecConfigVerified {
+    pub(crate) program: ExecProgramCanonical,
+    pub(crate) ffqn: FunctionFqn,
+    pub(crate) params: Vec<concepts::ParameterType>,
+    pub(crate) return_type: concepts::ReturnTypeExtendable,
+    pub(crate) env_vars: Arc<[EnvVar]>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) max_output_bytes: u64,
+    pub(crate) forward_stdout: Option<StdOutputConfig>,
+    pub(crate) forward_stderr: Option<StdOutputConfig>,
+    pub(crate) secrets: Option<ResolvedExecSecrets>,
+    pub(crate) component_id: ComponentId,
+    pub(crate) exec_config: executor::executor::ExecConfig,
+    pub(crate) logs_store_min_level: Option<LogLevel>,
+}
+
+impl ActivityExecConfigVerified {
+    pub fn component_id(&self) -> &ComponentId {
+        &self.component_id
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowJsComponentConfigToml {
@@ -2029,6 +2305,7 @@ pub(crate) struct DeploymentCanonical {
     pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
     pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
     pub(crate) activities_js: Vec<ActivityJsComponentConfigCanonical>,
+    pub(crate) activities_exec: Vec<ActivityExecComponentConfigCanonical>,
     pub(crate) workflows: Vec<WorkflowWasmComponentConfigCanonical>,
     pub(crate) workflows_js: Vec<WorkflowJsComponentConfigCanonical>,
     pub(crate) webhooks: Vec<webhook::WebhookWasmComponentConfigCanonical>,
@@ -2128,11 +2405,48 @@ pub(crate) async fn resolve_local_refs_to_canonical(
         });
     }
 
+    let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
+    for a in &deployment.activities_exec {
+        let program = match &a.program {
+            ExecProgramToml::External(argv) => ExecProgramCanonical::External(argv.clone()),
+            ExecProgramToml::Inline(script) => ExecProgramCanonical::Inline(script.clone()),
+            ExecProgramToml::Include(path) => {
+                let full_path = PathBuf::from(path);
+                if !full_path.exists() {
+                    bail!("include file does not exist: {full_path:?}");
+                }
+                let content = tokio::fs::read_to_string(&full_path)
+                    .await
+                    .with_context(|| format!("cannot read include file {full_path:?}"))?;
+                ExecProgramCanonical::Inline(content)
+            }
+        };
+        activities_exec.push(ActivityExecComponentConfigCanonical {
+            name: a.name.clone(),
+            program,
+            ffqn: a.ffqn.clone(),
+            params: a.params.clone(),
+            return_type: a.return_type.clone(),
+            component_digest: a.component_digest.clone(),
+            exec: a.exec.clone(),
+            max_retries: a.max_retries,
+            retry_exp_backoff: a.retry_exp_backoff,
+            forward_stdout: a.forward_stdout,
+            forward_stderr: a.forward_stderr,
+            logs_store_min_level: a.logs_store_min_level,
+            env_vars: a.env_vars.clone(),
+            cwd: a.cwd.clone(),
+            max_output_bytes: a.max_output_bytes,
+            secrets: a.secrets.clone(),
+        });
+    }
+
     Ok(DeploymentCanonical {
         activities_wasm: deployment.activities_wasm.clone(),
         activities_stub: deployment.activities_stub.clone(),
         activities_external: deployment.activities_external.clone(),
         activities_js,
+        activities_exec,
         workflows,
         workflows_js,
         webhooks,

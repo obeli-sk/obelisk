@@ -107,6 +107,53 @@
 # env_vars = ["API_KEY"]
 # replace_in = ["headers"]
 
+### Exec Activity components configuration — run native executables as activities
+### Exec activities spawn a native child process (shell script, Node.js, Docker, etc.)
+### instead of a WASM component. Parameters are passed as JSON-encoded CLI args,
+### and the result is read from stdout (exit 0 → ok, non-zero → err).
+# [[activity_exec]]
+# name = "name"                              # Required. Component name.
+## Program specification: exactly one of `external`, `inline`, or `include`.
+## `external`: explicit argv — first element is the executable, rest are fixed arguments.
+# program.external = ["/usr/bin/my-tool", "--flag"]
+## `inline`: script content embedded in the TOML. Written to a temp file at each execution.
+# program.inline = '''#!/usr/bin/env bash
+# echo "\"hello\""
+# '''
+## `include`: file path read at deploy time and converted to `inline`, making deployment self-contained.
+# program.include = "${DEPLOYMENT_DIR}/scripts/my-script.sh"
+# ffqn = "namespace:package/interface.function" # Required. Fully qualified function name.
+## Custom parameters. If omitted, defaults to no parameters.
+## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
+# params = [
+#   { name = "a", type = "u32" },
+#   { name = "b", type = "u32" },
+# ]
+## WIT return type. Defaults to `result`.
+## Must be `result`, `result<T>`, `result<T, string>`, or `result<T, variant { execution-failed, ... }>` (T can be unit type _).
+# return_type = "result<u32, string>"
+## Common executor settings - see above.
+# exec.lock_expiry.seconds = 1 # Child process will be killed afterwards, execution will be retried or marked as permanently timed out.
+## Retry customization: same as activity_wasm.
+# max_retries = 5
+# retry_exp_backoff.milliseconds = 100
+## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "db".
+# forward_stdout="db"
+# forward_stderr="db"
+# logs_store_min_level = "debug"             # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
+## Environment variables: same syntax as activity_wasm. Default is to expose `PATH` from the host.
+## When explicitly set, only the listed vars are exposed (env is cleared first).
+# env_vars = ["PATH", {key = "MY_VAR", value = "my_value"}] # Values support interpolation.
+## Working directory for the child process. Supports `${DEPLOYMENT_DIR}/` prefix interpolation.
+## Defaults to the server's working directory.
+# cwd = "${DEPLOYMENT_DIR}/workdir"
+## Maximum bytes per stream (stdout/stderr). Excess causes execution to fail. Default: 1024.
+# max_output_bytes = 1024
+## Secrets: resolved from host environment variables at startup and piped to the child's stdin as JSON.
+## The child receives `{"KEY":"value",...}` on stdin. Use `jq .KEY /dev/stdin` or equivalent to parse.
+# [activity_exec.secrets]
+# env_vars = [{name = "MY_SECRET", value = "${HOST_SECRET_VAR}"}] # Values support interpolation.
+
 ### External Activity components configuration - only WIT schema is loaded
 # [[activity_external]]
 # name = "name" # Required. Each component must be named.

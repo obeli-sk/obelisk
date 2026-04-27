@@ -69,6 +69,83 @@ expression: components
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_add"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_greet_include"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_greet_external"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_greet_inline"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_read_env"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_error"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_record_ok"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_expose_secrets"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_void_ok"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_void_err"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "test_exec_args_passthrough"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity_stub",
       "name": "test_inline_stub"
     }

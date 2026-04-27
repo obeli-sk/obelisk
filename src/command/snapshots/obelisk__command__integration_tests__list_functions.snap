@@ -31,6 +31,39 @@ expression: functions
     "ffqn": "testing:integration/activity-hmac.hmac-sign-verify"
   },
   {
+    "ffqn": "testing:integration/exec-add.add"
+  },
+  {
+    "ffqn": "testing:integration/exec-greet.greet-include"
+  },
+  {
+    "ffqn": "testing:integration/exec-greet.greet-external"
+  },
+  {
+    "ffqn": "testing:integration/exec-greet.greet-inline"
+  },
+  {
+    "ffqn": "testing:integration/exec-env.read-env"
+  },
+  {
+    "ffqn": "testing:integration/exec-error.fail"
+  },
+  {
+    "ffqn": "testing:integration/exec-record.make-record"
+  },
+  {
+    "ffqn": "testing:integration/exec-stdin.expose-secrets"
+  },
+  {
+    "ffqn": "testing:integration/exec-void.void-ok"
+  },
+  {
+    "ffqn": "testing:integration/exec-void.void-err"
+  },
+  {
+    "ffqn": "testing:integration/exec-args.echo-args"
+  },
+  {
     "ffqn": "testing:integration/stubs.my-stub"
   },
   {

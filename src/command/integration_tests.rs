@@ -274,6 +274,122 @@ params = [
 return_type = "result<string, string>"
 max_retries = 0
 
+[[activity_exec]]
+name = "test_exec_add"
+program.external = ["{ws}/crates/testing/test-programs/exec/add.sh"]
+ffqn = "testing:integration/exec-add.add"
+params = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+]
+return_type = "result<u32, string>"
+max_retries = 0
+
+[[activity_exec]]
+name = "test_exec_greet_include"
+program.include = "{ws}/crates/testing/test-programs/exec/greet.sh"
+ffqn = "testing:integration/exec-greet.greet-include"
+params = [
+  {{ name = "name", type = "string" }},
+]
+return_type = "result<string, string>"
+max_retries = 0
+
+[[activity_exec]]
+name = "test_exec_greet_external"
+program.external = ["{ws}/crates/testing/test-programs/exec/greet.sh"]
+ffqn = "testing:integration/exec-greet.greet-external"
+params = [
+  {{ name = "name", type = "string" }},
+]
+return_type = "result<string, string>"
+max_retries = 0
+
+
+[[activity_exec]]
+name = "test_exec_greet_inline"
+program.inline = '''
+#!/usr/bin/env bash
+raw=$(echo $1 | jq -r .)
+echo "\"Hello, $raw!\""
+'''
+ffqn = "testing:integration/exec-greet.greet-inline"
+params = [
+  {{ name = "name", type = "string" }},
+]
+return_type = "result<string, string>"
+max_retries = 0
+
+[[activity_exec]]
+name = "test_exec_read_env"
+program.include = "{ws}/crates/testing/test-programs/exec/read-env.sh"
+ffqn = "testing:integration/exec-env.read-env"
+params = []
+return_type = "result<string, string>"
+max_retries = 0
+env_vars = [{{key = "MY_VAR", value = "hello_from_exec_env"}}]
+
+[[activity_exec]]
+name = "test_exec_error"
+program.inline = '''#!/usr/bin/env bash
+echo '"something went wrong"'
+exit 1
+'''
+ffqn = "testing:integration/exec-error.fail"
+params = []
+return_type = "result<string, string>"
+max_retries = 0
+
+[[activity_exec]]
+name = "test_exec_record_ok"
+program.inline = '''#!/usr/bin/env bash
+printf '{{"name": "Alice", "count": 42}}'
+'''
+ffqn = "testing:integration/exec-record.make-record"
+params = []
+return_type = "result<record {{ name: string, count: u32 }}, string>"
+max_retries = 0
+
+[[activity_exec]]
+name = "test_exec_expose_secrets"
+program.external = ["{ws}/crates/testing/test-programs/exec/expose-secrets.sh"]
+ffqn = "testing:integration/exec-stdin.expose-secrets"
+params = []
+return_type = "result<string, string>"
+max_retries = 0
+[activity_exec.secrets]
+env_vars = [{{ name = "MY_SECRET", value = "s3cret_value" }}]
+
+[[activity_exec]]
+name = "test_exec_void_ok"
+program.external = ["true"]
+ffqn = "testing:integration/exec-void.void-ok"
+params = []
+return_type = "result"
+max_retries = 0
+
+[[activity_exec]]
+name = "test_exec_void_err"
+program.external = ["false"]
+ffqn = "testing:integration/exec-void.void-err"
+params = []
+return_type = "result"
+max_retries = 0
+
+[[activity_exec]]
+name = "test_exec_args_passthrough"
+program.inline = '''#!/usr/bin/env bash
+# Receives two u32 params as JSON args: $1 and $2
+printf '{{"a": %s, "b": %s}}' "$1" "$2"
+'''
+ffqn = "testing:integration/exec-args.echo-args"
+params = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+]
+return_type = "result<record {{ a: u32, b: u32 }}, string>"
+max_retries = 0
+
 [[activity_stub]]
 name = "test_inline_stub"
 ffqn = "testing:integration/stubs.my-stub"
@@ -1951,5 +2067,140 @@ async fn workflow_date_now() {
     let replay_resp = server.replay(&exec_id).await;
     assert_eq!(replay_resp.status().as_u16(), 200);
 
+    server.shutdown().await;
+}
+
+// ---- Activity exec: native process activities ----
+
+#[tokio::test]
+async fn activity_exec_add() {
+    let server = TestServer::start(test_addr!(50)).await;
+    let resp = server
+        .submit_follow("testing:integration/exec-add.add", vec![json!(3), json!(5)])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": 8 }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_greet_external() {
+    activity_exec_greet(test_addr!(51), "external").await;
+}
+
+#[tokio::test]
+async fn activity_exec_greet_inline() {
+    activity_exec_greet(test_addr!(52), "inline").await;
+}
+
+#[tokio::test]
+async fn activity_exec_greet_include() {
+    activity_exec_greet(test_addr!(53), "include").await;
+}
+
+async fn activity_exec_greet(ip: String, suffix: &str) {
+    let server = TestServer::start(ip).await;
+    let resp = server
+        .submit_follow(
+            &format!("testing:integration/exec-greet.greet-{suffix}"),
+            vec![json!("World")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": "Hello, World!" }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_record_return_type() {
+    let server = TestServer::start(test_addr!(54)).await;
+    let resp = server
+        .submit_follow("testing:integration/exec-record.make-record", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": { "name": "Alice", "count": 42 } }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_stdin_secrets() {
+    let server = TestServer::start(test_addr!(55)).await;
+    let resp = server
+        .submit_follow("testing:integration/exec-stdin.expose-secrets", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    // Secrets are serialized as a JSON object to stdin; the script wraps it as a JSON string.
+    let ok_val = body["ok"].as_str().expect("expected ok string");
+    let parsed: Value = serde_json::from_str(ok_val).expect("inner value must be valid JSON");
+    assert_eq!(parsed, json!({ "MY_SECRET": "s3cret_value" }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_void_ok() {
+    let server = TestServer::start(test_addr!(56)).await;
+    let resp = server
+        .submit_follow("testing:integration/exec-void.void-ok", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": null }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_void_err() {
+    let server = TestServer::start(test_addr!(57)).await;
+    let resp = server
+        .submit_follow("testing:integration/exec-void.void-err", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "err": null }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_args_passthrough() {
+    let server = TestServer::start(test_addr!(58)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/exec-args.echo-args",
+            vec![json!(10), json!(20)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    // The bash script receives JSON-serialized params as positional args ($1=10, $2=20)
+    // and echoes them back as a JSON record: {"a": 10, "b": 20}
+    assert_eq!(body, json!({ "ok": { "a": 10, "b": 20 } }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_env_vars() {
+    let server = TestServer::start(test_addr!(59)).await;
+    let resp = server
+        .submit_follow("testing:integration/exec-env.read-env", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": "hello_from_exec_env" }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_error_exit() {
+    let server = TestServer::start(test_addr!(60)).await;
+    let resp = server
+        .submit_follow("testing:integration/exec-error.fail", vec![])
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "err": "something went wrong" }));
     server.shutdown().await;
 }

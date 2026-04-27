@@ -336,6 +336,10 @@ pub(crate) async fn generate_wit_deps(
                 skipped_names.insert(c.name.to_string());
             }
         }
+        // Exec activities are always local — skip them from WIT generation.
+        for c in &deployment.activities_exec {
+            skipped_names.insert(c.name.to_string());
+        }
         for c in &deployment.workflows {
             if matches!(c.common.location, ComponentLocationToml::Path(_)) {
                 skipped_names.insert(c.common.name.to_string());
