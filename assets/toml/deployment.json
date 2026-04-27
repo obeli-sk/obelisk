@@ -3,6 +3,13 @@
   "title": "DeploymentToml",
   "type": "object",
   "properties": {
+    "activity_exec": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ActivityExecComponentConfigToml"
+      }
+    },
     "activity_external": {
       "type": "array",
       "default": [],
@@ -69,6 +76,122 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "ActivityExecComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "cwd": {
+          "description": "Working directory for the child process. Supports `${DEPLOYMENT_DIR}/`.\nDefaults to the server's working directory.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "env_vars": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "locking_strategy": null,
+            "tick_sleep": {
+              "milliseconds": 200
+            }
+          }
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
+        },
+        "max_output_bytes": {
+          "description": "Maximum bytes per stream (stdout/stderr). Excess is truncated and execution fails.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 1024,
+          "minimum": 0
+        },
+        "max_retries": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "params": {
+          "description": "Custom parameters for the exec activity.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          }
+        },
+        "program": {
+          "description": "Program specification. Exactly one of `external`, `inline`, or `include`.",
+          "$ref": "#/$defs/ExecProgramToml"
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
+        },
+        "return_type": {
+          "description": "WIT return type. Defaults to `result`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "secrets": {
+          "description": "Secrets pushed to stdin. See `ExecSecretsToml`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecSecretsToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "program",
+        "ffqn"
+      ]
+    },
     "ActivityExternalComponentConfigToml": {
       "anyOf": [
         {
@@ -632,6 +755,68 @@
       },
       "additionalProperties": false
     },
+    "ExecProgramToml": {
+      "description": "Program specification for exec activities (TOML input form).",
+      "oneOf": [
+        {
+          "description": "Explicit argv. The first element is the executable; remaining elements are fixed arguments.\nActivity params are JSON-serialized and appended as trailing args.",
+          "type": "object",
+          "properties": {
+            "external": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "external"
+          ]
+        },
+        {
+          "description": "Inline script content. Written to a temp file at each execution.\nActivity params are appended as args.",
+          "type": "object",
+          "properties": {
+            "inline": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "inline"
+          ]
+        },
+        {
+          "description": "File path to include. Resolved to `inline` at canonicalization time.\nSupports `${DEPLOYMENT_DIR}/` prefix.",
+          "type": "object",
+          "properties": {
+            "include": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "include"
+          ]
+        }
+      ]
+    },
+    "ExecSecretsToml": {
+      "description": "Secrets configuration for exec activities.",
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "description": "Secret entries resolved from environment variables.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SecretEnvVarToml"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "JsLocationToml": {
       "description": "Location of a JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
       "type": "string"
@@ -699,6 +884,25 @@
         "headers",
         "body",
         "params"
+      ]
+    },
+    "SecretEnvVarToml": {
+      "description": "Secret entry: resolved from environment variables at startup.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name used to reference this secret in the `secrets.stdin` function.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value supporting `${VAR}` interpolation from host environment.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
       ]
     },
     "WebhookJsComponentConfigToml": {
