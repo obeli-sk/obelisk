@@ -5,6 +5,7 @@ use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::config_holder::load_deployment_toml;
 use crate::config::env_var::EnvVarConfig;
+use crate::config::toml::ActivityExecConfigVerified;
 use crate::config::toml::ActivityExternalConfigVerified;
 use crate::config::toml::ActivityJsConfigVerified;
 use crate::config::toml::ActivityStubConfigVerified;
@@ -82,6 +83,7 @@ use grpc::extractor::accept_trace;
 use grpc::grpc_gen;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
+use secrecy::SecretString;
 use serde_json::json;
 use std::fmt::Debug;
 use std::future::Future;
@@ -107,6 +109,7 @@ use tracing::{debug, info, trace};
 use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use wasm_workers::RunnableComponent;
+use wasm_workers::activity::activity_exec_worker::ActivityExecWorkerCompiled;
 use wasm_workers::activity::activity_js_worker::ActivityJsWorkerCompiled;
 use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
@@ -1136,6 +1139,7 @@ impl ServerCompiledLinked {
             &server_verified.engines,
             config.activities_wasm,
             config.activities_js,
+            config.activities_exec,
             config.activities_stub_ext,
             config.activities_stub_ext_inline,
             config.workflows,
@@ -1827,6 +1831,7 @@ async fn start_http_servers(
 struct ConfigVerified {
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
+    activities_exec: Vec<ActivityExecConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     activities_stub_ext_inline: Vec<ActivityStubExtInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
@@ -2150,6 +2155,16 @@ impl ConfigVerified {
                     }
                 }
 
+                let mut activities_exec_verified = Vec::with_capacity(deployment.activities_exec.len());
+                for exec in deployment.activities_exec {
+                    activities_exec_verified.push(
+                        exec.fetch_and_verify(
+                            ignore_missing_env_vars,
+                            global_executor_instance_limiter.clone(),
+                        )?
+                    );
+                }
+
                 let mut crons = Vec::with_capacity(deployment.crons.len());
                 for cron in deployment.crons {
                     let name = cron.name.clone();
@@ -2161,6 +2176,7 @@ impl ConfigVerified {
                 Ok(ConfigVerified {
                     activities_wasm,
                     activities_js: activities_js_verified,
+                    activities_exec: activities_exec_verified,
                     activities_stub_ext,
                     activities_stub_ext_inline,
                     workflows,
@@ -2213,6 +2229,7 @@ async fn compile_and_link(
     engines: &Engines,
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
+    activities_exec: Vec<ActivityExecConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     activities_stub_ext_inline: Vec<ActivityStubExtInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
@@ -2328,6 +2345,22 @@ async fn compile_and_link(
                             worker,
                             component_config,
                             frame_files,
+                        }
+                    })
+                })
+            })
+        }))
+        .chain(activities_exec.into_iter().map(|activity_exec| {
+            // No build_semaphore and no WASM compilation needed for exec activities.
+            let parent_span = parent_span.clone();
+            tokio::task::spawn_blocking(move || {
+                let span = info_span!(parent: parent_span, "activity_exec_compile", component_id = %activity_exec.component_id());
+                span.in_scope(|| {
+                    prespawn_activity_exec(activity_exec).map(|(worker, component_config)| {
+                        CompiledComponent::ActivityOrWorkflow {
+                            worker,
+                            component_config,
+                            frame_files: FrameFilesToSourceContent::default(),
                         }
                     })
                 })
@@ -2823,6 +2856,57 @@ fn prespawn_activity_js(
     ))
 }
 
+fn prespawn_activity_exec(
+    activity_exec: ActivityExecConfigVerified,
+) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+    let component_id = activity_exec.component_id().clone();
+    assert!(component_id.component_type == ComponentType::Activity);
+
+    use crate::config::toml::ExecProgramCanonical;
+    use wasm_workers::activity::activity_exec_worker::ExecProgram;
+
+    let program = match activity_exec.program {
+        ExecProgramCanonical::External(argv) => ExecProgram::External(argv),
+        ExecProgramCanonical::Inline(script) => ExecProgram::Inline(script),
+    };
+
+    // Compute stdin_content from resolved secrets.
+    // Secrets are serialized as a JSON object and piped to the child's stdin.
+    let stdin_content = activity_exec.secrets.map(|secrets| {
+        use secrecy::ExposeSecret;
+        let mut obj = serde_json::Map::new();
+        for (name, secret_val) in &secrets.env_vars {
+            obj.insert(
+                name.clone(),
+                serde_json::Value::String(secret_val.expose_secret().to_string()),
+            );
+        }
+        SecretString::from(serde_json::to_string(&obj).expect("JSON map serialization cannot fail"))
+    });
+
+    let worker = ActivityExecWorkerCompiled::new(
+        program,
+        activity_exec.ffqn,
+        activity_exec.params,
+        activity_exec.return_type,
+        activity_exec.env_vars,
+        activity_exec.cwd,
+        activity_exec.max_output_bytes,
+        activity_exec.forward_stdout,
+        activity_exec.forward_stderr,
+        stdin_content,
+    )
+    .with_context(|| format!("cannot create exec activity worker for {component_id}"))?;
+    let wit = worker.wit();
+
+    Ok(WorkerCompiled::new_exec_activity(
+        worker,
+        activity_exec.exec_config,
+        wit,
+        activity_exec.logs_store_min_level,
+    ))
+}
+
 /// Resolve the activity-js runtime WASM path from the local build.
 #[cfg(feature = "activity-js-local")]
 async fn fetch_activity_js_runtime(
@@ -2994,6 +3078,7 @@ struct WorkflowJsWorkerCompiledWithConfig {
 enum CompiledWorkerKind {
     ActivityWasm(ActivityWorkerCompiled),
     ActivityJs(Box<ActivityJsWorkerCompiled>),
+    ActivityExec(Box<ActivityExecWorkerCompiled>),
     WorkflowWasm(WorkflowWorkerCompiledWithConfig),
     WorkflowJs(Box<WorkflowJsWorkerCompiledWithConfig>),
 }
@@ -3058,6 +3143,33 @@ impl WorkerCompiled {
             },
             component,
             frame_files,
+        )
+    }
+
+    fn new_exec_activity(
+        worker: ActivityExecWorkerCompiled,
+        exec_config: ExecConfig,
+        wit: String,
+        logs_store_min_level: Option<LogLevel>,
+    ) -> (WorkerCompiled, ComponentConfig) {
+        let component = ComponentConfig {
+            component_id: exec_config.component_id.clone(),
+            workflow_or_activity_config: Some(ComponentConfigImportable {
+                exports_ext: worker.exported_functions_ext().to_vec(),
+                exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
+            }),
+            imports: vec![],
+            wit,
+            workflow_replay_info: None,
+            wit_origin: WitOrigin::Synthesized,
+        };
+        (
+            WorkerCompiled {
+                worker: CompiledWorkerKind::ActivityExec(Box::new(worker)),
+                exec_config,
+                logs_store_min_level,
+            },
+            component,
         )
     }
 
@@ -3162,6 +3274,9 @@ impl WorkerCompiled {
                 CompiledWorkerKind::ActivityJs(js_activity) => {
                     LinkedWorkerKind::ActivityJs(js_activity)
                 }
+                CompiledWorkerKind::ActivityExec(exec_activity) => {
+                    LinkedWorkerKind::ActivityExec(exec_activity)
+                }
                 CompiledWorkerKind::WorkflowWasm(workflow_compiled) => {
                     LinkedWorkerKind::WorkflowWasm(WorkflowWorkerLinkedWithConfig {
                         worker: workflow_compiled.worker.link(fn_registry.clone())?,
@@ -3196,6 +3311,7 @@ struct WorkflowJsWorkerLinkedWithConfig {
 enum LinkedWorkerKind {
     ActivityWasm(ActivityWorkerCompiled),
     ActivityJs(Box<ActivityJsWorkerCompiled>),
+    ActivityExec(Box<ActivityExecWorkerCompiled>),
     WorkflowWasm(WorkflowWorkerLinkedWithConfig),
     WorkflowJs(WorkflowJsWorkerLinkedWithConfig),
     Cron(ScheduleWorkerConfig),
@@ -3237,6 +3353,13 @@ impl WorkerLinked {
             }
             LinkedWorkerKind::ActivityJs(js_activity_compiled) => {
                 Arc::from(js_activity_compiled.into_worker(
+                    cancel_registry,
+                    log_forwarder_sender,
+                    logs_storage_config,
+                ))
+            }
+            LinkedWorkerKind::ActivityExec(exec_activity_compiled) => {
+                Arc::from(exec_activity_compiled.into_worker(
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
