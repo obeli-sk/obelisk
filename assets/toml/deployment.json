@@ -88,7 +88,7 @@
           "default": null
         },
         "cwd": {
-          "description": "Working directory for the child process. Supports `${DEPLOYMENT_DIR}/`.\nDefaults to the server's working directory.",
+          "description": "Working directory for the child process. Supports `${DEPLOYMENT_DIR}` expansion.\nDefaults to the server's working directory.",
           "type": [
             "string",
             "null"
