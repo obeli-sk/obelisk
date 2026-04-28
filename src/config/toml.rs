@@ -1892,12 +1892,20 @@ impl ActivityExecComponentConfigCanonical {
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?
         };
         let resolved_secrets = if let Some(secrets) = self.secrets {
-            let mut resolved = indexmap::IndexMap::new();
-            for secret in secrets.env_vars {
-                let val = interpolate_env_vars_secret(&secret.value)
-                    .map_err(|e| anyhow!("failed to resolve secret `{}`: {e}", secret.name))?;
-                resolved.insert(secret.name, val);
-            }
+            let resolved = resolve_secret_env_vars(
+                secrets
+                    .env_vars
+                    .into_iter()
+                    .map(|secret| EnvVarConfig::KeyValue {
+                        key: secret.name,
+                        value: secret.value,
+                    })
+                    .collect(),
+                ignore_missing_env_vars,
+            )
+            .map_err(|e| anyhow!("failed to resolve exec secrets: {e}"))?
+            .into_iter()
+            .collect::<indexmap::IndexMap<_, _>>();
             if resolved.is_empty() {
                 None
             } else {
@@ -4056,6 +4064,60 @@ ffqn = "ns:pkg/ifc.fn"
 name = "my_stub"
 "#;
             toml::from_str::<ActivityStubComponentConfigToml>(toml_str).unwrap_err();
+        }
+    }
+
+    mod activity_exec {
+        use super::super::*;
+
+        fn exec_config_with_secret(value: &str) -> ActivityExecComponentConfigCanonical {
+            ActivityExecComponentConfigCanonical {
+                name: ConfigName::new(StrVariant::from("exec-test")).unwrap(),
+                program: ExecProgramCanonical::Inline("#!/usr/bin/env bash\necho null\n".into()),
+                ffqn: "testing:integration/exec-secret.expose".parse().unwrap(),
+                params: vec![],
+                return_type: Some("result<string, string>".into()),
+                component_digest: None,
+                exec: ExecConfigToml::default(),
+                max_retries: default_max_retries(),
+                retry_exp_backoff: default_retry_exp_backoff(),
+                forward_stdout: ComponentStdOutputToml::default(),
+                forward_stderr: ComponentStdOutputToml::default(),
+                logs_store_min_level: LogLevelToml::default(),
+                env_vars: vec![],
+                cwd: None,
+                max_output_bytes: default_max_output_bytes(),
+                secrets: Some(ExecSecretsToml {
+                    env_vars: vec![SecretEnvVarToml {
+                        name: "MY_SECRET".into(),
+                        value: value.into(),
+                    }],
+                }),
+            }
+        }
+
+        #[test]
+        fn fetch_and_verify_activity_exec_secret_fails_when_missing_and_not_ignored() {
+            let config = exec_config_with_secret("${MISSING_EXEC_SECRET}");
+            let error = config
+                .fetch_and_verify(false, None)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("failed to resolve exec secrets"),
+                "unexpected error: {error}"
+            );
+            assert!(
+                error.contains("MISSING_EXEC_SECRET"),
+                "unexpected error: {error}"
+            );
+        }
+
+        #[test]
+        fn fetch_and_verify_activity_exec_secret_is_skipped_when_missing_and_ignored() {
+            let config = exec_config_with_secret("${MISSING_EXEC_SECRET}");
+            let verified = config.fetch_and_verify(true, None).unwrap();
+            assert!(verified.secrets.is_none());
         }
     }
 }

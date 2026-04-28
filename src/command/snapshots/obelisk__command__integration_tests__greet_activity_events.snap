@@ -17,7 +17,7 @@ expression: events
           "executor_id": "Exr_<REDACTED>",
           "lock_expires_at": "<TIMESTAMP>",
           "retry_config": {
-            "max_retries": 0,
+            "max_retries": 5,
             "retry_exp_backoff": {
               "nanos": 100000000,
               "secs": 0
