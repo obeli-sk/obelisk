@@ -79,7 +79,6 @@ params = [
 return_type = "result<string, string>"
 
 [[activity_stub]]
-name = "test_inline_stub"
 ffqn = "testing:integration/stubs.my-stub"
 params = [
   { name = "id", type = "u64" },

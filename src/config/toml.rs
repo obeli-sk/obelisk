@@ -95,6 +95,8 @@ pub(crate) struct DeploymentTomlValidated {
     pub(crate) inner: DeploymentToml,
     pub(crate) activities_js: Vec<(ActivityJsComponentConfigToml, ConfigName)>,
     pub(crate) activities_exec: Vec<(ActivityExecComponentConfigToml, ConfigName)>,
+    pub(crate) activities_stub: Vec<(ActivityStubComponentConfigToml, ConfigName)>,
+    pub(crate) activities_external: Vec<(ActivityExternalComponentConfigToml, ConfigName)>,
     pub(crate) workflows_js: Vec<(WorkflowJsComponentConfigToml, ConfigName)>,
     pub(crate) component_type_by_name: hashbrown::HashMap<String, crate::args::TomlComponentType>,
 }
@@ -108,9 +110,12 @@ impl DeploymentToml {
         deployment_dir: &std::path::Path,
     ) -> Result<DeploymentTomlValidated, anyhow::Error> {
         self.expand_deployment_dir_prefix(deployment_dir);
-        // Resolve optional names from FFQN and drain the three vectors out of `self`.
+        // Resolve optional names from FFQN and drain vectors out of `self`.
         let activities_js = Self::resolve_names(std::mem::take(&mut self.activities_js))?;
         let activities_exec = Self::resolve_names(std::mem::take(&mut self.activities_exec))?;
+        let activities_stub = Self::resolve_stub_names(std::mem::take(&mut self.activities_stub))?;
+        let activities_external =
+            Self::resolve_external_names(std::mem::take(&mut self.activities_external))?;
         let workflows_js = Self::resolve_names(std::mem::take(&mut self.workflows_js))?;
         // Build the name→type index and check for duplicates.
         let mut component_type_by_name = hashbrown::HashMap::new();
@@ -124,9 +129,10 @@ impl DeploymentToml {
             }
         }
         // Components with resolved names.
+        use crate::args::TomlComponentType;
         for (_, name) in &activities_js {
             if component_type_by_name
-                .insert(name.to_string(), crate::args::TomlComponentType::ActivityJs)
+                .insert(name.to_string(), TomlComponentType::ActivityJs)
                 .is_some()
             {
                 bail!("duplicate component name `{name}` in deployment");
@@ -134,10 +140,23 @@ impl DeploymentToml {
         }
         for (_, name) in &activities_exec {
             if component_type_by_name
-                .insert(
-                    name.to_string(),
-                    crate::args::TomlComponentType::ActivityExec,
-                )
+                .insert(name.to_string(), TomlComponentType::ActivityExec)
+                .is_some()
+            {
+                bail!("duplicate component name `{name}` in deployment");
+            }
+        }
+        for (_, name) in &activities_stub {
+            if component_type_by_name
+                .insert(name.to_string(), TomlComponentType::ActivityStub)
+                .is_some()
+            {
+                bail!("duplicate component name `{name}` in deployment");
+            }
+        }
+        for (_, name) in &activities_external {
+            if component_type_by_name
+                .insert(name.to_string(), TomlComponentType::ActivityExternal)
                 .is_some()
             {
                 bail!("duplicate component name `{name}` in deployment");
@@ -145,7 +164,7 @@ impl DeploymentToml {
         }
         for (_, name) in &workflows_js {
             if component_type_by_name
-                .insert(name.to_string(), crate::args::TomlComponentType::WorkflowJs)
+                .insert(name.to_string(), TomlComponentType::WorkflowJs)
                 .is_some()
             {
                 bail!("duplicate component name `{name}` in deployment");
@@ -155,6 +174,8 @@ impl DeploymentToml {
             inner: self,
             activities_js,
             activities_exec,
+            activities_stub,
+            activities_external,
             workflows_js,
             component_type_by_name,
         })
@@ -190,6 +211,88 @@ impl DeploymentToml {
                     .config_name()
                     .cloned()
                     .unwrap_or_else(|| ConfigName::from_ffqn(c.ffqn()));
+                (c, name)
+            })
+            .collect())
+    }
+
+    /// Resolve names for `ActivityStubComponentConfigToml` enum variants.
+    /// File variants always have an explicit name; Inline variants may derive from FFQN.
+    fn resolve_stub_names(
+        configs: Vec<ActivityStubComponentConfigToml>,
+    ) -> Result<Vec<(ActivityStubComponentConfigToml, ConfigName)>, anyhow::Error> {
+        // Check for clashes among auto-derived inline names.
+        let mut auto_names: hashbrown::HashMap<String, Vec<String>> = hashbrown::HashMap::new();
+        for c in &configs {
+            if let ActivityStubComponentConfigToml::Inline(inline) = c
+                && inline.name.is_none()
+            {
+                let derived = ConfigName::from_ffqn(&inline.ffqn);
+                auto_names
+                    .entry(derived.0.as_ref().to_string())
+                    .or_default()
+                    .push(inline.ffqn.to_string());
+            }
+        }
+        for (name, ffqns) in &auto_names {
+            if ffqns.len() > 1 {
+                bail!(
+                    "multiple components derive the same name `{name}` from their FFQNs: {}. \
+                     Please specify an explicit `name` for each of these components",
+                    ffqns.join(", ")
+                );
+            }
+        }
+        Ok(configs
+            .into_iter()
+            .map(|c| {
+                let name = match &c {
+                    ActivityStubComponentConfigToml::File(f) => f.common.name.clone(),
+                    ActivityStubComponentConfigToml::Inline(i) => i
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| ConfigName::from_ffqn(&i.ffqn)),
+                };
+                (c, name)
+            })
+            .collect())
+    }
+
+    /// Resolve names for `ActivityExternalComponentConfigToml` enum variants.
+    fn resolve_external_names(
+        configs: Vec<ActivityExternalComponentConfigToml>,
+    ) -> Result<Vec<(ActivityExternalComponentConfigToml, ConfigName)>, anyhow::Error> {
+        let mut auto_names: hashbrown::HashMap<String, Vec<String>> = hashbrown::HashMap::new();
+        for c in &configs {
+            if let ActivityExternalComponentConfigToml::Inline(inline) = c
+                && inline.name.is_none()
+            {
+                let derived = ConfigName::from_ffqn(&inline.ffqn);
+                auto_names
+                    .entry(derived.0.as_ref().to_string())
+                    .or_default()
+                    .push(inline.ffqn.to_string());
+            }
+        }
+        for (name, ffqns) in &auto_names {
+            if ffqns.len() > 1 {
+                bail!(
+                    "multiple components derive the same name `{name}` from their FFQNs: {}. \
+                     Please specify an explicit `name` for each of these components",
+                    ffqns.join(", ")
+                );
+            }
+        }
+        Ok(configs
+            .into_iter()
+            .map(|c| {
+                let name = match &c {
+                    ActivityExternalComponentConfigToml::File(f) => f.common.name.clone(),
+                    ActivityExternalComponentConfigToml::Inline(i) => i
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| ConfigName::from_ffqn(&i.ffqn)),
+                };
                 (c, name)
             })
             .collect())
@@ -266,18 +369,9 @@ impl DeploymentToml {
         self.activities_wasm
             .iter()
             .map(|c| (c.common.name.0.as_ref(), TomlComponentType::ActivityWasm))
-            .chain(
-                self.activities_stub
-                    .iter()
-                    .map(|c| (c.name_str(), TomlComponentType::ActivityStub)),
-            )
-            .chain(
-                self.activities_external
-                    .iter()
-                    .map(|c| (c.name_str(), TomlComponentType::ActivityExternal)),
-            )
-            // activities_js, activities_exec, workflows_js are handled separately
-            // via DeploymentTomlValidated's resolved-name fields.
+            // activities_stub, activities_external, activities_js, activities_exec,
+            // workflows_js are handled separately via DeploymentTomlValidated's
+            // resolved-name fields.
             .chain(
                 self.workflows
                     .iter()
@@ -783,6 +877,15 @@ impl HasOptionalNameAndFfqn for WorkflowJsComponentConfigToml {
     }
 }
 
+impl HasOptionalNameAndFfqn for ActivityStubExtInlineConfigToml {
+    fn config_name(&self) -> Option<&ConfigName> {
+        self.name.as_ref()
+    }
+    fn ffqn(&self) -> &FunctionFqn {
+        &self.ffqn
+    }
+}
+
 impl std::fmt::Display for ComponentLocationToml {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1124,8 +1227,10 @@ pub(crate) struct ActivityStubFileConfigToml {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ActivityStubInlineConfigToml {
-    pub(crate) name: ConfigName,
+pub(crate) struct ActivityStubExtInlineConfigToml {
+    /// Component name. Optional — defaults to `{ifc_name}.{function_name}` from `ffqn`.
+    #[serde(default)]
+    pub(crate) name: Option<ConfigName>,
     #[schemars(with = "String")]
     pub(crate) ffqn: FunctionFqn,
     #[serde(default)]
@@ -1138,7 +1243,7 @@ pub(crate) struct ActivityStubInlineConfigToml {
 #[serde(untagged)]
 pub(crate) enum ActivityStubComponentConfigToml {
     File(ActivityStubFileConfigToml),
-    Inline(ActivityStubInlineConfigToml),
+    Inline(ActivityStubExtInlineConfigToml),
 }
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -1156,7 +1261,33 @@ pub(crate) struct ActivityExternalFileConfigToml {
 #[serde(untagged)]
 pub(crate) enum ActivityExternalComponentConfigToml {
     File(ActivityExternalFileConfigToml),
-    Inline(ActivityStubInlineConfigToml),
+    Inline(ActivityStubExtInlineConfigToml),
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivityStubExtInlineConfigCanonical {
+    pub(crate) name: ConfigName,
+    #[schemars(with = "String")]
+    pub(crate) ffqn: FunctionFqn,
+    #[serde(default)]
+    pub(crate) params: Option<Vec<JsParamToml>>,
+    #[serde(default)]
+    pub(crate) return_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub(crate) enum ActivityStubComponentConfigCanonical {
+    File(ActivityStubFileConfigToml),
+    Inline(ActivityStubExtInlineConfigCanonical),
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub(crate) enum ActivityExternalComponentConfigCanonical {
+    File(ActivityExternalFileConfigToml),
+    Inline(ActivityStubExtInlineConfigCanonical),
 }
 #[derive(Debug)]
 pub(crate) struct ActivityStubExtConfigVerified {
@@ -1178,7 +1309,7 @@ pub(crate) enum ActivityStubConfigVerified {
     Inline(ActivityStubExtInlineConfigVerified),
 }
 
-impl ActivityStubComponentConfigToml {
+impl ActivityStubComponentConfigCanonical {
     fn name_str(&self) -> &str {
         match self {
             Self::File(f) => f.common.name.0.as_ref(),
@@ -1285,7 +1416,7 @@ pub(crate) enum ActivityExternalConfigVerified {
     Inline(ActivityStubExtInlineConfigVerified),
 }
 
-impl ActivityExternalComponentConfigToml {
+impl ActivityExternalComponentConfigCanonical {
     fn name_str(&self) -> &str {
         match self {
             Self::File(f) => f.common.name.0.as_ref(),
@@ -2416,8 +2547,8 @@ impl WorkflowJsComponentConfigCanonical {
 #[derive(Debug, Deserialize, Serialize, Default, Clone, schemars::JsonSchema)]
 pub(crate) struct DeploymentCanonical {
     pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
-    pub(crate) activities_stub: Vec<ActivityStubComponentConfigToml>,
-    pub(crate) activities_external: Vec<ActivityExternalComponentConfigToml>,
+    pub(crate) activities_stub: Vec<ActivityStubComponentConfigCanonical>,
+    pub(crate) activities_external: Vec<ActivityExternalComponentConfigCanonical>,
     pub(crate) activities_js: Vec<ActivityJsComponentConfigCanonical>,
     pub(crate) activities_exec: Vec<ActivityExecComponentConfigCanonical>,
     pub(crate) workflows: Vec<WorkflowWasmComponentConfigCanonical>,
@@ -2555,10 +2686,48 @@ pub(crate) async fn resolve_local_refs_to_canonical(
         });
     }
 
+    // Build canonical stubs/externals with resolved names filled in.
+    let activities_stub = deployment
+        .activities_stub
+        .iter()
+        .map(|(c, name)| match c {
+            ActivityStubComponentConfigToml::File(f) => {
+                ActivityStubComponentConfigCanonical::File(f.clone())
+            }
+            ActivityStubComponentConfigToml::Inline(i) => {
+                ActivityStubComponentConfigCanonical::Inline(ActivityStubExtInlineConfigCanonical {
+                    name: name.clone(),
+                    ffqn: i.ffqn.clone(),
+                    params: i.params.clone(),
+                    return_type: i.return_type.clone(),
+                })
+            }
+        })
+        .collect();
+    let activities_external = deployment
+        .activities_external
+        .iter()
+        .map(|(c, name)| match c {
+            ActivityExternalComponentConfigToml::File(f) => {
+                ActivityExternalComponentConfigCanonical::File(f.clone())
+            }
+            ActivityExternalComponentConfigToml::Inline(i) => {
+                ActivityExternalComponentConfigCanonical::Inline(
+                    ActivityStubExtInlineConfigCanonical {
+                        name: name.clone(),
+                        ffqn: i.ffqn.clone(),
+                        params: i.params.clone(),
+                        return_type: i.return_type.clone(),
+                    },
+                )
+            }
+        })
+        .collect();
+
     Ok(DeploymentCanonical {
         activities_wasm: deployment_inner.activities_wasm.clone(),
-        activities_stub: deployment_inner.activities_stub.clone(),
-        activities_external: deployment_inner.activities_external.clone(),
+        activities_stub,
+        activities_external,
         activities_js,
         activities_exec,
         workflows,

@@ -206,7 +206,7 @@
           "$ref": "#/$defs/ActivityExternalFileConfigToml"
         },
         {
-          "$ref": "#/$defs/ActivityStubInlineConfigToml"
+          "$ref": "#/$defs/ActivityStubExtInlineConfigToml"
         }
       ]
     },
@@ -353,34 +353,27 @@
           "$ref": "#/$defs/ActivityStubFileConfigToml"
         },
         {
-          "$ref": "#/$defs/ActivityStubInlineConfigToml"
+          "$ref": "#/$defs/ActivityStubExtInlineConfigToml"
         }
       ]
     },
-    "ActivityStubFileConfigToml": {
-      "type": "object",
-      "properties": {
-        "location": {
-          "type": "string"
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "location"
-      ]
-    },
-    "ActivityStubInlineConfigToml": {
+    "ActivityStubExtInlineConfigToml": {
       "type": "object",
       "properties": {
         "ffqn": {
           "type": "string"
         },
         "name": {
-          "$ref": "#/$defs/ConfigName"
+          "description": "Component name. Optional — defaults to `{ifc_name}.{function_name}` from `ffqn`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "params": {
           "type": [
@@ -402,8 +395,23 @@
       },
       "additionalProperties": false,
       "required": [
-        "name",
         "ffqn"
+      ]
+    },
+    "ActivityStubFileConfigToml": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
       ]
     },
     "ActivityWasmComponentConfigToml": {

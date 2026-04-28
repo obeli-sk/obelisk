@@ -8,7 +8,7 @@
 //! The `test_addr!` macro ensures unique addresses at link time.
 
 use crate::config::toml::{
-    ActivityStubComponentConfigToml, ActivityStubInlineConfigToml, ConfigName,
+    ActivityStubComponentConfigCanonical, ActivityStubExtInlineConfigCanonical, ConfigName,
 };
 use crate::{
     command::server::{PrepareDirsParams, RunParams, prepare_dirs, run_internal},
@@ -1662,8 +1662,8 @@ async fn hot_redeploy_registry_impl(server: &TestServer, deploy_client: &TestDep
         .submit_and_hot_redeploy(server, |new_deployment| {
             new_deployment
                 .activities_stub
-                .push(ActivityStubComponentConfigToml::Inline(
-                    ActivityStubInlineConfigToml {
+                .push(ActivityStubComponentConfigCanonical::Inline(
+                    ActivityStubExtInlineConfigCanonical {
                         name: ConfigName::new(concepts::StrVariant::Static("new_hot_stub"))
                             .unwrap(),
                         ffqn: NEW_STUB_FFQN.parse().unwrap(),

@@ -316,18 +316,18 @@ pub(crate) async fn generate_wit_deps(
                 skipped_names.insert(c.common.name.to_string());
             }
         }
-        for c in &deployment.inner.activities_stub {
+        for (c, name) in &deployment.activities_stub {
             if let ActivityStubComponentConfigToml::File(f) = c
                 && matches!(f.common.location, ComponentLocationToml::Path(_))
             {
-                skipped_names.insert(f.common.name.to_string());
+                skipped_names.insert(name.to_string());
             }
         }
-        for c in &deployment.inner.activities_external {
+        for (c, name) in &deployment.activities_external {
             if let ActivityExternalComponentConfigToml::File(f) = c
                 && matches!(f.common.location, ComponentLocationToml::Path(_))
             {
-                skipped_names.insert(f.common.name.to_string());
+                skipped_names.insert(name.to_string());
             }
         }
         for (c, name) in &deployment.activities_js {

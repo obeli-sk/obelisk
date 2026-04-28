@@ -155,10 +155,26 @@
 # env_vars = [{name = "MY_SECRET", value = "${HOST_SECRET_VAR}"}] # Values support interpolation.
 
 ### External Activity components configuration - only WIT schema is loaded
+### An external activity declares callable activity functions whose implementation
+### is provided outside this deployment.
+### Two modes are supported: file mode (WASM binary for the WIT schema) and inline mode (no WASM file needed).
+##
+## File mode: load WIT schema from an existing WASM binary.
 # [[activity_external]]
 # name = "name" # Required. Each component must be named.
-# location = "path/to/wasm"
+# location = "path/to/external-activity.wasm"
 # location = "oci://docker.io/repo/image:tag"
+##
+## Inline mode: define the function schema directly in TOML (no WASM file required).
+# [[activity_external]]
+# name = "my-external-activity"              # Optional. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
+# ffqn = "namespace:package/interface.function"
+# params = [{ name = "id", type = "u64" }]
+## WIT return type. Defaults to `result<string, string>`.
+## Must be `result`, `result<T>`, `result<T, string>`, or
+## `result<T, variant { execution-failed, ... }>`.
+# return_type = "result<string, string>"
+## Note: `location` and `ffqn` are mutually exclusive; exactly one must be present.
 
 ### Stub Activity components configuration
 ### A stub activity is a placeholder function that never executes on its own.
@@ -180,7 +196,7 @@
 ##
 ## Inline mode: define the function schema directly in TOML (no WASM file required).
 # [[activity_stub]]
-# name = "my-stub"
+# name = "my-stub"                           # Optional. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
 # ffqn = "namespace:package/interface.function"
 # params = [{ name = "id", type = "u64" }]
 ## WIT return type. Defaults to `result<string, string>`.

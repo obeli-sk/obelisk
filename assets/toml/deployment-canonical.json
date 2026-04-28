@@ -13,7 +13,7 @@
     "activities_external": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityExternalComponentConfigToml"
+        "$ref": "#/$defs/ActivityExternalComponentConfigCanonical"
       }
     },
     "activities_js": {
@@ -25,7 +25,7 @@
     "activities_stub": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityStubComponentConfigToml"
+        "$ref": "#/$defs/ActivityStubComponentConfigCanonical"
       }
     },
     "activities_wasm": {
@@ -173,13 +173,13 @@
         "max_output_bytes"
       ]
     },
-    "ActivityExternalComponentConfigToml": {
+    "ActivityExternalComponentConfigCanonical": {
       "anyOf": [
         {
           "$ref": "#/$defs/ActivityExternalFileConfigToml"
         },
         {
-          "$ref": "#/$defs/ActivityStubInlineConfigToml"
+          "$ref": "#/$defs/ActivityStubExtInlineConfigCanonical"
         }
       ]
     },
@@ -293,33 +293,17 @@
         "allowed_hosts"
       ]
     },
-    "ActivityStubComponentConfigToml": {
+    "ActivityStubComponentConfigCanonical": {
       "anyOf": [
         {
           "$ref": "#/$defs/ActivityStubFileConfigToml"
         },
         {
-          "$ref": "#/$defs/ActivityStubInlineConfigToml"
+          "$ref": "#/$defs/ActivityStubExtInlineConfigCanonical"
         }
       ]
     },
-    "ActivityStubFileConfigToml": {
-      "type": "object",
-      "properties": {
-        "location": {
-          "type": "string"
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "location"
-      ]
-    },
-    "ActivityStubInlineConfigToml": {
+    "ActivityStubExtInlineConfigCanonical": {
       "type": "object",
       "properties": {
         "ffqn": {
@@ -350,6 +334,22 @@
       "required": [
         "name",
         "ffqn"
+      ]
+    },
+    "ActivityStubFileConfigToml": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
       ]
     },
     "ActivityWasmComponentConfigToml": {
