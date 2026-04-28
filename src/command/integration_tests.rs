@@ -113,7 +113,6 @@ params = [
   {{ name = "b", type = "u32" }},
 ]
 return_type = "result<string, string>"
-max_retries = 0
 
 [[activity_js]]
 name = "test_greet_activity"
@@ -123,7 +122,6 @@ params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
-max_retries = 0
 
 [[activity_js]]
 name = "test_fetch_denied_activity"
@@ -134,7 +132,6 @@ params = [
   {{ name = "headers", type = "list<tuple<string,string>>" }},
 ]
 return_type = "result<string, string>"
-max_retries = 0
 
 [[activity_js]]
 name = "test_fetch_allowed_activity"
@@ -145,7 +142,6 @@ params = [
   {{ name = "headers", type = "list<tuple<string,string>>" }},
 ]
 return_type = "result<string, string>"
-max_retries = 0
 [[activity_js.allowed_host]]
 pattern = "http://{ip}:{API_PORT}"
 methods = ["GET"]
@@ -158,7 +154,6 @@ params = [
   {{ name = "key", type = "string" }},
 ]
 return_type = "result<string, string>"
-max_retries = 0
 env_vars = [{{key = "TEST_ENV_VAR", value = "hello_from_env"}}]
 
 [[activity_js]]
@@ -169,7 +164,6 @@ params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<record {{ name: string, count: u32 }}, string>"
-max_retries = 0
 
 [[activity_js]]
 name = "test_throw_variant_activity"
@@ -177,7 +171,6 @@ location = "{ws}/crates/testing/test-programs/js/activity/throw_variant.js"
 ffqn = "testing:integration/activity-throw-variant.throw-variant"
 params = []
 return_type = "result<u32, variant {{ execution-failed, not-found }}>"
-max_retries = 0
 
 [[activity_js]]
 name = "test_throw_null_activity"
@@ -185,7 +178,6 @@ location = "{ws}/crates/testing/test-programs/js/activity/throw_null.js"
 ffqn = "testing:integration/activity-throw-null.throw-null"
 params = []
 return_type = "result<string>"
-max_retries = 0
 
 [[workflow_js]]
 name = "test_add_workflow"
@@ -272,7 +264,6 @@ params = [
   {{ name = "message", type = "string" }},
 ]
 return_type = "result<string, string>"
-max_retries = 0
 
 [[activity_exec]]
 name = "test_exec_add"
@@ -283,7 +274,6 @@ params = [
   {{ name = "b", type = "u32" }},
 ]
 return_type = "result<u32, string>"
-max_retries = 0
 
 [[activity_exec]]
 name = "test_exec_greet_include"
@@ -293,7 +283,6 @@ params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
-max_retries = 0
 
 [[activity_exec]]
 name = "test_exec_greet_external"
@@ -303,8 +292,6 @@ params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
-max_retries = 0
-
 
 [[activity_exec]]
 name = "test_exec_greet_inline"
@@ -318,7 +305,6 @@ params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
-max_retries = 0
 
 [[activity_exec]]
 name = "test_exec_read_env"
@@ -326,7 +312,6 @@ program.include = "{ws}/crates/testing/test-programs/exec/read-env.sh"
 ffqn = "testing:integration/exec-env.read-env"
 params = []
 return_type = "result<string, string>"
-max_retries = 0
 env_vars = [{{key = "MY_VAR", value = "hello_from_exec_env"}}]
 
 [[activity_exec]]
@@ -338,7 +323,6 @@ exit 1
 ffqn = "testing:integration/exec-error.fail"
 params = []
 return_type = "result<string, string>"
-max_retries = 0
 
 [[activity_exec]]
 name = "test_exec_record_ok"
@@ -348,7 +332,6 @@ printf '{{"name": "Alice", "count": 42}}'
 ffqn = "testing:integration/exec-record.make-record"
 params = []
 return_type = "result<record {{ name: string, count: u32 }}, string>"
-max_retries = 0
 
 [[activity_exec]]
 name = "test_exec_expose_secrets"
@@ -356,7 +339,6 @@ program.external = ["{ws}/crates/testing/test-programs/exec/expose-secrets.sh"]
 ffqn = "testing:integration/exec-stdin.expose-secrets"
 params = []
 return_type = "result<string, string>"
-max_retries = 0
 [activity_exec.secrets]
 env_vars = [{{ name = "MY_SECRET", value = "s3cret_value" }}]
 
@@ -366,7 +348,6 @@ program.external = ["true"]
 ffqn = "testing:integration/exec-void.void-ok"
 params = []
 return_type = "result"
-max_retries = 0
 
 [[activity_exec]]
 name = "test_exec_void_err"
@@ -374,7 +355,6 @@ program.external = ["false"]
 ffqn = "testing:integration/exec-void.void-err"
 params = []
 return_type = "result"
-max_retries = 0
 
 [[activity_exec]]
 name = "test_exec_args_passthrough"
@@ -388,7 +368,6 @@ params = [
   {{ name = "b", type = "u32" }},
 ]
 return_type = "result<record {{ a: u32, b: u32 }}, string>"
-max_retries = 0
 
 [[activity_stub]]
 name = "test_inline_stub"
