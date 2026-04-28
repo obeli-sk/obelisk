@@ -310,44 +310,43 @@ pub(crate) async fn generate_wit_deps(
     let skipped_oci_component_names: HashSet<String> = if skip_local {
         // When `--external-only` is set, build the set of component names that have an OCI location.
         // Local components will be skipped during WIT extraction.
-        let deployment = &deployment.inner;
         let mut skipped_names: HashSet<String> = HashSet::new();
-        for c in &deployment.activities_wasm {
+        for c in &deployment.inner.activities_wasm {
             if matches!(c.common.location, ComponentLocationToml::Path(_)) {
                 skipped_names.insert(c.common.name.to_string());
             }
         }
-        for c in &deployment.activities_stub {
+        for (c, name) in &deployment.activities_stub {
             if let ActivityStubComponentConfigToml::File(f) = c
                 && matches!(f.common.location, ComponentLocationToml::Path(_))
             {
-                skipped_names.insert(f.common.name.to_string());
+                skipped_names.insert(name.to_string());
             }
         }
-        for c in &deployment.activities_external {
+        for (c, name) in &deployment.activities_external {
             if let ActivityExternalComponentConfigToml::File(f) = c
                 && matches!(f.common.location, ComponentLocationToml::Path(_))
             {
-                skipped_names.insert(f.common.name.to_string());
+                skipped_names.insert(name.to_string());
             }
         }
-        for c in &deployment.activities_js {
+        for (c, name) in &deployment.activities_js {
             if matches!(c.location, JsLocationToml::Path(_)) {
-                skipped_names.insert(c.name.to_string());
+                skipped_names.insert(name.to_string());
             }
         }
         // Exec activities are always local — skip them from WIT generation.
-        for c in &deployment.activities_exec {
-            skipped_names.insert(c.name.to_string());
+        for (_, name) in &deployment.activities_exec {
+            skipped_names.insert(name.to_string());
         }
-        for c in &deployment.workflows {
+        for c in &deployment.inner.workflows {
             if matches!(c.common.location, ComponentLocationToml::Path(_)) {
                 skipped_names.insert(c.common.name.to_string());
             }
         }
-        for c in &deployment.workflows_js {
+        for (c, name) in &deployment.workflows_js {
             if matches!(c.location, JsLocationToml::Path(_)) {
-                skipped_names.insert(c.name.to_string());
+                skipped_names.insert(name.to_string());
             }
         }
         // webhooks are skipped in any case

@@ -1,5 +1,4 @@
 [[activity_js]]
-name = "test_add_activity"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/add.js"
 ffqn = "testing:integration/activity.add"
 params = [
@@ -9,7 +8,6 @@ params = [
 max_retries = 0
 
 [[workflow_js]]
-name = "test_add_via_activity_workflow"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/add_via_activity.js"
 ffqn = "testing:integration/workflow-add-via-activity.add-via-activity"
 params = [
@@ -18,7 +16,6 @@ params = [
 ]
 
 [[activity_js]]
-name = "test_read_env_activity"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/read_env.js"
 ffqn = "testing:integration/activity.read-env"
 params = [
@@ -28,7 +25,6 @@ max_retries = 0
 env_vars = [{key = "TEST_ENV_VAR", value = "hello_from_env"}]
 
 [[activity_js]]
-name = "activity_js_fetch_get"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/fetch_get.js"
 ffqn = "testing:js/activity.fetch-get"
 params = [
@@ -42,13 +38,11 @@ pattern = "http://localhost:5005"
 methods = ["GET"]
 
 [[workflow_js]]
-name = "workflow_js_test"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/fetch_components.js"
 ffqn = "testing:js/workflow.fetch-components"
 params = []
 
 [[workflow_js]]
-name = "test_call_activity_workflow"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/call_activity.js"
 ffqn = "testing:integration/workflow-call-activity.call-activity"
 params = [
@@ -77,7 +71,6 @@ routes = [{ methods = ["GET"], route = "/call-activity/:a/:b" }]
 # stub
 
 [[workflow_js]]
-name = "test_call_stub_workflow"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/call_stub.js"
 ffqn = "testing:integration/workflow-call-stub.call-stub"
 params = [
@@ -86,7 +79,6 @@ params = [
 return_type = "result<string, string>"
 
 [[activity_stub]]
-name = "test_inline_stub"
 ffqn = "testing:integration/stubs.my-stub"
 params = [
   { name = "id", type = "u64" },
@@ -96,14 +88,12 @@ return_type = "result<string, string>"
 # Busy workflow
 
 [[workflow_js]]
-name = "workflow_busy_sleep"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy-sleep.js"
 ffqn = "testing:integration/workflow-busy.busy"
 params = []
 return_type = "result<string, string>"
 
 [[activity_js]]
-name = "activity_busy_sleep"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/sleep.js"
 ffqn = "testing:integration/sleep-activity.sleep"
 params = [
@@ -113,14 +103,12 @@ return_type = "result"
 max_retries = 0
 
 [[workflow_js]]
-name = "workflow_busy_cpu"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy-cpu.js"
 ffqn = "testing:integration/workflow-busy-cpu.busy-cpu"
 params = []
 exec.lock_expiry.seconds = 10
 
 [[activity_js]]
-name = "activity_busy_cpu"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/busy-cpu.js"
 ffqn = "testing:integration/activity-busy-cpu.busy-cpu"
 params = []

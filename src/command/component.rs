@@ -93,10 +93,10 @@ fn find_component_for_push(
         .copied()
         .with_context(|| format!("component '{name}' not found in deployment TOML"))?;
 
-    let deployment = &deployment.inner;
     match component_type {
         TomlComponentType::ActivityWasm => {
             let cfg = deployment
+                .inner
                 .activities_wasm
                 .iter()
                 .find(|c| c.common.name.to_string() == name)
@@ -114,6 +114,7 @@ fn find_component_for_push(
         }
         TomlComponentType::WebhookEndpointWasm => {
             let cfg = deployment
+                .inner
                 .webhooks
                 .iter()
                 .find(|c| c.common.name.to_string() == name)
@@ -131,6 +132,7 @@ fn find_component_for_push(
         }
         TomlComponentType::WorkflowWasm => {
             let cfg = deployment
+                .inner
                 .workflows
                 .iter()
                 .find(|c| c.common.name.to_string() == name)
@@ -147,10 +149,10 @@ fn find_component_for_push(
             })
         }
         TomlComponentType::ActivityJs => {
-            let cfg = deployment
+            let (cfg, _) = deployment
                 .activities_js
                 .iter()
-                .find(|c| c.name.to_string() == name)
+                .find(|(_, n)| n.to_string() == name)
                 .expect("name is in map so it must be in the list");
             let JsLocationToml::Path(ref path) = cfg.location else {
                 bail!("component '{name}' uses OCI, only local paths are supported for push");
@@ -169,10 +171,10 @@ fn find_component_for_push(
             })
         }
         TomlComponentType::WorkflowJs => {
-            let cfg = deployment
+            let (cfg, _) = deployment
                 .workflows_js
                 .iter()
-                .find(|c| c.name.to_string() == name)
+                .find(|(_, n)| n.to_string() == name)
                 .expect("name is in map so it must be in the list");
             let JsLocationToml::Path(ref path) = cfg.location else {
                 bail!("component '{name}' uses OCI, only local paths are supported for push");
@@ -192,6 +194,7 @@ fn find_component_for_push(
         }
         TomlComponentType::WebhookEndpointJs => {
             let cfg = deployment
+                .inner
                 .webhooks_js
                 .iter()
                 .find(|c| c.name.to_string() == name)
@@ -768,7 +771,10 @@ mod tests {
 
         assert_eq!(parsed.activities_js.len(), 1);
         let act = &parsed.activities_js[0];
-        assert_eq!(act.name.to_string(), "my_js_activity");
+        assert_eq!(
+            act.name.as_ref().expect("name set").to_string(),
+            "my_js_activity"
+        );
         assert_eq!(act.ffqn.to_string(), "my-pkg:my-iface/my-ifc.my-fn");
         assert_eq!(act.return_type.as_deref(), Some("result<string>"));
         assert_eq!(act.params.len(), 1);
