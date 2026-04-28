@@ -48,7 +48,6 @@ use wasm_workers::{
 };
 use webhook::{HttpServer, WebhookJsComponentConfigToml, WebhookWasmComponentConfigToml};
 
-const DEPLOYMENT_DIR_PREFIX: &str = "${DEPLOYMENT_DIR}/";
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
 const DEFAULT_SQLITE_DIR: &str = "obelisk-sqlite";
@@ -298,22 +297,28 @@ impl DeploymentToml {
             .collect())
     }
 
-    /// Expand `${DEPLOYMENT_DIR}/` prefixes in all local file paths.
-    fn expand_deployment_dir_prefix(&mut self, dir: &std::path::Path) {
-        let expand_str = |s: &mut String| {
-            if let Some(suffix) = s.strip_prefix(DEPLOYMENT_DIR_PREFIX) {
-                *s = dir.join(suffix).to_string_lossy().into_owned();
+    fn expand_deployment_dir(s: &mut String, is_dir: bool, deployment_dir: &std::path::Path) {
+        if let Some(suffix) = s.strip_prefix("${DEPLOYMENT_DIR}") {
+            // if is_dir, we allow suffix to be empty. Otherwise we expect `/`
+            if is_dir && suffix.is_empty() {
+                *s = deployment_dir.to_string_lossy().into_owned();
+            } else if let Some(suffix) = suffix.strip_prefix("/") {
+                *s = deployment_dir.join(suffix).to_string_lossy().into_owned();
             }
-        };
+        }
+    }
+
+    /// Expand `${DEPLOYMENT_DIR}` prefixes in all local file paths.
+    fn expand_deployment_dir_prefix(&mut self, deployment_dir: &std::path::Path) {
         let expand_loc = |loc: &mut ComponentLocationToml| {
             if let ComponentLocationToml::Path(p) = loc {
-                expand_str(p);
+                Self::expand_deployment_dir(p, false, deployment_dir);
             }
         };
         let expand_backtrace = |bt: &mut ComponentBacktraceConfig| {
             for loc in bt.frame_files_to_sources.values_mut() {
                 let BacktraceSourceLocation::Path(p) = loc;
-                expand_str(p);
+                Self::expand_deployment_dir(p, false, deployment_dir);
             }
         };
         for c in &mut self.activities_wasm {
@@ -331,15 +336,15 @@ impl DeploymentToml {
         }
         for c in &mut self.activities_js {
             if let JsLocationToml::Path(p) = &mut c.location {
-                expand_str(p);
+                Self::expand_deployment_dir(p, false, deployment_dir);
             }
         }
         for c in &mut self.activities_exec {
             if let ExecProgramToml::Include(p) = &mut c.program {
-                expand_str(p);
+                Self::expand_deployment_dir(p, false, deployment_dir);
             }
             if let Some(cwd) = &mut c.cwd {
-                expand_str(cwd);
+                Self::expand_deployment_dir(cwd, true, deployment_dir);
             }
         }
         for c in &mut self.workflows {
@@ -348,7 +353,7 @@ impl DeploymentToml {
         }
         for c in &mut self.workflows_js {
             if let JsLocationToml::Path(p) = &mut c.location {
-                expand_str(p);
+                Self::expand_deployment_dir(p, false, deployment_dir);
             }
         }
         for c in &mut self.webhooks {
@@ -357,7 +362,7 @@ impl DeploymentToml {
         }
         for c in &mut self.webhooks_js {
             if let JsLocationToml::Path(p) = &mut c.location {
-                expand_str(p);
+                Self::expand_deployment_dir(p, false, deployment_dir);
             }
         }
     }
@@ -1789,7 +1794,7 @@ pub(crate) struct ActivityExecComponentConfigToml {
     pub(crate) logs_store_min_level: LogLevelToml,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
-    /// Working directory for the child process. Supports `${DEPLOYMENT_DIR}/`.
+    /// Working directory for the child process. Supports `${DEPLOYMENT_DIR}` expansion.
     /// Defaults to the server's working directory.
     #[serde(default)]
     pub(crate) cwd: Option<String>,
@@ -1818,7 +1823,7 @@ pub(crate) struct ActivityExecComponentConfigCanonical {
     pub(crate) forward_stderr: ComponentStdOutputToml,
     pub(crate) logs_store_min_level: LogLevelToml,
     pub(crate) env_vars: Vec<EnvVarConfig>,
-    pub(crate) cwd: Option<String>,
+    pub(crate) cwd: Option<String>, // Must be resolved.
     pub(crate) max_output_bytes: u64,
     pub(crate) secrets: Option<ExecSecretsToml>,
 }
