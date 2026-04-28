@@ -4099,7 +4099,10 @@ name = "my_stub"
         #[test]
         fn fetch_and_verify_activity_exec_secret_fails_when_missing_and_not_ignored() {
             let config = exec_config_with_secret("${MISSING_EXEC_SECRET}");
-            let error = config.fetch_and_verify(false, None).unwrap_err().to_string();
+            let error = config
+                .fetch_and_verify(false, None)
+                .unwrap_err()
+                .to_string();
             assert!(
                 error.contains("failed to resolve exec secrets"),
                 "unexpected error: {error}"
