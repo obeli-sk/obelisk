@@ -144,7 +144,16 @@
           "minimum": 0
         },
         "name": {
-          "$ref": "#/$defs/ConfigName"
+          "description": "Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "params": {
           "description": "Custom parameters for the exec activity.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).",
@@ -187,7 +196,6 @@
       },
       "additionalProperties": false,
       "required": [
-        "name",
         "program",
         "ffqn"
       ]
@@ -299,7 +307,16 @@
           "minimum": 0
         },
         "name": {
-          "$ref": "#/$defs/ConfigName"
+          "description": "Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "params": {
           "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
@@ -326,7 +343,6 @@
       },
       "additionalProperties": false,
       "required": [
-        "name",
         "location",
         "ffqn"
       ]
@@ -1111,7 +1127,16 @@
           "default": "debug"
         },
         "name": {
-          "$ref": "#/$defs/ConfigName"
+          "description": "Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "params": {
           "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
@@ -1138,7 +1163,6 @@
       },
       "additionalProperties": false,
       "required": [
-        "name",
         "location",
         "ffqn"
       ]

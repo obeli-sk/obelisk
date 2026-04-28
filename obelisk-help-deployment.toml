@@ -71,7 +71,7 @@
 
 ### JavaScript Activity components configuration
 # [[activity_js]]
-# name = "name"                              # Required. Component name.
+# name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
 ## Location of the JavaScript source file.
 ## Supports local file paths.
 ## OCI references are NOT supported for JS activities.
@@ -112,7 +112,7 @@
 ### instead of a WASM component. Parameters are passed as JSON-encoded CLI args,
 ### and the result is read from stdout (exit 0 → ok, non-zero → err).
 # [[activity_exec]]
-# name = "name"                              # Required. Component name.
+# name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
 ## Program specification: exactly one of `external`, `inline`, or `include`.
 ## `external`: explicit argv — first element is the executable, rest are fixed arguments.
 # program.external = ["/usr/bin/my-tool", "--flag"]
@@ -218,7 +218,7 @@
 
 ### JavaScript Workflow components configuration
 # [[workflow_js]]
-# name = "name"                              # Required. Component name.
+# name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
 ## Location of the JavaScript source file.
 ## Supports local file paths.
 ## OCI references are NOT supported for JS workflows.

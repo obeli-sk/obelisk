@@ -63,7 +63,7 @@ impl ComponentId {
     ) -> Result<Self, InvalidNameError<Self>> {
         Ok(Self {
             component_type,
-            name: check_name(name, "_")?,
+            name: check_name(name, "_.-")?,
             component_digest,
         })
     }

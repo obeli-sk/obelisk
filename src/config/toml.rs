@@ -60,7 +60,7 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}codegen", CACHE_DIR_PREFIX);
 const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone)]
+#[derive(Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DeploymentToml {
     #[serde(default, rename = "activity_wasm")]
@@ -86,11 +86,16 @@ pub(crate) struct DeploymentToml {
 }
 
 /// A `DeploymentToml` that has passed name-uniqueness validation.
-/// The `component_type_by_name` map is built during validation and can be
-/// used for O(1) component-type lookup by name.
-#[derive(Debug, Default)]
+///
+/// Components that support auto-derived names (`activity_js`, `activity_exec`,
+/// `workflow_js`) are stored as `(Config, ConfigName)` tuples with the resolved name
+/// pulled out of the `Option`. The remaining component types stay inside `inner`.
+#[derive(Default)]
 pub(crate) struct DeploymentTomlValidated {
     pub(crate) inner: DeploymentToml,
+    pub(crate) activities_js: Vec<(ActivityJsComponentConfigToml, ConfigName)>,
+    pub(crate) activities_exec: Vec<(ActivityExecComponentConfigToml, ConfigName)>,
+    pub(crate) workflows_js: Vec<(WorkflowJsComponentConfigToml, ConfigName)>,
     pub(crate) component_type_by_name: hashbrown::HashMap<String, crate::args::TomlComponentType>,
 }
 
@@ -103,7 +108,13 @@ impl DeploymentToml {
         deployment_dir: &std::path::Path,
     ) -> Result<DeploymentTomlValidated, anyhow::Error> {
         self.expand_deployment_dir_prefix(deployment_dir);
+        // Resolve optional names from FFQN and drain the three vectors out of `self`.
+        let activities_js = Self::resolve_names(std::mem::take(&mut self.activities_js))?;
+        let activities_exec = Self::resolve_names(std::mem::take(&mut self.activities_exec))?;
+        let workflows_js = Self::resolve_names(std::mem::take(&mut self.workflows_js))?;
+        // Build the name→type index and check for duplicates.
         let mut component_type_by_name = hashbrown::HashMap::new();
+        // Components remaining in `inner` (all have mandatory names).
         for (name, component_type) in self.all_component_names_with_types() {
             if component_type_by_name
                 .insert(name.to_string(), component_type)
@@ -112,10 +123,76 @@ impl DeploymentToml {
                 bail!("duplicate component name `{name}` in deployment");
             }
         }
+        // Components with resolved names.
+        for (_, name) in &activities_js {
+            if component_type_by_name
+                .insert(name.to_string(), crate::args::TomlComponentType::ActivityJs)
+                .is_some()
+            {
+                bail!("duplicate component name `{name}` in deployment");
+            }
+        }
+        for (_, name) in &activities_exec {
+            if component_type_by_name
+                .insert(
+                    name.to_string(),
+                    crate::args::TomlComponentType::ActivityExec,
+                )
+                .is_some()
+            {
+                bail!("duplicate component name `{name}` in deployment");
+            }
+        }
+        for (_, name) in &workflows_js {
+            if component_type_by_name
+                .insert(name.to_string(), crate::args::TomlComponentType::WorkflowJs)
+                .is_some()
+            {
+                bail!("duplicate component name `{name}` in deployment");
+            }
+        }
         Ok(DeploymentTomlValidated {
             inner: self,
+            activities_js,
+            activities_exec,
+            workflows_js,
             component_type_by_name,
         })
+    }
+
+    fn resolve_names<T: HasOptionalNameAndFfqn>(
+        configs: Vec<T>,
+    ) -> Result<Vec<(T, ConfigName)>, anyhow::Error> {
+        let mut resolved_names: hashbrown::HashMap<String, Vec<String>> = hashbrown::HashMap::new();
+        for c in &configs {
+            if c.config_name().is_none() {
+                let derived = ConfigName::from_ffqn(c.ffqn());
+                resolved_names
+                    .entry(derived.0.as_ref().to_string())
+                    .or_default()
+                    .push(c.ffqn().to_string());
+            }
+        }
+        for (name, ffqns) in &resolved_names {
+            if ffqns.len() > 1 {
+                bail!(
+                    "multiple components derive the same name `{name}` from their FFQNs: {}. \
+                     Please specify an explicit `name` for each of these components",
+                    ffqns.join(", ")
+                );
+            }
+        }
+
+        Ok(configs
+            .into_iter()
+            .map(|c| {
+                let name = c
+                    .config_name()
+                    .cloned()
+                    .unwrap_or_else(|| ConfigName::from_ffqn(c.ffqn()));
+                (c, name)
+            })
+            .collect())
     }
 
     /// Expand `${DEPLOYMENT_DIR}/` prefixes in all local file paths.
@@ -199,25 +276,12 @@ impl DeploymentToml {
                     .iter()
                     .map(|c| (c.name_str(), TomlComponentType::ActivityExternal)),
             )
-            .chain(
-                self.activities_js
-                    .iter()
-                    .map(|c| (c.name.0.as_ref(), TomlComponentType::ActivityJs)),
-            )
-            .chain(
-                self.activities_exec
-                    .iter()
-                    .map(|c| (c.name.0.as_ref(), TomlComponentType::ActivityExec)),
-            )
+            // activities_js, activities_exec, workflows_js are handled separately
+            // via DeploymentTomlValidated's resolved-name fields.
             .chain(
                 self.workflows
                     .iter()
                     .map(|c| (c.common.name.0.as_ref(), TomlComponentType::WorkflowWasm)),
-            )
-            .chain(
-                self.workflows_js
-                    .iter()
-                    .map(|c| (c.name.0.as_ref(), TomlComponentType::WorkflowJs)),
             )
             .chain(self.webhooks.iter().map(|c| {
                 (
@@ -686,6 +750,39 @@ impl FromStr for ComponentLocationToml {
     }
 }
 
+/// Trait for config structs that have an optional `name` and a required `ffqn`.
+trait HasOptionalNameAndFfqn {
+    fn config_name(&self) -> Option<&ConfigName>;
+    fn ffqn(&self) -> &FunctionFqn;
+}
+
+impl HasOptionalNameAndFfqn for ActivityJsComponentConfigToml {
+    fn config_name(&self) -> Option<&ConfigName> {
+        self.name.as_ref()
+    }
+    fn ffqn(&self) -> &FunctionFqn {
+        &self.ffqn
+    }
+}
+
+impl HasOptionalNameAndFfqn for ActivityExecComponentConfigToml {
+    fn config_name(&self) -> Option<&ConfigName> {
+        self.name.as_ref()
+    }
+    fn ffqn(&self) -> &FunctionFqn {
+        &self.ffqn
+    }
+}
+
+impl HasOptionalNameAndFfqn for WorkflowJsComponentConfigToml {
+    fn config_name(&self) -> Option<&ConfigName> {
+        self.name.as_ref()
+    }
+    fn ffqn(&self) -> &FunctionFqn {
+        &self.ffqn
+    }
+}
+
 impl std::fmt::Display for ComponentLocationToml {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -743,7 +840,7 @@ impl FromStr for JsLocationToml {
 pub struct ConfigName(#[schemars(with = "String")] StrVariant);
 impl ConfigName {
     pub fn new(name: StrVariant) -> Result<Self, InvalidNameError<ConfigName>> {
-        Ok(Self(check_name(name, "_")?))
+        Ok(Self(check_name(name, "_.-")?))
     }
 }
 impl<'de> Deserialize<'de> for ConfigName {
@@ -759,6 +856,17 @@ impl<'de> Deserialize<'de> for ConfigName {
 impl serde::Serialize for ConfigName {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(s)
+    }
+}
+
+impl ConfigName {
+    /// Derive a `ConfigName` from a `FunctionFqn` using the short form `{ifc_name}.{function_name}`.
+    pub(crate) fn from_ffqn(ffqn: &FunctionFqn) -> Self {
+        let ifc_name = ffqn.ifc_fqn.ifc_name();
+        let function_name: &str = &ffqn.function_name;
+        // WIT identifiers are kebab-case ([a-z0-9-]), so the derived name
+        // contains only [a-z0-9-.] — always valid for ConfigName.
+        Self(StrVariant::from(format!("{ifc_name}.{function_name}")))
     }
 }
 
@@ -1352,7 +1460,9 @@ impl ActivityWasmComponentConfigToml {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityJsComponentConfigToml {
-    pub(crate) name: ConfigName,
+    /// Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.
+    #[serde(default)]
+    pub(crate) name: Option<ConfigName>,
     /// Location of the JavaScript source file.
     /// Supports local file paths and OCI registry references (`oci://...`).
     pub(crate) location: JsLocationToml,
@@ -1516,7 +1626,9 @@ const fn default_max_output_bytes() -> u64 {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityExecComponentConfigToml {
-    pub(crate) name: ConfigName,
+    /// Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.
+    #[serde(default)]
+    pub(crate) name: Option<ConfigName>,
     /// Program specification. Exactly one of `external`, `inline`, or `include`.
     pub(crate) program: ExecProgramToml,
     #[schemars(with = "String")]
@@ -1722,7 +1834,9 @@ impl ActivityExecConfigVerified {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowJsComponentConfigToml {
-    pub(crate) name: ConfigName,
+    /// Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.
+    #[serde(default)]
+    pub(crate) name: Option<ConfigName>,
     /// Location of the JavaScript source file.
     /// Supports local file paths and OCI registry references (`oci://...`).
     pub(crate) location: JsLocationToml,
@@ -2319,11 +2433,10 @@ pub(crate) struct DeploymentCanonical {
 pub(crate) async fn resolve_local_refs_to_canonical(
     deployment: &DeploymentTomlValidated,
 ) -> anyhow::Result<DeploymentCanonical> {
-    let deployment = &deployment.inner;
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
-    for a in &deployment.activities_js {
+    for (a, name) in &deployment.activities_js {
         activities_js.push(ActivityJsComponentConfigCanonical {
-            name: a.name.clone(),
+            name: name.clone(),
             location: resolve_js_to_canonical(&a.location).await?,
             content_digest: a.content_digest.clone(),
             component_digest: a.component_digest.clone(),
@@ -2341,8 +2454,9 @@ pub(crate) async fn resolve_local_refs_to_canonical(
         });
     }
 
-    let mut workflows = Vec::with_capacity(deployment.workflows.len());
-    for w in &deployment.workflows {
+    let deployment_inner = &deployment.inner;
+    let mut workflows = Vec::with_capacity(deployment_inner.workflows.len());
+    for w in &deployment_inner.workflows {
         workflows.push(WorkflowWasmComponentConfigCanonical {
             common: w.common.clone(),
             component_digest: w.component_digest.clone(),
@@ -2357,9 +2471,9 @@ pub(crate) async fn resolve_local_refs_to_canonical(
     }
 
     let mut workflows_js = Vec::with_capacity(deployment.workflows_js.len());
-    for w in &deployment.workflows_js {
+    for (w, name) in &deployment.workflows_js {
         workflows_js.push(WorkflowJsComponentConfigCanonical {
-            name: w.name.clone(),
+            name: name.clone(),
             location: resolve_js_to_canonical(&w.location).await?,
             content_digest: w.content_digest.clone(),
             component_digest: w.component_digest.clone(),
@@ -2374,8 +2488,8 @@ pub(crate) async fn resolve_local_refs_to_canonical(
         });
     }
 
-    let mut webhooks = Vec::with_capacity(deployment.webhooks.len());
-    for w in &deployment.webhooks {
+    let mut webhooks = Vec::with_capacity(deployment_inner.webhooks.len());
+    for w in &deployment_inner.webhooks {
         webhooks.push(webhook::WebhookWasmComponentConfigCanonical {
             common: w.common.clone(),
             http_server: w.http_server.clone(),
@@ -2389,8 +2503,8 @@ pub(crate) async fn resolve_local_refs_to_canonical(
         });
     }
 
-    let mut webhooks_js = Vec::with_capacity(deployment.webhooks_js.len());
-    for w in &deployment.webhooks_js {
+    let mut webhooks_js = Vec::with_capacity(deployment_inner.webhooks_js.len());
+    for w in &deployment_inner.webhooks_js {
         webhooks_js.push(webhook::WebhookJsComponentConfigCanonical {
             name: w.name.clone(),
             location: resolve_js_to_canonical(&w.location).await?,
@@ -2406,7 +2520,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
     }
 
     let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
-    for a in &deployment.activities_exec {
+    for (a, name) in &deployment.activities_exec {
         let program = match &a.program {
             ExecProgramToml::External(argv) => ExecProgramCanonical::External(argv.clone()),
             ExecProgramToml::Inline(script) => ExecProgramCanonical::Inline(script.clone()),
@@ -2422,7 +2536,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
             }
         };
         activities_exec.push(ActivityExecComponentConfigCanonical {
-            name: a.name.clone(),
+            name: name.clone(),
             program,
             ffqn: a.ffqn.clone(),
             params: a.params.clone(),
@@ -2442,16 +2556,16 @@ pub(crate) async fn resolve_local_refs_to_canonical(
     }
 
     Ok(DeploymentCanonical {
-        activities_wasm: deployment.activities_wasm.clone(),
-        activities_stub: deployment.activities_stub.clone(),
-        activities_external: deployment.activities_external.clone(),
+        activities_wasm: deployment_inner.activities_wasm.clone(),
+        activities_stub: deployment_inner.activities_stub.clone(),
+        activities_external: deployment_inner.activities_external.clone(),
         activities_js,
         activities_exec,
         workflows,
         workflows_js,
         webhooks,
         webhooks_js,
-        crons: deployment.crons.clone(),
+        crons: deployment_inner.crons.clone(),
     })
 }
 
