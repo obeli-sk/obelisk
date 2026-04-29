@@ -930,6 +930,7 @@ impl WorkflowCtx {
     async fn persist_sleep(
         &mut self,
         schedule_at: HistoryEventScheduleAt,
+        name: Option<String>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<Result<DateTime<Utc>, ()>, WorkflowFunctionError> {
         let expires_at_if_new = schedule_at
@@ -945,6 +946,7 @@ impl WorkflowCtx {
             })?;
         OneOffDelayRequest::apply(
             schedule_at,
+            name,
             expires_at_if_new,
             wasm_backtrace,
             &mut self.event_history,
@@ -1627,6 +1629,26 @@ impl WorkflowCtx {
 
         inst_workflow_support
             .func_wrap_async(
+                "sleep-named-bt",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (schedule_at, name, wit_backtrace): (
+                    ScheduleAtTypes,
+                    Option<String>,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
+                        let expires_at = host.sleep_named(schedule_at, name, backtrace).await?;
+                        Ok((expires_at,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function sleep-named-bt", err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
                 "join-set-create-bt",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (wit_backtrace,): (Option<typesTypes::backtrace::WasmBacktrace>,)| {
@@ -2082,10 +2104,22 @@ pub(crate) mod workflow_support {
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> wasmtime::Result<Result<host_exports::latest::obelisk::types::time::Datetime, ()>>
         {
+            self.sleep_named(schedule_at, None, wasm_backtrace).await
+        }
+
+        pub(crate) async fn sleep_named(
+            &mut self,
+            schedule_at: HistoryEventScheduleAt,
+            name: Option<String>,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> wasmtime::Result<Result<host_exports::latest::obelisk::types::time::Datetime, ()>>
+        {
             Ok(
-                match self.persist_sleep(schedule_at, wasm_backtrace).await
-                .map_err(wasmtime::Error::new)? // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
-                 {
+                match self
+                    .persist_sleep(schedule_at, name, wasm_backtrace)
+                    .await
+                    .map_err(wasmtime::Error::new)?
+                {
                     Ok(expires_at) => Ok(
                         host_exports::latest::obelisk::types::time::Datetime::try_from(expires_at)?,
                     ),
@@ -2931,7 +2965,8 @@ pub(crate) mod tests {
                     WorkflowStep::Sleep { millis } => workflow_ctx
                         .persist_sleep(
                             HistoryEventScheduleAt::In(Duration::from_millis(u64::from(*millis))),
-                            None,
+                            None, // custom name
+                            None, // backtrace
                         )
                         .await
                         .map(|_| ()),

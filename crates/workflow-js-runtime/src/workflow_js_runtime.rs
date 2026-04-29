@@ -70,6 +70,7 @@
 //! const wakeUp = obelisk.sleep({ seconds: 30 });  // Date
 //! const wakeUp = obelisk.sleep({ minutes: 5 });   // Date
 //! const wakeUp = obelisk.sleep({ milliseconds: 500 }); // Date
+//! const namedWakeUp = obelisk.sleep({ seconds: 30 }, "retry-timeout"); // Date
 //! console.log(wakeUp.toISOString()); // e.g. "2024-01-01T00:00:00.500Z"
 //! ```
 //!
@@ -119,7 +120,7 @@ use crate::generated::obelisk::workflow::workflow_support::{
     JoinNextTryError, SubmitConfig, call_json, execution_id_generate, get_result_json_bt,
     join_next_bt, join_next_try_bt, join_set_close_bt, join_set_create_bt,
     join_set_create_named_bt, random_string_bt, random_u64_bt, random_u64_inclusive_bt,
-    schedule_json, sleep_bt, stub_json, submit_delay_bt, submit_json_bt,
+    schedule_json, sleep_named_bt, stub_json, submit_delay_bt, submit_json_bt,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{new_object, parse_ffqn};
@@ -473,11 +474,21 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // obelisk.sleep(schedule)
+    // obelisk.sleep(schedule, [name])
     let sleep_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
+        let name = match args.get(1) {
+            Some(arg) if !arg.is_null() && !arg.is_undefined() => Some(
+                arg.as_string()
+                    .ok_or_else(|| {
+                        JsNativeError::typ().with_message("sleep name must be a string")
+                    })?
+                    .to_std_string_escaped(),
+            ),
+            _ => None,
+        };
         let backtrace = capture_backtrace(ctx);
-        match sleep_bt(schedule, Some(&backtrace)) {
+        match sleep_named_bt(schedule, name.as_deref(), Some(&backtrace)) {
             Ok(dt) => {
                 let ms = (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
                 let date = JsDate::new(ctx);
@@ -766,13 +777,14 @@ fn setup_math_random(context: &mut Context) -> JsResult<()> {
     Ok(())
 }
 
-/// Override `Date.now()` to return the current Obelisk clock time via `sleep_bt(0)`.
+/// Override `Date.now()` to return the current Obelisk clock time via
+/// `sleep_named_bt(0, None)`.
 ///
 /// Returns milliseconds since Unix epoch as f64 (matching the JS spec).
 fn setup_date_now(context: &mut Context) -> JsResult<()> {
     let date_now_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
         let backtrace = capture_backtrace(ctx);
-        let dt = sleep_bt(ScheduleAt::Now, Some(&backtrace))
+        let dt = sleep_named_bt(ScheduleAt::Now, None, Some(&backtrace))
             .map_err(|()| JsNativeError::error().with_message("sleep failed"))?;
         let ms = (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
         Ok(JsValue::from(ms))
