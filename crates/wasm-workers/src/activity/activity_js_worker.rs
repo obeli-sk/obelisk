@@ -305,16 +305,6 @@ mod tests {
     use tracing::info_span;
     use val_json::wast_val::WastVal;
 
-    fn default_return_type() -> ReturnTypeExtendable {
-        ReturnTypeExtendable {
-            type_wrapper_tl: TypeWrapperTopLevel {
-                ok: Some(Box::new(TypeWrapper::String)),
-                err: Some(Box::new(TypeWrapper::String)),
-            },
-            wit_type: StrVariant::Static("result<string, string>"),
-        }
-    }
-
     struct JsWorkerBuilder {
         js_source: String,
         user_ffqn: FunctionFqn,
@@ -334,7 +324,13 @@ mod tests {
                     name: StrVariant::Static("params"),
                     wit_type: StrVariant::Static("list<string>"),
                 }],
-                user_return_type: default_return_type(),
+                user_return_type: ReturnTypeExtendable {
+                    type_wrapper_tl: TypeWrapperTopLevel {
+                        ok: Some(Box::new(TypeWrapper::String)),
+                        err: Some(Box::new(TypeWrapper::String)),
+                    },
+                    wit_type: StrVariant::Static("result<string, string>"),
+                },
                 allowed_hosts: Vec::new(),
                 logs_storage_config: None,
             }
@@ -684,14 +680,14 @@ mod tests {
             )
             => {
                 assert_eq!(
-                    "failed to type check the return value `{\"count\":42,\"name\":\"test\"}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 1",
+                    "failed to type check the ok variant value `{\"count\":42,\"name\":\"test\"}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 1",
                     reason);
             }
         );
     }
 
     #[tokio::test]
-    async fn throwing_object_should_fail_to_typecheck() {
+    async fn throwing_object_should_fail_to_typecheck_expecting_result_string_string() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "throw-object");
         let js_source = r"
@@ -713,9 +709,9 @@ mod tests {
                 _version,
             )
             => {
-                assert!(
-                    reason.contains("failed to type check thrown value"),
-                    "{reason} should mention type check failure"
+                assert_eq!(
+                    r#"failed to type check the err variant value `{"code":42,"message":"error"}` as type string - invalid type: map, expected value matching "string" at line 1 column 1"#,
+                    reason
                 );
             }
         );
@@ -1435,7 +1431,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn typed_throw_err_none_is_fatal() {
+    async fn throwing_anything_on_err_unit_is_ok() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "no-err");
         let js_source = r#"
@@ -1458,19 +1454,13 @@ mod tests {
             .await;
         let ctx = make_worker_context(ffqn, &[]);
 
-        let err = worker.run(ctx).await.unwrap_err();
-        let reason = assert_matches!(
-            err,
-            WorkerError::FatalError(
-                FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                    ResultParsingErrorFromVal::TypeCheckError(reason),
-                )),
-                _version,
-            ) => reason
-        );
-        assert_eq!(
-            reason,
-            "thrown value type check failed: return type is `result<u32>` (no error type), expected `throw null`, got `\"oops\"`"
+        let worker_ok = worker.run(ctx).await.unwrap();
+        assert_matches!(
+            worker_ok,
+            WorkerResultOk::RunFinished {
+                retval: SupportedFunctionReturnValue::Err(None),
+                ..
+            }
         );
     }
 
