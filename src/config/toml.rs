@@ -99,9 +99,14 @@ pub(crate) struct DeploymentTomlValidated {
     pub(crate) workflows_js: Vec<(WorkflowJsComponentConfigToml, ConfigName)>,
     pub(crate) component_type_by_name: hashbrown::HashMap<String, crate::args::TomlComponentType>,
 }
+impl DeploymentTomlValidated {
+    pub(crate) async fn canonicalize(self) -> Result<DeploymentCanonical, anyhow::Error> {
+        resolve_local_refs_to_canonical(self).await
+    }
+}
 
 impl DeploymentToml {
-    /// Consume `self`, expand `${DEPLOYMENT_DIR}/` prefixes in WASM component paths,
+    /// Expand `${DEPLOYMENT_DIR}/` prefixes in WASM component paths,
     /// verify that every component name is unique, and return a `DeploymentTomlValidated`
     /// that also carries the name→type index and the deployment directory.
     pub(crate) fn validate(
@@ -1722,7 +1727,7 @@ pub(crate) enum ExecProgramToml {
     /// File path to include. Resolved to `inline` at canonicalization time.
     /// Supports `${DEPLOYMENT_DIR}/` prefix.
     #[serde(rename = "include")]
-    Include(String), // expanded in `expand_deployment_dir_prefix`
+    Include(String),
 }
 
 /// Program specification for exec activities (canonical/wire form).
@@ -2566,37 +2571,37 @@ pub(crate) struct DeploymentCanonical {
 
 /// Resolve a `DeploymentToml` to `DeploymentCanonical` by reading all local JS and backtrace
 /// source files.
-pub(crate) async fn resolve_local_refs_to_canonical(
-    deployment: &DeploymentTomlValidated,
+async fn resolve_local_refs_to_canonical(
+    deployment: DeploymentTomlValidated,
 ) -> anyhow::Result<DeploymentCanonical> {
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
-    for (a, name) in &deployment.activities_js {
+    for (a, name) in deployment.activities_js {
         activities_js.push(ActivityJsComponentConfigCanonical {
-            name: name.clone(),
+            name,
             location: resolve_js_to_canonical(&a.location).await?,
-            content_digest: a.content_digest.clone(),
-            component_digest: a.component_digest.clone(),
-            ffqn: a.ffqn.clone(),
-            params: a.params.clone(),
-            exec: a.exec.clone(),
+            content_digest: a.content_digest,
+            component_digest: a.component_digest,
+            ffqn: a.ffqn,
+            params: a.params,
+            exec: a.exec,
             max_retries: a.max_retries,
             retry_exp_backoff: a.retry_exp_backoff,
             forward_stdout: a.forward_stdout,
             forward_stderr: a.forward_stderr,
             logs_store_min_level: a.logs_store_min_level,
-            env_vars: a.env_vars.clone(),
-            allowed_hosts: a.allowed_hosts.clone(),
-            return_type: a.return_type.clone(),
+            env_vars: a.env_vars,
+            allowed_hosts: a.allowed_hosts,
+            return_type: a.return_type,
         });
     }
 
-    let deployment_inner = &deployment.inner;
+    let deployment_inner = deployment.inner;
     let mut workflows = Vec::with_capacity(deployment_inner.workflows.len());
-    for w in &deployment_inner.workflows {
+    for w in deployment_inner.workflows {
         workflows.push(WorkflowWasmComponentConfigCanonical {
-            common: w.common.clone(),
-            component_digest: w.component_digest.clone(),
-            exec: w.exec.clone(),
+            common: w.common,
+            component_digest: w.component_digest,
+            exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
             backtrace: resolve_backtrace_to_canonical(&w.backtrace).await,
@@ -2607,59 +2612,59 @@ pub(crate) async fn resolve_local_refs_to_canonical(
     }
 
     let mut workflows_js = Vec::with_capacity(deployment.workflows_js.len());
-    for (w, name) in &deployment.workflows_js {
+    for (w, name) in deployment.workflows_js {
         workflows_js.push(WorkflowJsComponentConfigCanonical {
-            name: name.clone(),
+            name,
             location: resolve_js_to_canonical(&w.location).await?,
-            content_digest: w.content_digest.clone(),
-            component_digest: w.component_digest.clone(),
-            ffqn: w.ffqn.clone(),
-            params: w.params.clone(),
-            exec: w.exec.clone(),
+            content_digest: w.content_digest,
+            component_digest: w.component_digest,
+            ffqn: w.ffqn,
+            params: w.params,
+            exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
             lock_extension: w.lock_extension,
             logs_store_min_level: w.logs_store_min_level,
-            return_type: w.return_type.clone(),
+            return_type: w.return_type,
         });
     }
 
     let mut webhooks = Vec::with_capacity(deployment_inner.webhooks.len());
-    for w in &deployment_inner.webhooks {
+    for w in deployment_inner.webhooks {
         webhooks.push(webhook::WebhookWasmComponentConfigCanonical {
-            common: w.common.clone(),
-            http_server: w.http_server.clone(),
-            routes: w.routes.clone(),
+            common: w.common,
+            http_server: w.http_server,
+            routes: w.routes,
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
-            env_vars: w.env_vars.clone(),
+            env_vars: w.env_vars,
             backtrace: resolve_backtrace_to_canonical(&w.backtrace).await,
             logs_store_min_level: w.logs_store_min_level,
-            allowed_hosts: w.allowed_hosts.clone(),
+            allowed_hosts: w.allowed_hosts,
         });
     }
 
     let mut webhooks_js = Vec::with_capacity(deployment_inner.webhooks_js.len());
-    for w in &deployment_inner.webhooks_js {
+    for w in deployment_inner.webhooks_js {
         webhooks_js.push(webhook::WebhookJsComponentConfigCanonical {
-            name: w.name.clone(),
+            name: w.name,
             location: resolve_js_to_canonical(&w.location).await?,
-            content_digest: w.content_digest.clone(),
-            http_server: w.http_server.clone(),
-            routes: w.routes.clone(),
+            content_digest: w.content_digest,
+            http_server: w.http_server,
+            routes: w.routes,
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             logs_store_min_level: w.logs_store_min_level,
-            env_vars: w.env_vars.clone(),
-            allowed_hosts: w.allowed_hosts.clone(),
+            env_vars: w.env_vars,
+            allowed_hosts: w.allowed_hosts,
         });
     }
 
     let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
-    for (a, name) in &deployment.activities_exec {
-        let program = match &a.program {
-            ExecProgramToml::External(argv) => ExecProgramCanonical::External(argv.clone()),
-            ExecProgramToml::Inline(script) => ExecProgramCanonical::Inline(script.clone()),
+    for (a, name) in deployment.activities_exec {
+        let program = match a.program {
+            ExecProgramToml::External(argv) => ExecProgramCanonical::External(argv),
+            ExecProgramToml::Inline(script) => ExecProgramCanonical::Inline(script),
             ExecProgramToml::Include(path) => {
                 let full_path = PathBuf::from(path);
                 if !full_path.exists() {
@@ -2672,57 +2677,57 @@ pub(crate) async fn resolve_local_refs_to_canonical(
             }
         };
         activities_exec.push(ActivityExecComponentConfigCanonical {
-            name: name.clone(),
+            name,
             program,
-            ffqn: a.ffqn.clone(),
-            params: a.params.clone(),
-            return_type: a.return_type.clone(),
-            component_digest: a.component_digest.clone(),
-            exec: a.exec.clone(),
+            ffqn: a.ffqn,
+            params: a.params,
+            return_type: a.return_type,
+            component_digest: a.component_digest,
+            exec: a.exec,
             max_retries: a.max_retries,
             retry_exp_backoff: a.retry_exp_backoff,
             forward_stdout: a.forward_stdout,
             forward_stderr: a.forward_stderr,
             logs_store_min_level: a.logs_store_min_level,
-            env_vars: a.env_vars.clone(),
-            cwd: a.cwd.clone(),
+            env_vars: a.env_vars,
+            cwd: a.cwd,
             max_output_bytes: a.max_output_bytes,
-            secrets: a.secrets.clone(),
+            secrets: a.secrets,
         });
     }
 
     // Build canonical stubs/externals with resolved names filled in.
     let activities_stub = deployment
         .activities_stub
-        .iter()
+        .into_iter()
         .map(|(c, name)| match c {
             ActivityStubComponentConfigToml::File(f) => {
-                ActivityStubComponentConfigCanonical::File(f.clone())
+                ActivityStubComponentConfigCanonical::File(f)
             }
             ActivityStubComponentConfigToml::Inline(i) => {
                 ActivityStubComponentConfigCanonical::Inline(ActivityStubExtInlineConfigCanonical {
-                    name: name.clone(),
-                    ffqn: i.ffqn.clone(),
-                    params: i.params.clone(),
-                    return_type: i.return_type.clone(),
+                    name,
+                    ffqn: i.ffqn,
+                    params: i.params,
+                    return_type: i.return_type,
                 })
             }
         })
         .collect();
     let activities_external = deployment
         .activities_external
-        .iter()
+        .into_iter()
         .map(|(c, name)| match c {
             ActivityExternalComponentConfigToml::File(f) => {
-                ActivityExternalComponentConfigCanonical::File(f.clone())
+                ActivityExternalComponentConfigCanonical::File(f)
             }
             ActivityExternalComponentConfigToml::Inline(i) => {
                 ActivityExternalComponentConfigCanonical::Inline(
                     ActivityStubExtInlineConfigCanonical {
-                        name: name.clone(),
-                        ffqn: i.ffqn.clone(),
-                        params: i.params.clone(),
-                        return_type: i.return_type.clone(),
+                        name,
+                        ffqn: i.ffqn,
+                        params: i.params,
+                        return_type: i.return_type,
                     },
                 )
             }
@@ -2730,7 +2735,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
         .collect();
 
     Ok(DeploymentCanonical {
-        activities_wasm: deployment_inner.activities_wasm.clone(),
+        activities_wasm: deployment_inner.activities_wasm,
         activities_stub,
         activities_external,
         activities_js,
@@ -2739,7 +2744,7 @@ pub(crate) async fn resolve_local_refs_to_canonical(
         workflows_js,
         webhooks,
         webhooks_js,
-        crons: deployment_inner.crons.clone(),
+        crons: deployment_inner.crons,
     })
 }
 

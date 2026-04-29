@@ -13,7 +13,7 @@ use crate::config::toml::{
 use crate::{
     command::server::{PrepareDirsParams, RunParams, prepare_dirs, run_internal},
     config::{
-        config_holder::{ConfigHolder, load_deployment_toml},
+        config_holder::{ConfigHolder, load_deployment_canonical},
         env_var::EnvVarConfig,
         toml::DeploymentCanonical,
     },
@@ -455,7 +455,7 @@ impl TestServer {
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path)).unwrap();
         let config = config_holder.load_config().await.unwrap();
 
-        let deployment_toml = load_deployment_toml(deployment_path).await.unwrap();
+        let deployment_toml = load_deployment_canonical(&deployment_path).await.unwrap();
 
         let (termination_sender, termination_watcher) = watch::channel(());
 
