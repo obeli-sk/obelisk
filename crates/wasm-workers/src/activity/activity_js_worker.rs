@@ -179,7 +179,7 @@ impl Worker for ActivityJsWorker {
                     unreachable!("activity-js-runtime always sends JSON-encoded string")
                 };
                 let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                    &ok_val,
+                    Some(&ok_val),
                     &self.user_return_type,
                     version.clone(),
                 )?;
@@ -293,6 +293,7 @@ mod tests {
     };
     use concepts::{SupportedFunctionReturnValue, TypeWrapperTopLevel};
     use executor::worker::{WorkerContext, WorkerError, WorkerResultOk};
+    use rstest::rstest;
     use serde_json::json;
     use tokio::sync::mpsc;
     use tracing::info_span;
@@ -677,7 +678,7 @@ mod tests {
             )
             => {
                 assert_eq!(
-                    r#"failed to type check the return value `{"count":42,"name":"test"}` as `string`: invalid type: map, expected value matching "string" at line 1 column 1"#,
+                    "failed to type check the return value `{\"count\":42,\"name\":\"test\"}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 1",
                     reason);
             }
         );
@@ -1350,15 +1351,19 @@ mod tests {
         );
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn retval_ok_none_should_accept_null() {
+    async fn retval_ok_none_should_accept_anything(
+        #[values("return;", "return null;", "return 1")] return_stmt: &str,
+    ) {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "ok-none");
-        let js_source = r"
-            export default function ok_none() {
-                return null;
-            }
-        ";
+        let js_source = format!(
+            r"
+            export default function ok_none() {{
+                {return_stmt}
+            }}"
+        );
 
         let return_type = ReturnTypeExtendable {
             type_wrapper_tl: TypeWrapperTopLevel {
@@ -1368,7 +1373,7 @@ mod tests {
             wit_type: StrVariant::Static("result<_, string>"),
         };
 
-        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+        let worker = JsWorkerBuilder::new(&js_source, ffqn.clone())
             .with_return_type(return_type)
             .build()
             .await;
