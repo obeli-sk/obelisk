@@ -5,7 +5,7 @@ use crate::command::server::{
     prepare_dirs, server_verify,
 };
 use crate::command::termination_notifier::termination_notifier;
-use crate::config::config_holder::{ConfigHolder, load_deployment_toml};
+use crate::config::config_holder::{ConfigHolder, load_deployment_validated};
 use crate::config::toml::{
     ActivityExternalComponentConfigToml, ActivityStubComponentConfigToml, ComponentLocationToml,
     JsLocationToml,
@@ -300,12 +300,12 @@ pub(crate) async fn generate_support_wits(
 pub(crate) async fn generate_wit_deps(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
-    deployment_path: PathBuf,
+    deployment_toml: PathBuf,
     output_directory: PathBuf,
     overwrite: bool,
     skip_local: bool,
 ) -> Result<(), anyhow::Error> {
-    let deployment = load_deployment_toml(deployment_path).await?;
+    let deployment = load_deployment_validated(&deployment_toml).await?;
 
     let skipped_oci_component_names: HashSet<String> = if skip_local {
         // When `--external-only` is set, build the set of component names that have an OCI location.
@@ -358,7 +358,10 @@ pub(crate) async fn generate_wit_deps(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
     let config = config_holder.load_config().await?;
     let _guard = init::init(&config)?;
-    let deployment = crate::config::toml::resolve_local_refs_to_canonical(&deployment).await?;
+    let deployment = deployment
+        .canonicalize()
+        .await
+        .with_context(|| format!("cannot canonicalize {deployment_toml:?}"))?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let verify_params = VerifyParams {

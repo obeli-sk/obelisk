@@ -1,4 +1,7 @@
-use super::toml::{DeploymentToml, DeploymentTomlValidated, ServerConfigToml};
+use crate::config::toml::DeploymentCanonical;
+use crate::config::toml::DeploymentTomlValidated;
+
+use super::toml::{DeploymentToml, ServerConfigToml};
 use anyhow::{Context as _, bail};
 use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
@@ -148,20 +151,18 @@ impl ConfigHolder {
     }
 }
 
-/// Load and validate a deployment TOML file.
-/// `${DEPLOYMENT_DIR}/` prefixes in WASM component paths are expanded to absolute paths.
-pub(crate) async fn load_deployment_toml(
-    deployment_toml: PathBuf,
+pub(crate) async fn load_deployment_validated(
+    deployment_toml: &Path,
 ) -> Result<DeploymentTomlValidated, anyhow::Error> {
     let exists = deployment_toml.try_exists().unwrap_or_default();
     if !exists {
         bail!("cannot find deployment file {deployment_toml:?}");
     }
     info!("Using deployment file {:?}", deployment_toml);
-    let deployment_dir = canonicalize_parent(&deployment_toml)
+    let deployment_dir = canonicalize_parent(deployment_toml)
         .with_context(|| format!("cannot resolve parent of {deployment_toml:?}"))?;
     let builder = ConfigBuilder::<AsyncState>::default().add_source(
-        File::from(deployment_toml.as_path())
+        File::from(deployment_toml)
             .required(true)
             .format(FileFormat::Toml),
     );
@@ -171,7 +172,17 @@ pub(crate) async fn load_deployment_toml(
         .with_context(|| format!("cannot parse deployment file {deployment_toml:?}"))?;
     deployment
         .validate(&deployment_dir)
-        .with_context(|| format!("invalid deployment file {deployment_toml:?}"))
+        .with_context(|| format!("cannot validate {deployment_toml:?}"))
+}
+
+pub(crate) async fn load_deployment_canonical(
+    deployment_toml: &Path,
+) -> Result<DeploymentCanonical, anyhow::Error> {
+    load_deployment_validated(deployment_toml)
+        .await?
+        .canonicalize()
+        .await
+        .with_context(|| format!("cannot canonicalize {deployment_toml:?}"))
 }
 
 fn canonicalize_parent(path: &Path) -> Result<PathBuf, anyhow::Error> {

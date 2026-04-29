@@ -3,7 +3,7 @@ use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
-use crate::config::config_holder::load_deployment_toml;
+use crate::config::config_holder::load_deployment_canonical;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivityExecConfigVerified;
 use crate::config::toml::ActivityExternalConfigVerified;
@@ -18,7 +18,6 @@ use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::DatabaseConfigToml;
 use crate::config::toml::DeploymentCanonical;
-use crate::config::toml::DeploymentTomlValidated;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::ServerConfigToml;
@@ -400,11 +399,11 @@ pub(crate) async fn run(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
-    let deployment_toml = if let Some(deployment_path) = deployment {
-        let toml = load_deployment_toml(deployment_path).await?;
+    let deployment = if let Some(deployment_path) = deployment {
+        let toml = load_deployment_canonical(&deployment_path).await?;
         Some(toml)
     } else if deployment_empty {
-        Some(DeploymentTomlValidated::default())
+        Some(DeploymentCanonical::default())
     } else {
         None
     };
@@ -416,7 +415,7 @@ pub(crate) async fn run(
         prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes).await?;
     Box::pin(run_internal(
         config,
-        deployment_toml,
+        deployment,
         config_holder.path_prefixes,
         params,
         prepared_dirs,
@@ -445,13 +444,13 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
-    let deployment_toml_opt = if let Some(deployment_path) = deployment {
-        Some(load_deployment_toml(deployment_path).await?)
+    let deployment_opt = if let Some(deployment_path) = deployment {
+        Some(load_deployment_canonical(&deployment_path).await?)
     } else {
         None
     };
-    let deployment = if let Some(toml) = deployment_toml_opt {
-        crate::config::toml::resolve_local_refs_to_canonical(&toml).await?
+    let deployment = if let Some(deployment) = deployment_opt {
+        deployment
     } else {
         get_deployment_canonical_from_db(&config.database, &config_holder.path_prefixes).await?
     };
@@ -770,7 +769,7 @@ pub(crate) fn create_engines(
 #[instrument(skip_all, name = "init", fields(deployment_id))]
 pub(crate) async fn run_internal(
     config: ServerConfigToml,
-    deployment: Option<DeploymentTomlValidated>,
+    deployment: Option<DeploymentCanonical>,
     path_prefixes: PathPrefixes,
     params: RunParams,
     prepared_dirs: PreparedDirs,
@@ -832,17 +831,14 @@ pub(crate) async fn run_internal(
     };
     let span = Span::current();
     // Determine the deployment to compile and the active deployment_id.
-    let (active_deployment_id, deployment_canonical) = if let Some(deployment_toml) = deployment {
-        // --deployment or `--deployment-empty` provided: resolve, insert, and activate.
+    let (active_deployment_id, deployment_canonical) = if let Some(deployment) = deployment {
+        // --deployment or `--deployment-empty` provided: insert and activate.
         let new_deployment_id = DeploymentId::generate();
         span.record("deployment_id", tracing::field::display(&new_deployment_id));
-        let canonical = crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml)
-            .await
-            .context("cannot resolve deployment to canonical form")?;
-        let config_json = crate::config::toml::compute_config_json(&canonical);
+        let config_json = crate::config::toml::compute_config_json(&deployment);
         insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json).await?;
         info!("Activated new deployment");
-        (new_deployment_id, canonical)
+        (new_deployment_id, deployment)
     } else {
         // No --deployment: pick up from the DB.
         // Activate any Enqueued deployment (queued for this restart), then use active.
@@ -3428,7 +3424,7 @@ mod tests {
             ConfigVerified, PrepareDirsParams, ServerCompiledLinked, ServerVerified, VerifyParams,
             compile_activity_inline, create_engines, prepare_dirs,
         },
-        config::config_holder::{ConfigHolder, load_deployment_toml},
+        config::config_holder::{ConfigHolder, load_deployment_canonical},
     };
     use concepts::{ComponentId, FunctionFqn, prefixed_ulid::DeploymentId};
     use concepts::{
@@ -3492,10 +3488,7 @@ mod tests {
             ConfigHolder::new(project_dirs, base_dirs, Some(workspace.join(server_toml)))?;
         let config = config_holder.load_config().await?;
 
-        let deployment_toml = load_deployment_toml(workspace.join(deployment_toml)).await?;
-
-        let deployment =
-            crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml).await?;
+        let deployment = load_deployment_canonical(&workspace.join(deployment_toml)).await?;
 
         let prepared_dirs = prepare_dirs(
             &config,

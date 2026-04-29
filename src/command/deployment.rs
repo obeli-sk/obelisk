@@ -1,5 +1,5 @@
 use crate::args::{self, DeploymentSource};
-use crate::config::config_holder::load_deployment_toml;
+use crate::config::config_holder::load_deployment_canonical;
 use crate::config::toml::DeploymentTomlValidated;
 use crate::get_deployment_repository_client;
 use anyhow::{Context as _, bail};
@@ -220,17 +220,13 @@ async fn load_config_json_from_file_or_empty(
     if let Some(path) = file {
         load_config_json(path).await
     } else {
-        let deployment = crate::config::toml::resolve_local_refs_to_canonical(
-            &DeploymentTomlValidated::default(),
-        )
-        .await?;
+        let deployment = DeploymentTomlValidated::default().canonicalize().await?;
         Ok(crate::config::toml::compute_config_json(&deployment))
     }
 }
 
 async fn load_config_json(path: std::path::PathBuf) -> anyhow::Result<String> {
-    let deployment_toml = load_deployment_toml(path).await?;
-    let deployment = crate::config::toml::resolve_local_refs_to_canonical(&deployment_toml).await?;
+    let deployment = load_deployment_canonical(&path).await?;
     Ok(crate::config::toml::compute_config_json(&deployment))
 }
 
