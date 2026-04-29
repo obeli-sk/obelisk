@@ -102,8 +102,8 @@ impl ExecutorTaskHandle {
         let mut worker_count_rx = self.worker_count_rx.clone();
         loop {
             tokio::select! {
-                () = tokio::time::sleep(Duration::from_secs(1)) => {
-                    debug!("Waiting for {} workers to shut down", *self.worker_count_rx.borrow());
+                () = tokio::time::sleep(Duration::from_secs(5)) => {
+                    info!("Waiting for {} workers to shut down", *self.worker_count_rx.borrow());
                 }
                 _ = worker_count_rx.wait_for(|&count| count == 0) => {
                     break;
