@@ -163,23 +163,25 @@ impl Worker for ActivityJsWorker {
 
         let (retval, version, http_client_traces) = assert_matches!(inner_worker_ok, WorkerResultOk::RunFinished { retval, version,  http_client_traces }
             => (retval, version,  http_client_traces), "activity_js_runtime runs in ActivityWorker");
+
         match retval {
             SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                 r#type:
                     TypeWrapper::Result {
-                        ok: Some(ok_type),   // String
-                        err: Some(err_type), // err string was not sent
+                        ok: Some(ok_type),
+                        err: Some(err_type),
                     },
                 value: WastVal::Result(Ok(Some(ok_val))), // activity-js-runtime returned {"ok": {"ok": "<json-encoded value>"}}
-            })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
+            })) => {
+                assert!(*ok_type == TypeWrapper::String && *err_type == TypeWrapper::String);
                 let WastVal::String(ok_val) = *ok_val else {
                     unreachable!("ok type is String, so value must be WastVal::String")
                 };
                 let Ok(ok_val) = serde_json::from_str(&ok_val) else {
                     unreachable!("activity-js-runtime always sends JSON-encoded string")
                 };
-                let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                    Some(&ok_val),
+                let retval = crate::js_worker_utils::map_ok_variant(
+                    Some(ok_val),
                     &self.user_return_type,
                     version.clone(),
                 )?;
@@ -196,13 +198,17 @@ impl Worker for ActivityJsWorker {
                         ok: Some(ok_type),
                         err: Some(err_type),
                     },
-                value: WastVal::Result(Err(Some(err_val))), // js runtime returned {"ok":{"err":"some string"}}
-            })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
-                let WastVal::String(thrown) = *err_val else {
+                value: WastVal::Result(Err(Some(err_val))), // js runtime returned {"ok":{"err":"<json-encoded value>"}}
+            })) => {
+                assert!(*ok_type == TypeWrapper::String && *err_type == TypeWrapper::String);
+                let WastVal::String(err_val) = *err_val else {
                     unreachable!("err type is String, so value must be WastVal::String")
                 };
-                let retval = crate::js_worker_utils::map_js_throw_to_user_err(
-                    &thrown,
+                let Ok(err_val) = serde_json::from_str(&err_val) else {
+                    unreachable!("activity-js-runtime always sends JSON-encoded string")
+                };
+                let retval = crate::js_worker_utils::map_err_variant(
+                    Some(err_val),
                     &self.user_return_type,
                     version.clone(),
                 )?;
@@ -299,16 +305,6 @@ mod tests {
     use tracing::info_span;
     use val_json::wast_val::WastVal;
 
-    fn default_return_type() -> ReturnTypeExtendable {
-        ReturnTypeExtendable {
-            type_wrapper_tl: TypeWrapperTopLevel {
-                ok: Some(Box::new(TypeWrapper::String)),
-                err: Some(Box::new(TypeWrapper::String)),
-            },
-            wit_type: StrVariant::Static("result<string, string>"),
-        }
-    }
-
     struct JsWorkerBuilder {
         js_source: String,
         user_ffqn: FunctionFqn,
@@ -328,7 +324,13 @@ mod tests {
                     name: StrVariant::Static("params"),
                     wit_type: StrVariant::Static("list<string>"),
                 }],
-                user_return_type: default_return_type(),
+                user_return_type: ReturnTypeExtendable {
+                    type_wrapper_tl: TypeWrapperTopLevel {
+                        ok: Some(Box::new(TypeWrapper::String)),
+                        err: Some(Box::new(TypeWrapper::String)),
+                    },
+                    wit_type: StrVariant::Static("result<string, string>"),
+                },
                 allowed_hosts: Vec::new(),
                 logs_storage_config: None,
             }
@@ -678,14 +680,14 @@ mod tests {
             )
             => {
                 assert_eq!(
-                    "failed to type check the return value `{\"count\":42,\"name\":\"test\"}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 1",
+                    "failed to type check the ok variant value `{\"count\":42,\"name\":\"test\"}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 1",
                     reason);
             }
         );
     }
 
     #[tokio::test]
-    async fn throwing_object_should_fail_to_typecheck() {
+    async fn throwing_object_should_fail_to_typecheck_expecting_result_string_string() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "throw-object");
         let js_source = r"
@@ -707,9 +709,9 @@ mod tests {
                 _version,
             )
             => {
-                assert!(
-                    reason.contains("failed to type check thrown value"),
-                    "{reason} should mention type check failure"
+                assert_eq!(
+                    r#"failed to type check the err variant value `{"code":42,"message":"error"}` as type string - invalid type: map, expected value matching "string" at line 1 column 1"#,
+                    reason
                 );
             }
         );
@@ -1429,7 +1431,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn typed_throw_err_none_is_fatal() {
+    async fn throwing_anything_on_err_unit_is_ok() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "no-err");
         let js_source = r#"
@@ -1452,19 +1454,13 @@ mod tests {
             .await;
         let ctx = make_worker_context(ffqn, &[]);
 
-        let err = worker.run(ctx).await.unwrap_err();
-        let reason = assert_matches!(
-            err,
-            WorkerError::FatalError(
-                FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                    ResultParsingErrorFromVal::TypeCheckError(reason),
-                )),
-                _version,
-            ) => reason
-        );
-        assert_eq!(
-            reason,
-            "thrown value type check failed: return type is `result<u32>` (no error type), expected `throw null`, got `\"oops\"`"
+        let worker_ok = worker.run(ctx).await.unwrap();
+        assert_matches!(
+            worker_ok,
+            WorkerResultOk::RunFinished {
+                retval: SupportedFunctionReturnValue::Err(None),
+                ..
+            }
         );
     }
 

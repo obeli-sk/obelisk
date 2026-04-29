@@ -64,6 +64,9 @@ expression: functions
     "ffqn": "testing:integration/exec-args.echo-args"
   },
   {
+    "ffqn": "testing:integration/exec-stream.stream-test"
+  },
+  {
     "ffqn": "testing:integration/stubs.my-stub"
   },
   {

@@ -266,9 +266,8 @@ params = [
 return_type = "result<string, string>"
 
 [[activity_exec]]
-name = "test_exec_add"
-program.external = ["{ws}/crates/testing/test-programs/exec/add.sh"]
 ffqn = "testing:integration/exec-add.add"
+program.external = ["{ws}/crates/testing/test-programs/exec/add.sh"]
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
@@ -276,101 +275,91 @@ params = [
 return_type = "result<u32, string>"
 
 [[activity_exec]]
-name = "test_exec_greet_include"
-program.include = "{ws}/crates/testing/test-programs/exec/greet.sh"
 ffqn = "testing:integration/exec-greet.greet-include"
+program.include = "{ws}/crates/testing/test-programs/exec/greet.sh"
 params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
 
 [[activity_exec]]
-name = "test_exec_greet_external"
-program.external = ["{ws}/crates/testing/test-programs/exec/greet.sh"]
 ffqn = "testing:integration/exec-greet.greet-external"
+program.external = ["{ws}/crates/testing/test-programs/exec/greet.sh"]
 params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
 
 [[activity_exec]]
-name = "test_exec_greet_inline"
+ffqn = "testing:integration/exec-greet.greet-inline"
 program.inline = '''
 #!/usr/bin/env bash
 raw=$(echo $1 | jq -r .)
 echo "\"Hello, $raw!\""
 '''
-ffqn = "testing:integration/exec-greet.greet-inline"
 params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
 
 [[activity_exec]]
-name = "test_exec_read_env"
-program.include = "{ws}/crates/testing/test-programs/exec/read-env.sh"
 ffqn = "testing:integration/exec-env.read-env"
-params = []
+program.include = "{ws}/crates/testing/test-programs/exec/read-env.sh"
 return_type = "result<string, string>"
 env_vars = [{{key = "MY_VAR", value = "hello_from_exec_env"}}]
 
 [[activity_exec]]
-name = "test_exec_error"
+ffqn = "testing:integration/exec-error.fail"
 program.inline = '''#!/usr/bin/env bash
 echo '"something went wrong"'
 exit 1
 '''
-ffqn = "testing:integration/exec-error.fail"
-params = []
 return_type = "result<string, string>"
 
 [[activity_exec]]
-name = "test_exec_record_ok"
+ffqn = "testing:integration/exec-record.make-record"
 program.inline = '''#!/usr/bin/env bash
 printf '{{"name": "Alice", "count": 42}}'
 '''
-ffqn = "testing:integration/exec-record.make-record"
-params = []
 return_type = "result<record {{ name: string, count: u32 }}, string>"
 
 [[activity_exec]]
-name = "test_exec_expose_secrets"
-program.external = ["{ws}/crates/testing/test-programs/exec/expose-secrets.sh"]
 ffqn = "testing:integration/exec-stdin.expose-secrets"
-params = []
+program.external = ["{ws}/crates/testing/test-programs/exec/expose-secrets.sh"]
 return_type = "result<string, string>"
 [activity_exec.secrets]
 env_vars = [{{ name = "MY_SECRET", value = "s3cret_value" }}]
 
 [[activity_exec]]
-name = "test_exec_void_ok"
 program.external = ["true"]
 ffqn = "testing:integration/exec-void.void-ok"
-params = []
 return_type = "result"
 
 [[activity_exec]]
-name = "test_exec_void_err"
 program.external = ["false"]
 ffqn = "testing:integration/exec-void.void-err"
-params = []
-return_type = "result"
 
 [[activity_exec]]
-name = "test_exec_args_passthrough"
+ffqn = "testing:integration/exec-args.echo-args"
 program.inline = '''#!/usr/bin/env bash
 # Receives two u32 params as JSON args: $1 and $2
 printf '{{"a": %s, "b": %s}}' "$1" "$2"
 '''
-ffqn = "testing:integration/exec-args.echo-args"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
 return_type = "result<record {{ a: u32, b: u32 }}, string>"
 
+[[activity_exec]]
+ffqn = "testing:integration/exec-stream.stream-test"
+program.inline = '''#!/usr/bin/env bash
+echo "line1" >&2
+sleep 0.1
+echo "line2" >&2
+'''
+
 [[activity_stub]]
-name = "test_inline_stub"
 ffqn = "testing:integration/stubs.my-stub"
 params = [
   {{ name = "id", type = "u64" }},
@@ -2181,5 +2170,42 @@ async fn activity_exec_error_exit() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "err": "something went wrong" }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_stream_logs() {
+    let server = TestServer::start(test_addr!(61)).await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/exec-stream.stream-test",
+            vec![],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": null }));
+
+    // Allow log forwarding to flush.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let logs = server.get_logs(&exec_id).await;
+
+    // Filter for stderr stream entries.
+    let stderr_entries: Vec<&Value> = logs
+        .as_array()
+        .expect("logs must be an array")
+        .iter()
+        .filter(|entry| entry["type"] == "stream" && entry["stream_type"] == "stderr")
+        .collect();
+
+    // Streaming must produce at least 2 separate stderr entries (one per echo).
+    assert!(
+        stderr_entries.len() >= 2,
+        "expected at least 2 stderr stream entries, got {}: {stderr_entries:?}",
+        stderr_entries.len(),
+    );
     server.shutdown().await;
 }

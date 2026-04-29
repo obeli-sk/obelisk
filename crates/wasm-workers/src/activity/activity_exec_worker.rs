@@ -150,24 +150,45 @@ pub struct ActivityExecWorker {
     user_exports_noext: Vec<FunctionMetadata>,
 }
 
-/// Read up to `limit` bytes from `reader`, returning the bytes read.
-/// If the stream exceeds `limit`, returns the bytes read so far + a flag.
-async fn read_limited(
+/// Read from `reader` in chunks, streaming each chunk to `forwarder`,
+/// while accumulating the full output (up to `capture_limit` bytes).
+/// Capturing can be turned off by setting `capture_limit` to zero.
+async fn read_and_stream(
     reader: &mut (impl tokio::io::AsyncRead + Unpin),
-    limit: u64,
+    capture_limit: u64,
+    forwarder: Option<&StdOutputConfigWithSender>,
+    ctx: &WorkerContext,
 ) -> std::io::Result<(Vec<u8>, bool)> {
-    let mut buf = Vec::with_capacity(limit.min(8192) as usize);
-    let mut limited = reader.take(limit + 1);
-    limited.read_to_end(&mut buf).await?;
-    if buf.len() as u64 > limit {
-        buf.truncate(
-            usize::try_from(limit)
-                .expect("u64 must fit in usize - 32-bit platforms are not supported"),
-        );
-        Ok((buf, true))
-    } else {
-        Ok((buf, false))
+    let mut buf = Vec::with_capacity(capture_limit.min(8192) as usize);
+    let mut chunk = [0u8; 4096];
+    let mut exceeded = false;
+    loop {
+        let n = reader.read(&mut chunk).await?;
+        if n == 0 {
+            break;
+        }
+        // Forward to log storage.
+        if let Some(fwd) = forwarder {
+            forward_output(fwd, &chunk[..n], ctx);
+        }
+        // Accumulate for result capture unless turned off.
+        if !exceeded && capture_limit > 0 {
+            let space = usize::try_from(capture_limit)
+                .expect("32 bit systems are unsupported")
+                .saturating_sub(buf.len());
+            if space > 0 {
+                let to_capture = n.min(space);
+                buf.extend_from_slice(&chunk[..to_capture]);
+            }
+            if buf.len() as u64 >= capture_limit && n > space {
+                exceeded = true;
+            }
+        }
     }
+    if capture_limit == 0 {
+        assert!(!exceeded);
+    }
+    Ok((buf, exceeded))
 }
 
 #[async_trait]
@@ -258,30 +279,30 @@ impl Worker for ActivityExecWorker {
         }
         cmd.args(param_args);
 
-        // 4. Clean environment + configured env vars.
+        // Clean environment + configured env vars.
         cmd.env_clear();
         for env_var in self.env_vars.iter() {
             cmd.env(&env_var.key, &env_var.val);
         }
 
-        // 5. Set cwd if configured.
+        // Set cwd if configured.
         if let Some(cwd) = &self.cwd {
             cmd.current_dir(cwd);
         }
 
-        // 6. Process group and kill_on_drop.
+        // Process group and kill_on_drop.
         #[cfg(unix)]
         cmd.process_group(0);
         cmd.kill_on_drop(true);
 
-        // 7. Capture stdout/stderr, optionally pipe stdin.
+        // Capture stdout/stderr, optionally pipe stdin.
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         if self.stdin_content.is_some() {
             cmd.stdin(std::process::Stdio::piped());
         }
 
-        // 8. Spawn the child process.
+        // Spawn the child process.
         trace!("Spawning {cmd:?}");
         let mut child = cmd.spawn().map_err(|e| {
             WorkerError::FatalError(
@@ -293,7 +314,7 @@ impl Worker for ActivityExecWorker {
             )
         })?;
 
-        // 8b. Write stdin content if configured (e.g. resolved secrets).
+        // Write stdin content if configured (e.g. resolved secrets).
         if let Some(ref stdin_content) = self.stdin_content {
             use tokio::io::AsyncWriteExt;
             let mut child_stdin = child.stdin.take().expect("stdin was piped");
@@ -316,34 +337,53 @@ impl Worker for ActivityExecWorker {
         let mut child_stdout = child.stdout.take().expect("stdout was piped");
         let mut child_stderr = child.stderr.take().expect("stderr was piped");
 
-        // 9. Register cancellation token.
+        // Register cancellation token.
         let cancel_token = self
             .cancel_registry
             .obtain_cancellation_token(ctx.execution_id.clone());
 
-        // 10. Read stdout/stderr concurrently with cancellation support.
-        let max_bytes = self.max_output_bytes;
+        // Skip stdout collection when return_type is `result` (unit ok and err variants).
+        let max_stdout_bytes = if self.user_return_type.type_wrapper_tl.is_result_of_units() {
+            0
+        } else {
+            self.max_output_bytes
+        };
         let result = tokio::select! {
             biased;
             _ = cancel_token => {
                 // Kill the child on cancellation.
                 let _ = child.kill().await;
                 return Err(WorkerError::FatalError(
-                    FatalError::CannotInstantiate {
-                        reason: "execution cancelled".to_string(),
-                        detail: None,
-                    },
+                    FatalError::Cancelled,
                     version,
                 ));
             }
             result = async {
-                let stdout_fut = read_limited(&mut child_stdout, max_bytes);
-                let stderr_fut = read_limited(&mut child_stderr, max_bytes);
+                // Read stdout/stderr concurrently, streaming to log forwarder as chunks arrive.
+                let stdout_fut = read_and_stream(
+                    &mut child_stdout,
+                    max_stdout_bytes,
+                    self.forward_stdout.as_ref(),
+                    &ctx,
+                );
+                let stderr_fut = read_and_stream(
+                    &mut child_stderr,
+                    0, // stderr is only streamed to logs, not captured
+                    self.forward_stderr.as_ref(),
+                    &ctx,
+                );
                 let (stdout_result, stderr_result) = tokio::join!(stdout_fut, stderr_fut);
-                let (stdout_bytes, stdout_exceeded) = stdout_result?;
-                let (stderr_bytes, stderr_exceeded) = stderr_result?;
-                let status = child.wait().await?;
-                Ok::<_, std::io::Error>((stdout_bytes, stdout_exceeded, stderr_bytes, stderr_exceeded, status))
+                let (mut stdout_bytes, mut stdout_exceeded) = stdout_result?;
+                let _ = stderr_result?;
+                let exit_code = child.wait().await?.code().unwrap_or(-1);
+                // If the unit type was requested, return empty response.
+                if exit_code == 0 && self.user_return_type.type_wrapper_tl.ok.is_none()
+                    || exit_code != 0 && self.user_return_type.type_wrapper_tl.err.is_none()
+                {
+                    stdout_exceeded = false;
+                    stdout_bytes = Vec::new();
+                }
+                Ok::<_, std::io::Error>((stdout_bytes, stdout_exceeded, exit_code))
             } => {
                 result.map_err(|e| {
                     WorkerError::FatalError(
@@ -357,9 +397,9 @@ impl Worker for ActivityExecWorker {
             }
         };
 
-        let (stdout_bytes, stdout_exceeded, stderr_bytes, stderr_exceeded, status) = result;
+        let (stdout_bytes, stdout_exceeded, exit_code) = result;
 
-        // 11. Check output size limits.
+        // Check output size limit.
         if stdout_exceeded {
             return Err(WorkerError::FatalError(
                 FatalError::CannotInstantiate {
@@ -372,121 +412,59 @@ impl Worker for ActivityExecWorker {
                 version,
             ));
         }
-        if stderr_exceeded {
-            return Err(WorkerError::FatalError(
-                FatalError::CannotInstantiate {
-                    reason: format!(
-                        "stderr exceeded max_output_bytes limit of {} bytes",
-                        self.max_output_bytes
-                    ),
-                    detail: None,
-                },
-                version,
-            ));
-        }
-
-        let stdout_str = String::from_utf8_lossy(&stdout_bytes);
-        let stderr_str = String::from_utf8_lossy(&stderr_bytes);
-
-        // 12. Forward stdout/stderr per config.
-        if let Some(ref config) = self.forward_stdout {
-            forward_output(config, &stdout_str, &ctx);
-        }
-        if let Some(ref config) = self.forward_stderr {
-            forward_output(config, &stderr_str, &ctx);
-        }
 
         debug!(
-            exit_code = status.code(),
+            exit_code,
             stdout_len = stdout_bytes.len(),
-            stderr_len = stderr_bytes.len(),
             "Child process finished"
         );
-
-        // 13. Map exit code + stdout to result.
-        let exit_code = status.code().unwrap_or(-1);
-        if exit_code == 0 {
-            // Ok path: stdout is the ok-variant JSON.
-            let stdout_trimmed = stdout_str.trim();
-            if stdout_trimmed.is_empty() {
-                let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                    None,
-                    &self.user_return_type,
-                    version.clone(),
-                )?;
-                Ok(WorkerResultOk::RunFinished {
-                    retval,
-                    version,
-                    http_client_traces: None,
-                })
-            } else {
-                let ok_val: serde_json::Value = serde_json::from_str(stdout_trimmed)
-                    .map_err(|e| {
-                        WorkerError::FatalError(
-                            FatalError::ResultParsingError(
-                                concepts::ResultParsingError::ResultParsingErrorFromVal(
-                                    concepts::ResultParsingErrorFromVal::TypeCheckError(format!(
-                                        "failed to parse stdout as JSON on exit 0: {e}, stdout: `{stdout_trimmed}`"
-                                    )),
-                                ),
-                            ),
-                            version.clone(),
-                        )
-                    })?;
-                let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                    Some(&ok_val),
-                    &self.user_return_type,
-                    version.clone(),
-                )?;
-                Ok(WorkerResultOk::RunFinished {
-                    retval,
-                    version,
-                    http_client_traces: None,
-                })
-            }
+        let stdout = String::from_utf8_lossy(&stdout_bytes);
+        let parsed = if stdout.trim().is_empty() {
+            None
         } else {
-            // Err path: stdout is the err-variant JSON.
-            let stdout_trimmed = stdout_str.trim();
-            if stdout_trimmed.is_empty() {
-                // Empty stdout on non-zero exit → JSON null for err
-                let retval = crate::js_worker_utils::map_js_throw_to_user_err(
-                    "null",
-                    &self.user_return_type,
+            Some(serde_json::from_str::<serde_json::Value>(&stdout).map_err(|e| {
+                WorkerError::FatalError(
+                    FatalError::ResultParsingError(
+                        concepts::ResultParsingError::ResultParsingErrorFromVal(
+                            concepts::ResultParsingErrorFromVal::TypeCheckError(format!(
+                                "failed to parse stdout as JSON on exit {exit_code}: {e}, stdout: `{stdout}`"
+                            )),
+                        ),
+                    ),
                     version.clone(),
-                )?;
-                Ok(WorkerResultOk::RunFinished {
-                    retval,
-                    version,
-                    http_client_traces: None,
-                })
-            } else {
-                // stdout should already be valid JSON; pass it through as-is to map_js_throw_to_user_err
-                // which expects the raw JSON string.
-                let retval = crate::js_worker_utils::map_js_throw_to_user_err(
-                    stdout_trimmed,
-                    &self.user_return_type,
-                    version.clone(),
-                )?;
-                Ok(WorkerResultOk::RunFinished {
-                    retval,
-                    version,
-                    http_client_traces: None,
-                })
-            }
-        }
+                )
+            })?)
+        };
+
+        let retval = if exit_code == 0 {
+            crate::js_worker_utils::map_ok_variant(parsed, &self.user_return_type, version.clone())?
+        } else {
+            crate::js_worker_utils::map_err_variant(
+                parsed,
+                &self.user_return_type,
+                version.clone(),
+            )?
+        };
+        Ok(WorkerResultOk::RunFinished {
+            retval,
+            version,
+            http_client_traces: None,
+        })
     }
 }
 
-fn forward_output(config: &StdOutputConfigWithSender, output: &str, ctx: &WorkerContext) {
+fn forward_output(config: &StdOutputConfigWithSender, output: &[u8], ctx: &WorkerContext) {
     if output.is_empty() {
         return;
     }
     match config {
         StdOutputConfigWithSender::Stdout => {
-            print!("{output}");
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(output);
         }
         StdOutputConfigWithSender::Stderr => {
-            eprint!("{output}");
+            use std::io::Write;
+            let _ = std::io::stderr().write_all(output);
         }
         StdOutputConfigWithSender::Db {
             sender,
@@ -494,7 +472,7 @@ fn forward_output(config: &StdOutputConfigWithSender, output: &str, ctx: &Worker
         } => {
             let log_entry = concepts::storage::LogEntry::Stream {
                 created_at: chrono::Utc::now(),
-                payload: output.as_bytes().to_vec(),
+                payload: output.to_vec(),
                 stream_type: *forwarding_from,
             };
             let row = LogInfoAppendRow {

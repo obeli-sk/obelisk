@@ -1,0 +1,7 @@
+[[activity_exec]]
+ffqn = "testing:integration/exec-stream.stream-test"
+program.inline = '''#!/usr/bin/env bash
+echo "line1" >&2
+sleep 0.1
+echo "line2" >&2
+'''

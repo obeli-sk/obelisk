@@ -216,15 +216,18 @@ impl Worker for WorkflowJsWorker {
                                 err: Some(err_type),
                             },
                         value: WastVal::Result(Ok(Some(ok_val))),
-                    })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
+                    })) => {
+                        assert!(
+                            *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String
+                        );
                         let WastVal::String(ok_val) = *ok_val else {
                             unreachable!("ok type is String, so value must be WastVal::String")
                         };
                         let Ok(ok_val) = serde_json::from_str(&ok_val) else {
                             unreachable!("workflow-js-runtime always sends JSON-encoded string")
                         };
-                        let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                            Some(&ok_val),
+                        let retval = crate::js_worker_utils::map_ok_variant(
+                            Some(ok_val),
                             &self.user_return_type,
                             version.clone(),
                         )?;
@@ -242,12 +245,18 @@ impl Worker for WorkflowJsWorker {
                                 err: Some(err_type),
                             },
                         value: WastVal::Result(Err(Some(err_val))),
-                    })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
-                        let WastVal::String(thrown) = *err_val else {
+                    })) => {
+                        assert!(
+                            *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String
+                        );
+                        let WastVal::String(err_val) = *err_val else {
                             unreachable!("err type is String, so value must be WastVal::String")
                         };
-                        let retval = crate::js_worker_utils::map_js_throw_to_user_err(
-                            &thrown,
+                        let Ok(err_val) = serde_json::from_str(&err_val) else {
+                            unreachable!("workflow-js-runtime always sends JSON-encoded string")
+                        };
+                        let retval = crate::js_worker_utils::map_err_variant(
+                            Some(err_val),
                             &self.user_return_type,
                             version.clone(),
                         )?;
@@ -660,7 +669,7 @@ mod tests {
                 _version,
             ) => {
                 assert_eq!(
-                    "failed to type check the return value `{}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 2",
+                    "failed to type check the ok variant value `{}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 2",
                     reason,
                 );
             }
