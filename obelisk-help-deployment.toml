@@ -141,7 +141,7 @@
 # forward_stdout="db"
 # forward_stderr="db"
 # logs_store_min_level = "debug"             # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
-## Environment variables: same syntax as activity_wasm. Default is to expose `PATH` from the host.
+## Environment variables: same syntax as activity_wasm. Default is empty, not even `PATH` is exposed from the host.
 ## When explicitly set, only the listed vars are exposed (env is cleared first).
 # env_vars = ["PATH", {key = "MY_VAR", value = "my_value"}] # Values support interpolation.
 ## Working directory for the child process. Supports `${DEPLOYMENT_DIR}/` prefix interpolation.

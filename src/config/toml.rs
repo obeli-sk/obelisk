@@ -1886,18 +1886,7 @@ impl ActivityExecComponentConfigCanonical {
             StrVariant::from(self.name),
             component_digest,
         )?;
-        let env_vars = if self.env_vars.is_empty() {
-            // Default to exposing PATH so scripts can find standard tools.
-            resolve_env_vars_plaintext(
-                vec![EnvVarConfig::KeyValue {
-                    key: "PATH".to_string(),
-                    value: "${PATH:-}".to_string(), // Never fails
-                }],
-                ignore_missing_env_vars,
-            )?
-        } else {
-            resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?
-        };
+        let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
         let resolved_secrets = if let Some(secrets) = self.secrets {
             let resolved = resolve_secret_env_vars(
                 secrets

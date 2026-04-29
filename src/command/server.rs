@@ -1469,7 +1469,7 @@ async fn switch_hot_redeploy(
             "server is being shut down"
         )));
     }
-
+    debug!("Closing old executors");
     let old = std::mem::take(&mut write_guard_ctx.exec_task_handles);
     futures_util::future::join_all(
         old.iter()
