@@ -151,27 +151,27 @@ impl ConfigHolder {
 /// Load and validate a deployment TOML file.
 /// `${DEPLOYMENT_DIR}/` prefixes in WASM component paths are expanded to absolute paths.
 pub(crate) async fn load_deployment_toml(
-    path: PathBuf,
+    deployment_toml: PathBuf,
 ) -> Result<DeploymentTomlValidated, anyhow::Error> {
-    let exists = path.try_exists().unwrap_or_default();
+    let exists = deployment_toml.try_exists().unwrap_or_default();
     if !exists {
-        bail!("cannot find deployment file {path:?}");
+        bail!("cannot find deployment file {deployment_toml:?}");
     }
-    info!("Using deployment file {:?}", path);
-    let deployment_dir =
-        canonicalize_parent(&path).with_context(|| format!("cannot resolve parent of {path:?}"))?;
+    info!("Using deployment file {:?}", deployment_toml);
+    let deployment_dir = canonicalize_parent(&deployment_toml)
+        .with_context(|| format!("cannot resolve parent of {deployment_toml:?}"))?;
     let builder = ConfigBuilder::<AsyncState>::default().add_source(
-        File::from(path.as_path())
+        File::from(deployment_toml.as_path())
             .required(true)
             .format(FileFormat::Toml),
     );
     let settings = builder.build().await?;
     let deployment: DeploymentToml = settings
         .try_deserialize()
-        .with_context(|| format!("cannot parse deployment file {path:?}"))?;
+        .with_context(|| format!("cannot parse deployment file {deployment_toml:?}"))?;
     deployment
         .validate(&deployment_dir)
-        .with_context(|| format!("invalid deployment file {path:?}"))
+        .with_context(|| format!("invalid deployment file {deployment_toml:?}"))
 }
 
 fn canonicalize_parent(path: &Path) -> Result<PathBuf, anyhow::Error> {

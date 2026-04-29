@@ -1,7 +1,41 @@
 [[activity_exec]]
 ffqn = "testing:integration/exec-stream.stream-test"
 program.inline = '''#!/usr/bin/env bash
+set -exuo pipefail
+
 echo "line1" >&2
 sleep 0.1
 echo "line2" >&2
 '''
+
+[[activity_exec]]
+ffqn = "testing:integration/exec-greet.greet-include"
+program.include = "${DEPLOYMENT_DIR}/crates/testing/test-programs/exec/greet.sh"
+params = [
+  { name = "name", type = "string" },
+]
+return_type = "result<string, string>"
+env_vars = ["PATH"] # for jq
+
+[[activity_exec]]
+ffqn = "testing:integration/exec-greet.greet-external"
+program.external = ["crates/testing/test-programs/exec/greet.sh"]
+params = [
+  { name = "name", type = "string" },
+]
+return_type = "result<string, string>"
+env_vars = ["PATH"] # for jq
+
+[[activity_exec]]
+ffqn = "testing:integration/exec-greet.greet-inline"
+program.inline = '''
+#!/usr/bin/env bash
+set -exuo pipefail
+raw=$(echo $1 | jq -r .)
+echo "\"Hello, $raw!\""
+'''
+params = [
+  { name = "name", type = "string" },
+]
+return_type = "result<string, string>"
+env_vars = ["PATH"] # for jq

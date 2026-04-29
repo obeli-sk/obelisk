@@ -1721,7 +1721,7 @@ pub(crate) enum ExecProgramToml {
     /// File path to include. Resolved to `inline` at canonicalization time.
     /// Supports `${DEPLOYMENT_DIR}/` prefix.
     #[serde(rename = "include")]
-    Include(String),
+    Include(String), // expanded in `expand_deployment_dir_prefix`
 }
 
 /// Program specification for exec activities (canonical/wire form).
