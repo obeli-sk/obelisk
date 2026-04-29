@@ -827,9 +827,9 @@ impl WorkflowWorker {
     pub(crate) async fn replay_internal(
         &self,
         ctx: WorkerContext,
-        is_replay: Option<ReplayKind>,
+        is_replay: ReplayKind,
     ) -> Result<(), ReplayError> {
-        match self.run_internal(ctx, is_replay).await {
+        match self.run_internal(ctx, Some(is_replay)).await {
             Ok(Either::Left(WorkerResultOk::RunFinished { .. })) => {
                 debug!("Replay finished returning a value");
                 Ok(())
@@ -959,7 +959,7 @@ impl WorkflowWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        worker.replay_internal(ctx, Some(replay_kind)).await
+        worker.replay_internal(ctx, replay_kind).await
     }
 }
 
