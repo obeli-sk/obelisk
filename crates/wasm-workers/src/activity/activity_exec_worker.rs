@@ -173,7 +173,9 @@ async fn read_and_stream(
         }
         // Accumulate for result capture unless turned off.
         if !exceeded && capture_limit > 0 {
-            let space = (capture_limit as usize).saturating_sub(buf.len());
+            let space = usize::try_from(capture_limit)
+                .expect("32 bit systems are unsupported")
+                .saturating_sub(buf.len());
             if space > 0 {
                 let to_capture = n.min(space);
                 buf.extend_from_slice(&chunk[..to_capture]);

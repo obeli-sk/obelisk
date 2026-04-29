@@ -1800,7 +1800,7 @@ pub(crate) struct ActivityExecComponentConfigToml {
     pub(crate) cwd: Option<String>,
     /// Maximum bytes collected from stdout to form the response.
     /// Exceeding the limit fails the execution.
-    /// Not used when return_type is result (default), since the response carries no data.
+    /// Not used when `return_type` is result (default), since the response carries no data.
     #[serde(default = "default_max_output_bytes")]
     pub(crate) max_output_bytes: u64,
     /// Secrets pushed to stdin. See `ExecSecretsToml`.

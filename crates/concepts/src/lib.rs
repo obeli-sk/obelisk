@@ -641,6 +641,7 @@ pub struct TypeWrapperTopLevel {
     pub err: Option<Box<TypeWrapper>>,
 }
 impl TypeWrapperTopLevel {
+    #[must_use]
     pub fn is_result_of_units(&self) -> bool {
         self.ok.is_none() && self.err.is_none()
     }
