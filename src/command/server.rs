@@ -499,10 +499,12 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
     }
 }
 
+type DbPoolCloseableContainer = Option<(Arc<dyn DbPool>, Pin<Box<dyn Future<Output = ()> + Send>>)>;
+
 async fn verify_db_schema(
     db_config_toml: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
-) -> Result<Option<(Arc<dyn DbPool>, Pin<Box<dyn Future<Output = ()> + Send>>)>, anyhow::Error> {
+) -> Result<DbPoolCloseableContainer, anyhow::Error> {
     Ok(match db_config_toml {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
             let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes).await?;
@@ -679,7 +681,7 @@ pub(crate) async fn deployment_verify_config_compile_link(
 async fn get_deployment_canonical_from_db(
     database: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
-    db_pool_container: &mut Option<(Arc<dyn DbPool>, Pin<Box<dyn Future<Output = ()> + Send>>)>,
+    db_pool_container: &mut DbPoolCloseableContainer,
 ) -> anyhow::Result<(DeploymentCanonical, DeploymentId)> {
     let conn = if let Some((pool, _)) = db_pool_container.as_ref() {
         pool.external_api_conn()
