@@ -440,11 +440,16 @@ pub async fn server(
             .accept()
             .await
             .map_err(WebhookServerError::SocketError)?;
+        let stream_id = stream
+            .local_addr()
+            .map(|local_addr| local_addr.port())
+            .unwrap_or_default();
         let stream = TokioIo::new(stream);
 
         // Snapshot state before spawning – cheap Arc clone, consistent view.
         let state = wh_server_state_watcher.borrow().clone();
         let deployment_id = state.deployment_id;
+        debug!(%deployment_id, %stream_id, "Initializing connection");
         // Spawn a tokio task for each TCP connection.
         tokio::task::spawn(
             {
@@ -457,7 +462,7 @@ pub async fn server(
                 let max_inflight_requests = max_inflight_requests.clone();
                 let server_termination_watcher = server_termination_watcher.clone();
                 let log_forwarder_sender = log_forwarder_sender.clone();
-                let wh_server_state_watcher = wh_server_state_watcher.clone();
+                let mut wh_server_state_watcher = wh_server_state_watcher.clone();
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
                     let deployment_id = state.deployment_id;
@@ -486,14 +491,19 @@ pub async fn server(
                             })
                         );
                     let mut conn = Pin::new(&mut conn);
-                    let mut wh_watcher = wh_server_state_watcher.clone();
                     let res = loop {
                         select! {
                             result = conn.as_mut() => {
                                 break result;
                             }
-                            changed = wh_watcher.changed() => {
-                                debug!(%http_server, "Deployment {}, gracefully shutting down connection", if changed.is_ok() {"changed" } else {"watcher dropped"});
+                            changed = wh_server_state_watcher.changed() => {
+                                if changed.is_ok() {
+                                    let new_deployment_id = wh_server_state_watcher.borrow().deployment_id;
+                                    debug!(%http_server, "Switching to deployment {new_deployment_id}, gracefully shutting down connection");
+                                } else {
+                                    debug!(%http_server, "Deployment watcher dropped, gracefully shutting down connection");
+                                }
+
                                 conn.as_mut().graceful_shutdown();
                             }
                         }
@@ -503,7 +513,7 @@ pub async fn server(
                         drop(connection_drop_sender);
                     }
                 }
-            }.instrument(debug_span!("tcp stream", %deployment_id))
+            }.instrument(debug_span!("tcp stream", %deployment_id, %stream_id))
         );
     }
 }
