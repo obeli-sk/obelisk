@@ -2618,15 +2618,25 @@ pub(crate) struct OneOffDelayRequest {
 impl OneOffDelayRequest {
     pub(crate) async fn apply(
         schedule_at: HistoryEventScheduleAt,
+        name: Option<String>,
         expires_at_if_new: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
         db_connection: &mut CachingDbConnection,
         called_at: DateTime<Utc>,
     ) -> Result<Result<DateTime<Utc>, ()>, WorkflowFunctionError> {
+        let suffix = name.as_deref().unwrap_or("sleep");
         let join_set_id = event_history
-            .next_join_set_one_off_named("sleep")
-            .expect("no illegal chars in sleep");
+            .next_join_set_one_off_named(suffix)
+            .map_err(|err| WorkflowFunctionError::ImportedFunctionCallError {
+                // Only `sleep-named-bt` passes the name
+                ffqn: FunctionFqn::new_static(
+                    "obelisk:workflow/workflow-support@5.1.0",
+                    "sleep-named-bt",
+                ),
+                reason: "invalid sleep join set name".into(),
+                detail: Some(err.to_string()),
+            })?;
         let delay_id = DelayId::new(&db_connection.execution_id, &join_set_id);
 
         let ChildReturnValue::OneOffDelay {

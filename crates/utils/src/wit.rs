@@ -43,11 +43,11 @@ pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
     WIT_OBELISK_TYPES_PACKAGE_CONTENT,
 ];
 pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
-    "obelisk_workflow@5.0.0",
-    "obelisk_workflow@5.0.0.wit",
+    "obelisk_workflow@5.1.0",
+    "obelisk_workflow@5.1.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_workflow@5.0.0/obelisk_workflow@5.0.0.wit"
+        "/wit/obelisk_workflow@5.1.0/obelisk_workflow@5.1.0.wit"
     )),
 ];
 
