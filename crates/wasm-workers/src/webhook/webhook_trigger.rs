@@ -492,8 +492,8 @@ pub async fn server(
                             result = conn.as_mut() => {
                                 break result;
                             }
-                            _ = wh_watcher.changed() => {
-                                debug!(%http_server, "Deployment changed, gracefully shutting down connection");
+                            changed = wh_watcher.changed() => {
+                                debug!(%http_server, "Deployment {}, gracefully shutting down connection", if changed.is_ok() {"changed" } else {"watcher dropped"});
                                 conn.as_mut().graceful_shutdown();
                             }
                         }
@@ -2040,6 +2040,8 @@ pub(crate) mod tests {
             db_close: DbPoolCloseableWrapper,
             #[expect(dead_code)]
             server_termination_sender: watch::Sender<()>,
+            #[expect(dead_code)]
+            wh_server_state_sender: watch::Sender<Arc<WebhookServerState>>,
         }
 
         impl SetUpFiboWebhook {
@@ -2125,7 +2127,8 @@ pub(crate) mod tests {
                     router: Arc::new(router),
                     fn_registry,
                 });
-                let (_, wh_server_state_watcher) = watch::channel(initial_state);
+                let (wh_server_state_sender, wh_server_state_watcher) =
+                    watch::channel(initial_state);
                 let mut set = tokio::task::JoinSet::new();
                 set.spawn(webhook_trigger::server(
                     "test".to_string(),
@@ -2149,6 +2152,7 @@ pub(crate) mod tests {
                     sim_clock,
                     db_close,
                     server_termination_sender,
+                    wh_server_state_sender,
                 }
             }
 
@@ -2311,7 +2315,7 @@ pub(crate) mod tests {
             const BODY: &str = "webhook-http-trace-test-body";
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (guard, db_pool, db_close) = db.set_up().await;
+            let (db_guard, db_pool, db_close) = db.set_up().await;
 
             // Set up mock HTTP server
             let mock_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2406,11 +2410,12 @@ pub(crate) mod tests {
             let server_addr = tcp_listener.local_addr().unwrap();
             info!("Listening on port {}", server_addr.port());
             let (_server_termination_sender, server_termination_watcher) = watch::channel(());
-            let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                router: Arc::new(router),
-                fn_registry,
-            }));
+            let (_wh_server_state_sender, wh_server_state_watcher) =
+                watch::channel(Arc::new(WebhookServerState {
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    router: Arc::new(router),
+                    fn_registry,
+                }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
                 "test".to_string(),
@@ -2482,7 +2487,7 @@ pub(crate) mod tests {
             drop(conn);
             drop(activity_exec);
             drop(set);
-            drop(guard);
+            drop(db_guard);
             db_close.close().await;
         }
 
@@ -2494,7 +2499,7 @@ pub(crate) mod tests {
             };
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (guard, db_pool, db_close) = Database::Memory.set_up().await;
+            let (db_guard, db_pool, db_close) = Database::Memory.set_up().await;
 
             // Set up mock HTTP server that the webhook will try to call
             let mock_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2579,11 +2584,12 @@ pub(crate) mod tests {
             let server_addr = tcp_listener.local_addr().unwrap();
             info!("Listening on port {}", server_addr.port());
             let (_server_termination_sender, server_termination_watcher) = watch::channel(());
-            let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                router: Arc::new(router),
-                fn_registry,
-            }));
+            let (_wh_server_state_sender, wh_server_state_watcher) =
+                watch::channel(Arc::new(WebhookServerState {
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    router: Arc::new(router),
+                    fn_registry,
+                }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
                 "test".to_string(),
@@ -2613,7 +2619,7 @@ pub(crate) mod tests {
 
             drop(activity_exec);
             drop(set);
-            drop(guard);
+            drop(db_guard);
             db_close.close().await;
         }
     }
@@ -2639,12 +2645,19 @@ pub(crate) mod tests {
         use tracing::info;
         use utils::sha256sum::calculate_sha256_file;
 
+        struct WatchGuard {
+            #[expect(dead_code)]
+            server_termination_sender: watch::Sender<()>,
+            #[expect(dead_code)]
+            wh_server_state_sender: watch::Sender<Arc<WebhookServerState>>,
+        }
+
         async fn start_js_webhook_server(
             source: &str,
         ) -> (
             tokio::task::JoinSet<Result<(), WebhookServerError>>,
             SocketAddr,
-            watch::Sender<()>,
+            WatchGuard,
         ) {
             let sim_clock = SimClock::default();
             let (_guard, db_pool, _db_close) = db_tests::Database::Memory.set_up().await;
@@ -2694,11 +2707,12 @@ pub(crate) mod tests {
             let server_addr = tcp_listener.local_addr().unwrap();
             info!("JS webhook listening on port {}", server_addr.port());
             let (server_termination_sender, server_termination_watcher) = watch::channel(());
-            let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                router: Arc::new(router),
-                fn_registry,
-            }));
+            let (wh_server_state_sender, wh_server_state_watcher) =
+                watch::channel(Arc::new(WebhookServerState {
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    router: Arc::new(router),
+                    fn_registry,
+                }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
                 "test-js".to_string(),
@@ -2712,7 +2726,14 @@ pub(crate) mod tests {
                 None,
                 server_termination_watcher,
             ));
-            (set, server_addr, server_termination_sender)
+            (
+                set,
+                server_addr,
+                WatchGuard {
+                    server_termination_sender,
+                    wh_server_state_sender,
+                },
+            )
         }
 
         #[tokio::test]
@@ -2779,7 +2800,7 @@ pub(crate) mod tests {
         ) -> (
             tokio::task::JoinSet<Result<(), WebhookServerError>>,
             SocketAddr,
-            watch::Sender<()>,
+            WatchGuard,
         ) {
             use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
             let host_pattern =
@@ -2839,11 +2860,12 @@ pub(crate) mod tests {
                 server_addr.port()
             );
             let (server_termination_sender, server_termination_watcher) = watch::channel(());
-            let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                router: Arc::new(router),
-                fn_registry,
-            }));
+            let (wh_server_state_sender, wh_server_state_watcher) =
+                watch::channel(Arc::new(WebhookServerState {
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    router: Arc::new(router),
+                    fn_registry,
+                }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
                 "test-js-http".to_string(),
@@ -2857,7 +2879,14 @@ pub(crate) mod tests {
                 None,
                 server_termination_watcher,
             ));
-            (set, server_addr, server_termination_sender)
+            (
+                set,
+                server_addr,
+                WatchGuard {
+                    server_termination_sender,
+                    wh_server_state_sender,
+                },
+            )
         }
 
         #[tokio::test]
@@ -3126,7 +3155,7 @@ pub(crate) mod tests {
             #[expect(dead_code)]
             db_close: db_tests::DbPoolCloseableWrapper,
             #[expect(dead_code)]
-            server_termination_sender: watch::Sender<()>,
+            guard: WatchGuard,
         }
 
         impl JsWebhookWithActivitiesHarness {
@@ -3207,11 +3236,12 @@ pub(crate) mod tests {
                     server_addr.port()
                 );
                 let (server_termination_sender, server_termination_watcher) = watch::channel(());
-                let (_, wh_server_state_watcher) = watch::channel(Arc::new(WebhookServerState {
-                    deployment_id: DEPLOYMENT_ID_DUMMY,
-                    router: Arc::new(router),
-                    fn_registry,
-                }));
+                let (wh_server_state_sender, wh_server_state_watcher) =
+                    watch::channel(Arc::new(WebhookServerState {
+                        deployment_id: DEPLOYMENT_ID_DUMMY,
+                        router: Arc::new(router),
+                        fn_registry,
+                    }));
                 let mut server_set = tokio::task::JoinSet::new();
                 server_set.spawn(webhook_trigger::server(
                     "test-js-activities".to_string(),
@@ -3233,7 +3263,10 @@ pub(crate) mod tests {
                     sim_clock,
                     db_pool,
                     db_close,
-                    server_termination_sender,
+                    guard: WatchGuard {
+                        server_termination_sender,
+                        wh_server_state_sender,
+                    },
                 }
             }
 
