@@ -34,7 +34,7 @@ use sha2::Sha256;
 use std::fmt::Write as _;
 use std::{path::PathBuf, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
-use tracing::debug;
+use tracing::{debug, instrument};
 
 #[cfg(test)]
 mod populate_js_codegen_cache {
@@ -764,6 +764,7 @@ impl TestDeployClient {
     /// Read the active deployment config from `SQLite`, apply `mutate` to it,
     /// then submit the modified deployment and hot-redeploy to it using
     /// whichever protocol this client represents.
+    #[instrument(skip_all)]
     async fn submit_and_hot_redeploy(
         &self,
         server: &TestServer,

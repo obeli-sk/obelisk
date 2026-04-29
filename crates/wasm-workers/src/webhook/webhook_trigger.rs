@@ -427,7 +427,7 @@ pub async fn server(
     http_server: String,
     listener: TcpListener,
     engine: Arc<Engine>,
-    wh_server_state_watcher: WebhookStateWatcher,
+    wh_server_state_watcher_parent: WebhookStateWatcher,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     db_pool: Arc<dyn DbPool>,
     clock_fn: Box<dyn ClockFn>,
@@ -446,8 +446,10 @@ pub async fn server(
             .unwrap_or_default();
         let stream = TokioIo::new(stream);
 
-        // Snapshot state before spawning – cheap Arc clone, consistent view.
-        let state = wh_server_state_watcher.borrow().clone();
+        // Each connection must not affect other connections.
+        let mut wh_server_state_watcher = wh_server_state_watcher_parent.clone();
+        // Snapshot state before spawning, marking the latest value as seen.
+        let state = wh_server_state_watcher.borrow_and_update().clone();
         let deployment_id = state.deployment_id;
         debug!(%deployment_id, %stream_id, "Initializing connection");
         // Spawn a tokio task for each TCP connection.
@@ -462,7 +464,6 @@ pub async fn server(
                 let max_inflight_requests = max_inflight_requests.clone();
                 let server_termination_watcher = server_termination_watcher.clone();
                 let log_forwarder_sender = log_forwarder_sender.clone();
-                let mut wh_server_state_watcher = wh_server_state_watcher.clone();
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
                     let deployment_id = state.deployment_id;
@@ -499,7 +500,7 @@ pub async fn server(
                             changed = wh_server_state_watcher.changed() => {
                                 if changed.is_ok() {
                                     let new_deployment_id = wh_server_state_watcher.borrow().deployment_id;
-                                    debug!(%http_server, "Switching to deployment {new_deployment_id}, gracefully shutting down connection");
+                                    debug!(%http_server, "Switching to {new_deployment_id}, gracefully shutting down connection");
                                 } else {
                                     debug!(%http_server, "Deployment watcher dropped, gracefully shutting down connection");
                                 }

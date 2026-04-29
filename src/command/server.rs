@@ -1312,6 +1312,7 @@ pub(crate) async fn submit_deployment(
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> anyhow::Result<DeploymentId> {
+    info!("Submitting deployment");
     let deployment: DeploymentCanonical =
         serde_json::from_str(config_json).with_context(|| "cannot parse config_json")?;
 
