@@ -218,18 +218,24 @@ impl Worker for ActivityExecWorker {
             }
             ExecProgram::Inline(script) => {
                 // Write script to temp file preserving shebang.
-                let mut tmp = tempfile::Builder::new()
-                    .prefix("obelisk-exec-")
-                    .tempfile()
-                    .map_err(|e| {
-                        WorkerError::FatalError(
-                            FatalError::CannotInstantiate {
-                                reason: "failed to create temp file for inline script".to_string(),
-                                detail: Some(e.to_string()),
-                            },
-                            version.clone(),
-                        )
-                    })?;
+                let mut builder = tempfile::Builder::new();
+                builder.prefix("obelisk-exec-");
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    // Apply 0o755 permissions to the builder
+                    builder.permissions(std::fs::Permissions::from_mode(0o755));
+                }
+
+                let mut tmp = builder.tempfile().map_err(|e| {
+                    WorkerError::FatalError(
+                        FatalError::CannotInstantiate {
+                            reason: "failed to create temp file for inline script".to_string(),
+                            detail: Some(e.to_string()),
+                        },
+                        version.clone(),
+                    )
+                })?;
                 use std::io::Write;
                 tmp.write_all(script.as_bytes()).map_err(|e| {
                     WorkerError::FatalError(
@@ -240,21 +246,6 @@ impl Worker for ActivityExecWorker {
                         version.clone(),
                     )
                 })?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    tmp.as_file()
-                        .set_permissions(std::fs::Permissions::from_mode(0o755))
-                        .map_err(|e| {
-                            WorkerError::FatalError(
-                                FatalError::CannotInstantiate {
-                                    reason: "failed to make temp file executable".to_string(),
-                                    detail: Some(e.to_string()),
-                                },
-                                version.clone(),
-                            )
-                        })?;
-                }
                 let temp_path = tmp.into_temp_path(); // Close the file handle.
                 let cmd = tokio::process::Command::new(&temp_path);
                 _temp_file_guard = Some(temp_path);
