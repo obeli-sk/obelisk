@@ -3,8 +3,8 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:workflow/workflow-support@5.0.0.execution-id-generate": {
-    "ffqn": "obelisk:workflow/workflow-support@5.0.0.execution-id-generate",
+  "obelisk:workflow/workflow-support@5.1.0.execution-id-generate": {
+    "ffqn": "obelisk:workflow/workflow-support@5.1.0.execution-id-generate",
     "parameter_types": [
       {
         "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
@@ -21,8 +21,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.0.0.get-result-json": {
-    "ffqn": "obelisk:workflow/workflow-support@5.0.0.get-result-json",
+  "obelisk:workflow/workflow-support@5.1.0.get-result-json": {
+    "ffqn": "obelisk:workflow/workflow-support@5.1.0.get-result-json",
     "parameter_types": [
       {
         "type_wrapper": "record { id: string }",
@@ -39,8 +39,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.0.0.join-next": {
-    "ffqn": "obelisk:workflow/workflow-support@5.0.0.join-next",
+  "obelisk:workflow/workflow-support@5.1.0.join-next": {
+    "ffqn": "obelisk:workflow/workflow-support@5.1.0.join-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -57,8 +57,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.0.0.join-set-create": {
-    "ffqn": "obelisk:workflow/workflow-support@5.0.0.join-set-create",
+  "obelisk:workflow/workflow-support@5.1.0.join-set-create": {
+    "ffqn": "obelisk:workflow/workflow-support@5.1.0.join-set-create",
     "parameter_types": [],
     "return_type": {
       "non_extendable": {
@@ -69,8 +69,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.0.0.schedule-json": {
-    "ffqn": "obelisk:workflow/workflow-support@5.0.0.schedule-json",
+  "obelisk:workflow/workflow-support@5.1.0.schedule-json": {
+    "ffqn": "obelisk:workflow/workflow-support@5.1.0.schedule-json",
     "parameter_types": [
       {
         "type_wrapper": "record { id: string }",
@@ -112,8 +112,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.0.0.submit-json": {
-    "ffqn": "obelisk:workflow/workflow-support@5.0.0.submit-json",
+  "obelisk:workflow/workflow-support@5.1.0.submit-json": {
+    "ffqn": "obelisk:workflow/workflow-support@5.1.0.submit-json",
     "parameter_types": [
       {
         "type_wrapper": "borrow",

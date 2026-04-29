@@ -849,7 +849,7 @@ impl WasiView for WorkflowCtx {
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@5.0.0";
+const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@5.1.0";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReplayKind {

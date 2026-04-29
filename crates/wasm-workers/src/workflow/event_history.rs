@@ -2631,7 +2631,7 @@ impl OneOffDelayRequest {
             .map_err(|err| WorkflowFunctionError::ImportedFunctionCallError {
                 // Only `sleep-named-bt` passes the name
                 ffqn: FunctionFqn::new_static(
-                    "obelisk:workflow/workflow-support@5.0.0",
+                    "obelisk:workflow/workflow-support@5.1.0",
                     "sleep-named-bt",
                 ),
                 reason: "invalid sleep join set name".into(),
