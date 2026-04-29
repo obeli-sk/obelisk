@@ -281,6 +281,7 @@ params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
+env_vars = ["PATH"] # for jq
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-external"
@@ -289,11 +290,13 @@ params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
+env_vars = ["PATH"] # for jq
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-inline"
 program.inline = '''
 #!/usr/bin/env bash
+set -exuo pipefail
 raw=$(echo $1 | jq -r .)
 echo "\"Hello, $raw!\""
 '''
@@ -301,6 +304,7 @@ params = [
   {{ name = "name", type = "string" }},
 ]
 return_type = "result<string, string>"
+env_vars = ["PATH"] # for jq
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-env.read-env"
@@ -327,6 +331,7 @@ return_type = "result<record {{ name: string, count: u32 }}, string>"
 ffqn = "testing:integration/exec-stdin.expose-secrets"
 program.external = ["{ws}/crates/testing/test-programs/exec/expose-secrets.sh"]
 return_type = "result<string, string>"
+env_vars = ["PATH"] # for jq
 [activity_exec.secrets]
 env_vars = [{{ name = "MY_SECRET", value = "s3cret_value" }}]
 

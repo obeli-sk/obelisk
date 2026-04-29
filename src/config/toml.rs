@@ -1712,6 +1712,7 @@ impl ActivityJsConfigVerified {
 pub(crate) enum ExecProgramToml {
     /// Explicit argv. The first element is the executable; remaining elements are fixed arguments.
     /// Activity params are JSON-serialized and appended as trailing args.
+    /// Does not support `${DEPLOYMENT_DIR}/` prefix.
     #[serde(rename = "external")]
     External(Vec<String>),
     /// Inline script content. Written to a temp file at each execution.
@@ -1721,7 +1722,7 @@ pub(crate) enum ExecProgramToml {
     /// File path to include. Resolved to `inline` at canonicalization time.
     /// Supports `${DEPLOYMENT_DIR}/` prefix.
     #[serde(rename = "include")]
-    Include(String),
+    Include(String), // expanded in `expand_deployment_dir_prefix`
 }
 
 /// Program specification for exec activities (canonical/wire form).

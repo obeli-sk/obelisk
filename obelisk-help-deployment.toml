@@ -114,13 +114,13 @@
 # [[activity_exec]]
 # name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
 ## Program specification: exactly one of `external`, `inline`, or `include`.
-## `external`: explicit argv — first element is the executable, rest are fixed arguments.
+## `external`: explicit argv — first element is the executable, rest are fixed arguments. Does not support `${DEPLOYMENT_DIR}/` prefix.
 # program.external = ["/usr/bin/my-tool", "--flag"]
-## `inline`: script content embedded in the TOML. Written to a temp file at each execution.
+## `inline`: script content embedded in the TOML. Written to a temp file at each execution. Supports `${DEPLOYMENT_DIR}/` prefix.
 # program.inline = '''#!/usr/bin/env bash
 # echo "\"hello\""
 # '''
-## `include`: file path read at deploy time and converted to `inline`, making deployment self-contained.
+## `include`: file path read at deploy time and converted to `inline`, making deployment self-contained. Supports `${DEPLOYMENT_DIR}/` prefix.
 # program.include = "${DEPLOYMENT_DIR}/scripts/my-script.sh"
 # ffqn = "namespace:package/interface.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
