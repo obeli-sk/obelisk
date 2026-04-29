@@ -32,6 +32,7 @@ use hyper_util::rt::TokioIo;
 use log_activities::obelisk::log::log::Host;
 use route_recognizer::{Match, Router};
 use std::ops::Deref;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
@@ -456,10 +457,11 @@ pub async fn server(
                 let max_inflight_requests = max_inflight_requests.clone();
                 let server_termination_watcher = server_termination_watcher.clone();
                 let log_forwarder_sender = log_forwarder_sender.clone();
+                let wh_server_state_watcher = wh_server_state_watcher.clone();
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
                     let deployment_id = state.deployment_id;
-                    let res = http1::Builder::new()
+                    let mut conn = http1::Builder::new()
                         .serve_connection(
                             stream,
                             hyper::service::service_fn({
@@ -482,8 +484,20 @@ pub async fn server(
                                     .handle_request(req, max_inflight_requests.clone())
                                 }.instrument(info_span!(parent: &connection_span, "request", %deployment_id))
                             })
-                        )
-                        .await;
+                        );
+                    let mut conn = Pin::new(&mut conn);
+                    let mut wh_watcher = wh_server_state_watcher.clone();
+                    let res = loop {
+                        select! {
+                            result = conn.as_mut() => {
+                                break result;
+                            }
+                            _ = wh_watcher.changed() => {
+                                debug!(%http_server, "Deployment changed, gracefully shutting down connection");
+                                conn.as_mut().graceful_shutdown();
+                            }
+                        }
+                    };
                     if let Err(err) = res {
                         info!(%http_server, "Error serving connection: {err:?}");
                         drop(connection_drop_sender);
