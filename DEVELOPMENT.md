@@ -79,7 +79,7 @@ cargo test --package obelisk grpc_server::tests
 
 | Task | Files |
 |------|-------|
-| TOML | `src/config/toml.rs`, `obelisk-help-server.toml`, `obelisk-help-deployment.toml` — update the `obelisk-help-*.toml` files when changing TOML config |
+| TOML | `src/config/toml.rs`, `obelisk-help-server.toml`, `obelisk-help-deployment.toml` — update the `obelisk-help-*.toml` files when changing TOML config, then run `scripts/update-toml-schema.sh` to regenerate JSON schemas |
 | Database schema/queries | `crates/db-sqlite/src/sqlite_dao.rs`, `crates/db-postgres/src/postgres_dao.rs` |
 | Storage traits | `crates/concepts/src/storage.rs` |
 | gRPC API | `proto/obelisk.proto`, `src/server/grpc_server.rs`,`crates/grpc/src/grpc_mapping.rs` |

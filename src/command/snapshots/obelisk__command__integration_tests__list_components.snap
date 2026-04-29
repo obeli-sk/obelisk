@@ -70,84 +70,91 @@ expression: components
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_add"
+      "name": "exec-add.add"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_greet_include"
+      "name": "exec-greet.greet-include"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_greet_external"
+      "name": "exec-greet.greet-external"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_greet_inline"
+      "name": "exec-greet.greet-inline"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_read_env"
+      "name": "exec-env.read-env"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_error"
+      "name": "exec-error.fail"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_record_ok"
+      "name": "exec-record.make-record"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_expose_secrets"
+      "name": "exec-stdin.expose-secrets"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_void_ok"
+      "name": "exec-void.void-ok"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_void_err"
+      "name": "exec-void.void-err"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_exec_args_passthrough"
+      "name": "exec-args.echo-args"
+    }
+  },
+  {
+    "component_id": {
+      "component_digest": "sha256:<REDACTED>",
+      "component_type": "activity",
+      "name": "exec-stream.stream-test"
     }
   },
   {
     "component_id": {
       "component_digest": "sha256:<REDACTED>",
       "component_type": "activity_stub",
-      "name": "test_inline_stub"
+      "name": "stubs.my-stub"
     }
   },
   {

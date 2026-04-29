@@ -1798,7 +1798,9 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Defaults to the server's working directory.
     #[serde(default)]
     pub(crate) cwd: Option<String>,
-    /// Maximum bytes per stream (stdout/stderr). Excess is truncated and execution fails.
+    /// Maximum bytes collected from stdout to form the response.
+    /// Exceeding the limit fails the execution.
+    /// Not used when return_type is result (default), since the response carries no data.
     #[serde(default = "default_max_output_bytes")]
     pub(crate) max_output_bytes: u64,
     /// Secrets pushed to stdin. See `ExecSecretsToml`.

@@ -640,6 +640,11 @@ pub struct TypeWrapperTopLevel {
     pub ok: Option<Box<TypeWrapper>>,
     pub err: Option<Box<TypeWrapper>>,
 }
+impl TypeWrapperTopLevel {
+    pub fn is_result_of_units(&self) -> bool {
+        self.ok.is_none() && self.err.is_none()
+    }
+}
 impl From<TypeWrapperTopLevel> for TypeWrapper {
     fn from(value: TypeWrapperTopLevel) -> TypeWrapper {
         TypeWrapper::Result {

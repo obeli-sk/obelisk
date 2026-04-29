@@ -147,7 +147,10 @@
 ## Working directory for the child process. Supports `${DEPLOYMENT_DIR}/` prefix interpolation.
 ## Defaults to the server's working directory.
 # cwd = "${DEPLOYMENT_DIR}/workdir"
-## Maximum bytes per stream (stdout/stderr). Excess causes execution to fail. Default: 1024.
+## Maximum bytes collected from stdout to form the response.
+## Exceeding the limit fails the execution.
+## Not used when return_type is result (default), since the response carries no data.
+## Default: 1024.
 # max_output_bytes = 1024
 ## Secrets: resolved from host environment variables at startup and piped to the child's stdin as JSON.
 ## The child receives `{"KEY":"value",...}` on stdin. Use `jq .KEY /dev/stdin` or equivalent to parse.
