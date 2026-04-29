@@ -409,10 +409,8 @@ impl Worker for ActivityExecWorker {
             // Ok path: stdout is the ok-variant JSON.
             let stdout_trimmed = stdout_str.trim();
             if stdout_trimmed.is_empty() {
-                // Empty stdout → JSON null (for void ok types like `result`)
-                let ok_val = serde_json::Value::Null;
                 let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                    &ok_val,
+                    None,
                     &self.user_return_type,
                     version.clone(),
                 )?;
@@ -436,7 +434,7 @@ impl Worker for ActivityExecWorker {
                         )
                     })?;
                 let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                    &ok_val,
+                    Some(&ok_val),
                     &self.user_return_type,
                     version.clone(),
                 )?;

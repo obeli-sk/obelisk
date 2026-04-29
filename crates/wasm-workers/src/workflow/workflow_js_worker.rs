@@ -224,7 +224,7 @@ impl Worker for WorkflowJsWorker {
                             unreachable!("workflow-js-runtime always sends JSON-encoded string")
                         };
                         let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                            &ok_val,
+                            Some(&ok_val),
                             &self.user_return_type,
                             version.clone(),
                         )?;
@@ -660,9 +660,8 @@ mod tests {
                 _version,
             ) => {
                 assert_eq!(
+                    "failed to type check the return value `{}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 2",
                     reason,
-                    "failed to type check the return value `{}` as `string`: \
-                     invalid type: map, expected value matching \"string\" at line 1 column 2"
                 );
             }
         );

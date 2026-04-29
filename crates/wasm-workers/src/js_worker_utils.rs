@@ -11,16 +11,13 @@ use concepts::{
 use executor::worker::{FatalError, WorkerError};
 
 /// Maps a JSON-encoded JS ok return value to the user-configured ok type.
-///
-/// * `ok: None` (void) — only JSON null is accepted → `Ok(None)`; anything else is fatal.
-/// * `ok: Some(T)` — the JSON is type-checked and deserialized via `deserialize_value`.
 pub(crate) fn map_js_ok_to_user_retval(
-    ok_val: &serde_json::Value,
+    ok_val: Option<&serde_json::Value>,
     user_return_type: &ReturnTypeExtendable,
     version: Version,
 ) -> Result<SupportedFunctionReturnValue, WorkerError> {
-    match &user_return_type.type_wrapper_tl.ok {
-        Some(configured_ok_type) => {
+    match (&user_return_type.type_wrapper_tl.ok, ok_val) {
+        (Some(configured_ok_type), Some(ok_val)) => {
             let wvt =
                 val_json::wast_val_ser::deserialize_value(ok_val, *configured_ok_type.clone())
                     .map_err(|err| {
@@ -28,8 +25,7 @@ pub(crate) fn map_js_ok_to_user_retval(
                             FatalError::ResultParsingError(
                                 ResultParsingError::ResultParsingErrorFromVal(
                                     ResultParsingErrorFromVal::TypeCheckError(format!(
-                                        "failed to type check the return value `{ok_val}` as \
-                                         `{configured_ok_type}`: {err}"
+                                        "failed to type check the return value `{ok_val}` as type {configured_ok_type} - {err}"
                                     )),
                                 ),
                             ),
@@ -38,20 +34,18 @@ pub(crate) fn map_js_ok_to_user_retval(
                     })?;
             Ok(SupportedFunctionReturnValue::Ok(Some(wvt)))
         }
-        None => {
-            if *ok_val == serde_json::Value::Null {
-                Ok(SupportedFunctionReturnValue::Ok(None))
-            } else {
-                Err(WorkerError::FatalError(
-                    FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                        ResultParsingErrorFromVal::TypeCheckError(format!(
-                            "return value type check failed, expected `null`, got `{ok_val}`"
-                        )),
-                    )),
-                    version,
-                ))
-            }
-        }
+        (None, _) => Ok(SupportedFunctionReturnValue::Ok(None)), // Convenience: unit type accepts (blocks) any response.
+        (Some(ty), ok_val) => Err(WorkerError::FatalError(
+            FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                ResultParsingErrorFromVal::TypeCheckError(format!(
+                    "return value type check failed, expected value of type {ty}, got {ok_val}",
+                    ok_val = ok_val
+                        .map(|ok_val| format!("`{ok_val}`"))
+                        .unwrap_or_else(|| "empty response".to_string())
+                )),
+            )),
+            version,
+        )),
     }
 }
 
