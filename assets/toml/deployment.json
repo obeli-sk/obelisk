@@ -131,7 +131,7 @@
           "default": "debug"
         },
         "max_output_bytes": {
-          "description": "Maximum bytes collected from stdout to form the response.\nExceeding the limit fails the execution.\nNot used when return_type is result (default), since the response carries no data.",
+          "description": "Maximum bytes collected from stdout to form the response.\nExceeding the limit fails the execution.\nNot used when `return_type` is result (default), since the response carries no data.",
           "type": "integer",
           "format": "uint64",
           "default": 1024,
