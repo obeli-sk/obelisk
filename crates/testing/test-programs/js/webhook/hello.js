@@ -1,5 +1,5 @@
 export default function handle(request) {
-    console.info(request);
+    console.info("hello request", request);
     const execId = obelisk.executionIdCurrent();
     return new Response("Hello from JS webhook!", {
         status: 200,
