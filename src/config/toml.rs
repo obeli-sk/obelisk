@@ -1756,7 +1756,7 @@ pub(crate) struct ExecSecretsToml {
 }
 
 const fn default_max_output_bytes() -> u64 {
-    1024
+    4096
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
