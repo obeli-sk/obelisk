@@ -163,23 +163,25 @@ impl Worker for ActivityJsWorker {
 
         let (retval, version, http_client_traces) = assert_matches!(inner_worker_ok, WorkerResultOk::RunFinished { retval, version,  http_client_traces }
             => (retval, version,  http_client_traces), "activity_js_runtime runs in ActivityWorker");
+
         match retval {
             SupportedFunctionReturnValue::Ok(Some(WastValWithType {
                 r#type:
                     TypeWrapper::Result {
-                        ok: Some(ok_type),   // String
-                        err: Some(err_type), // err string was not sent
+                        ok: Some(ok_type),
+                        err: Some(err_type),
                     },
                 value: WastVal::Result(Ok(Some(ok_val))), // activity-js-runtime returned {"ok": {"ok": "<json-encoded value>"}}
-            })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
+            })) => {
+                assert!(*ok_type == TypeWrapper::String && *err_type == TypeWrapper::String);
                 let WastVal::String(ok_val) = *ok_val else {
                     unreachable!("ok type is String, so value must be WastVal::String")
                 };
                 let Ok(ok_val) = serde_json::from_str(&ok_val) else {
                     unreachable!("activity-js-runtime always sends JSON-encoded string")
                 };
-                let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                    Some(&ok_val),
+                let retval = crate::js_worker_utils::map_ok_variant(
+                    Some(ok_val),
                     &self.user_return_type,
                     version.clone(),
                 )?;
@@ -196,13 +198,17 @@ impl Worker for ActivityJsWorker {
                         ok: Some(ok_type),
                         err: Some(err_type),
                     },
-                value: WastVal::Result(Err(Some(err_val))), // js runtime returned {"ok":{"err":"some string"}}
-            })) if *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String => {
-                let WastVal::String(thrown) = *err_val else {
+                value: WastVal::Result(Err(Some(err_val))), // js runtime returned {"ok":{"err":"<json-encoded value>"}}
+            })) => {
+                assert!(*ok_type == TypeWrapper::String && *err_type == TypeWrapper::String);
+                let WastVal::String(err_val) = *err_val else {
                     unreachable!("err type is String, so value must be WastVal::String")
                 };
-                let retval = crate::js_worker_utils::map_js_throw_to_user_err(
-                    &thrown,
+                let Ok(err_val) = serde_json::from_str(&err_val) else {
+                    unreachable!("activity-js-runtime always sends JSON-encoded string")
+                };
+                let retval = crate::js_worker_utils::map_err_variant(
+                    Some(err_val),
                     &self.user_return_type,
                     version.clone(),
                 )?;

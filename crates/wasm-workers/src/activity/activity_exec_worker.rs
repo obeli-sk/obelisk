@@ -373,8 +373,8 @@ impl Worker for ActivityExecWorker {
                 let (stdout_result, stderr_result) = tokio::join!(stdout_fut, stderr_fut);
                 let (stdout_bytes, stdout_exceeded) = stdout_result?;
                 let _ = stderr_result?;
-                let status = child.wait().await?;
-                Ok::<_, std::io::Error>((stdout_bytes, stdout_exceeded, status))
+                let exit_code = child.wait().await?.code().unwrap_or(-1);
+                Ok::<_, std::io::Error>((stdout_bytes, stdout_exceeded, exit_code))
             } => {
                 result.map_err(|e| {
                     WorkerError::FatalError(
@@ -388,9 +388,9 @@ impl Worker for ActivityExecWorker {
             }
         };
 
-        let (stdout_bytes, stdout_exceeded, status) = result;
+        let (stdout_bytes, stdout_exceeded, exit_code) = result;
 
-        // Check output size limits.
+        // Check output size limit.
         if stdout_exceeded {
             return Err(WorkerError::FatalError(
                 FatalError::CannotInstantiate {
@@ -404,85 +404,43 @@ impl Worker for ActivityExecWorker {
             ));
         }
 
-        let stdout_str = String::from_utf8_lossy(&stdout_bytes);
-
         debug!(
-            exit_code = status.code(),
+            exit_code,
             stdout_len = stdout_bytes.len(),
             "Child process finished"
         );
-
-        // Map exit code + stdout to result.
-        let exit_code = status.code().unwrap_or(-1);
-        if exit_code == 0 {
-            // Ok path: stdout is the ok-variant JSON.
-            let stdout_trimmed = stdout_str.trim();
-            if stdout_trimmed.is_empty() {
-                let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                    None, // no JSON was sent, this is accepted only for the unit type.
-                    &self.user_return_type,
-                    version.clone(),
-                )?;
-                Ok(WorkerResultOk::RunFinished {
-                    retval,
-                    version,
-                    http_client_traces: None,
-                })
-            } else {
-                let ok_val: serde_json::Value = serde_json::from_str(stdout_trimmed)
-                    .map_err(|e| {
-                        WorkerError::FatalError(
-                            FatalError::ResultParsingError(
-                                concepts::ResultParsingError::ResultParsingErrorFromVal(
-                                    concepts::ResultParsingErrorFromVal::TypeCheckError(format!(
-                                        "failed to parse stdout as JSON on exit 0: {e}, stdout: `{stdout_trimmed}`"
-                                    )),
-                                ),
-                            ),
-                            version.clone(),
-                        )
-                    })?;
-                let retval = crate::js_worker_utils::map_js_ok_to_user_retval(
-                    Some(&ok_val),
-                    &self.user_return_type,
-                    version.clone(),
-                )?;
-                Ok(WorkerResultOk::RunFinished {
-                    retval,
-                    version,
-                    http_client_traces: None,
-                })
-            }
+        let stdout = String::from_utf8_lossy(&stdout_bytes);
+        let parsed = if stdout.trim().is_empty() {
+            None
         } else {
-            // Err path: stdout is the err-variant JSON.
-            let stdout_trimmed = stdout_str.trim();
-            if stdout_trimmed.is_empty() {
-                // Empty stdout on non-zero exit → JSON null for err
-                let retval = crate::js_worker_utils::map_js_throw_to_user_err(
-                    "null",
-                    &self.user_return_type,
+            Some(serde_json::from_str::<serde_json::Value>(&stdout).map_err(|e| {
+                WorkerError::FatalError(
+                    FatalError::ResultParsingError(
+                        concepts::ResultParsingError::ResultParsingErrorFromVal(
+                            concepts::ResultParsingErrorFromVal::TypeCheckError(format!(
+                                "failed to parse stdout as JSON on exit {exit_code}: {e}, stdout: `{stdout}`"
+                            )),
+                        ),
+                    ),
                     version.clone(),
-                )?;
-                Ok(WorkerResultOk::RunFinished {
-                    retval,
-                    version,
-                    http_client_traces: None,
-                })
-            } else {
-                // stdout should already be valid JSON; pass it through as-is to map_js_throw_to_user_err
-                // which expects the raw JSON string.
-                let retval = crate::js_worker_utils::map_js_throw_to_user_err(
-                    stdout_trimmed,
-                    &self.user_return_type,
-                    version.clone(),
-                )?;
-                Ok(WorkerResultOk::RunFinished {
-                    retval,
-                    version,
-                    http_client_traces: None,
-                })
-            }
-        }
+                )
+            })?)
+        };
+
+        let retval = if exit_code == 0 {
+            crate::js_worker_utils::map_ok_variant(parsed, &self.user_return_type, version.clone())?
+        } else {
+            crate::js_worker_utils::map_err_variant(
+                parsed,
+                &self.user_return_type,
+                version.clone(),
+            )?
+        };
+        Ok(WorkerResultOk::RunFinished {
+            retval,
+            version,
+            http_client_traces: None,
+        })
     }
 }
 

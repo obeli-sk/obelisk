@@ -9,93 +9,76 @@ use concepts::{
     SupportedFunctionReturnValue, storage::Version,
 };
 use executor::worker::{FatalError, WorkerError};
+use val_json::type_wrapper::TypeWrapper;
 
-/// Maps a JSON-encoded JS ok return value to the user-configured ok type.
-pub(crate) fn map_js_ok_to_user_retval(
-    ok_val: Option<&serde_json::Value>,
+pub(crate) fn map_ok_variant(
+    val: Option<serde_json::Value>,
     user_return_type: &ReturnTypeExtendable,
     version: Version,
 ) -> Result<SupportedFunctionReturnValue, WorkerError> {
-    match (&user_return_type.type_wrapper_tl.ok, ok_val) {
-        (Some(configured_ok_type), Some(ok_val)) => {
+    map_variant(
+        val,
+        version,
+        user_return_type.type_wrapper_tl.ok.as_deref(),
+        Ok(()),
+    )
+}
+pub(crate) fn map_err_variant(
+    val: Option<serde_json::Value>,
+    user_return_type: &ReturnTypeExtendable,
+    version: Version,
+) -> Result<SupportedFunctionReturnValue, WorkerError> {
+    map_variant(
+        val,
+        version,
+        user_return_type.type_wrapper_tl.err.as_deref(),
+        Err(()),
+    )
+}
+
+fn map_variant(
+    val: Option<serde_json::Value>,
+    version: Version,
+    expected_type: Option<&TypeWrapper>,
+    variant: Result<(), ()>,
+) -> Result<SupportedFunctionReturnValue, WorkerError> {
+    let supported_func = if variant.is_ok() {
+        SupportedFunctionReturnValue::Ok
+    } else {
+        SupportedFunctionReturnValue::Err
+    };
+
+    match (expected_type, val) {
+        (Some(ty), Some(ok_val)) => {
             let wvt =
-                val_json::wast_val_ser::deserialize_value(ok_val, *configured_ok_type.clone())
+                val_json::wast_val_ser::deserialize_value(&ok_val, ty.clone())
                     .map_err(|err| {
                         WorkerError::FatalError(
                             FatalError::ResultParsingError(
                                 ResultParsingError::ResultParsingErrorFromVal(
                                     ResultParsingErrorFromVal::TypeCheckError(format!(
-                                        "failed to type check the return value `{ok_val}` as type {configured_ok_type} - {err}"
+                                        "failed to type check the {variant} variant value `{ok_val}` as type {ty} - {err}",
+                                        variant = if variant.is_ok() { "ok" } else { "err" }
                                     )),
                                 ),
                             ),
                             version.clone(),
                         )
                     })?;
-            Ok(SupportedFunctionReturnValue::Ok(Some(wvt)))
+            Ok(supported_func(Some(wvt)))
         }
-        (None, _) => Ok(SupportedFunctionReturnValue::Ok(None)), // Convenience: unit type accepts (blocks) any response.
-        (Some(ty), ok_val) => Err(WorkerError::FatalError(
+        (None, _) => Ok(supported_func(None)), // Convenience: unit type accepts (blocks) any response.
+        (Some(ty), val) => Err(WorkerError::FatalError(
             FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
                 ResultParsingErrorFromVal::TypeCheckError(format!(
-                    "return value type check failed, expected value of type {ty}, got {ok_val}",
-                    ok_val = ok_val
-                        .map(|ok_val| format!("`{ok_val}`"))
+                    "failed to type check the {variant} variant `{val} as type {ty}",
+                    variant = if variant.is_ok() { "ok" } else { "err" },
+                    val = val
+                        .map(|val| format!("`{val}`"))
                         .unwrap_or_else(|| "empty response".to_string())
                 )),
             )),
             version,
         )),
-    }
-}
-
-/// Maps a JSON-encoded JS throw to the user-configured err type.
-///
-/// The Boa runtime JSON-encodes all thrown values (consistent with ok values), so
-/// `throw null` → `"null"`, `throw "foo"` → `"\"foo\""`, `throw "my-case"` → `"\"my-case\""`.
-///
-/// * `err: None` (void) — only JSON null is accepted → `Err(None)`; anything else is fatal.
-/// * `err: Some(T)` — the JSON is type-checked and deserialized via `deserialize_value`.
-pub(crate) fn map_js_throw_to_user_err(
-    thrown: &str,
-    user_return_type: &ReturnTypeExtendable,
-    version: Version,
-) -> Result<SupportedFunctionReturnValue, WorkerError> {
-    let thrown_val: serde_json::Value =
-        serde_json::from_str(thrown).unwrap_or(serde_json::Value::Null);
-    match user_return_type.type_wrapper_tl.err.as_deref() {
-        None => {
-            if thrown_val == serde_json::Value::Null {
-                Ok(SupportedFunctionReturnValue::Err(None))
-            } else {
-                let declared_return_type = user_return_type.to_string();
-                Err(WorkerError::FatalError(
-                    FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                        ResultParsingErrorFromVal::TypeCheckError(format!(
-                            "thrown value type check failed: return type is `{declared_return_type}` (no error \
-                             type), expected `throw null`, got `{thrown}`"
-                        )),
-                    )),
-                    version,
-                ))
-            }
-        }
-        Some(user_err_type) => {
-            let wvt = val_json::wast_val_ser::deserialize_value(&thrown_val, user_err_type.clone())
-                .map_err(|e| {
-                    WorkerError::FatalError(
-                        FatalError::ResultParsingError(
-                            ResultParsingError::ResultParsingErrorFromVal(
-                                ResultParsingErrorFromVal::TypeCheckError(format!(
-                                    "failed to type check thrown value `{thrown}` as \
-                                     `{user_err_type}`: {e}"
-                                )),
-                            ),
-                        ),
-                        version.clone(),
-                    )
-                })?;
-            Ok(SupportedFunctionReturnValue::Err(Some(wvt)))
-        }
     }
 }
