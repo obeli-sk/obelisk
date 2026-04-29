@@ -371,9 +371,16 @@ impl Worker for ActivityExecWorker {
                     &ctx,
                 );
                 let (stdout_result, stderr_result) = tokio::join!(stdout_fut, stderr_fut);
-                let (stdout_bytes, stdout_exceeded) = stdout_result?;
+                let (mut stdout_bytes, mut stdout_exceeded) = stdout_result?;
                 let _ = stderr_result?;
                 let exit_code = child.wait().await?.code().unwrap_or(-1);
+                // If the unit type was requested, return empty response.
+                if exit_code == 0 && self.user_return_type.type_wrapper_tl.ok.is_none()
+                    || exit_code != 0 && self.user_return_type.type_wrapper_tl.err.is_none()
+                {
+                    stdout_exceeded = false;
+                    stdout_bytes = Vec::new();
+                }
                 Ok::<_, std::io::Error>((stdout_bytes, stdout_exceeded, exit_code))
             } => {
                 result.map_err(|e| {
