@@ -394,7 +394,7 @@ version = "0.37.7"
 dependencies = [
  "futures-concurrency",
  "futures-lite 2.6.1",
- "hmac 0.12.1",
+ "hmac",
  "http",
  "obeli-sk-boa-engine",
  "obeli-sk-boa-gc",
@@ -1363,7 +1363,6 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.7",
- "subtle",
 ]
 
 [[package]]
@@ -2025,15 +2024,6 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
-name = "hmac"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
-dependencies = [
- "digest 0.10.7",
-]
 
 [[package]]
 name = "hmac"
@@ -3378,7 +3368,7 @@ dependencies = [
  "docker_credential",
  "futures-util",
  "hashbrown 0.16.1",
- "hmac 0.12.1",
+ "hmac",
  "http",
  "indexmap 2.14.0",
  "insta",
@@ -3837,7 +3827,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "fallible-iterator 0.2.0",
- "hmac 0.13.0",
+ "hmac",
  "md-5",
  "memchr",
  "rand 0.10.1",

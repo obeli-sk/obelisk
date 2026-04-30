@@ -319,7 +319,7 @@ semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_with = "3.18.0"
-hmac = "0.12.1"
+hmac = "0.13.0"
 sha2 = "0.10.9"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
