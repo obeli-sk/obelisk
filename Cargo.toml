@@ -254,7 +254,7 @@ config = { version = "0.15.22", default-features = false, features = [
 ] }
 console-subscriber = "0.5.0"
 const_format = "0.2.36"
-croner = "2"
+croner = "3"
 criterion = "0.8"
 crossterm = "0.29.0"
 deadpool-postgres = "0.14.1"
