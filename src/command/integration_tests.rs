@@ -1705,7 +1705,7 @@ async fn hot_redeploy_webhook_js_env_var_impl(
             }];
         })
         .await;
-
+    debug!("Expecting new deployment to answer the next request");
     let resp = server
         .client
         .get(format!("{}/read-env", server.webhook_base_url))

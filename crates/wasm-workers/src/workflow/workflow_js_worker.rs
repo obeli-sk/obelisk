@@ -458,7 +458,7 @@ impl WorkflowJsWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        worker.replay_internal(ctx, Some(replay_kind)).await
+        worker.replay_internal(ctx, replay_kind).await
     }
 }
 
@@ -1064,6 +1064,7 @@ mod tests {
                 component_id,
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1339,6 +1340,7 @@ mod tests {
                     component_id,
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
+                    paused: false,
                 })
                 .await
                 .unwrap();
@@ -1753,6 +1755,7 @@ mod tests {
                 component_id,
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();

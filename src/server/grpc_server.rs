@@ -219,6 +219,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             execution_id,
             ffqn,
             params,
+            request.paused,
             &component_registry_ro,
         )
         .await?;

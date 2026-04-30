@@ -378,6 +378,7 @@ async fn fetch_created_event(
             deployment_id,
             metadata,
             scheduled_by,
+            paused: false,
         })
     } else {
         error!("Row with version=0 must be a `Created` event - {event:?}");
@@ -418,6 +419,7 @@ async fn create_inner(
     let scheduled_at = req.scheduled_at;
     let component_id = req.component_id.clone();
     let deployment_id = req.deployment_id;
+    let paused = req.paused;
 
     let event = ExecutionRequest::from(req);
     let event = Json(event);
@@ -458,7 +460,7 @@ async fn create_inner(
                 intermittent_event_count,
                 is_paused
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0, false
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0, $12
             )",
             &[
                 &execution_id_str,
@@ -472,22 +474,40 @@ async fn create_inner(
                 &component_id.component_type.to_string(),
                 &deployment_id.to_string(),
                 &scheduled_at,
+                &paused,
             ],
         )
         .await?;
 
         AppendNotifier {
-            pending_at: Some(NotifierPendingAt {
-                scheduled_at,
-                ffqn,
-                component_input_digest: component_id.component_digest,
-            }),
+            pending_at: if paused {
+                None
+            } else {
+                Some(NotifierPendingAt {
+                    scheduled_at,
+                    ffqn: ffqn.clone(),
+                    component_input_digest: component_id.component_digest,
+                })
+            },
             execution_finished: None,
             response: None,
         }
     };
 
-    let next_version = Version::new(version.0 + 1);
+    let mut next_version = Version::new(version.0 + 1);
+    if paused {
+        let (v, _) = append(
+            tx,
+            &execution_id,
+            AppendRequest {
+                created_at,
+                event: ExecutionRequest::Paused,
+            },
+            next_version,
+        )
+        .await?;
+        next_version = v;
+    }
     Ok((next_version, pending_at))
 }
 

@@ -109,6 +109,7 @@ impl Worker for CronWorker {
             deployment_id: self.deployment_id,
             metadata: ExecutionMetadata::empty(),
             scheduled_by: Some(current_execution_id.clone()),
+            paused: false,
         };
 
         // Build the history event for the schedule
@@ -265,6 +266,7 @@ mod tests {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             metadata: ExecutionMetadata::empty(),
             scheduled_by: None,
+            paused: false,
         })
         .await
         .unwrap();

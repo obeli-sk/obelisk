@@ -87,7 +87,7 @@ impl ExecutionLog {
                 ffqn,params,parent,scheduled_at,component_id,deployment_id,metadata,scheduled_by},
                 created_at, .. }) => CreateRequest { created_at, execution_id:
                     self.execution_id.clone(), ffqn, params, parent, scheduled_at,
-                    component_id, deployment_id, metadata, scheduled_by })
+                    component_id, deployment_id, metadata, scheduled_by, paused: false })
     }
 
     #[must_use]
@@ -936,6 +936,7 @@ pub struct CreateRequest {
     pub deployment_id: DeploymentId,
     pub metadata: ExecutionMetadata,
     pub scheduled_by: Option<ExecutionId>,
+    pub paused: bool,
 }
 
 impl From<CreateRequest> for ExecutionRequest {
@@ -1533,6 +1534,7 @@ pub trait DbConnection: DbExecutor {
                 deployment_id,
                 metadata,
                 scheduled_by,
+                paused: false,
             })
         } else {
             Err(DbErrorRead::Generic(DbErrorGeneric::Uncategorized {

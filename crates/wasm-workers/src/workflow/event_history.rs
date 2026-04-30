@@ -1206,6 +1206,7 @@ impl EventHistory {
                             component_id: fn_component_id,
                             deployment_id: self.deployment_id,
                             scheduled_by: None,
+                            paused: false,
                         };
                         (Ok(()), params, Some(child_req))
                     }
@@ -1327,6 +1328,7 @@ impl EventHistory {
                             component_id: fn_component_id,
                             deployment_id: self.deployment_id,
                             scheduled_by: Some(db_connection.execution_id.clone()),
+                            paused: false,
                         };
                         (Ok(()), Some(child_req))
                     }
@@ -1713,6 +1715,7 @@ impl EventHistory {
                     component_id: fn_component_id,
                     deployment_id: self.deployment_id,
                     scheduled_by: None,
+                    paused: false,
                 };
                 db_connection
                     .append_batch_create_new_execution(
@@ -3799,6 +3802,7 @@ mod tests {
                 component_id: ComponentId::dummy_activity(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();

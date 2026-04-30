@@ -1130,6 +1130,7 @@ mod tests {
                 component_id: ComponentId::dummy_activity(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1453,6 +1454,7 @@ mod tests {
                 component_id: ComponentId::dummy_activity(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1491,6 +1493,7 @@ mod tests {
                 component_id: ComponentId::dummy_activity(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             };
             let current_time = sim_clock.now();
             let join_set = AppendRequest {
@@ -1710,6 +1713,7 @@ mod tests {
                 component_id: ComponentId::dummy_activity(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();

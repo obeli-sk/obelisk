@@ -539,6 +539,9 @@ pub(crate) enum Execution {
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long, requires = "follow")]
         no_reconnect: bool,
+        /// Create the execution in paused state so it won't run until explicitly unpaused or advanced.
+        #[arg(long)]
+        paused: bool,
         /// Output events as JSON in Web API format instead of human-readable text.
         #[arg(short, long)]
         json: bool,

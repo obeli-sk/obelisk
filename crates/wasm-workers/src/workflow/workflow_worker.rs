@@ -827,9 +827,9 @@ impl WorkflowWorker {
     pub(crate) async fn replay_internal(
         &self,
         ctx: WorkerContext,
-        is_replay: Option<ReplayKind>,
+        is_replay: ReplayKind,
     ) -> Result<(), ReplayError> {
-        match self.run_internal(ctx, is_replay).await {
+        match self.run_internal(ctx, Some(is_replay)).await {
             Ok(Either::Left(WorkerResultOk::RunFinished { .. })) => {
                 debug!("Replay finished returning a value");
                 Ok(())
@@ -959,7 +959,7 @@ impl WorkflowWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        worker.replay_internal(ctx, Some(replay_kind)).await
+        worker.replay_internal(ctx, replay_kind).await
     }
 }
 
@@ -1336,6 +1336,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1464,6 +1465,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1579,6 +1581,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1645,6 +1648,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1710,6 +1714,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1797,6 +1802,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1894,6 +1900,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -2059,6 +2066,7 @@ pub(crate) mod tests {
                     scheduled_at: sim_clock.now(),
                     component_id: worker.config.component_id.clone(),
                     scheduled_by: None,
+                    paused: false,
                 })
                 .await
                 .unwrap();
@@ -2183,6 +2191,7 @@ pub(crate) mod tests {
                     component_id: worker.config.component_id.clone(),
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
+                    paused: false,
                 })
                 .await
                 .unwrap();
@@ -2352,6 +2361,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -2460,6 +2470,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -2563,6 +2574,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -2661,6 +2673,7 @@ pub(crate) mod tests {
                 component_id: worker.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -2785,6 +2798,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -2871,6 +2885,7 @@ pub(crate) mod tests {
                 component_id: worker.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -3072,6 +3087,7 @@ pub(crate) mod tests {
                 component_id: worker.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -3274,6 +3290,7 @@ pub(crate) mod tests {
                 component_id: worker.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -3436,6 +3453,7 @@ pub(crate) mod tests {
                 },
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -3651,6 +3669,7 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();

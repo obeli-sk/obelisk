@@ -440,10 +440,7 @@ pub async fn server(
             .accept()
             .await
             .map_err(WebhookServerError::SocketError)?;
-        let stream_id = stream
-            .local_addr()
-            .map(|local_addr| local_addr.port())
-            .unwrap_or_default();
+        let stream_id = format!("{stream:?}");
         let stream = TokioIo::new(stream);
 
         // Each connection must not affect other connections.
@@ -498,14 +495,14 @@ pub async fn server(
                                 break result;
                             }
                             changed = wh_server_state_watcher.changed() => {
+                                conn.as_mut().graceful_shutdown();
                                 if changed.is_ok() {
                                     let new_deployment_id = wh_server_state_watcher.borrow().deployment_id;
                                     debug!(%http_server, "Switching to {new_deployment_id}, gracefully shutting down connection");
                                 } else {
                                     debug!(%http_server, "Deployment watcher dropped, gracefully shutting down connection");
+                                    break conn.as_mut().await;
                                 }
-
-                                conn.as_mut().graceful_shutdown();
                             }
                         }
                     };
@@ -784,6 +781,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             component_id: component_id.clone(),
             deployment_id: self.deployment_id,
             scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
+            paused: false,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -947,6 +945,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             component_id: component_id.clone(),
             deployment_id: self.deployment_id,
             scheduled_by: None,
+            paused: false,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -1229,6 +1228,7 @@ impl WebhookEndpointCtx {
             component_id: self.component_id.clone(),
             deployment_id: self.deployment_id,
             scheduled_by: None,
+            paused: false,
         };
         let conn = self.db_pool.connection().await?;
         let version = conn.create(create_request).await?;
@@ -1343,6 +1343,7 @@ impl WebhookEndpointCtx {
                     component_id: child_component_id.clone(),
                     deployment_id: self.deployment_id,
                     scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
+                    paused: false,
                 };
                 let db_connection = self.db_pool.connection().await?;
                 let expected_next_version = version.increment();
@@ -1434,6 +1435,7 @@ impl WebhookEndpointCtx {
                 component_id: child_component_id.clone(),
                 deployment_id: self.deployment_id,
                 scheduled_by: None,
+                paused: false,
             };
             let db_connection = self.db_pool.connection().await?;
             let appended = vec![req_join_set_created, req_child_exec, req_join_next];

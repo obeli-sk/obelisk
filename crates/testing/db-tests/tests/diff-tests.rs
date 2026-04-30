@@ -51,6 +51,7 @@ async fn diff_proptest_inner(seed: u64) {
         component_id: ComponentId::dummy_activity(),
         deployment_id: DEPLOYMENT_ID_DUMMY,
         scheduled_by: None,
+        paused: false,
     };
     let mut append_requests = vec![];
     while append_requests.is_empty() {
@@ -196,6 +197,7 @@ async fn persist_finished_event(
             component_id: component_id.clone(),
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
+            paused: false,
         })
         .await
         .unwrap();

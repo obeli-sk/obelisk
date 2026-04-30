@@ -35,18 +35,34 @@ impl ExecutionJournal {
         let execution_id = req.execution_id.clone();
         let component_id = req.component_id.clone();
         let deployment_id = req.deployment_id;
+        let paused = req.paused;
 
         let created_at = req.created_at;
-        let event = ExecutionEvent {
+        let created_event = ExecutionEvent {
             event: ExecutionRequest::from(req),
             created_at,
             backtrace_id: None,
             version: Version(0),
         };
+        let mut events = vec![created_event];
+        let pending_state = if paused {
+            events.push(ExecutionEvent {
+                event: ExecutionRequest::Paused,
+                created_at,
+                backtrace_id: None,
+                version: Version(1),
+            });
+            PendingState::Paused(PendingStatePaused::PendingAt(PendingStatePendingAt {
+                scheduled_at: created_at,
+                last_lock: None,
+            }))
+        } else {
+            pending_state
+        };
         Self {
             execution_id,
             pending_state,
-            execution_events: vec![event],
+            execution_events: events,
             responses: Vec::default(),
             response_subscriber: None,
             component_id,
@@ -287,6 +303,7 @@ impl ExecutionJournal {
             deployment_id,
             metadata,
             scheduled_by,
+            paused: false,
         }
     }
 
