@@ -440,10 +440,7 @@ pub async fn server(
             .accept()
             .await
             .map_err(WebhookServerError::SocketError)?;
-        let stream_id = stream
-            .local_addr()
-            .map(|local_addr| local_addr.port())
-            .unwrap_or_default();
+        let stream_id = format!("{stream:?}");
         let stream = TokioIo::new(stream);
 
         // Each connection must not affect other connections.
