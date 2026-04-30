@@ -1367,6 +1367,9 @@ pub(crate) struct ExecutionSubmitPayload {
     pub(crate) ffqn: FunctionFqn,
     /// Function parameters as JSON values
     pub(crate) params: Vec<serde_json::Value>,
+    /// If true, create the execution in paused state.
+    #[serde(default)]
+    pub(crate) paused: bool,
 }
 
 #[derive(Deserialize, Debug, IntoParams)]
@@ -1446,6 +1449,7 @@ async fn execution_submit(
         execution_id.clone(),
         payload.ffqn,
         payload.params,
+        payload.paused,
         &component_registry_ro,
     )
     .await

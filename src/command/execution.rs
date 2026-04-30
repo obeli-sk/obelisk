@@ -95,6 +95,7 @@ impl args::Execution {
                 params,
                 follow,
                 no_reconnect,
+                paused,
                 json,
             } => {
                 let opts = if json {
@@ -108,7 +109,15 @@ impl args::Execution {
                         no_reconnect,
                     }
                 };
-                submit(&api_url, execution_id, ffqn, parse_params(params)?, opts).await
+                submit(
+                    &api_url,
+                    execution_id,
+                    ffqn,
+                    parse_params(params)?,
+                    paused,
+                    opts,
+                )
+                .await
             }
             args::Execution::Stub(args::Stub {
                 api_url,
@@ -191,6 +200,7 @@ pub(crate) async fn submit(
     execution_id: Option<ExecutionId>,
     ffqn: FunctionFqnOrShort,
     params: Vec<serde_json::Value>,
+    paused: bool,
     opts: SubmitOutputOpts,
 ) -> anyhow::Result<()> {
     let channel = to_channel(api_url).await?;
@@ -251,6 +261,7 @@ pub(crate) async fn submit(
                         value: serde_json::Value::Array(params).to_string().into_bytes(),
                     }),
                     function_name: Some(grpc_gen::FunctionName::from(ffqn)),
+                    paused,
                 }))
                 .await?;
             println!("{execution_id}");
@@ -277,6 +288,7 @@ pub(crate) async fn submit(
                     &ExecutionSubmitPayload {
                         ffqn: ffqn.clone(),
                         params: params.clone(),
+                        paused,
                     },
                 );
                 match request.send().await {

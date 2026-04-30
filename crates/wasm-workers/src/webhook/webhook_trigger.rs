@@ -781,6 +781,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             component_id: component_id.clone(),
             deployment_id: self.deployment_id,
             scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
+            paused: false,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -944,6 +945,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             component_id: component_id.clone(),
             deployment_id: self.deployment_id,
             scheduled_by: None,
+            paused: false,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -1226,6 +1228,7 @@ impl WebhookEndpointCtx {
             component_id: self.component_id.clone(),
             deployment_id: self.deployment_id,
             scheduled_by: None,
+            paused: false,
         };
         let conn = self.db_pool.connection().await?;
         let version = conn.create(create_request).await?;
@@ -1340,6 +1343,7 @@ impl WebhookEndpointCtx {
                     component_id: child_component_id.clone(),
                     deployment_id: self.deployment_id,
                     scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
+                    paused: false,
                 };
                 let db_connection = self.db_pool.connection().await?;
                 let expected_next_version = version.increment();
@@ -1431,6 +1435,7 @@ impl WebhookEndpointCtx {
                 component_id: child_component_id.clone(),
                 deployment_id: self.deployment_id,
                 scheduled_by: None,
+                paused: false,
             };
             let db_connection = self.db_pool.connection().await?;
             let appended = vec![req_join_set_created, req_child_exec, req_join_next];

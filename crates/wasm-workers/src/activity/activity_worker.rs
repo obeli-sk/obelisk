@@ -797,6 +797,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_activity(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -980,6 +981,7 @@ pub(crate) mod tests {
 
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1157,6 +1159,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_activity(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1375,6 +1378,7 @@ pub(crate) mod tests {
 
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1505,6 +1509,7 @@ pub(crate) mod tests {
 
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1657,6 +1662,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_activity(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1800,6 +1806,7 @@ pub(crate) mod tests {
                 component_id,
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1890,6 +1897,7 @@ pub(crate) mod tests {
 
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1958,6 +1966,7 @@ pub(crate) mod tests {
 
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -2031,6 +2040,7 @@ pub(crate) mod tests {
 
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();

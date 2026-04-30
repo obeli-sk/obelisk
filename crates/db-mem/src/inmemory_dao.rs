@@ -834,6 +834,7 @@ impl DbHolder {
         let subscription = self.ffqn_to_pending_subscription.get(&req.ffqn);
         let scheduled_at = req.scheduled_at;
         let created_at = req.created_at;
+        let paused = req.paused;
         let mut journal = ExecutionJournal::new(req);
         let version = journal.version();
         self.index.update(&mut journal);
@@ -842,7 +843,8 @@ impl DbHolder {
             old_val.is_none(),
             "journals cannot contain the new execution"
         );
-        if scheduled_at <= created_at
+        if !paused
+            && scheduled_at <= created_at
             && let Some(subscription) = subscription
         {
             let _ = subscription.try_send(());

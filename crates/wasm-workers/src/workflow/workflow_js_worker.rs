@@ -1064,6 +1064,7 @@ mod tests {
                 component_id,
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
@@ -1339,6 +1340,7 @@ mod tests {
                     component_id,
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
+                    paused: false,
                 })
                 .await
                 .unwrap();
@@ -1753,6 +1755,7 @@ mod tests {
                 component_id,
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();

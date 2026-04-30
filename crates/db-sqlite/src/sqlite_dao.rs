@@ -815,6 +815,7 @@ impl SqlitePool {
                 deployment_id,
                 metadata,
                 scheduled_by,
+                paused: false,
             })
         } else {
             error!("Row with version=0 must be a `Created` event - {event:?}");
@@ -855,6 +856,7 @@ impl SqlitePool {
         let scheduled_at = req.scheduled_at;
         let component_id = req.component_id.clone();
         let deployment_id = req.deployment_id;
+        let paused = req.paused;
         let event = ExecutionRequest::from(req);
         let event_ser = serde_json::to_string(&event).map_err(|err| {
             error!("Cannot serialize {event:?} - {err:?}");
@@ -907,7 +909,7 @@ impl SqlitePool {
                     CURRENT_TIMESTAMP,
                     :first_scheduled_at,
                     0,
-                    false
+                    :is_paused
                     )
                 ",
             )?
@@ -923,18 +925,36 @@ impl SqlitePool {
                 ":component_type": component_id.component_type,
                 ":deployment_id": deployment_id.to_string(),
                 ":first_scheduled_at": scheduled_at,
+                ":is_paused": paused,
             })?;
             AppendNotifier {
-                pending_at: Some(NotifierPendingAt {
-                    scheduled_at,
-                    ffqn,
-                    component_input_digest: component_id.component_digest,
-                }),
+                pending_at: if paused {
+                    None
+                } else {
+                    Some(NotifierPendingAt {
+                        scheduled_at,
+                        ffqn: ffqn.clone(),
+                        component_input_digest: component_id.component_digest,
+                    })
+                },
                 execution_finished: None,
                 response: None,
             }
         };
-        let next_version = Version::new(version.0 + 1);
+        let mut next_version = Version::new(version.0 + 1);
+        if paused {
+            // Append the Paused event in the same transaction.
+            let (v, _) = Self::append(
+                tx,
+                &execution_id,
+                AppendRequest {
+                    created_at,
+                    event: ExecutionRequest::Paused,
+                },
+                next_version,
+            )?;
+            next_version = v;
+        }
         Ok((next_version, pending_at))
     }
 
@@ -4691,6 +4711,7 @@ mod tests {
                     component_id: ComponentId::dummy_activity(),
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
+                    paused: false,
                 };
                 SqlitePool::create_inner(tx, req)?;
                 SqlitePool::pause_execution(tx, &EXECUTION_ID_DUMMY, created_at)?;

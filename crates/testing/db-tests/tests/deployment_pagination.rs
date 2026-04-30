@@ -64,6 +64,7 @@ async fn create_deployment_with_execution(
             component_id,
             deployment_id,
             scheduled_by: None,
+            paused: false,
         })
         .await
         .unwrap();

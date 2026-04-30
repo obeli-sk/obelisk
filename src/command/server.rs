@@ -254,6 +254,7 @@ pub(crate) async fn submit(
     execution_id: ExecutionId,
     ffqn: FunctionFqn,
     mut params: Vec<serde_json::Value>,
+    paused: bool,
     component_registry_ro: &ComponentConfigRegistryRO,
 ) -> Result<SubmitOutcome, SubmitError> {
     let span = Span::current();
@@ -364,6 +365,7 @@ pub(crate) async fn submit(
             component_id: component_id.clone(),
             deployment_id,
             scheduled_by: None,
+            paused,
         })
         .await;
     match res {
@@ -1592,6 +1594,7 @@ async fn create_missing_cron_seeds(
                 deployment_id,
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .map_err(|e| {

@@ -208,6 +208,9 @@ message SubmitRequest {
     ExecutionId execution_id = 1;
     FunctionName function_name = 2;
     google.protobuf.Any params = 3;
+    // If true, create the execution in paused state so it won't be picked up
+    // by an executor until explicitly unpaused or advanced.
+    bool paused = 4;
 }
 
 message SubmitResponse {

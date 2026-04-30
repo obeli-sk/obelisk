@@ -356,6 +356,7 @@ mod bench {
                 component_id: ComponentId::dummy_workflow(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
+                paused: false,
             })
             .await
             .unwrap();
