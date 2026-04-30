@@ -495,14 +495,14 @@ pub async fn server(
                                 break result;
                             }
                             changed = wh_server_state_watcher.changed() => {
+                                conn.as_mut().graceful_shutdown();
                                 if changed.is_ok() {
                                     let new_deployment_id = wh_server_state_watcher.borrow().deployment_id;
                                     debug!(%http_server, "Switching to {new_deployment_id}, gracefully shutting down connection");
                                 } else {
                                     debug!(%http_server, "Deployment watcher dropped, gracefully shutting down connection");
+                                    break conn.as_mut().await;
                                 }
-
-                                conn.as_mut().graceful_shutdown();
                             }
                         }
                     };
