@@ -295,7 +295,7 @@ paste = "1.0"
 prost = "0.14.3"
 prost-wkt-types = "0.7"
 quote = "1"
-rand = "0.9"
+rand = "0.10"
 refinery = { git = "https://github.com/tomasol/refinery.git", rev = "3b5a6eb7903e6d5d9ebce0fd17b518f9d1a5c1d2", features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
