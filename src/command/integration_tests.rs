@@ -1706,11 +1706,8 @@ async fn hot_redeploy_webhook_js_env_var_impl(
         })
         .await;
 
-    // 3. The webhook must now return the updated env var.
-    // Use a fresh client to ensure a new TCP connection is made (the per-connection
-    // state snapshot means a keep-alive connection would still see the old state).
-    let fresh_client = reqwest::Client::new();
-    let resp = fresh_client
+    let resp = server
+        .client
         .get(format!("{}/read-env", server.webhook_base_url))
         .send()
         .await
