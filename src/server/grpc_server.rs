@@ -816,11 +816,29 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             )
             .await
         };
-        if let Err(err) = replay_res {
-            info!("Replay failed: {err:?}");
-            return Err(tonic::Status::internal(format!("replay failed: {err}")));
+        match replay_res {
+            Err(err) => {
+                info!("Replay failed: {err:?}");
+                Err(tonic::Status::internal(format!("replay failed: {err}")))
+            }
+            Ok(replay_response) => {
+                let next_events_json = serde_json::to_string(&replay_response.next_events)
+                    .expect("HistoryEvent must be serializable");
+                let next_events_proto = replay_response
+                    .next_events
+                    .into_iter()
+                    .map(Into::into)
+                    .collect();
+                let return_value = replay_response
+                    .return_value
+                    .map(grpc_gen::SupportedFunctionResult::from);
+                Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {
+                    next_events: next_events_proto,
+                    next_events_json,
+                    return_value,
+                }))
+            }
         }
-        Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {}))
     }
 
     #[instrument(skip_all, fields(execution_id))]

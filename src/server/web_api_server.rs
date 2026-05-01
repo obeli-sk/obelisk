@@ -1655,20 +1655,26 @@ async fn execution_replay(
         )
         .await
     };
-    if let Err(err) = replay_res {
-        info!("Replay failed: {err:?}");
-        return Err(HttpResponse {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            message: format!("Replay failed: {err}"),
-            accept,
-        });
+    match replay_res {
+        Err(err) => {
+            info!("Replay failed: {err:?}");
+            Err(HttpResponse {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: format!("Replay failed: {err}"),
+                accept,
+            })
+        }
+        Ok(replay_response) => {
+            let json = serde_json::to_string(&replay_response)
+                .expect("ReplayResponse must be serializable");
+            Ok(HttpResponse {
+                status: StatusCode::OK,
+                message: json,
+                accept,
+            }
+            .into_response())
+        }
     }
-    Ok(HttpResponse {
-        status: StatusCode::OK,
-        message: "replayed".to_string(),
-        accept,
-    }
-    .into_response())
 }
 
 /// Payload for upgrading an execution to a new component version

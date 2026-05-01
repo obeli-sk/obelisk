@@ -77,12 +77,15 @@ pub(crate) enum WorkflowFunctionError {
     ExecutorClosing,
     #[error("replay finished")]
     ReplayFinished,
+    #[error("preview completed")]
+    PreviewCompleted(Vec<HistoryEvent>),
 }
 
 #[derive(Debug)]
 pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
     ReplayFinished,
+    PreviewCompleted(Vec<HistoryEvent>),
     // retriable:
     InterruptDbUpdated,
     LockExpired,
@@ -120,6 +123,9 @@ impl WorkflowFunctionError {
             WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
             WorkflowFunctionError::ExecutorClosing => WorkerPartialResult::ExecutorClosing,
             WorkflowFunctionError::ReplayFinished => WorkerPartialResult::ReplayFinished,
+            WorkflowFunctionError::PreviewCompleted(events) => {
+                WorkerPartialResult::PreviewCompleted(events)
+            }
         }
     }
 }
@@ -137,6 +143,7 @@ impl From<ApplyError> for WorkflowFunctionError {
             }
             ApplyError::ExecutorClosing => WorkflowFunctionError::ExecutorClosing,
             ApplyError::ReplayFinished => WorkflowFunctionError::ReplayFinished,
+            ApplyError::PreviewCompleted(events) => WorkflowFunctionError::PreviewCompleted(events),
         }
     }
 }
@@ -152,6 +159,12 @@ pub(crate) struct WorkflowCtx {
     backtrace_persist: bool,
     wasi_ctx: WasiCtx,
     is_replay: bool, // Used for lowering logs to trace
+}
+
+impl WorkflowCtx {
+    pub(crate) fn take_preview_events(&self) -> Vec<HistoryEvent> {
+        self.event_history.take_preview_events()
+    }
 }
 
 #[derive(derive_more::Debug)]
@@ -876,7 +889,7 @@ impl WorkflowCtx {
         lock_extension: Option<Duration>,
         subscription_interruption: Option<Duration>,
         logs_storage_config: Option<LogStrageConfig>,
-        is_replay: Option<ReplayKind>,
+        replay_mode: Option<ReplayKind>,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -899,7 +912,7 @@ impl WorkflowCtx {
                 lock_extension,
                 subscription_interruption,
                 worker_span.clone(),
-                is_replay == Some(ReplayKind::Unfinished),
+                replay_mode,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -912,7 +925,7 @@ impl WorkflowCtx {
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace_persist,
             wasi_ctx: wasi_ctx_builder.build(),
-            is_replay: is_replay.is_some(),
+            is_replay: replay_mode.is_some(),
         }
     }
 
@@ -2829,7 +2842,8 @@ pub(crate) mod tests {
                 }
                 WorkerPartialResult::LockExpired
                 | WorkerPartialResult::ExecutorClosing
-                | WorkerPartialResult::ReplayFinished => {
+                | WorkerPartialResult::ReplayFinished
+                | WorkerPartialResult::PreviewCompleted(_) => {
                     unreachable!()
                 }
             }

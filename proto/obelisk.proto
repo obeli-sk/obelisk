@@ -664,6 +664,14 @@ message ReplayExecutionRequest {
   ExecutionId execution_id = 1;
 }
 message ReplayExecutionResponse {
+  // Next HistoryEvent(s) the workflow would produce (structured, lossy —
+  // e.g. child execution params and target_ffqn are not included).
+  repeated ExecutionEvent.HistoryEvent next_events = 1;
+  // Full-fidelity JSON-serialized HistoryEvent(s) for round-tripping
+  // to the advance RPC's expected_event field.
+  string next_events_json = 2;
+  // If the workflow would complete, contains the return value.
+  optional SupportedFunctionResult return_value = 3;
 }
 
 
