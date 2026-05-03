@@ -16,6 +16,7 @@ use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError;
 use crate::workflow::host_exports::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
 use crate::workflow::host_exports::response_id::ResponseId;
+use crate::workflow::workflow_ctx::ReplayKind;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ComponentId;
@@ -106,11 +107,13 @@ pub(crate) enum ApplyError {
     ExecutorClosing,
     #[error("replay finished")]
     ReplayFinished,
+    #[error("preview completed")]
+    PreviewCompleted(Vec<HistoryEvent>),
 }
 
 #[expect(clippy::struct_field_names)]
 pub(crate) struct EventHistory {
-    replaying_unfinished_execution: bool,
+    replay_mode: Option<ReplayKind>,
     deployment_id: DeploymentId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     // Contains requests (events produced by the workflow)
@@ -131,6 +134,10 @@ pub(crate) struct EventHistory {
 
     // Tracks join set contents for closing. One-offs are ignored, response id is removed when the response is processed.
     index_join_set_to_unawaited_requests: IndexMap<JoinSetId, IndexMap<ResponseId, ComponentType>>,
+
+    // Replay preview: let one more event through after replay, then capture it
+    past_replay_boundary: bool,
+    replay_boundary_idx: usize,
 }
 
 #[derive(Debug)]
@@ -157,10 +164,10 @@ impl EventHistory {
         lock_extension: Option<Duration>,
         subscription_interruption: Option<Duration>,
         worker_span: Span,
-        replaying_unfinished_execution: bool,
+        replay_mode: Option<ReplayKind>,
     ) -> EventHistory {
         EventHistory {
-            replaying_unfinished_execution,
+            replay_mode,
             deployment_id,
             index_child_exe_to_processed_response_idx: HashMap::default(),
             index_child_exe_to_ffqn: HashMap::default(),
@@ -182,6 +189,20 @@ impl EventHistory {
             lock_extension: lock_extension.unwrap_or_default(),
             subscription_interruption,
             index_join_set_to_unawaited_requests: IndexMap::default(),
+            past_replay_boundary: false,
+            replay_boundary_idx: 0,
+        }
+    }
+
+    /// Returns events generated past the replay boundary during preview mode.
+    pub(crate) fn take_preview_events(&self) -> Vec<HistoryEvent> {
+        if self.replay_mode == Some(ReplayKind::Unfinished) && self.past_replay_boundary {
+            self.event_history[self.replay_boundary_idx..]
+                .iter()
+                .map(|(e, _, _)| e.clone())
+                .collect()
+        } else {
+            vec![] // FIXME is this reachable?
         }
     }
 
@@ -280,6 +301,35 @@ impl EventHistory {
         if let Some(resp) = self.find_matching_atomic(&event_call)? {
             trace!("found_atomic: {resp:?}");
             return Ok(resp);
+        }
+
+        // In preview mode past the replay boundary, the workflow is about to
+        // create new event(s). Capture them without writing to the DB.
+        // Non-blocking events are added to event_history and execution continues.
+        // Blocking events stop execution and return all accumulated preview events.
+        if self.replay_mode == Some(ReplayKind::Unfinished) && self.past_replay_boundary {
+            match &event_call {
+                EventCall::Blocking(_) => {
+                    let event = event_call.to_history_event();
+                    let mut new_events: Vec<_> = self.event_history[self.replay_boundary_idx..]
+                        .iter()
+                        .map(|(e, _, _)| e.clone())
+                        .collect();
+                    new_events.push(event);
+                    return Err(ApplyError::PreviewCompleted(new_events));
+                }
+                EventCall::NonBlocking(nb_event_call) => {
+                    // Add to event_history without DB write so the workflow can continue.
+                    let cloned = nb_event_call.clone();
+                    let event = event_call.to_history_event();
+                    self.event_history
+                        .push((event, Unprocessed, Version::new(0)));
+                    let non_blocking_resp = self
+                        .find_matching_atomic(&EventCall::NonBlocking(cloned))?
+                        .expect("just stored the event as Unprocessed, it must be found");
+                    return Ok(non_blocking_resp);
+                }
+            }
         }
 
         match event_call {
@@ -570,8 +620,17 @@ impl EventHistory {
                     join_next_idx,
                     join_next_version,
                 } => {
+                    let replay_mode = self.replay_mode.expect("bug in executor? TODO");
                     // JoinNext is still unprocessed. This is the only exception when replay is considered finished.
                     if join_next_idx == self.event_history.len() - 1 {
+                        if replay_mode == ReplayKind::Unfinished && self.past_replay_boundary {
+                            // Blocking event created past the boundary — capture all new events.
+                            let new_events = self.event_history[self.replay_boundary_idx..]
+                                .iter()
+                                .map(|(event, _, _)| event.clone())
+                                .collect();
+                            return Err(ApplyError::PreviewCompleted(new_events));
+                        }
                         return Err(ApplyError::ReplayFinished);
                     }
                     unreachable!(
@@ -684,8 +743,18 @@ impl EventHistory {
         key: &DeterministicKey,
     ) -> Result<FindMatchingResponse, ApplyError> {
         let resp = self.process_event_by_key_inner(key)?;
-        if self.replaying_unfinished_execution && !self.has_unprocessed_requests() {
-            return Err(ApplyError::ReplayFinished);
+        if self.replay_mode == Some(ReplayKind::Unfinished) && !self.has_unprocessed_requests() {
+            if !self.past_replay_boundary {
+                // Last replay event processed. Record the boundary and let the workflow continue.
+                self.past_replay_boundary = true;
+                self.replay_boundary_idx = self.event_history.len();
+            } else {
+                // Past the boundary with processed non-blocking events.
+                // Let the workflow continue — preview will complete when
+                // a blocking event is encountered in apply().
+            }
+            // If past_boundary but no new events yet (NotFound), let it through
+            // so apply_inner can create the event.
         }
         Ok(resp)
     }
@@ -2123,6 +2192,138 @@ impl JoinNextVariant {
 pub(crate) enum EventCall {
     Blocking(EventCallBlocking),
     NonBlocking(EventCallNonBlocking),
+}
+
+impl EventCall {
+    /// Convert this event call into the primary `HistoryEvent` it would produce.
+    /// Used in preview mode to capture events without writing to the DB.
+    fn to_history_event(&self) -> HistoryEvent {
+        match self {
+            EventCall::NonBlocking(ec) => ec.to_history_event(),
+            EventCall::Blocking(ec) => ec.to_history_event(),
+        }
+    }
+}
+
+impl EventCallNonBlocking {
+    fn to_history_event(&self) -> HistoryEvent {
+        match self {
+            EventCallNonBlocking::JoinSetCreate(JoinSetCreate { join_set_id, .. }) => {
+                HistoryEvent::JoinSetCreate {
+                    join_set_id: join_set_id.clone(),
+                }
+            }
+            EventCallNonBlocking::Persist(Persist { value, kind, .. }) => HistoryEvent::Persist {
+                value: value.clone(),
+                kind: *kind,
+            },
+            EventCallNonBlocking::SubmitChildExecution(SubmitChildExecution {
+                target_ffqn,
+                join_set_id,
+                child_execution_id,
+                intent,
+                ..
+            }) => {
+                let (result, params) = match intent {
+                    SubmitChildIntent::Ok { params, .. } => (Ok(()), params.clone()),
+                    SubmitChildIntent::Err(err) => (Err(err.clone()), Params::empty()),
+                };
+                HistoryEvent::JoinSetRequest {
+                    join_set_id: join_set_id.clone(),
+                    request: JoinSetRequest::ChildExecutionRequest {
+                        child_execution_id: child_execution_id.clone(),
+                        target_ffqn: target_ffqn.clone(),
+                        params,
+                        result,
+                    },
+                }
+            }
+            EventCallNonBlocking::SubmitDelay(SubmitDelay {
+                join_set_id,
+                delay_id,
+                schedule_at,
+                expires_at_if_new,
+                ..
+            }) => HistoryEvent::JoinSetRequest {
+                join_set_id: join_set_id.clone(),
+                request: JoinSetRequest::DelayRequest {
+                    delay_id: delay_id.clone(),
+                    expires_at: *expires_at_if_new,
+                    schedule_at: *schedule_at,
+                },
+            },
+            EventCallNonBlocking::Schedule(Schedule {
+                execution_id,
+                schedule_at,
+                intent,
+                ..
+            }) => {
+                let result = match intent {
+                    ScheduleIntent::Ok { .. } => Ok(()),
+                    ScheduleIntent::Err(err) => Err(err.clone()),
+                };
+                HistoryEvent::Schedule {
+                    execution_id: execution_id.clone(),
+                    schedule_at: *schedule_at,
+                    result,
+                }
+            }
+            EventCallNonBlocking::Stub(Stub { intent, params, .. }) => {
+                let result = match intent {
+                    StubIntent::Err(err) => Err(err.clone().into()),
+                    StubIntent::StubTypeChecked(_) => Ok(()),
+                };
+                HistoryEvent::Stub {
+                    target_execution_id: params.target_execution_id.clone(),
+                    retval_hash: params.retval_hash.clone(),
+                    result,
+                }
+            }
+            EventCallNonBlocking::JoinNextTry(JoinNextTry { join_set_id, .. }) => {
+                // In preview mode we don't know the actual outcome, use Pending.
+                HistoryEvent::JoinNextTry {
+                    join_set_id: join_set_id.clone(),
+                    outcome: JoinNextTryOutcome::Pending,
+                }
+            }
+        }
+    }
+}
+
+impl EventCallBlocking {
+    fn to_history_event(&self) -> HistoryEvent {
+        match self {
+            EventCallBlocking::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
+                join_set_id,
+                requested_ffqn,
+                ..
+            }) => HistoryEvent::JoinNext {
+                join_set_id: join_set_id.clone(),
+                run_expires_at: DateTime::<Utc>::UNIX_EPOCH,
+                requested_ffqn: Some(requested_ffqn.clone()),
+                closing: false,
+            },
+            EventCallBlocking::JoinNext(JoinNext {
+                join_set_id,
+                closing,
+                ..
+            }) => HistoryEvent::JoinNext {
+                join_set_id: join_set_id.clone(),
+                run_expires_at: DateTime::<Utc>::UNIX_EPOCH,
+                requested_ffqn: None,
+                closing: *closing,
+            },
+            EventCallBlocking::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
+                join_set_id,
+                ..
+            })
+            | EventCallBlocking::OneOffDelayRequest(OneOffDelayRequest { join_set_id, .. }) => {
+                HistoryEvent::JoinSetCreate {
+                    join_set_id: join_set_id.clone(),
+                }
+            }
+        }
+    }
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -3850,7 +4051,7 @@ mod tests {
             None, // lock_extension
             None, // subscription_interruption
             info_span!("worker-test"),
-            false, // replaying_unfinished_execution
+            None, // replay_mode
         );
 
         (event_history, caching_db_connection)

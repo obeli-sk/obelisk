@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+# Speed up testing by compiling WASM components upfront.
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 

@@ -593,168 +593,255 @@ impl From<SupportedFunctionReturnValue> for grpc_gen::SupportedFunctionResult {
 
 pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::ExecutionEvent {
     grpc_gen::ExecutionEvent {
-            created_at: Some(prost_wkt_types::Timestamp::from(event.created_at)),
-            version: event.version.0,
-            backtrace_id: event.backtrace_id.map(|v|v.0),
-            event: Some(match event.event {
-                ExecutionRequest::Created {
-                    ffqn,
-                    params,
-                    parent: _,
-                    scheduled_at,
-                    component_id,
-                    deployment_id,
-                    metadata: _,
-                    scheduled_by,
-                } => grpc_gen::execution_event::Event::Created(grpc_gen::execution_event::Created {
-                    params: Some(to_any(
-                        params,
-                        format!("urn:obelisk:json:params:{ffqn}"),
-                    ).expect("Params must be JSON-serializable")),
-                    function_name: Some(grpc_gen::FunctionName::from(ffqn)),
-                    scheduled_at: Some(prost_wkt_types::Timestamp::from(scheduled_at)),
-                    component_id: Some(component_id.into()),
-                    deployment_id: Some(deployment_id.into()),
-                    scheduled_by: scheduled_by.map(|id| grpc_gen::ExecutionId { id: id.to_string() }),
-                }),
-                ExecutionRequest::Locked(Locked{
-                    component_id,
-                    deployment_id,
-                    executor_id: _,
-                    run_id,
-                    lock_expires_at,
-                    retry_config: _,
-                }) => grpc_gen::execution_event::Event::Locked(grpc_gen::execution_event::Locked {
-                    component_id: Some(component_id.into()),
-                    deployment_id: Some(deployment_id.into()),
-                    run_id: run_id.to_string(),
-                    lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
-                }),
-                ExecutionRequest::Unlocked { backoff_expires_at, reason } => {
-                    grpc_gen::execution_event::Event::Unlocked(grpc_gen::execution_event::Unlocked {
-                        backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
-                        reason: reason.to_string(),
-                    })
-                },
-                ExecutionRequest::TemporarilyFailed {
-                    backoff_expires_at,
-                    reason,
-                    detail,
-                    http_client_traces
-                } => grpc_gen::execution_event::Event::TemporarilyFailed(grpc_gen::execution_event::TemporarilyFailed {
+        created_at: Some(prost_wkt_types::Timestamp::from(event.created_at)),
+        version: event.version.0,
+        backtrace_id: event.backtrace_id.map(|v| v.0),
+        event: Some(match event.event {
+            ExecutionRequest::Created {
+                ffqn,
+                params,
+                parent: _,
+                scheduled_at,
+                component_id,
+                deployment_id,
+                metadata: _,
+                scheduled_by,
+            } => grpc_gen::execution_event::Event::Created(grpc_gen::execution_event::Created {
+                params: Some(
+                    to_any(params, format!("urn:obelisk:json:params:{ffqn}"))
+                        .expect("Params must be JSON-serializable"),
+                ),
+                function_name: Some(grpc_gen::FunctionName::from(ffqn)),
+                scheduled_at: Some(prost_wkt_types::Timestamp::from(scheduled_at)),
+                component_id: Some(component_id.into()),
+                deployment_id: Some(deployment_id.into()),
+                scheduled_by: scheduled_by.map(|id| grpc_gen::ExecutionId { id: id.to_string() }),
+            }),
+            ExecutionRequest::Locked(Locked {
+                component_id,
+                deployment_id,
+                executor_id: _,
+                run_id,
+                lock_expires_at,
+                retry_config: _,
+            }) => grpc_gen::execution_event::Event::Locked(grpc_gen::execution_event::Locked {
+                component_id: Some(component_id.into()),
+                deployment_id: Some(deployment_id.into()),
+                run_id: run_id.to_string(),
+                lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
+            }),
+            ExecutionRequest::Unlocked {
+                backoff_expires_at,
+                reason,
+            } => grpc_gen::execution_event::Event::Unlocked(grpc_gen::execution_event::Unlocked {
+                backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
+                reason: reason.to_string(),
+            }),
+            ExecutionRequest::TemporarilyFailed {
+                backoff_expires_at,
+                reason,
+                detail,
+                http_client_traces,
+            } => grpc_gen::execution_event::Event::TemporarilyFailed(
+                grpc_gen::execution_event::TemporarilyFailed {
                     reason: reason.to_string(),
                     detail,
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
-                    http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc_gen::HttpClientTrace::from).collect(),
-                }),
-                ExecutionRequest::TemporarilyTimedOut { backoff_expires_at, http_client_traces } => {
-                    grpc_gen::execution_event::Event::TemporarilyTimedOut(grpc_gen::execution_event::TemporarilyTimedOut {
-                        backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
-                        http_client_traces: http_client_traces
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(grpc_gen::HttpClientTrace::from)
-                            .collect(),
-                    })
+                    http_client_traces: http_client_traces
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(grpc_gen::HttpClientTrace::from)
+                        .collect(),
                 },
-                ExecutionRequest::Finished { retval: result, http_client_traces } => grpc_gen::execution_event::Event::Finished(grpc_gen::execution_event::Finished {
-                    value: Some(
-                        grpc_gen::SupportedFunctionResult::from(result)
-                    ),
-                    http_client_traces: http_client_traces.unwrap_or_default().into_iter().map(grpc_gen::HttpClientTrace::from).collect(),
+            ),
+            ExecutionRequest::TemporarilyTimedOut {
+                backoff_expires_at,
+                http_client_traces,
+            } => grpc_gen::execution_event::Event::TemporarilyTimedOut(
+                grpc_gen::execution_event::TemporarilyTimedOut {
+                    backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
+                    http_client_traces: http_client_traces
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(grpc_gen::HttpClientTrace::from)
+                        .collect(),
+                },
+            ),
+            ExecutionRequest::Finished {
+                retval: result,
+                http_client_traces,
+            } => grpc_gen::execution_event::Event::Finished(grpc_gen::execution_event::Finished {
+                value: Some(grpc_gen::SupportedFunctionResult::from(result)),
+                http_client_traces: http_client_traces
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(grpc_gen::HttpClientTrace::from)
+                    .collect(),
+            }),
+            ExecutionRequest::Paused => {
+                grpc_gen::execution_event::Event::Paused(grpc_gen::execution_event::Paused {})
+            }
+            ExecutionRequest::Unpaused => {
+                grpc_gen::execution_event::Event::Unpaused(grpc_gen::execution_event::Unpaused {})
+            }
+            ExecutionRequest::HistoryEvent { event } => {
+                grpc_gen::execution_event::Event::HistoryVariant(event.into())
+            }
+        }),
+    }
+}
 
-                }),
-                ExecutionRequest::Paused  => {
-                    grpc_gen::execution_event::Event::Paused(grpc_gen::execution_event::Paused{})
-                },
-                ExecutionRequest::Unpaused => grpc_gen::execution_event::Event::Unpaused(grpc_gen::execution_event::Unpaused{}),
-                ExecutionRequest::HistoryEvent { event } => grpc_gen::execution_event::Event::HistoryVariant(grpc_gen::execution_event::HistoryEvent {
-                    event: Some(match event {
-                        HistoryEvent::Persist { value, kind } => history_event::Event::Persist(history_event::Persist {
-                            data: Some(prost_wkt_types::Any {
-                                type_url: "unknown".to_string(),
-                                value,
-                            }),
-                            kind: Some(history_event::persist::PersistKind { variant: Some(match kind {
-                                PersistKind::RandomU64 { .. } =>
-                                history_event::persist::persist_kind::Variant::RandomU64(
-                                    history_event::persist::persist_kind::RandomU64 {  }),
-                                PersistKind::RandomString { .. } =>
-                                history_event::persist::persist_kind::Variant::RandomString(
-                                    history_event::persist::persist_kind::RandomString {  }),
-                                PersistKind::ExecutionId =>
-                                history_event::persist::persist_kind::Variant::ExecutionId(
-                                    history_event::persist::persist_kind::ExecutionId {  }),
-                            }) })
+impl From<HistoryEvent> for grpc_gen::execution_event::HistoryEvent {
+    fn from(event: HistoryEvent) -> Self {
+        grpc_gen::execution_event::HistoryEvent {
+            event: Some(match event {
+                HistoryEvent::Persist { value, kind } => {
+                    history_event::Event::Persist(history_event::Persist {
+                        data: Some(prost_wkt_types::Any {
+                            type_url: "unknown".to_string(),
+                            value,
                         }),
-                        HistoryEvent::JoinSetCreate { join_set_id } =>
-                            history_event::Event::JoinSetCreated(history_event::JoinSetCreated {
-                                join_set_id: Some(join_set_id.into()),
-                            }),
-                        HistoryEvent::JoinSetRequest { join_set_id, request } => history_event::Event::JoinSetRequest(history_event::JoinSetRequest {
-                            join_set_id: Some(join_set_id.into()),
-                            join_set_request: match request {
-                                JoinSetRequest::DelayRequest { delay_id, expires_at, .. } => {
-                                    Some(history_event::join_set_request::JoinSetRequest::DelayRequest(
-                                        history_event::join_set_request::DelayRequest {
-                                            delay_id: Some(delay_id.into()),
-                                            expires_at: Some(prost_wkt_types::Timestamp::from(expires_at)),
-                                        }
-                                    ))
+                        kind: Some(history_event::persist::PersistKind {
+                            variant: Some(match kind {
+                                PersistKind::RandomU64 { .. } => {
+                                    history_event::persist::persist_kind::Variant::RandomU64(
+                                        history_event::persist::persist_kind::RandomU64 {},
+                                    )
                                 }
-                                JoinSetRequest::ChildExecutionRequest { child_execution_id, params: _, target_ffqn: _, result } => {
-                                    Some(history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(
-                                        history_event::join_set_request::ChildExecutionRequest {
-                                            child_execution_id: Some(grpc_gen::ExecutionId { id: child_execution_id.to_string() }),
-                                            success: result.is_ok(),
-                                        }
-                                    ))
+                                PersistKind::RandomString { .. } => {
+                                    history_event::persist::persist_kind::Variant::RandomString(
+                                        history_event::persist::persist_kind::RandomString {},
+                                    )
                                 }
-                            },
+                                PersistKind::ExecutionId => {
+                                    history_event::persist::persist_kind::Variant::ExecutionId(
+                                        history_event::persist::persist_kind::ExecutionId {},
+                                    )
+                                }
+                            }),
                         }),
-                        HistoryEvent::JoinNext { join_set_id, run_expires_at, closing, requested_ffqn:_ } => history_event::Event::JoinNext(history_event::JoinNext {
-                            join_set_id: Some(join_set_id.into()),
-                            run_expires_at: Some(prost_wkt_types::Timestamp::from(run_expires_at)),
-                            closing,
-                        }),
-                        HistoryEvent::JoinNextTooMany { join_set_id, requested_ffqn } => history_event::Event::JoinNextTooMany(history_event::JoinNextTooMany {
-                            join_set_id: Some(join_set_id.into()),
-                            function: requested_ffqn.map(Into::into)
-                        }),
-                        HistoryEvent::JoinNextTry { join_set_id, outcome } => {
-                            let outcome = match outcome {
-                                concepts::storage::JoinNextTryOutcome::Found => history_event::join_next_try::Outcome::Found,
-                                concepts::storage::JoinNextTryOutcome::Pending => history_event::join_next_try::Outcome::Pending,
-                                concepts::storage::JoinNextTryOutcome::AllProcessed => history_event::join_next_try::Outcome::AllProcessed,
-                            };
-                            history_event::Event::JoinNextTry(history_event::JoinNextTry {
-                                join_set_id: Some(join_set_id.into()),
-                                outcome: outcome.into(),
-                            })
-                        }
-                        HistoryEvent::Schedule { execution_id, schedule_at: scheduled_at, result } => history_event::Event::Schedule(history_event::Schedule {
-                            execution_id: Some(grpc_gen::ExecutionId { id: execution_id.to_string() }),
-                            scheduled_at: Some(history_event::schedule::ScheduledAt {
-                                variant: match scheduled_at {
-                                    HistoryEventScheduleAt::Now => Some(history_event::schedule::scheduled_at::Variant::Now(history_event::schedule::scheduled_at::Now {})),
-                                    HistoryEventScheduleAt::At( at) => Some(history_event::schedule::scheduled_at::Variant::At(history_event::schedule::scheduled_at::At {
-                                        at: Some(prost_wkt_types::Timestamp::from(at)),
-                                    })),
-                                    HistoryEventScheduleAt::In (r#in ) => Some(history_event::schedule::scheduled_at::Variant::In(history_event::schedule::scheduled_at::In {
-                                        r#in: prost_wkt_types::Duration::try_from(r#in).ok(),
-                                    })),
+                    })
+                }
+                HistoryEvent::JoinSetCreate { join_set_id } => {
+                    history_event::Event::JoinSetCreated(history_event::JoinSetCreated {
+                        join_set_id: Some(join_set_id.into()),
+                    })
+                }
+                HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request,
+                } => history_event::Event::JoinSetRequest(history_event::JoinSetRequest {
+                    join_set_id: Some(join_set_id.into()),
+                    join_set_request: match request {
+                        JoinSetRequest::DelayRequest {
+                            delay_id,
+                            expires_at,
+                            ..
+                        } => Some(
+                            history_event::join_set_request::JoinSetRequest::DelayRequest(
+                                history_event::join_set_request::DelayRequest {
+                                    delay_id: Some(delay_id.into()),
+                                    expires_at: Some(prost_wkt_types::Timestamp::from(expires_at)),
                                 },
-                            }),
-                            success: result.is_ok(),
-                        }),
-                        HistoryEvent::Stub { target_execution_id, result, .. } => history_event::Event::Stub(history_event::Stub {
-                            execution_id: Some(ExecutionId::Derived(target_execution_id).into()),
-                            success: result.is_ok()
-                        }),
+                            ),
+                        ),
+                        JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id,
+                            result,
+                            ..
+                        } => Some(
+                            history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(
+                                history_event::join_set_request::ChildExecutionRequest {
+                                    child_execution_id: Some(grpc_gen::ExecutionId {
+                                        id: child_execution_id.to_string(),
+                                    }),
+                                    success: result.is_ok(),
+                                },
+                            ),
+                        ),
+                    },
+                }),
+                HistoryEvent::JoinNext {
+                    join_set_id,
+                    run_expires_at,
+                    closing,
+                    requested_ffqn: _,
+                } => history_event::Event::JoinNext(history_event::JoinNext {
+                    join_set_id: Some(join_set_id.into()),
+                    run_expires_at: Some(prost_wkt_types::Timestamp::from(run_expires_at)),
+                    closing,
+                }),
+                HistoryEvent::JoinNextTooMany {
+                    join_set_id,
+                    requested_ffqn,
+                } => history_event::Event::JoinNextTooMany(history_event::JoinNextTooMany {
+                    join_set_id: Some(join_set_id.into()),
+                    function: requested_ffqn.map(Into::into),
+                }),
+                HistoryEvent::JoinNextTry {
+                    join_set_id,
+                    outcome,
+                } => {
+                    let outcome = match outcome {
+                        concepts::storage::JoinNextTryOutcome::Found => {
+                            history_event::join_next_try::Outcome::Found
+                        }
+                        concepts::storage::JoinNextTryOutcome::Pending => {
+                            history_event::join_next_try::Outcome::Pending
+                        }
+                        concepts::storage::JoinNextTryOutcome::AllProcessed => {
+                            history_event::join_next_try::Outcome::AllProcessed
+                        }
+                    };
+                    history_event::Event::JoinNextTry(history_event::JoinNextTry {
+                        join_set_id: Some(join_set_id.into()),
+                        outcome: outcome.into(),
+                    })
+                }
+                HistoryEvent::Schedule {
+                    execution_id,
+                    schedule_at: scheduled_at,
+                    result,
+                } => history_event::Event::Schedule(history_event::Schedule {
+                    execution_id: Some(grpc_gen::ExecutionId {
+                        id: execution_id.to_string(),
                     }),
+                    scheduled_at: Some(history_event::schedule::ScheduledAt {
+                        variant: match scheduled_at {
+                            HistoryEventScheduleAt::Now => {
+                                Some(history_event::schedule::scheduled_at::Variant::Now(
+                                    history_event::schedule::scheduled_at::Now {},
+                                ))
+                            }
+                            HistoryEventScheduleAt::At(at) => {
+                                Some(history_event::schedule::scheduled_at::Variant::At(
+                                    history_event::schedule::scheduled_at::At {
+                                        at: Some(prost_wkt_types::Timestamp::from(at)),
+                                    },
+                                ))
+                            }
+                            HistoryEventScheduleAt::In(r#in) => {
+                                Some(history_event::schedule::scheduled_at::Variant::In(
+                                    history_event::schedule::scheduled_at::In {
+                                        r#in: prost_wkt_types::Duration::try_from(r#in).ok(),
+                                    },
+                                ))
+                            }
+                        },
+                    }),
+                    success: result.is_ok(),
+                }),
+                HistoryEvent::Stub {
+                    target_execution_id,
+                    result,
+                    ..
+                } => history_event::Event::Stub(history_event::Stub {
+                    execution_id: Some(ExecutionId::Derived(target_execution_id).into()),
+                    success: result.is_ok(),
                 }),
             }),
         }
+    }
 }
 
 pub mod response {
