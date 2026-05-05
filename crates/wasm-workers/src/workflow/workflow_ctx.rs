@@ -75,14 +75,14 @@ pub(crate) enum WorkflowFunctionError {
     LockExpired,
     #[error("executor closing")]
     ExecutorClosing,
-    #[error("replay finished")]
-    ReplayFinished,
+    #[error("replay waiting for response")]
+    ReplayWaitingForResponse,
 }
 
 #[derive(Debug)]
 pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
-    ReplayFinished,
+    ReplayWaitingForResponse,
     // retriable:
     InterruptDbUpdated,
     LockExpired,
@@ -119,7 +119,9 @@ impl WorkflowFunctionError {
             }
             WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
             WorkflowFunctionError::ExecutorClosing => WorkerPartialResult::ExecutorClosing,
-            WorkflowFunctionError::ReplayFinished => WorkerPartialResult::ReplayFinished,
+            WorkflowFunctionError::ReplayWaitingForResponse => {
+                WorkerPartialResult::ReplayWaitingForResponse
+            }
         }
     }
 }
@@ -136,7 +138,7 @@ impl From<ApplyError> for WorkflowFunctionError {
                 WorkflowFunctionError::ConstraintViolation(reason)
             }
             ApplyError::ExecutorClosing => WorkflowFunctionError::ExecutorClosing,
-            ApplyError::ReplayFinished => WorkflowFunctionError::ReplayFinished,
+            ApplyError::ReplayWaitingForResponse => WorkflowFunctionError::ReplayWaitingForResponse,
         }
     }
 }
@@ -2829,7 +2831,7 @@ pub(crate) mod tests {
                 }
                 WorkerPartialResult::LockExpired
                 | WorkerPartialResult::ExecutorClosing
-                | WorkerPartialResult::ReplayFinished => {
+                | WorkerPartialResult::ReplayWaitingForResponse => {
                     unreachable!()
                 }
             }

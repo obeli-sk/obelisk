@@ -9,6 +9,7 @@ use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryForReplay};
 use crate::workflow::workflow_ctx::ReplayKind;
+use crate::workflow::workflow_worker::ReplayResponse;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{DbConnection, DbPool, Locked};
@@ -361,7 +362,7 @@ impl WorkflowJsWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         js_source: String,
-    ) -> Result<(), ReplayError> {
+    ) -> Result<ReplayResponse, ReplayError> {
         let clock_fn = ConstClock(chrono::DateTime::from_timestamp_nanos(0));
 
         let config = WorkflowConfig {
