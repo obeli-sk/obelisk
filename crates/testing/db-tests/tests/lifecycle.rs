@@ -3780,3 +3780,82 @@ async fn list_logs_with_show_derived(database: Database) {
     drop(api_conn);
     db_close.close().await;
 }
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn create_paused_workflow(database: Database) {
+    if database == Database::Memory {
+        // external_api_conn not implemented for in-memory DB
+        return;
+    }
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    let scheduled_at = sim_clock.now();
+    // Create with paused: true
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at,
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: true,
+        })
+        .await
+        .unwrap();
+
+    // Verify state is paused immediately after creation
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(log.pending_state, PendingState::Paused(..));
+
+    // Paused execution cannot be locked
+    let err = db_connection
+        .lock_one(
+            sim_clock.now(),
+            ComponentId::dummy_activity(),
+            DEPLOYMENT_ID_DUMMY,
+            &execution_id,
+            RunId::generate(),
+            Version::new(1),
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!("cannot lock, execution is paused", reason.as_ref());
+
+    // Unpause the execution
+    api_conn
+        .unpause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    // Verify state is now pending at the original scheduled time
+    let log = db_connection.get(&execution_id).await.unwrap();
+    if let PendingState::PendingAt(PendingStatePendingAt {
+        scheduled_at: actual,
+        ..
+    }) = log.pending_state
+    {
+        assert_eq!(actual, scheduled_at);
+    } else {
+        panic!("Expected PendingAt state, got {:?}", log.pending_state);
+    }
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
