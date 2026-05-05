@@ -909,10 +909,10 @@ impl SqlitePool {
                     CURRENT_TIMESTAMP,
                     :first_scheduled_at,
                     0,
-                    :is_paused
+                    false
                     )
                 ",
-            )?
+            )? // paused set to false here to avoid "execution is already paused" error.
             .execute(named_params! {
                 ":execution_id": execution_id.to_string(),
                 ":is_top_level": execution_id.is_top_level(),
@@ -925,7 +925,6 @@ impl SqlitePool {
                 ":component_type": component_id.component_type,
                 ":deployment_id": deployment_id.to_string(),
                 ":first_scheduled_at": scheduled_at,
-                ":is_paused": paused,
             })?;
             AppendNotifier {
                 pending_at: if paused {

@@ -474,8 +474,8 @@ async fn create_inner(
                 &component_id.component_type.to_string(),
                 &deployment_id.to_string(),
                 &scheduled_at,
-                &paused,
-            ],
+                &false,
+            ], // paused set to false here to avoid "execution is already paused" error.
         )
         .await?;
 
