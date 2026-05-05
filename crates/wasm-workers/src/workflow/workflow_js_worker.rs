@@ -14,13 +14,13 @@ use async_trait::async_trait;
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{DbConnection, DbPool, Locked};
 use concepts::time::{ClockFn, ConstClock};
+use crate::workflow::replay_db_proxy::{ReplayDbPool, ReplayEventCollector};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
     ExecutionMetadata, FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry,
     PackageIfcFns, ParameterType, Params, ResultParsingError, ResultParsingErrorFromVal,
     ReturnTypeExtendable, SupportedFunctionReturnValue,
 };
-use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
@@ -422,6 +422,11 @@ impl WorkflowJsWorker {
         } else {
             ReplayKind::Unfinished
         };
+        let event_collector = ReplayEventCollector::new();
+        let db_pool = Arc::new(ReplayDbPool::new(
+            event_collector.clone(),
+            log.next_version.clone(),
+        ));
         let ctx = WorkerContext {
             execution_id,
             metadata: ExecutionMetadata::empty(),
@@ -451,7 +456,6 @@ impl WorkflowJsWorker {
             clock_fn.clone_box(),
         )?;
         let linked = compiled.link(fn_registry)?;
-        let db_pool = Arc::new(InMemoryPool::new());
         let worker = linked.into_worker(
             deployment_id,
             db_pool,
@@ -459,7 +463,9 @@ impl WorkflowJsWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        worker.replay_internal(ctx, replay_kind).await
+        worker
+            .replay_internal(ctx, replay_kind, event_collector)
+            .await
     }
 }
 

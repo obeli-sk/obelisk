@@ -5,6 +5,7 @@ use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
+use crate::workflow::replay_db_proxy::{ReplayDbPool, ReplayEventCollector};
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
@@ -17,7 +18,6 @@ use concepts::{
     ResultParsingError, StrVariant, TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
-use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Either;
@@ -834,6 +834,7 @@ impl WorkflowWorker {
         &self,
         ctx: WorkerContext,
         is_replay: ReplayKind,
+        event_collector: ReplayEventCollector,
     ) -> Result<ReplayResponse, ReplayError> {
         let return_value = match self.run_internal(ctx, Some(is_replay)).await {
             Ok(Either::Left(WorkerResultOk::RunFinished { retval, .. })) => {
@@ -852,9 +853,9 @@ impl WorkflowWorker {
                 Err(ReplayError::from(err))
             }
         }?;
-        // TODO: Collect `next_events`
+        let next_events = event_collector.take_events();
         Ok(ReplayResponse {
-            next_events: vec![], // FIXME
+            next_events,
             return_value,
         })
     }
@@ -931,7 +932,11 @@ impl WorkflowWorker {
         };
         // TODO: consider using current exec's watcher for faster cancellation
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
-        let db_pool = Arc::new(InMemoryPool::new());
+        let event_collector = ReplayEventCollector::new();
+        let db_pool = Arc::new(ReplayDbPool::new(
+            event_collector.clone(),
+            log.next_version.clone(),
+        ));
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
             metadata: ExecutionMetadata::empty(),
@@ -969,7 +974,9 @@ impl WorkflowWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        worker.replay_internal(ctx, replay_kind).await
+        worker
+            .replay_internal(ctx, replay_kind, event_collector)
+            .await
     }
 }
 
