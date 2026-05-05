@@ -1032,7 +1032,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Execution replayed"
+            "description": "Execution replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayResponseSer"
+                }
+              }
+            }
           },
           "404": {
             "description": "Not found"
@@ -1886,6 +1893,33 @@
           "wit_type": {
             "type": "string",
             "description": "WIT type representation"
+          }
+        }
+      },
+      "ReplayResponseSer": {
+        "type": "object",
+        "description": "Result of replaying a workflow execution",
+        "required": [
+          "next_events"
+        ],
+        "properties": {
+          "next_events": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Events that the workflow would produce next"
+          },
+          "return_value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetVal",
+                "description": "If the workflow completed during replay, contains the return value"
+              }
+            ]
           }
         }
       },

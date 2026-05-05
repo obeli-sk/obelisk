@@ -664,6 +664,8 @@ message ReplayExecutionRequest {
   ExecutionId execution_id = 1;
 }
 message ReplayExecutionResponse {
+  repeated ExecutionEvent.HistoryEvent next_events = 1;
+  optional SupportedFunctionResult return_value = 2;
 }
 
 
