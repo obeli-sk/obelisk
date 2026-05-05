@@ -78,7 +78,7 @@ impl DbPool for ReplayDbPool {
         unimplemented!("ReplayDbPool does not support external_api_conn")
     }
 
-    #[cfg(feature = "test")]
+    #[cfg(any(test, feature = "test"))]
     async fn connection_test(
         &self,
     ) -> Result<Box<dyn concepts::storage::DbConnectionTest>, DbErrorGeneric> {
@@ -101,10 +101,13 @@ impl ReplayDbConnection {
             }
         }
     }
+}
 
-    fn next_version(&self, count: usize) -> Version {
-        Version::new(self.version.0 + u32::try_from(count).unwrap())
-    }
+fn next_version(curr_version: &Version, batch_size: usize) -> Version {
+    Version::new(
+        curr_version.0
+            + u32::try_from(batch_size).expect("batch size is always just a couple of items"),
+    )
 }
 
 #[async_trait]
@@ -140,7 +143,7 @@ impl DbExecutor for ReplayDbConnection {
         unimplemented!("not used during replay")
     }
 
-    #[cfg(feature = "test")]
+    #[cfg(any(test, feature = "test"))]
     async fn lock_one(
         &self,
         _created_at: DateTime<Utc>,
@@ -175,7 +178,7 @@ impl DbExecutor for ReplayDbConnection {
         _current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         self.collect_events_from_batch(&events.batch);
-        Ok(self.next_version(events.batch.len()))
+        Ok(next_version(&self.version, events.batch.len()))
     }
 
     async fn wait_for_pending_by_ffqn(
@@ -200,7 +203,23 @@ impl DbExecutor for ReplayDbConnection {
         &self,
         _execution_id: &ExecutionId,
     ) -> Result<ExecutionEvent, DbErrorRead> {
-        unimplemented!("not used during replay")
+        // During replay, cancel_activity calls this to check if the child is already finished.
+        // Return a "Cancelled" finished event so cancel_activity returns CancelOutcome::Cancelled.
+        Ok(ExecutionEvent {
+            created_at: DateTime::UNIX_EPOCH,
+            event: ExecutionRequest::Finished {
+                retval: SupportedFunctionReturnValue::ExecutionError(
+                    concepts::FinishedExecutionError {
+                        reason: None,
+                        kind: concepts::ExecutionFailureKind::Cancelled,
+                        detail: None,
+                    },
+                ),
+                http_client_traces: None,
+            },
+            backtrace_id: None,
+            version: Version::new(0),
+        })
     }
 }
 
@@ -216,9 +235,10 @@ impl DbConnection for ReplayDbConnection {
         _execution_id: ExecutionId,
         _join_set_id: JoinSetId,
         _delay_id: DelayId,
-        _outcome: Result<(), ()>,
+        outcome: Result<(), ()>,
     ) -> Result<concepts::storage::AppendDelayResponseOutcome, DbErrorWrite> {
-        unimplemented!("not used during replay")
+        assert!(outcome.is_err(), "replay can only request to cancel delays");
+        Ok(concepts::storage::AppendDelayResponseOutcome::AlreadyCancelled)
     }
 
     async fn append_batch(
@@ -229,9 +249,7 @@ impl DbConnection for ReplayDbConnection {
         version: Version,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         self.collect_events_from_batch(&batch);
-        Ok(Version::new(
-            version.0 + u32::try_from(batch.len()).unwrap(),
-        ))
+        Ok(next_version(&version, batch.len()))
     }
 
     async fn append_batch_create_new_execution(
@@ -244,9 +262,7 @@ impl DbConnection for ReplayDbConnection {
         _backtraces: Vec<BacktraceInfo>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         self.collect_events_from_batch(&batch);
-        Ok(Version::new(
-            version.0 + u32::try_from(batch.len()).unwrap(),
-        ))
+        Ok(next_version(&version, batch.len()))
     }
 
     async fn get_execution_event(

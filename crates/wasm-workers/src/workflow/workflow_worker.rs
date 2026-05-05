@@ -846,7 +846,8 @@ impl WorkflowWorker {
                 Ok(None)
             }
             Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher)) => {
-                unreachable!("replay request does not end with DbUpdatedByWorkerOrWatcher")
+                debug!("Replay interrupted after writing events");
+                Ok(None)
             }
             Err(err) => {
                 debug!("Replay failed: {err:?}");

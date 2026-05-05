@@ -578,8 +578,11 @@ impl EventHistory {
                     join_next_idx,
                     join_next_version,
                 } => {
-                    // JoinNext is still unprocessed. This can only happen on replay if there is no progress.
-                    assert_eq!(last_key_idx, join_next_idx);
+                    // JoinNext is still unprocessed. This can only happen on the last key (the JoinNext key).
+                    assert_eq!(
+                        last_key_idx, idx,
+                        "FoundRequestButNotResponse must be returned on the last key"
+                    );
                     return Ok(FindMatchingResponse::FoundRequestButNotResponse {
                         join_next_idx,
                         join_next_version,
