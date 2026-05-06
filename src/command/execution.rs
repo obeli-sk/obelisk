@@ -8,6 +8,7 @@ use crate::get_fn_repository_client;
 use crate::server::web_api_server::ExecutionSubmitPayload;
 use anyhow::Context as _;
 use anyhow::bail;
+use base64::Engine as _;
 use chrono::DateTime;
 use concepts::ExecutionFailureKind;
 use concepts::JoinSetId;
@@ -27,6 +28,7 @@ use grpc::to_channel;
 use grpc_gen::execution_status::Status;
 use http::header::ACCEPT;
 use itertools::Either;
+use std::fmt::Write as _;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::instrument;
@@ -703,6 +705,107 @@ impl LogsOpts {
     }
 }
 
+/// Parse a JSON log response into items, print them (as JSONL when `json` is true,
+/// as human-readable text otherwise), and return the cursor of the last item.
+fn print_log_items(
+    body: &str,
+    json: bool,
+    show_run_id: bool,
+    show_derived: bool,
+) -> anyhow::Result<Option<String>> {
+    let items: Vec<serde_json::Value> =
+        serde_json::from_str(body).context("failed to parse logs JSON")?;
+    if items.is_empty() {
+        return Ok(None);
+    }
+    if json {
+        for item in &items {
+            println!(
+                "{}",
+                serde_json::to_string(item).context("failed to serialize log item")?
+            );
+        }
+    } else {
+        let mut output = String::new();
+        for item in &items {
+            let created_at = item["created_at"]
+                .as_str()
+                .context("missing created_at in log item")?;
+            let run_id = item["run_id"].as_str().unwrap_or_default();
+            let execution_id = item["execution_id"].as_str().unwrap_or_default();
+            let mut prefix = String::new();
+            if show_run_id {
+                write!(&mut prefix, "{run_id} ").expect("writing to string");
+            }
+            if show_derived {
+                write!(&mut prefix, "{execution_id} ").expect("writing to string");
+            }
+            match item["type"].as_str() {
+                Some("log") => {
+                    let level = item["level"].as_str().unwrap_or("INFO");
+                    let message = item["message"].as_str().unwrap_or_default();
+                    writeln!(
+                        &mut output,
+                        "{created_at} [{level:<6}] {prefix}{message}",
+                        level = level.to_uppercase(),
+                    )
+                    .expect("writing to string");
+                }
+                Some("stream") => {
+                    let stream_type = item["stream_type"].as_str().unwrap_or("STDOUT");
+                    let payload_b64 = item["payload"].as_str().unwrap_or_default();
+                    let payload_bytes = base64::engine::general_purpose::STANDARD
+                        .decode(payload_b64)
+                        .unwrap_or_default();
+                    let payload_utf8 = String::from_utf8_lossy(&payload_bytes);
+                    writeln!(
+                        &mut output,
+                        "{created_at} [{stream_type:<6}] {prefix}{payload_utf8}",
+                        stream_type = stream_type.to_uppercase(),
+                    )
+                    .expect("writing to string");
+                }
+                _ => {}
+            }
+        }
+        print!("{output}");
+    }
+    let cursor = items
+        .last()
+        .and_then(|v| v["cursor"].as_str())
+        .map(str::to_string);
+    Ok(cursor)
+}
+
+async fn fetch_logs(
+    client: &reqwest::Client,
+    logs_url: &str,
+    opts: &LogsOpts,
+    cursor: Option<&str>,
+    direction: &str,
+) -> anyhow::Result<String> {
+    let mut req = client
+        .get(logs_url)
+        .header(ACCEPT, "application/json")
+        .query(&[
+            ("length", opts.limit.to_string()),
+            ("direction", direction.into()),
+        ]);
+    req = opts.apply_to_request(req);
+    if let Some(c) = cursor {
+        req = req
+            .query(&[("cursor", c)])
+            .query(&[("including_cursor", "false")]);
+    }
+    let resp = req.send().await.context("failed to send logs request")?;
+    let resp_status = resp.status();
+    if !resp_status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("server returned {resp_status}: {body}"));
+    }
+    resp.text().await.context("failed to read logs response")
+}
+
 async fn execution_logs_cmd(
     api_url: &str,
     execution_id: ExecutionId,
@@ -710,23 +813,11 @@ async fn execution_logs_cmd(
     after: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let accept = if json {
-        "application/json"
-    } else {
-        "text/plain"
-    };
-    let mut req = reqwest::Client::new()
-        .get(format!("{api_url}/v1/executions/{execution_id}/logs"))
-        .header(ACCEPT, accept)
-        .query(&[("length", opts.limit.to_string())]);
-    req = opts.apply_to_request(req);
-    if let Some(after) = after {
-        req = req
-            .query(&[("cursor", after.as_str())])
-            .query(&[("including_cursor", "false")])
-            .query(&[("direction", "newer")]);
-    }
-    send_and_print(req).await
+    let client = reqwest::Client::new();
+    let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
+    let body = fetch_logs(&client, &logs_url, opts, after.as_deref(), "newer").await?;
+    print_log_items(&body, json, opts.show_run_id, opts.show_derived)?;
+    Ok(())
 }
 
 async fn follow_logs(
@@ -739,60 +830,14 @@ async fn follow_logs(
     let client = reqwest::Client::new();
     let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
     let status_url = format!("{api_url}/v1/executions/{execution_id}/status");
-    let accept = if json {
-        "application/json"
-    } else {
-        "text/plain"
-    };
     let mut cursor: Option<String> = initial_after;
 
     loop {
-        let mut req = client.get(&logs_url).header(ACCEPT, accept).query(&[
-            ("length", opts.limit.to_string()),
-            ("direction", "newer".into()),
-        ]);
-        req = opts.apply_to_request(req);
-        if let Some(ref c) = cursor {
-            req = req
-                .query(&[("cursor", c.as_str())])
-                .query(&[("including_cursor", "false")]);
-        }
-
-        let resp = req.send().await.context("failed to send logs request")?;
-        let resp_status = resp.status();
-        if !resp_status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("server returned {resp_status}: {body}"));
-        }
-
-        let body = resp.text().await.context("failed to read logs response")?;
-        let has_items = body.lines().any(|l| !l.is_empty());
-
-        if has_items {
-            if json {
-                // Parse only to extract cursor and emit JSONL; no text rendering.
-                let items: Vec<serde_json::Value> =
-                    serde_json::from_str(&body).context("failed to parse logs JSON")?;
-                for item in &items {
-                    println!(
-                        "{}",
-                        serde_json::to_string(item).context("failed to serialize log item")?
-                    );
-                }
-                if let Some(c) = items.last().and_then(|v| v["cursor"].as_str()) {
-                    cursor = Some(c.to_string());
-                }
-            } else {
-                // Forward server-rendered text directly; cursor is the timestamp
-                // at the start of the last non-empty line (always 30 chars wide).
-                print!("{body}");
-                cursor = body
-                    .lines()
-                    .rev()
-                    .find(|l| !l.is_empty())
-                    .and_then(|l| l.get(..30))
-                    .map(str::to_string);
-            }
+        let body = fetch_logs(&client, &logs_url, opts, cursor.as_deref(), "newer").await?;
+        let new_cursor = print_log_items(&body, json, opts.show_run_id, opts.show_derived)?;
+        let has_items = new_cursor.is_some();
+        if let Some(c) = new_cursor {
+            cursor = Some(c);
         }
 
         // Check if the execution has finished.
