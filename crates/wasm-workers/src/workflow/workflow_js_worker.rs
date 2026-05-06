@@ -2163,7 +2163,7 @@ mod tests {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
-        let js_source = r#"
+        let js_source = r"
         export default function call_stub() {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
@@ -2171,7 +2171,7 @@ mod tests {
             const response = js.joinNext();
             if (!response.ok) throw 'stub failed';
             return obelisk.getResult(execId).ok;
-        }"#;
+        }";
 
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "call-stub");
         let sim_clock = SimClock::epoch();
