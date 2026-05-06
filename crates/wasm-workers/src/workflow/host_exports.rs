@@ -119,6 +119,14 @@ pub(crate) mod latest {
         }
     }
 
+    impl From<&ExecutionId> for types_execution::ExecutionId {
+        fn from(value: &ExecutionId) -> Self {
+            Self {
+                id: value.to_string(),
+            }
+        }
+    }
+
     impl TryFrom<types_execution::ExecutionId> for ExecutionId {
         type Error = ExecutionIdParseError;
 

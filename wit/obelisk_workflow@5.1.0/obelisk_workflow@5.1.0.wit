@@ -62,6 +62,11 @@ interface workflow-support {
         conflict,
     }
 
+    /// Get the execution ID of the current webhook handler invocation.
+    /// Returns the ID assigned to this workflow execution.
+    @since(version = 5.1.0)
+    execution-id-current: func() -> execution-id;
+
     /// Returns a random u64 in the range [min, max).
     @since(version = 3.0.0)
     random-u64: func(min: u64, max-exclusive: u64) -> u64;

@@ -20,8 +20,8 @@ use crate::workflow::event_history::{
 };
 use crate::workflow::host_exports::latest::{self, DelayIdTypes, ExecutionIdTypes};
 use crate::workflow::host_exports::{
-    SUFFIX_FN_GET, SUFFIX_FN_STUB, execution_id_derived_into_wast_val, execution_id_into_wast_val,
-    stub_result_to_wast_val,
+    self, SUFFIX_FN_GET, SUFFIX_FN_STUB, execution_id_derived_into_wast_val,
+    execution_id_into_wast_val, stub_result_to_wast_val,
 };
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutionIdDerived};
@@ -1168,6 +1168,22 @@ impl WorkflowCtx {
         let mut inst_workflow_support = linker
             .instance(ifc_fqn)
             .map_err(|err| WasmFileError::linking_error(ifc_fqn, err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "execution-id-current",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, (): ()| {
+                    Box::new(async move {
+                        let host = caller.data_mut();
+                        let execution_id =
+                            host_exports::latest::obelisk::types::execution::ExecutionId::from(
+                                &host.execution_id,
+                            );
+                        Ok((execution_id,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("cannot link function random-u64", err))?;
 
         inst_workflow_support
             .func_wrap_async(

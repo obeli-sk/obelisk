@@ -20,6 +20,10 @@
 //! }
 //! ```
 //!
+//! ```js
+//! const currentId = obelisk.executionIdCurrent();
+//! ```
+//!
 //! ## Join Sets (Child Executions)
 //! ```js
 //! // Create a join set to manage child executions
@@ -117,7 +121,7 @@ use crate::generated::obelisk::types::execution::{ExecutionId, Function, Respons
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    JoinNextTryError, SubmitConfig, call_json, execution_id_generate, get_result_json_bt,
+    self, JoinNextTryError, SubmitConfig, call_json, execution_id_generate, get_result_json_bt,
     join_next_bt, join_next_try_bt, join_set_close_bt, join_set_create_bt,
     join_set_create_named_bt, random_string_bt, random_u64_bt, random_u64_inclusive_bt,
     schedule_json, sleep_named_bt, stub_json, submit_delay_bt, submit_json_bt,
@@ -445,6 +449,31 @@ fn get_default_export_workflow(
 fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     let obelisk = new_object(context);
 
+    // obelisk.executionIdCurrent()
+    let current_execution_id_fn = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
+        let exec_id = workflow_support::execution_id_current();
+        Ok(JsValue::from(js_string!(exec_id.id)))
+    });
+    obelisk.set(
+        js_string!("executionIdCurrent"),
+        current_execution_id_fn.to_js_function(context.realm()),
+        false,
+        context,
+    )?;
+
+    // obelisk.executionIdGenerate()
+    let exec_id_generate_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
+        let backtrace = capture_backtrace(ctx);
+        let exec_id = execution_id_generate(Some(&backtrace));
+        Ok(JsValue::from(js_string!(exec_id.id)))
+    });
+    obelisk.set(
+        js_string!("executionIdGenerate"),
+        exec_id_generate_fn.to_js_function(context.realm()),
+        false,
+        context,
+    )?;
+
     // obelisk.createJoinSet([options])
     let create_join_set = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         // Check for options.name
@@ -643,19 +672,6 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     obelisk.set(
         js_string!("getResult"),
         get_result_fn.to_js_function(context.realm()),
-        false,
-        context,
-    )?;
-
-    // obelisk.executionIdGenerate()
-    let exec_id_generate_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
-        let backtrace = capture_backtrace(ctx);
-        let exec_id = execution_id_generate(Some(&backtrace));
-        Ok(JsValue::from(js_string!(exec_id.id)))
-    });
-    obelisk.set(
-        js_string!("executionIdGenerate"),
-        exec_id_generate_fn.to_js_function(context.realm()),
         false,
         context,
     )?;
