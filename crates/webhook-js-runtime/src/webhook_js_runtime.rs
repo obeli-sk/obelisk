@@ -346,7 +346,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
     // obelisk.executionIdCurrent()
     let current_execution_id_fn = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
-        let exec_id = webhook_support::current_execution_id();
+        let exec_id = webhook_support::execution_id_current();
         Ok(JsValue::from(js_string!(exec_id.id)))
     });
     obelisk.set(
