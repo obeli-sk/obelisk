@@ -11,7 +11,7 @@ use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
-use concepts::storage::{DbConnection, DbErrorWrite, DbPool, HistoryEvent, Locked, Version};
+use concepts::storage::{DbErrorWrite, DbPool, HistoryEvent, Locked, Version};
 use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
 use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, PackageIfcFns,
@@ -907,7 +907,7 @@ impl WorkflowWorker {
         exim: &ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
-        db_conn: &dyn DbConnection,
+        real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> Result<ReplayResponse, ReplayError> {
@@ -922,6 +922,10 @@ impl WorkflowWorker {
             fuel: None,
         };
 
+        let db_conn = real_db_pool
+            .connection()
+            .await
+            .map_err(DbErrorWrite::from)?;
         let log = db_conn
             .get(&execution_id)
             .await
@@ -937,6 +941,7 @@ impl WorkflowWorker {
         let db_pool = Arc::new(ReplayDbPool::new(
             event_collector.clone(),
             log.next_version.clone(),
+            real_db_pool,
         ));
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
@@ -3726,7 +3731,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
-            db_connection.as_ref(),
+            db_pool.clone(),
             execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
@@ -3779,7 +3784,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
-            db_connection.as_ref(),
+            db_pool.clone(),
             execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
@@ -3824,7 +3829,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
-            db_connection.as_ref(),
+            db_pool.clone(),
             execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
@@ -3873,7 +3878,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
-            db_connection.as_ref(),
+            db_pool.clone(),
             execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,

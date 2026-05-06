@@ -1656,7 +1656,7 @@ async fn execution_replay(
             &replay_info.runnable_component.wasm_component.exim,
             state.engines.workflow_engine.clone(),
             Arc::new(component_registry_ro.clone()),
-            conn.as_ref(),
+            state.db_pool.clone(),
             execution_id.clone(),
             logs_storage_config,
             js_info.js_source.clone(),
@@ -1670,7 +1670,7 @@ async fn execution_replay(
             &replay_info.runnable_component.wasm_component.exim,
             state.engines.workflow_engine.clone(),
             Arc::new(component_registry_ro.clone()),
-            conn.as_ref(),
+            state.db_pool.clone(),
             execution_id.clone(),
             logs_storage_config,
         )
@@ -1752,12 +1752,6 @@ async fn execution_upgrade(
                     min_level,
                     log_sender: state.log_forwarder_sender.clone(),
                 });
-        let conn = state
-            .db_pool
-            .connection()
-            .await
-            .map_err(|e| ErrorWrapper(e, accept))?;
-
         let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
             WorkflowJsWorker::replay(
                 deployment_id,
@@ -1766,7 +1760,7 @@ async fn execution_upgrade(
                 &replay_info.runnable_component.wasm_component.exim,
                 state.engines.workflow_engine.clone(),
                 Arc::new(component_registry_ro.clone()),
-                conn.as_ref(),
+                state.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
                 js_info.js_source.clone(),
@@ -1780,7 +1774,7 @@ async fn execution_upgrade(
                 &replay_info.runnable_component.wasm_component.exim,
                 state.engines.workflow_engine.clone(),
                 Arc::new(component_registry_ro.clone()),
-                conn.as_ref(),
+                state.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
             )

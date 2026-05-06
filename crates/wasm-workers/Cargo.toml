@@ -51,7 +51,7 @@ wit-component.workspace = true
 wit-parser.workspace = true
 
 [features]
-test = []
+test = ["concepts/test", "executor/test"]
 
 [dev-dependencies]
 activity-js-runtime-builder.workspace = true

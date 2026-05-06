@@ -42,16 +42,23 @@ impl ReplayEventCollector {
 }
 
 /// A `DbPool` that returns `ReplayDbConnection` instances.
+/// Read operations are passed through to the real database pool.
 pub(crate) struct ReplayDbPool {
     collector: ReplayEventCollector,
     starting_version: Version,
+    real_pool: Arc<dyn DbPool>,
 }
 
 impl ReplayDbPool {
-    pub(crate) fn new(collector: ReplayEventCollector, starting_version: Version) -> Self {
+    pub(crate) fn new(
+        collector: ReplayEventCollector,
+        starting_version: Version,
+        real_pool: Arc<dyn DbPool>,
+    ) -> Self {
         Self {
             collector,
             starting_version,
+            real_pool,
         }
     }
 }
@@ -62,6 +69,7 @@ impl DbPool for ReplayDbPool {
         Ok(Box::new(ReplayDbConnection {
             collector: self.collector.clone(),
             version: self.starting_version.clone(),
+            real_connection: self.real_pool.connection().await?,
         }))
     }
 
@@ -69,6 +77,7 @@ impl DbPool for ReplayDbPool {
         Ok(Box::new(ReplayDbConnection {
             collector: self.collector.clone(),
             version: self.starting_version.clone(),
+            real_connection: self.real_pool.connection().await?,
         }))
     }
 
@@ -78,7 +87,7 @@ impl DbPool for ReplayDbPool {
         unimplemented!("ReplayDbPool does not support external_api_conn")
     }
 
-    #[cfg(any(test, feature = "test"))]
+    #[cfg(feature = "test")]
     async fn connection_test(
         &self,
     ) -> Result<Box<dyn concepts::storage::DbConnectionTest>, DbErrorGeneric> {
@@ -87,9 +96,11 @@ impl DbPool for ReplayDbPool {
 }
 
 /// A `DbConnection` that captures history events instead of persisting them.
+/// Read operations are delegated to the real database connection.
 struct ReplayDbConnection {
     collector: ReplayEventCollector,
     version: Version,
+    real_connection: Box<dyn DbConnection>,
 }
 
 impl ReplayDbConnection {
@@ -143,7 +154,7 @@ impl DbExecutor for ReplayDbConnection {
         unimplemented!("not used during replay")
     }
 
-    #[cfg(any(test, feature = "test"))]
+    #[cfg(feature = "test")]
     async fn lock_one(
         &self,
         _created_at: DateTime<Utc>,
@@ -225,8 +236,8 @@ impl DbExecutor for ReplayDbConnection {
 
 #[async_trait]
 impl DbConnection for ReplayDbConnection {
-    async fn get(&self, _execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
-        unimplemented!("not used during replay")
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
+        self.real_connection.get(execution_id).await
     }
 
     async fn append_delay_response(
@@ -267,17 +278,19 @@ impl DbConnection for ReplayDbConnection {
 
     async fn get_execution_event(
         &self,
-        _execution_id: &ExecutionId,
-        _version: &Version,
+        execution_id: &ExecutionId,
+        version: &Version,
     ) -> Result<ExecutionEvent, DbErrorRead> {
-        unimplemented!("not used during replay")
+        self.real_connection
+            .get_execution_event(execution_id, version)
+            .await
     }
 
     async fn get_pending_state(
         &self,
-        _execution_id: &ExecutionId,
+        execution_id: &ExecutionId,
     ) -> Result<ExecutionWithState, DbErrorRead> {
-        unimplemented!("not used during replay")
+        self.real_connection.get_pending_state(execution_id).await
     }
 
     async fn get_expired_timers(

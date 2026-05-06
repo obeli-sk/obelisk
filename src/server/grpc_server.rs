@@ -797,7 +797,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 &replay_info.runnable_component.wasm_component.exim,
                 self.engines.workflow_engine.clone(),
                 Arc::new(component_registry_ro.clone()),
-                conn.as_ref(),
+                self.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
                 js_info.js_source.clone(),
@@ -811,7 +811,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 &replay_info.runnable_component.wasm_component.exim,
                 self.engines.workflow_engine.clone(),
                 Arc::new(component_registry_ro.clone()),
-                conn.as_ref(),
+                self.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
             )
@@ -870,8 +870,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         min_level,
                         log_sender: self.log_forwarder_sender.clone(),
                     });
-            let conn = self.db_pool.connection().await.map_err(map_to_status)?;
-
             let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
                 WorkflowJsWorker::replay(
                     deployment_id,
@@ -880,7 +878,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     &replay_info.runnable_component.wasm_component.exim,
                     self.engines.workflow_engine.clone(),
                     Arc::new(component_registry_ro.clone()),
-                    conn.as_ref(),
+                    self.db_pool.clone(),
                     execution_id.clone(),
                     logs_storage_config,
                     js_info.js_source.clone(),
@@ -894,7 +892,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     &replay_info.runnable_component.wasm_component.exim,
                     self.engines.workflow_engine.clone(),
                     Arc::new(component_registry_ro.clone()),
-                    conn.as_ref(),
+                    self.db_pool.clone(),
                     execution_id.clone(),
                     logs_storage_config,
                 )
