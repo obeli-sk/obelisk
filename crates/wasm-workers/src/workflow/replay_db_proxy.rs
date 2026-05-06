@@ -44,6 +44,7 @@ impl ReplayEventCollector {
 /// A `DbPool` that returns `ReplayDbConnection` instances.
 /// Read operations are passed through to the real database pool.
 pub(crate) struct ReplayDbPool {
+    execution_id: ExecutionId,
     collector: ReplayEventCollector,
     starting_version: Version,
     real_pool: Arc<dyn DbPool>,
@@ -51,11 +52,13 @@ pub(crate) struct ReplayDbPool {
 
 impl ReplayDbPool {
     pub(crate) fn new(
+        execution_id: ExecutionId,
         collector: ReplayEventCollector,
         starting_version: Version,
         real_pool: Arc<dyn DbPool>,
     ) -> Self {
         Self {
+            execution_id,
             collector,
             starting_version,
             real_pool,
@@ -67,6 +70,7 @@ impl ReplayDbPool {
 impl DbPool for ReplayDbPool {
     async fn db_exec_conn(&self) -> Result<Box<dyn DbExecutor>, DbErrorGeneric> {
         Ok(Box::new(ReplayDbConnection {
+            execution_id: self.execution_id.clone(),
             collector: self.collector.clone(),
             version: self.starting_version.clone(),
             real_connection: self.real_pool.connection().await?,
@@ -75,6 +79,7 @@ impl DbPool for ReplayDbPool {
 
     async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric> {
         Ok(Box::new(ReplayDbConnection {
+            execution_id: self.execution_id.clone(),
             collector: self.collector.clone(),
             version: self.starting_version.clone(),
             real_connection: self.real_pool.connection().await?,
@@ -98,6 +103,7 @@ impl DbPool for ReplayDbPool {
 /// A `DbConnection` that captures history events instead of persisting them.
 /// Read operations are delegated to the real database connection.
 struct ReplayDbConnection {
+    execution_id: ExecutionId,
     collector: ReplayEventCollector,
     version: Version,
     real_connection: Box<dyn DbConnection>,
@@ -172,10 +178,11 @@ impl DbExecutor for ReplayDbConnection {
 
     async fn append(
         &self,
-        _execution_id: ExecutionId,
+        execution_id: ExecutionId,
         version: Version,
         req: AppendRequest,
     ) -> Result<AppendResponse, DbErrorWrite> {
+        assert_eq!(self.execution_id, execution_id);
         if let ExecutionRequest::HistoryEvent { event } = &req.event {
             self.collector.events.lock().unwrap().push(event.clone());
         }
@@ -188,6 +195,7 @@ impl DbExecutor for ReplayDbConnection {
         _response: AppendResponseToExecution,
         _current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        assert_eq!(self.execution_id, events.execution_id);
         self.collect_events_from_batch(&events.batch);
         Ok(next_version(&self.version, events.batch.len()))
     }
@@ -212,10 +220,11 @@ impl DbExecutor for ReplayDbConnection {
 
     async fn get_last_execution_event(
         &self,
-        _execution_id: &ExecutionId,
+        _activity_execution_id: &ExecutionId,
     ) -> Result<ExecutionEvent, DbErrorRead> {
         // During replay, cancel_activity calls this to check if the child is already finished.
         // Return a "Cancelled" finished event so cancel_activity returns CancelOutcome::Cancelled.
+        // `EventHistory::join_set_close` does not care about value of `CancelOutcome`.
         Ok(ExecutionEvent {
             created_at: DateTime::UNIX_EPOCH,
             event: ExecutionRequest::Finished {
@@ -237,17 +246,19 @@ impl DbExecutor for ReplayDbConnection {
 #[async_trait]
 impl DbConnection for ReplayDbConnection {
     async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
+        // Allow getting the current state of a stubbed execution
         self.real_connection.get(execution_id).await
     }
 
     async fn append_delay_response(
         &self,
         _created_at: DateTime<Utc>,
-        _execution_id: ExecutionId,
+        execution_id: ExecutionId,
         _join_set_id: JoinSetId,
         _delay_id: DelayId,
         outcome: Result<(), ()>,
     ) -> Result<concepts::storage::AppendDelayResponseOutcome, DbErrorWrite> {
+        assert_eq!(self.execution_id, execution_id);
         assert!(outcome.is_err(), "replay can only request to cancel delays");
         Ok(concepts::storage::AppendDelayResponseOutcome::AlreadyCancelled)
     }
@@ -256,9 +267,10 @@ impl DbConnection for ReplayDbConnection {
         &self,
         _current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
-        _execution_id: ExecutionId,
+        execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        assert_eq!(self.execution_id, execution_id);
         self.collect_events_from_batch(&batch);
         Ok(next_version(&version, batch.len()))
     }
@@ -267,15 +279,17 @@ impl DbConnection for ReplayDbConnection {
         &self,
         _current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
-        _execution_id: ExecutionId,
+        execution_id: ExecutionId,
         version: Version,
         _child_req: Vec<CreateRequest>,
         _backtraces: Vec<BacktraceInfo>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        assert_eq!(self.execution_id, execution_id);
         self.collect_events_from_batch(&batch);
         Ok(next_version(&version, batch.len()))
     }
 
+    // Needed for stubbed executions
     async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,
@@ -286,6 +300,7 @@ impl DbConnection for ReplayDbConnection {
             .await
     }
 
+    // Needed for stubbed executions
     async fn get_pending_state(
         &self,
         execution_id: &ExecutionId,

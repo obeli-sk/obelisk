@@ -939,6 +939,7 @@ impl WorkflowWorker {
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
         let event_collector = ReplayEventCollector::new();
         let db_pool = Arc::new(ReplayDbPool::new(
+            execution_id.clone(),
             event_collector.clone(),
             log.next_version.clone(),
             real_db_pool,
