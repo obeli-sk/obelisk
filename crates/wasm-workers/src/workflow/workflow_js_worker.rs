@@ -8,10 +8,12 @@ use super::workflow_worker::{ReplayError, WorkflowConfig, WorkflowWorker, Workfl
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryForReplay};
+use crate::workflow::replay_db_proxy::{ReplayDbPool, ReplayEventCollector};
 use crate::workflow::workflow_ctx::ReplayKind;
+use crate::workflow::workflow_worker::ReplayResponse;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
-use concepts::storage::{DbConnection, DbPool, Locked};
+use concepts::storage::{DbPool, Locked};
 use concepts::time::{ClockFn, ConstClock};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
@@ -19,7 +21,6 @@ use concepts::{
     PackageIfcFns, ParameterType, Params, ResultParsingError, ResultParsingErrorFromVal,
     ReturnTypeExtendable, SupportedFunctionReturnValue,
 };
-use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
@@ -357,11 +358,11 @@ impl WorkflowJsWorker {
         exim: &utils::wasm_tools::ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
-        db_conn: &dyn DbConnection,
+        real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         js_source: String,
-    ) -> Result<(), ReplayError> {
+    ) -> Result<ReplayResponse, ReplayError> {
         let clock_fn = ConstClock(chrono::DateTime::from_timestamp_nanos(0));
 
         let config = WorkflowConfig {
@@ -375,6 +376,10 @@ impl WorkflowJsWorker {
             fuel: None,
         };
 
+        let db_conn = real_db_pool
+            .connection()
+            .await
+            .map_err(concepts::storage::DbErrorWrite::from)?;
         let log = db_conn
             .get(&execution_id)
             .await
@@ -421,6 +426,13 @@ impl WorkflowJsWorker {
         } else {
             ReplayKind::Unfinished
         };
+        let event_collector = ReplayEventCollector::new();
+        let db_pool = Arc::new(ReplayDbPool::new(
+            execution_id.clone(),
+            event_collector.clone(),
+            log.next_version.clone(),
+            real_db_pool,
+        ));
         let ctx = WorkerContext {
             execution_id,
             metadata: ExecutionMetadata::empty(),
@@ -450,7 +462,6 @@ impl WorkflowJsWorker {
             clock_fn.clone_box(),
         )?;
         let linked = compiled.link(fn_registry)?;
-        let db_pool = Arc::new(InMemoryPool::new());
         let worker = linked.into_worker(
             deployment_id,
             db_pool,
@@ -458,7 +469,9 @@ impl WorkflowJsWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        worker.replay_internal(ctx, replay_kind).await
+        worker
+            .replay_internal(ctx, replay_kind, event_collector)
+            .await
     }
 }
 
@@ -1233,7 +1246,7 @@ mod tests {
             &runnable_component.wasm_component.exim,
             workflow_engine,
             fn_registry,
-            db_connection.as_ref(),
+            db_pool.clone(),
             execution_id,
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
@@ -1939,6 +1952,328 @@ mod tests {
             json!(142),
             result["ms"],
             "sleep() should return a Date whose getTime() equals the wake-up ms: {result}"
+        );
+
+        db_close.close().await;
+    }
+
+    /// Test: replay of a JS workflow that creates a join set and returns.
+    /// Replays at three stages:
+    /// 1. Just after creation (no events in DB) — preview returns `JoinSetCreate` + finished result.
+    /// 2. After `JoinSetCreate` event is manually inserted but execution is not finished — preview returns finished result.
+    /// 3. After the execution is fully done — replay returns finished result, no `next_events`.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_replay_create_join_set(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r#"
+        export default function test_replay(params) {
+            const js = obelisk.createJoinSet();
+            return "done-" + js.id();
+        }"#;
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-replay");
+        let sim_clock = SimClock::epoch();
+
+        let fn_registry: Arc<dyn FunctionRegistry> =
+            TestingFnRegistry::new_from_components(Vec::new());
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+
+        let workflow_exec =
+            new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
+
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        let params = Params::from_json_values_test(vec![json!(Vec::<String>::new())]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params,
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        // --- Stage 1: Replay on just-created execution (no events in DB) ---
+        let (log_sender, _log_recv) = mpsc::channel(100);
+        let replay = WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender: log_sender.clone(),
+            }),
+            js_source.to_string(),
+        )
+        .await
+        .unwrap();
+
+        info!("Stage 1 replay: {replay:?}");
+        assert!(
+            replay.return_value.is_some(),
+            "workflow should complete during preview (non-blocking events only)"
+        );
+        assert!(
+            !replay.next_events.is_empty(),
+            "preview should contain at least the JoinSetCreate event"
+        );
+        assert_matches!(&replay.next_events[0], HistoryEvent::JoinSetCreate { .. });
+
+        // --- Stage 2: Manually insert JoinSetCreate event, execution not finished ---
+        // Extract the JoinSetCreate event from the replay preview and insert it.
+        use concepts::storage::AppendRequest;
+        let join_set_create_event = replay.next_events[0].clone();
+        db_connection
+            .append_batch(
+                sim_clock.now(),
+                vec![AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: ExecutionRequest::HistoryEvent {
+                        event: join_set_create_event.clone(),
+                    },
+                }],
+                execution_id.clone(),
+                Version::new(1),
+            )
+            .await
+            .unwrap();
+
+        let replay2 = WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender: log_sender.clone(),
+            }),
+            js_source.to_string(),
+        )
+        .await
+        .unwrap();
+
+        info!("Stage 2 replay: {replay2:?}");
+        assert!(
+            replay2.return_value.is_some(),
+            "workflow should complete even with partial event log (JoinSetCreate already present)"
+        );
+        // The JoinSetCreate is already in the log, so it should not appear as a next_event.
+        assert!(
+            !replay2
+                .next_events
+                .iter()
+                .any(|e| matches!(e, HistoryEvent::JoinSetCreate { .. })),
+            "JoinSetCreate should not appear in next_events since it's already in the log"
+        );
+
+        // --- Stage 3: Execute the workflow fully, then replay ---
+        // Tick the execution (which already has JoinSetCreate in the log) to completion.
+        assert_eq!(
+            1,
+            workflow_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await
+                .len()
+        );
+
+        let res = db_connection
+            .get_finished_result(&execution_id)
+            .await
+            .unwrap();
+        let ok_val = assert_matches!(&res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
+        let result_str = assert_matches!(&ok_val.value, WastVal::String(s) => s);
+        assert!(
+            result_str.starts_with("done-"),
+            "unexpected result: {result_str}"
+        );
+
+        let replay3 = WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender: log_sender.clone(),
+            }),
+            js_source.to_string(),
+        )
+        .await
+        .unwrap();
+
+        info!("Stage 3 replay: {replay3:?}");
+        assert!(
+            replay3.next_events.is_empty(),
+            "replay of a finished execution must have no next_events, got {:?}",
+            replay3.next_events
+        );
+        assert!(
+            replay3.return_value.is_some(),
+            "replay of a finished execution should include the return value"
+        );
+
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_replay_call_stub(database: Database) {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+        use insta::assert_json_snapshot;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function call_stub() {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            obelisk.stub(execId, { 'ok': 'hello' });
+            const response = js.joinNext();
+            if (!response.ok) throw 'stub failed';
+            return obelisk.getResult(execId).ok;
+        }";
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "call-stub");
+        let sim_clock = SimClock::epoch();
+
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+
+        let workflow_exec =
+            new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
+
+        let execution_id = ExecutionId::from_parts(0, 0);
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        // replay on just-created execution
+        let (log_sender, _log_recv) = mpsc::channel(100);
+        let replay = WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender: log_sender.clone(),
+            }),
+            js_source.to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(4, replay.next_events.len());
+        assert_json_snapshot!(replay.next_events);
+
+        // Tick - should end with JoinNext
+        // Tick the execution (which already has JoinSetCreate in the log) to completion.
+        assert_eq!(
+            1,
+            workflow_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await
+                .len()
+        );
+        // Replay should return the return value
+        let replay = WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender: log_sender.clone(),
+            }),
+            js_source.to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert!(replay.next_events.is_empty());
+        let retval = replay.return_value.expect("retval should be computed");
+        let retval = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(WastValWithType{ r#type: _, value })) => value);
+        assert_eq!(
+            "Result(Ok(Some(String(\"\\\"hello\\\"\"))))",
+            format!("{retval:?}")
         );
 
         db_close.close().await;

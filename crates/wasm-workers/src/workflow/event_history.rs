@@ -104,8 +104,8 @@ pub(crate) enum ApplyError {
     ConstraintViolation(StrVariant),
     #[error("executor closing")]
     ExecutorClosing,
-    #[error("replay finished")]
-    ReplayFinished,
+    #[error("replay waiting for response")]
+    ReplayWaitingForResponse, // Same state as `InterruptDbUpdated`, but db might not have been updated.
 }
 
 #[expect(clippy::struct_field_names)]
@@ -277,9 +277,16 @@ impl EventHistory {
             self.extend_lock(db_connection, called_at).await?;
         }
 
-        if let Some(resp) = self.find_matching_atomic(&event_call)? {
-            trace!("found_atomic: {resp:?}");
-            return Ok(resp);
+        match self.find_matching_atomic(&event_call)? {
+            FindMatchingResponse::Found(resp) => {
+                trace!("found_atomic: {resp:?}");
+                return Ok(resp);
+            }
+            FindMatchingResponse::NotFound => {} // continue
+            FindMatchingResponse::FoundRequestButNotResponse { .. } => {
+                assert!(self.replaying_unfinished_execution);
+                return Err(ApplyError::ReplayWaitingForResponse);
+            }
         }
 
         match event_call {
@@ -291,9 +298,10 @@ impl EventHistory {
                     .await?;
                 self.event_history.push((event, Unprocessed, version));
                 trace!("find_matching_atomic must mark the non-blocking event as Processed");
-                let non_blocking_resp = self
-                    .find_matching_atomic(&EventCall::NonBlocking(cloned_non_blocking))?
-                    .expect("just stored the event as Unprocessed, it must be found");
+                let non_blocking_resp = assert_matches!(
+                    self
+                    .find_matching_atomic(&EventCall::NonBlocking(cloned_non_blocking))?,
+                    FindMatchingResponse::Found(resp) => resp, "just stored the event as Unprocessed, it must be found");
                 Ok(non_blocking_resp)
             }
             EventCall::Blocking(event_call) => {
@@ -489,7 +497,8 @@ impl EventHistory {
                         &ExecutionId::Derived(child_execution_id_derived.clone()),
                         called_at,
                     )
-                    .await;
+                    .await
+                    .map(|_| ()); // CancelOutcome is not inspected, this would interfere with replay preview.
                 if let Err(err) = res {
                     debug!("Ignoring failure to cancel {child_execution_id_derived} - {err:?}");
                 }
@@ -497,7 +506,8 @@ impl EventHistory {
                 debug!("Cancelling {delay_id}");
                 let res = db_connection
                     .cancel_delay(delay_id.clone(), called_at)
-                    .await;
+                    .await
+                    .map(|_| ()); // CancelOutcome is not inspected, this would interfere with replay preview.
                 if let Err(err) = res {
                     // This means that the watcher expired the delay in the mean time.
                     trace!("Ignoring failure to cancel {delay_id} - {err:?}");
@@ -555,7 +565,7 @@ impl EventHistory {
     fn find_matching_atomic(
         &mut self,
         event_call: &EventCall,
-    ) -> Result<Option<ChildReturnValue>, ApplyError> {
+    ) -> Result<FindMatchingResponse, ApplyError> {
         let keys = event_call.as_keys();
         assert!(!keys.is_empty());
         let last_key_idx = keys.len() - 1;
@@ -564,23 +574,25 @@ impl EventHistory {
             match resp {
                 FindMatchingResponse::NotFound => {
                     assert_eq!(idx, 0, "NotFound must be returned on the first key");
-                    return Ok(None);
+                    return Ok(FindMatchingResponse::NotFound);
                 }
                 FindMatchingResponse::FoundRequestButNotResponse {
                     join_next_idx,
                     join_next_version,
                 } => {
-                    // JoinNext is still unprocessed. This is the only exception when replay is considered finished.
-                    if join_next_idx == self.event_history.len() - 1 {
-                        return Err(ApplyError::ReplayFinished);
-                    }
-                    unreachable!(
-                        "bug in executor: FoundRequestButNotResponse in find_matching_atomic - {event_call:?}, {join_next_idx}, {join_next_version}"
+                    // JoinNext is still unprocessed. This can only happen on the last key (the JoinNext key).
+                    assert_eq!(
+                        last_key_idx, idx,
+                        "FoundRequestButNotResponse must be returned on the last key"
                     );
+                    return Ok(FindMatchingResponse::FoundRequestButNotResponse {
+                        join_next_idx,
+                        join_next_version,
+                    });
                 }
                 FindMatchingResponse::Found(found) => {
                     if idx == last_key_idx {
-                        return Ok(Some(found));
+                        return Ok(FindMatchingResponse::Found(found));
                     }
                 }
             }
@@ -680,17 +692,6 @@ impl EventHistory {
 
     // Only entry point to marking events as processed.
     fn process_event_by_key(
-        &mut self,
-        key: &DeterministicKey,
-    ) -> Result<FindMatchingResponse, ApplyError> {
-        let resp = self.process_event_by_key_inner(key)?;
-        if self.replaying_unfinished_execution && !self.has_unprocessed_requests() {
-            return Err(ApplyError::ReplayFinished);
-        }
-        Ok(resp)
-    }
-
-    fn process_event_by_key_inner(
         &mut self,
         key: &DeterministicKey,
     ) -> Result<FindMatchingResponse, ApplyError> {

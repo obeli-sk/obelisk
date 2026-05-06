@@ -5,19 +5,19 @@ use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
+use crate::workflow::replay_db_proxy::{ReplayDbPool, ReplayEventCollector};
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
-use concepts::storage::{DbConnection, DbErrorWrite, DbPool, Locked, Version};
+use concepts::storage::{DbErrorWrite, DbPool, HistoryEvent, Locked, Version};
 use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
 use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, PackageIfcFns,
     ResultParsingError, StrVariant, TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
-use db_mem::inmemory_dao::InMemoryPool;
 use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Either;
@@ -381,7 +381,7 @@ enum WorkerResultRefactored {
     DbError(DbErrorWrite),
     LockExpired(WorkflowCtx),
     ExecutorClosing(WorkflowCtx),
-    ReplayFinished,
+    ReplayWaitingForResponse,
 }
 
 type CallFuncResult = Result<(SupportedFunctionReturnValue, WorkflowCtx), RunError>;
@@ -428,7 +428,7 @@ enum PrepareFuncOk {
     },
 }
 
-pub(crate) struct ReplayFinished;
+struct ReplayWaitingForResponse;
 
 impl WorkflowWorker {
     async fn prepare_func(
@@ -640,7 +640,7 @@ impl WorkflowWorker {
         worker_span: &Span,
         execution_deadline: DateTime<Utc>,
         assigned_fuel: Option<u64>,
-    ) -> Result<Either<WorkerResultOk, ReplayFinished>, WorkflowError> {
+    ) -> Result<Either<WorkerResultOk, ReplayWaitingForResponse>, WorkflowError> {
         // call_func
         let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         let res = Self::call_func(store, func, component_func, params, assigned_fuel).await;
@@ -661,7 +661,7 @@ impl WorkflowWorker {
                     Ok(Either::Left(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher)) => {
                         Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher))
                     }
-                    Ok(Either::Right(ReplayFinished)) => Ok(Either::Right(ReplayFinished)),
+                    Ok(Either::Right(replay_response)) => Ok(Either::Right(replay_response)),
                     Err(closing_err) => {
                         debug!("Error while closing join sets {closing_err:?}");
                         Err(closing_err)
@@ -715,7 +715,9 @@ impl WorkflowWorker {
                     workflow_ctx.db_connection.version.clone(),
                 ))
             }
-            WorkerResultRefactored::ReplayFinished => Ok(Either::Right(ReplayFinished)),
+            WorkerResultRefactored::ReplayWaitingForResponse => {
+                Ok(Either::Right(ReplayWaitingForResponse))
+            }
         }
     }
 
@@ -782,7 +784,9 @@ impl WorkflowWorker {
                         // logged in epoch callback
                         WorkerResultRefactored::ExecutorClosing(workflow_ctx)
                     }
-                    WorkerPartialResult::ReplayFinished => WorkerResultRefactored::ReplayFinished,
+                    WorkerPartialResult::ReplayWaitingForResponse => {
+                        WorkerResultRefactored::ReplayWaitingForResponse
+                    }
                 }
             }
             Err(RunError::ResultParsingError(err, mut workflow_ctx)) => {
@@ -801,7 +805,7 @@ impl WorkflowWorker {
 
     async fn close_join_sets(
         workflow_ctx: &mut WorkflowCtx,
-    ) -> Result<Either<CloseJoinSetOk, ReplayFinished>, WorkflowError> {
+    ) -> Result<Either<CloseJoinSetOk, ReplayWaitingForResponse>, WorkflowError> {
         match workflow_ctx.join_sets_close_on_finish().await {
             Ok(()) => Ok(Either::Left(CloseJoinSetOk::Ok)),
             Err(ApplyError::InterruptDbUpdated) => {
@@ -820,7 +824,9 @@ impl WorkflowWorker {
             Err(ApplyError::ExecutorClosing) => Err(WorkflowError::ExecutorClosing(
                 workflow_ctx.db_connection.version.clone(),
             )),
-            Err(ApplyError::ReplayFinished) => Ok(Either::Right(ReplayFinished)),
+            Err(ApplyError::ReplayWaitingForResponse) => {
+                Ok(Either::Right(ReplayWaitingForResponse))
+            }
         }
     }
 
@@ -828,32 +834,38 @@ impl WorkflowWorker {
         &self,
         ctx: WorkerContext,
         is_replay: ReplayKind,
-    ) -> Result<(), ReplayError> {
-        match self.run_internal(ctx, Some(is_replay)).await {
-            Ok(Either::Left(WorkerResultOk::RunFinished { .. })) => {
+        event_collector: ReplayEventCollector,
+    ) -> Result<ReplayResponse, ReplayError> {
+        let return_value = match self.run_internal(ctx, Some(is_replay)).await {
+            Ok(Either::Left(WorkerResultOk::RunFinished { retval, .. })) => {
                 debug!("Replay finished returning a value");
-                Ok(())
+                Ok(Some(retval))
             }
-            Ok(Either::Right(ReplayFinished)) => {
-                debug!("Replay concluded, execution is in progress");
-                Ok(())
+            Ok(Either::Right(ReplayWaitingForResponse)) => {
+                debug!("Replay waiting for response");
+                Ok(None)
             }
             Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher)) => {
-                debug!("Replay concluded asking for interrupt"); // Response did not arrive yet.
-                Ok(())
+                debug!("Replay interrupted after writing events");
+                Ok(None)
             }
             Err(err) => {
                 debug!("Replay failed: {err:?}");
                 Err(ReplayError::from(err))
             }
-        }
+        }?;
+        let next_events = event_collector.take_events();
+        Ok(ReplayResponse {
+            next_events,
+            return_value,
+        })
     }
 
-    pub(crate) async fn run_internal(
+    async fn run_internal(
         &self,
         ctx: WorkerContext,
         is_replay: Option<ReplayKind>,
-    ) -> Result<Either<WorkerResultOk, ReplayFinished>, WorkflowError> {
+    ) -> Result<Either<WorkerResultOk, ReplayWaitingForResponse>, WorkflowError> {
         ctx.worker_span.in_scope(|| info!("Execution run started"));
         if !ctx.can_be_retried {
             warn!(
@@ -895,10 +907,10 @@ impl WorkflowWorker {
         exim: &ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
-        db_conn: &dyn DbConnection,
+        real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
-    ) -> Result<(), ReplayError> {
+    ) -> Result<ReplayResponse, ReplayError> {
         let clock_fn = ConstClock(DateTime::UNIX_EPOCH);
         let config = WorkflowConfig {
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
@@ -910,6 +922,10 @@ impl WorkflowWorker {
             fuel: None,
         };
 
+        let db_conn = real_db_pool
+            .connection()
+            .await
+            .map_err(DbErrorWrite::from)?;
         let log = db_conn
             .get(&execution_id)
             .await
@@ -921,7 +937,13 @@ impl WorkflowWorker {
         };
         // TODO: consider using current exec's watcher for faster cancellation
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
-        let db_pool = Arc::new(InMemoryPool::new());
+        let event_collector = ReplayEventCollector::new();
+        let db_pool = Arc::new(ReplayDbPool::new(
+            execution_id.clone(),
+            event_collector.clone(),
+            log.next_version.clone(),
+            real_db_pool,
+        ));
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
             metadata: ExecutionMetadata::empty(),
@@ -959,7 +981,9 @@ impl WorkflowWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        worker.replay_internal(ctx, replay_kind).await
+        worker
+            .replay_internal(ctx, replay_kind, event_collector)
+            .await
     }
 }
 
@@ -967,6 +991,15 @@ impl WorkflowWorker {
 enum CloseJoinSetOk {
     Ok,
     DbUpdatedByWorkerOrWatcher,
+}
+
+/// Result of replaying a workflow execution.
+#[derive(Debug, Clone, Default)]
+pub struct ReplayResponse {
+    /// Events that the workflow would produce next.
+    pub next_events: Vec<HistoryEvent>,
+    /// If the workflow completed during replay, contains the return value.
+    pub return_value: Option<SupportedFunctionReturnValue>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1016,12 +1049,12 @@ impl Worker for WorkflowWorker {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         match self
             .run_internal(
-                ctx, None, //is_replay
+                ctx, None, // is_replay
             )
             .await
         {
             Ok(Either::Left(ok)) => WorkerResult::Ok(ok),
-            Ok(Either::Right(_)) => unreachable!("replay was not requested"),
+            Ok(Either::Right(_)) => unreachable!("not replaying"),
             Err(workflow_err) => WorkerResult::Err(WorkerError::from(workflow_err)),
         }
     }
@@ -1079,8 +1112,8 @@ pub(crate) mod tests {
     use chrono::DateTime;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived};
     use concepts::storage::{
-        AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, JoinSetResponse, Locked,
-        LockedBy, PendingStateFinishedError,
+        AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, JoinSetRequest,
+        JoinSetResponse, Locked, LockedBy, PendingStateFinishedError,
     };
     use concepts::storage::{AppendRequest, DbConnection, DbPool, ExecutionRequest};
     use concepts::time::TokioSleep;
@@ -1126,6 +1159,9 @@ pub(crate) mod tests {
     pub const FIBOA_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA,
     ); // fiboa: func(n: u8, iterations: u32) -> u64;
+    pub const FIBOA_CONCURRENT_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA_CONCURRENT,
+    ); // fiboa-concurrent: func(n: u8, iterations: u32) -> u64;
     pub const FIBOA_SUBMIT_JSON_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA_SUBMIT_JSON,
     ); // fiboa-submit-json: func(n: u8) -> u64;
@@ -3615,15 +3651,26 @@ pub(crate) mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn fibo_workflow_each_stage_replay(db: Database) {
+    async fn fibo_workflow_each_stage_replay(
+        db: Database,
+        #[values(1, 3)] activity_iterations: u32,
+    ) {
         let sim_clock = SimClock::epoch();
         let (_guard, db_pool, db_close) = db.set_up().await;
-        fibo_workflow_each_stage_replay_inner(db_pool.clone(), sim_clock).await;
+        Box::pin(fibo_workflow_each_stage_replay_inner(
+            activity_iterations,
+            db_pool.clone(),
+            sim_clock,
+        ))
+        .await;
         db_close.close().await;
     }
 
-    async fn fibo_workflow_each_stage_replay_inner(db_pool: Arc<dyn DbPool>, sim_clock: SimClock) {
-        const INPUT_ITERATIONS: u32 = 1;
+    async fn fibo_workflow_each_stage_replay_inner(
+        activity_iterations: u32,
+        db_pool: Arc<dyn DbPool>,
+        sim_clock: SimClock,
+    ) {
         test_utils::set_up();
 
         let workflow_engine =
@@ -3658,10 +3705,10 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id: execution_id.clone(),
-                ffqn: FIBOA_WORKFLOW_FFQN,
+                ffqn: FIBOA_CONCURRENT_WORKFLOW_FFQN,
                 params: Params::from_json_values_test(vec![
                     json!(FIBO_10_INPUT),
-                    json!(INPUT_ITERATIONS),
+                    json!(activity_iterations),
                 ]),
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -3673,17 +3720,19 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
+        let activity_iterations = usize::try_from(activity_iterations).unwrap();
 
         let (log_sender, _log_storage_recv) = mpsc::channel(100);
-        // Replay just after creating
-        WorkflowWorker::replay(
+        // Replay just after creating - execution is unfinished with no events,
+        // preview should return the first event(s) the workflow would produce.
+        let replay = WorkflowWorker::replay(
             DeploymentId::generate(),
             workflow_exec.config.component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
-            db_connection.as_ref(),
+            db_pool.clone(),
             execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
@@ -3692,6 +3741,32 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+        debug!("Preview after creation: {replay:?}");
+        assert!(
+            replay.return_value.is_none(),
+            "workflow should not have completed yet"
+        );
+        assert_eq!(
+            2 + activity_iterations,
+            replay.next_events.len(),
+            "unexpected next_events: {:?}",
+            replay.next_events
+        );
+        // Verify event types: JoinSetCreate, JoinSetRequest (submit) * activity_iterations, JoinNext (await)
+        assert_matches!(&replay.next_events[0], HistoryEvent::JoinSetCreate { .. });
+        for i in 1..=activity_iterations {
+            assert_matches!(
+                &replay.next_events[i],
+                HistoryEvent::JoinSetRequest {
+                    request: JoinSetRequest::ChildExecutionRequest { .. },
+                    ..
+                }
+            );
+        }
+        assert_matches!(
+            replay.next_events.last().unwrap(),
+            HistoryEvent::JoinNext { .. }
+        );
 
         info!("Should end as BlockedByJoinSet");
 
@@ -3701,15 +3776,16 @@ pub(crate) mod tests {
 
         assert_eq!(1, executed_workflows.wait_for_tasks().await.len());
 
-        // Replay before activity has finished
-        WorkflowWorker::replay(
+        // Replay before activity has finished - workflow is blocked by JoinNext,
+        // no response available, so preview cannot produce new events.
+        let replay = WorkflowWorker::replay(
             DeploymentId::generate(),
             workflow_exec.config.component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
-            db_connection.as_ref(),
+            db_pool.clone(),
             execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
@@ -3719,8 +3795,17 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        info!("Execution should call the activity and finish");
+        assert!(
+            replay.next_events.is_empty(),
+            "unexpected next_events: {:?}",
+            replay.next_events
+        );
+        assert!(
+            replay.return_value.is_none(),
+            "workflow should not have completed yet"
+        );
 
+        // Run all activities to completion.
         let activity_exec = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
@@ -3728,20 +3813,24 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
-        let executed_activities = activity_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-        assert_eq!(1, executed_activities.len());
+        for _ in 0..activity_iterations {
+            let executed_activities = activity_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(1, executed_activities.len());
+        }
 
-        // Replay after activity has finished but before the response was processed
-        WorkflowWorker::replay(
+        // Replay after all activities have finished but before the response was processed.
+        // With activity_iterations=1, the workflow completes → return_value is set, no next_events.
+        // With activity_iterations>1, the workflow processes one response and blocks on the next JoinNext.
+        let replay = WorkflowWorker::replay(
             DeploymentId::generate(),
             workflow_exec.config.component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
-            db_connection.as_ref(),
+            db_pool.clone(),
             execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
@@ -3750,6 +3839,16 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+        // First JoinNext is already in db. Replay should return n - 1 JoinNext events
+        assert_eq!(
+            activity_iterations - 1,
+            replay.next_events.len(),
+            "unexpected replay response after activities finished: {replay:?}"
+        );
+        assert!(
+            replay.return_value.is_some(),
+            "workflow will complete in the next tick"
+        );
 
         sim_clock.move_time_forward(LOCK_EXPIRY_WORKFLOW); // another lock will be appended when the current one expires
 
@@ -3763,21 +3862,24 @@ pub(crate) mod tests {
             .get_finished_result(&execution_id)
             .await
             .unwrap();
+        // Compare prediction with reality
+        assert_eq!(replay.return_value.unwrap(), res);
+
         let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
 
         let fibo = assert_matches!(res,
             WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
 
-        // Replay after workflow was finished
-        WorkflowWorker::replay(
+        // Replay after workflow was finished - no next_events, return_value is present.
+        let replay = WorkflowWorker::replay(
             DeploymentId::generate(),
             workflow_exec.config.component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
-            db_connection.as_ref(),
+            db_pool.clone(),
             execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
@@ -3786,5 +3888,14 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+        assert!(
+            replay.next_events.is_empty(),
+            "replay of a finished execution must have no next_events, got {:?}",
+            replay.next_events
+        );
+        assert!(
+            replay.return_value.is_some(),
+            "replay of a finished execution should include the return value"
+        );
     }
 }

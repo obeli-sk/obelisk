@@ -46,6 +46,7 @@ use grpc::grpc_gen;
 use grpc::grpc_gen::GenerateExecutionIdResponse;
 use grpc::grpc_gen::GetStatusResponse;
 use grpc::grpc_gen::get_status_response::Message;
+use grpc::grpc_mapping;
 use grpc::grpc_mapping::TonicServerOptionExt;
 use grpc::grpc_mapping::TonicServerResultExt;
 use grpc::grpc_mapping::convert_length;
@@ -796,7 +797,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 &replay_info.runnable_component.wasm_component.exim,
                 self.engines.workflow_engine.clone(),
                 Arc::new(component_registry_ro.clone()),
-                conn.as_ref(),
+                self.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
                 js_info.js_source.clone(),
@@ -810,17 +811,26 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 &replay_info.runnable_component.wasm_component.exim,
                 self.engines.workflow_engine.clone(),
                 Arc::new(component_registry_ro.clone()),
-                conn.as_ref(),
+                self.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
             )
             .await
         };
-        if let Err(err) = replay_res {
+        let replay_response = replay_res.map_err(|err| {
             info!("Replay failed: {err:?}");
-            return Err(tonic::Status::internal(format!("replay failed: {err}")));
-        }
-        Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {}))
+            tonic::Status::internal(format!("replay failed: {err}"))
+        })?;
+        Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {
+            next_events: replay_response
+                .next_events
+                .into_iter()
+                .map(grpc_mapping::history_event_to_grpc)
+                .collect(),
+            return_value: replay_response
+                .return_value
+                .map(grpc_gen::SupportedFunctionResult::from),
+        }))
     }
 
     #[instrument(skip_all, fields(execution_id))]
@@ -860,8 +870,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         min_level,
                         log_sender: self.log_forwarder_sender.clone(),
                     });
-            let conn = self.db_pool.connection().await.map_err(map_to_status)?;
-
             let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
                 WorkflowJsWorker::replay(
                     deployment_id,
@@ -870,7 +878,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     &replay_info.runnable_component.wasm_component.exim,
                     self.engines.workflow_engine.clone(),
                     Arc::new(component_registry_ro.clone()),
-                    conn.as_ref(),
+                    self.db_pool.clone(),
                     execution_id.clone(),
                     logs_storage_config,
                     js_info.js_source.clone(),
@@ -884,7 +892,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     &replay_info.runnable_component.wasm_component.exim,
                     self.engines.workflow_engine.clone(),
                     Arc::new(component_registry_ro.clone()),
-                    conn.as_ref(),
+                    self.db_pool.clone(),
                     execution_id.clone(),
                     logs_storage_config,
                 )

@@ -28,8 +28,9 @@ use concepts::{
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, ExecutionEvent, ExecutionListPagination,
-        ExecutionRequest, ExecutionWithState, ListExecutionsFilter, LogInfoAppendRow, Pagination,
-        PendingState, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version, VersionType,
+        ExecutionRequest, ExecutionWithState, HistoryEvent, ListExecutionsFilter, LogInfoAppendRow,
+        Pagination, PendingState, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version,
+        VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -118,6 +119,7 @@ pub(crate) struct WebApiState {
         ExecutionResponsesResponse,
         ExecutionStubPayload,
         RetVal,
+        ReplayResponseSer,
         ExecutionSubmitPayload,
         ExecutionUpgradePayload,
         logs::LogEntryRowSer,
@@ -1310,6 +1312,25 @@ impl From<SupportedFunctionReturnValue> for RetVal {
     }
 }
 
+/// Result of replaying a workflow execution
+#[derive(Debug, Serialize, ToSchema)]
+struct ReplayResponseSer {
+    /// Events that the workflow would produce next
+    #[schema(value_type = Vec<Object>)]
+    next_events: Vec<HistoryEvent>,
+    /// If the workflow completed during replay, contains the return value
+    return_value: Option<RetVal>,
+}
+
+impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayResponseSer {
+    fn from(value: wasm_workers::workflow::workflow_worker::ReplayResponse) -> Self {
+        Self {
+            next_events: value.next_events,
+            return_value: value.return_value.map(RetVal::from),
+        }
+    }
+}
+
 /// Get execution return value
 #[utoipa::path(
     get,
@@ -1580,7 +1601,7 @@ async fn stream_execution_response_task(
         ("execution_id" = String, Path, description = "Execution ID to replay")
     ),
     responses(
-        (status = 200, description = "Execution replayed"),
+        (status = 200, description = "Execution replayed", body = ReplayResponseSer),
         (status = 404, description = "Not found"),
         (status = 422, description = "Replay failed")
     )
@@ -1635,7 +1656,7 @@ async fn execution_replay(
             &replay_info.runnable_component.wasm_component.exim,
             state.engines.workflow_engine.clone(),
             Arc::new(component_registry_ro.clone()),
-            conn.as_ref(),
+            state.db_pool.clone(),
             execution_id.clone(),
             logs_storage_config,
             js_info.js_source.clone(),
@@ -1649,26 +1670,34 @@ async fn execution_replay(
             &replay_info.runnable_component.wasm_component.exim,
             state.engines.workflow_engine.clone(),
             Arc::new(component_registry_ro.clone()),
-            conn.as_ref(),
+            state.db_pool.clone(),
             execution_id.clone(),
             logs_storage_config,
         )
         .await
     };
-    if let Err(err) = replay_res {
+    let replay_response = replay_res.map_err(|err| {
         info!("Replay failed: {err:?}");
-        return Err(HttpResponse {
+        HttpResponse {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             message: format!("Replay failed: {err}"),
             accept,
-        });
-    }
-    Ok(HttpResponse {
-        status: StatusCode::OK,
-        message: "replayed".to_string(),
-        accept,
-    }
-    .into_response())
+        }
+    })?;
+    let ser = ReplayResponseSer::from(replay_response);
+    Ok(match accept {
+        AcceptHeader::Json => Json(ser).into_response(),
+        AcceptHeader::Text => {
+            let mut output = String::new();
+            for event in &ser.next_events {
+                writeln!(&mut output, "{event}").expect("writing to string");
+            }
+            if let Some(retval) = &ser.return_value {
+                writeln!(&mut output, "return_value: {retval:?}").expect("writing to string");
+            }
+            output.into_response()
+        }
+    })
 }
 
 /// Payload for upgrading an execution to a new component version
@@ -1723,12 +1752,6 @@ async fn execution_upgrade(
                     min_level,
                     log_sender: state.log_forwarder_sender.clone(),
                 });
-        let conn = state
-            .db_pool
-            .connection()
-            .await
-            .map_err(|e| ErrorWrapper(e, accept))?;
-
         let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
             WorkflowJsWorker::replay(
                 deployment_id,
@@ -1737,7 +1760,7 @@ async fn execution_upgrade(
                 &replay_info.runnable_component.wasm_component.exim,
                 state.engines.workflow_engine.clone(),
                 Arc::new(component_registry_ro.clone()),
-                conn.as_ref(),
+                state.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
                 js_info.js_source.clone(),
@@ -1751,7 +1774,7 @@ async fn execution_upgrade(
                 &replay_info.runnable_component.wasm_component.exim,
                 state.engines.workflow_engine.clone(),
                 Arc::new(component_registry_ro.clone()),
-                conn.as_ref(),
+                state.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
             )
