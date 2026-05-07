@@ -8,11 +8,14 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[features]
+test = ["concepts/test", "db-mem/test", "db-sqlite/test", "db-postgres/test"]
+
 [dependencies]
-concepts = { workspace = true, features = ["test"] }
-db-mem = { workspace = true, features = ["test"] }
-db-sqlite = { workspace = true, features = ["tempfile", "test"] }
-db-postgres = { workspace = true, features = ["test"] }
+concepts.workspace = true
+db-mem.workspace = true
+db-sqlite = { workspace = true, features = ["tempfile"] }
+db-postgres.workspace = true
 test-utils.workspace = true
 utils.workspace = true
 val-json.workspace = true
