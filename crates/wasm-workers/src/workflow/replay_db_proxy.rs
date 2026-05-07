@@ -1,22 +1,20 @@
-//! A database proxy for replay that captures all appended `HistoryEvent`s in memory
+//! A workflow database proxy for replay that captures all appended `HistoryEvent`s in memory
 //! instead of persisting them. This allows `replay_internal` to collect the events
 //! that the workflow would produce next.
 
+use super::caching_db_connection::{CacheableDbEvent, WorkflowDbConnection};
+use crate::activity::cancel_registry::CancelRegistry;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::component_id::ComponentDigest;
-use concepts::prefixed_ulid::{DelayId, ExecutorId, RunId};
-use concepts::storage::{
-    AppendBatchResponse, AppendEventsToExecution, AppendRequest, AppendResponse,
-    AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric,
-    DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbExecutor, DbPool, ExecutionEvent,
-    ExecutionLog, ExecutionRequest, ExecutionWithState, ExpiredTimer, HistoryEvent,
-    LockPendingResponse, LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
-    Version,
-};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, JoinSetId,
-    SupportedFunctionReturnValue,
+    ComponentId, ExecutionId,
+    prefixed_ulid::DelayId,
+    storage::{
+        self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
+        AppendResponseToExecution, BacktraceInfo, CancelOutcome, CreateRequest, DbConnection,
+        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ExecutionRequest,
+        HistoryEvent, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version,
+    },
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -78,76 +76,37 @@ impl ReplayEventCollector {
     }
 }
 
-/// A `DbPool` that returns `ReplayDbConnection` instances.
-/// Read operations are passed through to the real database pool.
-pub(crate) struct ReplayDbPool {
-    execution_id: ExecutionId,
-    collector: ReplayEventCollector,
-    starting_version: Version,
-    real_pool: Arc<dyn DbPool>,
-}
-
-impl ReplayDbPool {
-    pub(crate) fn new(
-        execution_id: ExecutionId,
-        collector: ReplayEventCollector,
-        starting_version: Version,
-        real_pool: Arc<dyn DbPool>,
-    ) -> Self {
-        Self {
-            execution_id,
-            collector,
-            starting_version,
-            real_pool,
-        }
-    }
-}
-
-#[async_trait]
-impl DbPool for ReplayDbPool {
-    async fn db_exec_conn(&self) -> Result<Box<dyn DbExecutor>, DbErrorGeneric> {
-        Ok(Box::new(ReplayDbConnection {
-            execution_id: self.execution_id.clone(),
-            collector: self.collector.clone(),
-            version: self.starting_version.clone(),
-            real_connection: self.real_pool.connection().await?,
-        }))
-    }
-
-    async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric> {
-        Ok(Box::new(ReplayDbConnection {
-            execution_id: self.execution_id.clone(),
-            collector: self.collector.clone(),
-            version: self.starting_version.clone(),
-            real_connection: self.real_pool.connection().await?,
-        }))
-    }
-
-    async fn external_api_conn(
-        &self,
-    ) -> Result<Box<dyn concepts::storage::DbExternalApi>, DbErrorGeneric> {
-        unimplemented!("ReplayDbPool does not support external_api_conn")
-    }
-
-    #[cfg(feature = "test")]
-    async fn connection_test(
-        &self,
-    ) -> Result<Box<dyn concepts::storage::DbConnectionTest>, DbErrorGeneric> {
-        unimplemented!("ReplayDbPool does not support connection_test")
-    }
-}
-
-/// A `DbConnection` that captures history events instead of persisting them.
+/// A `WorkflowDbConnection` that captures history events instead of persisting them.
 /// Read operations are delegated to the real database connection.
-struct ReplayDbConnection {
+pub(crate) struct ReplayWorkflowDbConnection {
     execution_id: ExecutionId,
     collector: ReplayEventCollector,
     version: Version,
     real_connection: Box<dyn DbConnection>,
 }
 
-impl ReplayDbConnection {
-    fn collect_events_from_batch(&self, batch: &[AppendRequest]) {
+impl ReplayWorkflowDbConnection {
+    pub(crate) fn new(
+        execution_id: ExecutionId,
+        collector: ReplayEventCollector,
+        version: Version,
+        real_connection: Box<dyn DbConnection>,
+    ) -> Self {
+        Self {
+            execution_id,
+            collector,
+            version,
+            real_connection,
+        }
+    }
+
+    fn collect_history_event(&self, req: &AppendRequest) {
+        if let ExecutionRequest::HistoryEvent { event } = &req.event {
+            self.collector.events.lock().unwrap().push(event.clone());
+        }
+    }
+
+    fn collect_history_events_from_batch(&self, batch: &[AppendRequest]) {
         let mut events = self.collector.events.lock().unwrap();
         for req in batch {
             if let ExecutionRequest::HistoryEvent { event } = &req.event {
@@ -164,166 +123,140 @@ fn next_version(curr_version: &Version, batch_size: usize) -> Version {
     )
 }
 
-#[async_trait]
-impl DbExecutor for ReplayDbConnection {
-    async fn lock_pending_by_ffqns(
-        &self,
-        _batch_size: u32,
-        _pending_at_or_sooner: DateTime<Utc>,
-        _ffqns: Arc<[FunctionFqn]>,
-        _created_at: DateTime<Utc>,
-        _component_id: ComponentId,
-        _deployment_id: concepts::prefixed_ulid::DeploymentId,
-        _executor_id: ExecutorId,
-        _lock_expires_at: DateTime<Utc>,
-        _run_id: RunId,
-        _retry_config: ComponentRetryConfig,
-    ) -> Result<LockPendingResponse, DbErrorWrite> {
-        unimplemented!("not used during replay")
-    }
-
-    async fn lock_pending_by_component_digest(
-        &self,
-        _batch_size: u32,
-        _pending_at_or_sooner: DateTime<Utc>,
-        _component_id: &ComponentId,
-        _deployment_id: concepts::prefixed_ulid::DeploymentId,
-        _created_at: DateTime<Utc>,
-        _executor_id: ExecutorId,
-        _lock_expires_at: DateTime<Utc>,
-        _run_id: RunId,
-        _retry_config: ComponentRetryConfig,
-    ) -> Result<LockPendingResponse, DbErrorWrite> {
-        unimplemented!("not used during replay")
-    }
-
-    #[cfg(feature = "test")]
-    async fn lock_one(
-        &self,
-        _created_at: DateTime<Utc>,
-        _component_id: ComponentId,
-        _deployment_id: concepts::prefixed_ulid::DeploymentId,
-        _execution_id: &ExecutionId,
-        _run_id: RunId,
-        _version: Version,
-        _executor_id: ExecutorId,
-        _lock_expires_at: DateTime<Utc>,
-        _retry_config: ComponentRetryConfig,
-    ) -> Result<concepts::storage::LockedExecution, DbErrorWrite> {
-        unimplemented!("not used during replay")
-    }
-
-    async fn append(
-        &self,
-        execution_id: ExecutionId,
-        version: Version,
-        req: AppendRequest,
-    ) -> Result<AppendResponse, DbErrorWrite> {
-        assert_eq!(self.execution_id, execution_id);
-        if let ExecutionRequest::HistoryEvent { event } = &req.event {
-            self.collector.events.lock().unwrap().push(event.clone());
+/// Extract the `AppendRequest` and `Version` from a `CacheableDbEvent`, collecting
+/// the history event and recording the appropriate `CapturedDbWrite`.
+fn cacheable_event_parts(
+    event: CacheableDbEvent,
+) -> (
+    AppendRequest,
+    Version,
+    Option<CreateRequest>,
+    Option<BacktraceInfo>,
+) {
+    match event {
+        CacheableDbEvent::SubmitChildExecution {
+            request,
+            version,
+            child_req,
+            backtrace,
         }
-        self.collector.writes.lock().unwrap().push(CapturedDbWrite::Append {
-            execution_id,
-            version: version.clone(),
-            req,
-        });
-        Ok(Version::new(version.0 + 1))
-    }
-
-    async fn append_batch_respond_to_parent(
-        &self,
-        events: AppendEventsToExecution,
-        response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorWrite> {
-        assert_eq!(self.execution_id, events.execution_id);
-        self.collect_events_from_batch(&events.batch);
-        let next = next_version(&self.version, events.batch.len());
-        self.collector
-            .writes
-            .lock()
-            .unwrap()
-            .push(CapturedDbWrite::AppendBatchRespondToParent {
-                events,
-                response,
-                current_time,
-            });
-        Ok(next)
-    }
-
-    async fn wait_for_pending_by_ffqn(
-        &self,
-        _pending_at_or_sooner: DateTime<Utc>,
-        _ffqns: Arc<[FunctionFqn]>,
-        _timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) {
-        // no-op for replay
-    }
-
-    async fn wait_for_pending_by_component_digest(
-        &self,
-        _pending_at_or_sooner: DateTime<Utc>,
-        _component_digest: &ComponentDigest,
-        _timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) {
-        // no-op for replay
-    }
-
-    async fn get_last_execution_event(
-        &self,
-        _activity_execution_id: &ExecutionId,
-    ) -> Result<ExecutionEvent, DbErrorRead> {
-        // During replay, cancel_activity calls this to check if the child is already finished.
-        // Return a "Cancelled" finished event so cancel_activity returns CancelOutcome::Cancelled.
-        // `EventHistory::join_set_close` does not care about value of `CancelOutcome`.
-        Ok(ExecutionEvent {
-            created_at: DateTime::UNIX_EPOCH,
-            event: ExecutionRequest::Finished {
-                retval: SupportedFunctionReturnValue::ExecutionError(
-                    concepts::FinishedExecutionError {
-                        reason: None,
-                        kind: concepts::ExecutionFailureKind::Cancelled,
-                        detail: None,
-                    },
-                ),
-                http_client_traces: None,
-            },
-            backtrace_id: None,
-            version: Version::new(0),
-        })
+        | CacheableDbEvent::Schedule {
+            request,
+            version,
+            child_req,
+            backtrace,
+        } => (request, version, Some(child_req), backtrace),
+        CacheableDbEvent::SubmitChildExecutionError {
+            request,
+            version,
+            backtrace,
+        }
+        | CacheableDbEvent::ScheduleError {
+            request,
+            version,
+            backtrace,
+        }
+        | CacheableDbEvent::JoinSetCreate {
+            request,
+            version,
+            backtrace,
+        }
+        | CacheableDbEvent::Persist {
+            request,
+            version,
+            backtrace,
+        }
+        | CacheableDbEvent::SubmitDelay {
+            request,
+            version,
+            backtrace,
+        }
+        | CacheableDbEvent::JoinNextTry {
+            request,
+            version,
+            backtrace,
+        } => (request, version, None, backtrace),
     }
 }
 
 #[async_trait]
-impl DbConnection for ReplayDbConnection {
-    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead> {
-        // Allow getting the current state of a stubbed execution
-        self.real_connection.get(execution_id).await
+impl WorkflowDbConnection for ReplayWorkflowDbConnection {
+    fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
     }
 
-    async fn append_delay_response(
-        &self,
-        _created_at: DateTime<Utc>,
+    fn version(&self) -> &Version {
+        &self.version
+    }
+
+    async fn append_non_blocking(
+        &mut self,
+        non_blocking_event: CacheableDbEvent,
+        _called_at: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        let (request, version, child_req, backtrace) = cacheable_event_parts(non_blocking_event);
+        self.collect_history_event(&request);
+        if let Some(child_req) = child_req {
+            self.collector.writes.lock().unwrap().push(
+                CapturedDbWrite::AppendBatchCreateNewExecution {
+                    current_time: _called_at,
+                    batch: vec![request],
+                    execution_id: self.execution_id.clone(),
+                    version: version.clone(),
+                    child_req: vec![child_req],
+                    backtraces: backtrace.into_iter().collect(),
+                },
+            );
+        } else {
+            self.collector
+                .writes
+                .lock()
+                .unwrap()
+                .push(CapturedDbWrite::Append {
+                    execution_id: self.execution_id.clone(),
+                    version: version.clone(),
+                    req: request,
+                });
+        }
+        self.version = Version::new(version.0 + 1);
+        Ok(())
+    }
+
+    async fn append_blocking(
+        &mut self,
         execution_id: ExecutionId,
-        _join_set_id: JoinSetId,
-        _delay_id: DelayId,
-        outcome: Result<(), ()>,
-    ) -> Result<concepts::storage::AppendDelayResponseOutcome, DbErrorWrite> {
+        req: AppendRequest,
+        _called_at: DateTime<Utc>,
+        _wasm_backtrace: Option<storage::WasmBacktrace>,
+        _component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
-        assert!(outcome.is_err(), "replay can only request to cancel delays");
-        Ok(concepts::storage::AppendDelayResponseOutcome::AlreadyCancelled)
+        self.collect_history_event(&req);
+        let version = self.version.clone();
+        self.collector
+            .writes
+            .lock()
+            .unwrap()
+            .push(CapturedDbWrite::Append {
+                execution_id,
+                version: version.clone(),
+                req,
+            });
+        self.version = Version::new(version.0 + 1);
+        Ok(())
     }
 
     async fn append_batch(
-        &self,
+        &mut self,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: Version,
-    ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        _wasm_backtrace: Option<storage::WasmBacktrace>,
+        _component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
-        self.collect_events_from_batch(&batch);
+        self.collect_history_events_from_batch(&batch);
+        let version = self.version.clone();
         let next = next_version(&version, batch.len());
         self.collector
             .writes
@@ -335,37 +268,66 @@ impl DbConnection for ReplayDbConnection {
                 execution_id,
                 version,
             });
-        Ok(next)
+        self.version = next;
+        Ok(())
     }
 
     async fn append_batch_create_new_execution(
-        &self,
+        &mut self,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: Version,
         child_req: Vec<CreateRequest>,
-        backtraces: Vec<BacktraceInfo>,
-    ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        _wasm_backtrace: Option<storage::WasmBacktrace>,
+        _component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
-        self.collect_events_from_batch(&batch);
+        self.collect_history_events_from_batch(&batch);
+        let version = self.version.clone();
         let next = next_version(&version, batch.len());
-        self.collector
-            .writes
-            .lock()
-            .unwrap()
-            .push(CapturedDbWrite::AppendBatchCreateNewExecution {
+        self.collector.writes.lock().unwrap().push(
+            CapturedDbWrite::AppendBatchCreateNewExecution {
                 current_time,
                 batch,
                 execution_id,
                 version,
                 child_req,
-                backtraces,
+                backtraces: Vec::new(),
+            },
+        );
+        self.version = next;
+        Ok(())
+    }
+
+    async fn append_batch_respond_to_parent(
+        &mut self,
+        events: AppendEventsToExecution,
+        response: AppendResponseToExecution,
+        current_time: DateTime<Utc>,
+    ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        assert_eq!(self.execution_id, events.execution_id);
+        self.collect_history_events_from_batch(&events.batch);
+        let next = next_version(&self.version, events.batch.len());
+        self.collector
+            .writes
+            .lock()
+            .unwrap()
+            .push(CapturedDbWrite::AppendBatchRespondToParent {
+                events,
+                response,
+                current_time,
             });
+        self.version = next.clone();
         Ok(next)
     }
 
-    // Needed for stubbed executions
+    async fn get_create_request(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<CreateRequest, DbErrorRead> {
+        self.real_connection.get_create_request(execution_id).await
+    }
+
     async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,
@@ -374,25 +336,6 @@ impl DbConnection for ReplayDbConnection {
         self.real_connection
             .get_execution_event(execution_id, version)
             .await
-    }
-
-    // Needed for stubbed executions
-    async fn get_pending_state(
-        &self,
-        execution_id: &ExecutionId,
-    ) -> Result<ExecutionWithState, DbErrorRead> {
-        self.real_connection.get_pending_state(execution_id).await
-    }
-
-    async fn get_expired_timers(
-        &self,
-        _at: DateTime<Utc>,
-    ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
-        unimplemented!("not used during replay")
-    }
-
-    async fn create(&self, _req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
-        unimplemented!("not used during replay")
     }
 
     async fn subscribe_to_next_responses(
@@ -405,31 +348,31 @@ impl DbConnection for ReplayDbConnection {
         Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout))
     }
 
-    async fn wait_for_finished_result(
-        &self,
+    async fn flush_non_blocking_event_cache(
+        &mut self,
+        _current_time: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        // No caching in replay — nothing to flush.
+        Ok(())
+    }
+
+    async fn cancel_activity(
+        &mut self,
+        _cancel_registry: &CancelRegistry,
         _execution_id: &ExecutionId,
-        _timeout_fut: Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>,
-    ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
-        unimplemented!("not used during replay")
+        _cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        // During replay, always return Cancelled.
+        // `EventHistory::join_set_close` does not care about the value of `CancelOutcome`.
+        Ok(CancelOutcome::Cancelled)
     }
 
-    async fn append_backtrace(&self, _append: BacktraceInfo) -> Result<(), DbErrorWrite> {
-        // Silently discard backtraces during replay
-        Ok(())
-    }
-
-    async fn append_backtrace_batch(&self, _batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite> {
-        // Silently discard backtraces during replay
-        Ok(())
-    }
-
-    async fn append_log(&self, _row: LogInfoAppendRow) -> Result<(), DbErrorWrite> {
-        // Silently discard logs during replay
-        Ok(())
-    }
-
-    async fn append_log_batch(&self, _batch: &[LogInfoAppendRow]) -> Result<(), DbErrorWrite> {
-        // Silently discard logs during replay
-        Ok(())
+    async fn cancel_delay(
+        &mut self,
+        _delay_id: DelayId,
+        _cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        // During replay, always return Cancelled.
+        Ok(CancelOutcome::Cancelled)
     }
 }

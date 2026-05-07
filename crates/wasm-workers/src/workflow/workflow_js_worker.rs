@@ -11,7 +11,7 @@ use super::workflow_worker::{
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryForReplay};
-use crate::workflow::replay_db_proxy::{ReplayDbPool, ReplayEventCollector};
+use crate::workflow::replay_db_proxy::{ReplayEventCollector, ReplayWorkflowDbConnection};
 use crate::workflow::workflow_ctx::ReplayKind;
 use crate::workflow::workflow_worker::ReplayResponse;
 use async_trait::async_trait;
@@ -430,11 +430,14 @@ impl WorkflowJsWorker {
             ReplayKind::Unfinished
         };
         let event_collector = ReplayEventCollector::new();
-        let db_pool = Arc::new(ReplayDbPool::new(
+        let replay_db_connection = Box::new(ReplayWorkflowDbConnection::new(
             execution_id.clone(),
             event_collector.clone(),
             log.next_version.clone(),
-            real_db_pool,
+            real_db_pool
+                .connection()
+                .await
+                .map_err(concepts::storage::DbErrorWrite::from)?,
         ));
         let ctx = WorkerContext {
             execution_id,
@@ -467,14 +470,20 @@ impl WorkflowJsWorker {
         let linked = compiled.link(fn_registry)?;
         let worker = linked.into_worker(
             deployment_id,
-            db_pool,
+            real_db_pool,
             Arc::new(DeadlineTrackerFactoryForReplay {}),
             CancelRegistry::new(),
             logs_storage_config,
         );
         let version = ctx.version.clone();
         worker
-            .replay_internal(ctx, replay_kind, event_collector, version)
+            .replay_internal(
+                ctx,
+                replay_db_connection,
+                replay_kind,
+                event_collector,
+                version,
+            )
             .await
     }
 
@@ -561,11 +570,14 @@ impl WorkflowJsWorker {
 
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
         let event_collector = ReplayEventCollector::new();
-        let replay_db_pool = Arc::new(ReplayDbPool::new(
+        let replay_db_connection = Box::new(ReplayWorkflowDbConnection::new(
             execution_id.clone(),
             event_collector.clone(),
             log.next_version.clone(),
-            real_db_pool,
+            real_db_pool
+                .connection()
+                .await
+                .map_err(concepts::storage::DbErrorWrite::from)?,
         ));
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
@@ -598,14 +610,20 @@ impl WorkflowJsWorker {
         let linked = compiled.link(fn_registry)?;
         let worker = linked.into_worker(
             deployment_id,
-            replay_db_pool,
+            real_db_pool,
             Arc::new(DeadlineTrackerFactoryForReplay {}),
             CancelRegistry::new(),
             logs_storage_config,
         );
         let version = ctx.version.clone();
         let replay_response = worker
-            .replay_internal(ctx, replay_kind, event_collector.clone(), version)
+            .replay_internal(
+                ctx,
+                replay_db_connection,
+                replay_kind,
+                event_collector.clone(),
+                version,
+            )
             .await?;
 
         // Step 3: Compare against expected outcome.

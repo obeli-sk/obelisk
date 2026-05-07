@@ -3,9 +3,13 @@ use super::event_history::ApplyError;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
-use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
+use crate::workflow::caching_db_connection::{
+    CachingBuffer, CachingDbConnection, WorkflowDbConnection,
+};
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
-use crate::workflow::replay_db_proxy::{CapturedDbWrite, ReplayDbPool, ReplayEventCollector};
+use crate::workflow::replay_db_proxy::{
+    CapturedDbWrite, ReplayEventCollector, ReplayWorkflowDbConnection,
+};
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
@@ -435,6 +439,7 @@ impl WorkflowWorker {
     async fn prepare_func(
         &self,
         ctx: WorkerContext,
+        db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
     ) -> Result<PrepareFuncOk, WorkflowError> {
         assert_eq!(self.config.component_id, ctx.locked_event.component_id);
@@ -455,12 +460,6 @@ impl WorkflowWorker {
 
         let version_at_start = ctx.version.clone();
         let seed = ctx.execution_id.random_seed();
-        let db_connection = CachingDbConnection::new(
-            self.db_pool.connection().await.unwrap(),
-            ctx.execution_id.clone(),
-            CachingBuffer::new(self.config.join_next_blocking_strategy),
-            ctx.version,
-        );
         let workflow_ctx = WorkflowCtx::new(
             self.deployment_id,
             db_connection,
@@ -515,7 +514,7 @@ impl WorkflowWorker {
             Ok(instance) => instance,
             Err(err) => {
                 let reason = err.to_string();
-                let version = store.into_data().db_connection.version.clone();
+                let version = store.into_data().db_connection.version().clone();
                 if reason.starts_with("maximum concurrent") {
                     return Err(WorkflowError::LimitReached { reason, version });
                 }
@@ -539,7 +538,7 @@ impl WorkflowWorker {
                         ),
                         detail: None,
                     },
-                    store.into_data().db_connection.version.clone(),
+                    store.into_data().db_connection.version().clone(),
                 ));
             };
             instance
@@ -593,7 +592,7 @@ impl WorkflowWorker {
                 {
                     let worker_partial_result = err
                         .clone()
-                        .into_worker_partial_result(workflow_ctx.db_connection.version.clone());
+                        .into_worker_partial_result(workflow_ctx.db_connection.version().clone());
                     Err(RunError::WorkerPartialResult(
                         worker_partial_result,
                         workflow_ctx,
@@ -655,7 +654,7 @@ impl WorkflowWorker {
                     Ok(Either::Left(CloseJoinSetOk::Ok)) => {
                         Ok(Either::Left(WorkerResultOk::RunFinished {
                             retval,
-                            version: workflow_ctx.db_connection.version.clone(),
+                            version: workflow_ctx.db_connection.version().clone(),
                             http_client_traces: None,
                         }))
                     }
@@ -680,7 +679,7 @@ impl WorkflowWorker {
                         // Propagate the original error
                         Err(WorkflowError::FatalError(
                             err,
-                            workflow_ctx.db_connection.version.clone(),
+                            workflow_ctx.db_connection.version().clone(),
                         ))
                     }
                     Err(closing_err) => {
@@ -702,7 +701,7 @@ impl WorkflowWorker {
                     .await
                     .map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::LockExpired(
-                    workflow_ctx.db_connection.version.clone(),
+                    workflow_ctx.db_connection.version().clone(),
                 ))
             }
             WorkerResultRefactored::ExecutorClosing(mut workflow_ctx) => {
@@ -713,7 +712,7 @@ impl WorkflowWorker {
                     .await
                     .map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::ExecutorClosing(
-                    workflow_ctx.db_connection.version.clone(),
+                    workflow_ctx.db_connection.version().clone(),
                 ))
             }
             WorkerResultRefactored::ReplayWaitingForResponse => {
@@ -816,14 +815,14 @@ impl WorkflowWorker {
             Err(ApplyError::DbError(db_error)) => Err(WorkflowError::DbError(db_error)),
             Err(ApplyError::NondeterminismDetected(detail)) => Err(WorkflowError::FatalError(
                 FatalError::NondeterminismDetected { detail },
-                workflow_ctx.db_connection.version.clone(),
+                workflow_ctx.db_connection.version().clone(),
             )),
             Err(ApplyError::ConstraintViolation(reason)) => Err(WorkflowError::FatalError(
                 FatalError::ConstraintViolation { reason },
-                workflow_ctx.db_connection.version.clone(),
+                workflow_ctx.db_connection.version().clone(),
             )),
             Err(ApplyError::ExecutorClosing) => Err(WorkflowError::ExecutorClosing(
-                workflow_ctx.db_connection.version.clone(),
+                workflow_ctx.db_connection.version().clone(),
             )),
             Err(ApplyError::ReplayWaitingForResponse) => {
                 Ok(Either::Right(ReplayWaitingForResponse))
@@ -834,11 +833,12 @@ impl WorkflowWorker {
     pub(crate) async fn replay_internal(
         &self,
         ctx: WorkerContext,
+        db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: ReplayKind,
         event_collector: ReplayEventCollector,
         version: Version,
     ) -> Result<ReplayResponse, ReplayError> {
-        let return_value = match self.run_internal(ctx, Some(is_replay)).await {
+        let return_value = match self.run_internal(ctx, db_connection, Some(is_replay)).await {
             Ok(Either::Left(WorkerResultOk::RunFinished { retval, .. })) => {
                 debug!("Replay finished returning a value");
                 Ok(Some(retval))
@@ -867,13 +867,14 @@ impl WorkflowWorker {
     async fn run_internal(
         &self,
         ctx: WorkerContext,
+        db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
     ) -> Result<Either<WorkerResultOk, ReplayWaitingForResponse>, WorkflowError> {
         ctx.worker_span.in_scope(|| {
             info!(
                 "Execution {} started",
                 is_replay.map(|_| "replay").unwrap_or("run")
-            )
+            );
         });
         if !ctx.can_be_retried {
             warn!(
@@ -882,7 +883,7 @@ impl WorkflowWorker {
         }
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
-        let prepare_finished = match self.prepare_func(ctx, is_replay).await? {
+        let prepare_finished = match self.prepare_func(ctx, db_connection, is_replay).await? {
             PrepareFuncOk::Finished(finished) => finished,
             PrepareFuncOk::LockAlreadyExpired => {
                 return Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher));
@@ -940,11 +941,14 @@ impl WorkflowWorker {
         // TODO: consider using current exec's watcher for faster cancellation
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
         let event_collector = ReplayEventCollector::new();
-        let db_pool = Arc::new(ReplayDbPool::new(
+        let replay_db_connection = Box::new(ReplayWorkflowDbConnection::new(
             execution_id.clone(),
             event_collector.clone(),
             log.next_version.clone(),
-            real_db_pool,
+            real_db_pool
+                .connection()
+                .await
+                .map_err(DbErrorWrite::from)?,
         ));
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
@@ -978,14 +982,20 @@ impl WorkflowWorker {
 
         let worker = linked.into_worker(
             deployment_id,
-            db_pool,
+            real_db_pool,
             Arc::new(DeadlineTrackerFactoryForReplay {}),
             CancelRegistry::new(),
             logs_storage_config,
         );
         let version = ctx.version.clone();
         worker
-            .replay_internal(ctx, replay_kind, event_collector, version)
+            .replay_internal(
+                ctx,
+                replay_db_connection,
+                replay_kind,
+                event_collector,
+                version,
+            )
             .await
     }
 
@@ -1043,11 +1053,14 @@ impl WorkflowWorker {
         };
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
         let event_collector = ReplayEventCollector::new();
-        let replay_db_pool = Arc::new(ReplayDbPool::new(
+        let replay_db_connection = Box::new(ReplayWorkflowDbConnection::new(
             execution_id.clone(),
             event_collector.clone(),
             log.next_version.clone(),
-            real_db_pool,
+            real_db_pool
+                .connection()
+                .await
+                .map_err(DbErrorWrite::from)?,
         ));
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
@@ -1080,14 +1093,20 @@ impl WorkflowWorker {
         let linked = compiled.link(fn_registry)?;
         let worker = linked.into_worker(
             deployment_id,
-            replay_db_pool,
+            real_db_pool,
             Arc::new(DeadlineTrackerFactoryForReplay {}),
             CancelRegistry::new(),
             logs_storage_config,
         );
         let version = ctx.version.clone();
         let replay_response = worker
-            .replay_internal(ctx, replay_kind, event_collector.clone(), version)
+            .replay_internal(
+                ctx,
+                replay_db_connection,
+                replay_kind,
+                event_collector.clone(),
+                version,
+            )
             .await?;
 
         // Step 3: Compare against expected outcome.
@@ -1244,9 +1263,17 @@ impl Worker for WorkflowWorker {
     }
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
+        let db_connection = Box::new(CachingDbConnection::new(
+            self.db_pool.connection().await.unwrap(),
+            ctx.execution_id.clone(),
+            CachingBuffer::new(self.config.join_next_blocking_strategy),
+            ctx.version.clone(),
+        ));
         match self
             .run_internal(
-                ctx, None, // is_replay
+                ctx,
+                db_connection,
+                None, // is_replay
             )
             .await
         {

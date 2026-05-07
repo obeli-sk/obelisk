@@ -1,5 +1,6 @@
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId,
@@ -11,14 +12,98 @@ use concepts::{
         ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
+use std::future::Future;
 use std::pin::Pin;
 use tracing::{debug, instrument, warn};
 
+#[async_trait]
+pub(crate) trait WorkflowDbConnection: Send {
+    fn execution_id(&self) -> &ExecutionId;
+    fn version(&self) -> &Version;
+
+    async fn append_non_blocking(
+        &mut self,
+        non_blocking_event: CacheableDbEvent,
+        called_at: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_blocking(
+        &mut self,
+        execution_id: ExecutionId,
+        req: AppendRequest,
+        called_at: DateTime<Utc>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_batch(
+        &mut self,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_batch_create_new_execution(
+        &mut self,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        child_req: Vec<CreateRequest>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_batch_respond_to_parent(
+        &mut self,
+        events: AppendEventsToExecution,
+        response: AppendResponseToExecution,
+        current_time: DateTime<Utc>,
+    ) -> Result<AppendBatchResponse, DbErrorWrite>;
+
+    async fn get_create_request(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<CreateRequest, DbErrorRead>;
+
+    async fn get_execution_event(
+        &self,
+        execution_id: &ExecutionId,
+        version: &Version,
+    ) -> Result<ExecutionEvent, DbErrorRead>;
+
+    async fn subscribe_to_next_responses(
+        &self,
+        execution_id: &ExecutionId,
+        last_response: ResponseCursor,
+        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout>;
+
+    async fn flush_non_blocking_event_cache(
+        &mut self,
+        current_time: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn cancel_activity(
+        &mut self,
+        cancel_registry: &CancelRegistry,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite>;
+
+    async fn cancel_delay(
+        &mut self,
+        delay_id: DelayId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite>;
+}
+
 pub(crate) struct CachingDbConnection {
     db_connection: Box<dyn DbConnection>,
-    pub(crate) execution_id: ExecutionId,
+    execution_id: ExecutionId,
     pub(crate) caching_buffer: Option<CachingBuffer>,
-    pub(crate) version: Version,
+    version: Version,
 }
 impl CachingDbConnection {
     pub(crate) fn new(
@@ -110,8 +195,17 @@ impl CachingBuffer {
     }
 }
 
-impl CachingDbConnection {
-    pub(crate) async fn append_non_blocking(
+#[async_trait]
+impl WorkflowDbConnection for CachingDbConnection {
+    fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
+    }
+
+    fn version(&self) -> &Version {
+        &self.version
+    }
+
+    async fn append_non_blocking(
         &mut self,
         non_blocking_event: CacheableDbEvent,
         called_at: DateTime<Utc>,
@@ -201,7 +295,7 @@ impl CachingDbConnection {
         Ok(())
     }
 
-    pub(crate) async fn append_blocking(
+    async fn append_blocking(
         &mut self,
         execution_id: ExecutionId,
         req: AppendRequest,
@@ -225,7 +319,7 @@ impl CachingDbConnection {
         Ok(())
     }
 
-    pub(crate) async fn append_batch(
+    async fn append_batch(
         &mut self,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
@@ -249,7 +343,7 @@ impl CachingDbConnection {
         Ok(())
     }
 
-    pub(crate) async fn append_batch_create_new_execution(
+    async fn append_batch_create_new_execution(
         &mut self,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
@@ -285,7 +379,7 @@ impl CachingDbConnection {
         Ok(())
     }
 
-    pub(crate) async fn append_batch_respond_to_parent(
+    async fn append_batch_respond_to_parent(
         &mut self,
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
@@ -297,14 +391,14 @@ impl CachingDbConnection {
             .await
     }
 
-    pub(crate) async fn get_create_request(
+    async fn get_create_request(
         &self,
         execution_id: &ExecutionId,
     ) -> Result<CreateRequest, DbErrorRead> {
         self.db_connection.get_create_request(execution_id).await
     }
 
-    pub(crate) async fn get_execution_event(
+    async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,
         version: &Version,
@@ -314,7 +408,7 @@ impl CachingDbConnection {
             .await
     }
 
-    pub(crate) async fn subscribe_to_next_responses(
+    async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
         last_response: ResponseCursor,
@@ -325,22 +419,8 @@ impl CachingDbConnection {
             .await
     }
 
-    async fn flush_non_blocking_event_cache_if_full(
-        &mut self,
-        current_time: DateTime<Utc>,
-    ) -> Result<(), DbErrorWrite> {
-        if let Some(caching_buffer) = &self.caching_buffer {
-            let too_many = caching_buffer.non_blocking_event_batch.len()
-                >= caching_buffer.non_blocking_event_batch_size;
-            if too_many {
-                self.flush_non_blocking_event_cache(current_time).await?;
-            }
-        }
-        Ok(())
-    }
-
     #[instrument(level = tracing::Level::DEBUG, skip(self))]
-    pub(crate) async fn flush_non_blocking_event_cache(
+    async fn flush_non_blocking_event_cache(
         &mut self,
         current_time: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
@@ -432,7 +512,7 @@ impl CachingDbConnection {
         Ok(())
     }
 
-    pub(crate) async fn cancel_activity(
+    async fn cancel_activity(
         &mut self,
         cancel_registry: &CancelRegistry,
         execution_id: &ExecutionId,
@@ -444,7 +524,7 @@ impl CachingDbConnection {
             .await
     }
 
-    pub(crate) async fn cancel_delay(
+    async fn cancel_delay(
         &mut self,
         delay_id: DelayId,
         cancelled_at: DateTime<Utc>,
@@ -469,6 +549,20 @@ impl Drop for CachingDbConnection {
 }
 
 impl CachingDbConnection {
+    async fn flush_non_blocking_event_cache_if_full(
+        &mut self,
+        current_time: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        if let Some(caching_buffer) = &self.caching_buffer {
+            let too_many = caching_buffer.non_blocking_event_batch.len()
+                >= caching_buffer.non_blocking_event_batch_size;
+            if too_many {
+                WorkflowDbConnection::flush_non_blocking_event_cache(self, current_time).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn persist_backtrace_blocking(
         &mut self,
         version: &Version,
