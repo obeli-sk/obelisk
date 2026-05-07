@@ -478,7 +478,7 @@ impl EventHistory {
                     format!("not found in open join sets: `{join_set_id}`").into(),
                 )
             })?;
-        debug!("Closing `{join_set_id}` with {response_ids:?}");
+        debug!("Closing `{join_set_id}` with unawaited {response_ids:?}");
 
         let join_next_count = response_ids.len();
         // Attempt to cancel activities and delays.
@@ -1384,11 +1384,6 @@ impl EventHistory {
             }
 
             EventCallNonBlocking::Stub(Stub {
-                // target_ffqn,
-                // target_execution_id,
-                // parent_id,
-                // join_set_id,
-                // stub_retval,
                 intent,
                 params,
                 wasm_backtrace,

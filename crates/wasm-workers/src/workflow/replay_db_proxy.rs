@@ -22,22 +22,59 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-/// Shared buffer that accumulates `HistoryEvent`s during replay.
+/// A captured database write operation with all arguments needed to replay it
+/// against the real database.
+#[derive(Debug, Clone)]
+pub(crate) enum CapturedDbWrite {
+    Append {
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
+    },
+    AppendBatch {
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        version: Version,
+    },
+    AppendBatchCreateNewExecution {
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        version: Version,
+        child_req: Vec<CreateRequest>,
+        backtraces: Vec<BacktraceInfo>,
+    },
+    AppendBatchRespondToParent {
+        events: AppendEventsToExecution,
+        response: AppendResponseToExecution,
+        current_time: DateTime<Utc>,
+    },
+}
+
+/// Shared buffer that accumulates `HistoryEvent`s and full write operations during replay.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ReplayEventCollector {
     events: Arc<Mutex<Vec<HistoryEvent>>>,
+    writes: Arc<Mutex<Vec<CapturedDbWrite>>>,
 }
 
 impl ReplayEventCollector {
     pub(crate) fn new() -> Self {
         Self {
             events: Arc::new(Mutex::new(Vec::new())),
+            writes: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     /// Extract collected events, consuming the buffer.
     pub(crate) fn take_events(&self) -> Vec<HistoryEvent> {
         std::mem::take(&mut *self.events.lock().unwrap())
+    }
+
+    /// Extract collected write operations, consuming the buffer.
+    pub(crate) fn take_writes(&self) -> Vec<CapturedDbWrite> {
+        std::mem::take(&mut *self.writes.lock().unwrap())
     }
 }
 
@@ -186,18 +223,33 @@ impl DbExecutor for ReplayDbConnection {
         if let ExecutionRequest::HistoryEvent { event } = &req.event {
             self.collector.events.lock().unwrap().push(event.clone());
         }
+        self.collector.writes.lock().unwrap().push(CapturedDbWrite::Append {
+            execution_id,
+            version: version.clone(),
+            req,
+        });
         Ok(Version::new(version.0 + 1))
     }
 
     async fn append_batch_respond_to_parent(
         &self,
         events: AppendEventsToExecution,
-        _response: AppendResponseToExecution,
-        _current_time: DateTime<Utc>,
+        response: AppendResponseToExecution,
+        current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         assert_eq!(self.execution_id, events.execution_id);
         self.collect_events_from_batch(&events.batch);
-        Ok(next_version(&self.version, events.batch.len()))
+        let next = next_version(&self.version, events.batch.len());
+        self.collector
+            .writes
+            .lock()
+            .unwrap()
+            .push(CapturedDbWrite::AppendBatchRespondToParent {
+                events,
+                response,
+                current_time,
+            });
+        Ok(next)
     }
 
     async fn wait_for_pending_by_ffqn(
@@ -265,28 +317,52 @@ impl DbConnection for ReplayDbConnection {
 
     async fn append_batch(
         &self,
-        _current_time: DateTime<Utc>,
+        current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
         self.collect_events_from_batch(&batch);
-        Ok(next_version(&version, batch.len()))
+        let next = next_version(&version, batch.len());
+        self.collector
+            .writes
+            .lock()
+            .unwrap()
+            .push(CapturedDbWrite::AppendBatch {
+                current_time,
+                batch,
+                execution_id,
+                version,
+            });
+        Ok(next)
     }
 
     async fn append_batch_create_new_execution(
         &self,
-        _current_time: DateTime<Utc>,
+        current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
-        _child_req: Vec<CreateRequest>,
-        _backtraces: Vec<BacktraceInfo>,
+        child_req: Vec<CreateRequest>,
+        backtraces: Vec<BacktraceInfo>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
         self.collect_events_from_batch(&batch);
-        Ok(next_version(&version, batch.len()))
+        let next = next_version(&version, batch.len());
+        self.collector
+            .writes
+            .lock()
+            .unwrap()
+            .push(CapturedDbWrite::AppendBatchCreateNewExecution {
+                current_time,
+                batch,
+                execution_id,
+                version,
+                child_req,
+                backtraces,
+            });
+        Ok(next)
     }
 
     // Needed for stubbed executions

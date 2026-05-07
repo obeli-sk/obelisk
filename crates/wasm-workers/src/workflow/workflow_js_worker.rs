@@ -4,7 +4,10 @@
 //! This wrapper translates the user's typed interface `func(params) -> result<T, E>`
 //! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
-use super::workflow_worker::{ReplayError, WorkflowConfig, WorkflowWorker, WorkflowWorkerCompiled};
+use super::workflow_worker::{
+    AdvanceOutcome, AdvanceResponse, ReplayError, WorkflowConfig, WorkflowWorker,
+    WorkflowWorkerCompiled, apply_captured_write,
+};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryForReplay};
@@ -13,7 +16,7 @@ use crate::workflow::workflow_ctx::ReplayKind;
 use crate::workflow::workflow_worker::ReplayResponse;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
-use concepts::storage::{DbPool, Locked};
+use concepts::storage::{DbPool, HistoryEvent, Locked, Version};
 use concepts::time::{ClockFn, ConstClock};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
@@ -474,6 +477,159 @@ impl WorkflowJsWorker {
             .replay_internal(ctx, replay_kind, event_collector, version)
             .await
     }
+
+    /// Advance a paused JS workflow by one interrupt boundary.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn advance(
+        deployment_id: DeploymentId,
+        component_id: ComponentId,
+        wasmtime_component: wasmtime::component::Component,
+        exim: &utils::wasm_tools::ExIm,
+        engine: Arc<Engine>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        real_db_pool: Arc<dyn DbPool>,
+        execution_id: ExecutionId,
+        logs_storage_config: Option<LogStrageConfig>,
+        js_source: String,
+        expected_version: Version,
+        expected_events: Vec<HistoryEvent>,
+        expected_return_value: Option<SupportedFunctionReturnValue>,
+    ) -> Result<AdvanceResponse, ReplayError> {
+        // Step 1: Check version before replaying.
+        let db_conn = real_db_pool
+            .connection()
+            .await
+            .map_err(concepts::storage::DbErrorWrite::from)?;
+        let log = db_conn
+            .get(&execution_id)
+            .await
+            .map_err(concepts::storage::DbErrorWrite::from)?;
+        if log.next_version != expected_version {
+            return Ok(AdvanceResponse {
+                version: log.next_version,
+                outcome: AdvanceOutcome::VersionMismatch,
+            });
+        }
+
+        // Step 2: Replay to capture events and write operations.
+        let replay_kind = if log.is_finished() {
+            ReplayKind::Finished
+        } else {
+            ReplayKind::Unfinished
+        };
+        let clock_fn = ConstClock(chrono::DateTime::from_timestamp_nanos(0));
+        let config = WorkflowConfig {
+            join_next_blocking_strategy:
+                super::workflow_worker::JoinNextBlockingStrategy::Interrupt,
+            backtrace_persist: false,
+            lock_extension: None,
+            subscription_interruption: None,
+            component_id,
+            stub_wasi: true,
+            fuel: None,
+        };
+
+        let original_params = log.params().clone();
+        let json_params = original_params
+            .as_json_values()
+            .expect("params come from database");
+        let params_json_list: Vec<serde_json::Value> = json_params
+            .iter()
+            .map(|v| {
+                serde_json::Value::String(
+                    serde_json::to_string(v).expect("serde_json::Value must be serializable"),
+                )
+            })
+            .collect();
+        let boa_ffqn =
+            FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
+        let boa_params: Arc<[serde_json::Value]> = Arc::from([
+            serde_json::Value::String(js_source),
+            serde_json::Value::Array(params_json_list),
+            serde_json::Value::Null,
+        ]);
+        let transformed_params = Params::from_json_values(
+            boa_params,
+            [
+                &TypeWrapper::String,
+                &TypeWrapper::List(Box::new(TypeWrapper::String)),
+                &TypeWrapper::Option(Box::new(TypeWrapper::String)),
+            ]
+            .into_iter(),
+        )
+        .expect("types checked at compile time");
+
+        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let event_collector = ReplayEventCollector::new();
+        let replay_db_pool = Arc::new(ReplayDbPool::new(
+            execution_id.clone(),
+            event_collector.clone(),
+            log.next_version.clone(),
+            real_db_pool,
+        ));
+        let ctx = WorkerContext {
+            execution_id: execution_id.clone(),
+            metadata: ExecutionMetadata::empty(),
+            ffqn: boa_ffqn,
+            params: transformed_params,
+            event_history: log.event_history().collect(),
+            responses: log.responses,
+            version: log.next_version.clone(),
+            can_be_retried: true,
+            worker_span: Span::current(),
+            locked_event: Locked {
+                component_id: config.component_id.clone(),
+                deployment_id,
+                executor_id: ExecutorId::generate(),
+                run_id: RunId::generate(),
+                lock_expires_at: clock_fn.now(),
+                retry_config: ComponentRetryConfig::WORKFLOW,
+            },
+            executor_close_watcher,
+        };
+
+        let compiled = WorkflowWorkerCompiled::new_with_config_inner(
+            wasmtime_component,
+            exim,
+            config,
+            engine,
+            clock_fn.clone_box(),
+        )?;
+        let linked = compiled.link(fn_registry)?;
+        let worker = linked.into_worker(
+            deployment_id,
+            replay_db_pool,
+            Arc::new(DeadlineTrackerFactoryForReplay {}),
+            CancelRegistry::new(),
+            logs_storage_config,
+        );
+        let version = ctx.version.clone();
+        let replay_response = worker
+            .replay_internal(ctx, replay_kind, event_collector.clone(), version)
+            .await?;
+
+        // Step 3: Compare against expected outcome.
+        if replay_response.next_events != expected_events
+            || replay_response.return_value != expected_return_value
+        {
+            return Ok(AdvanceResponse {
+                version: replay_response.version,
+                outcome: AdvanceOutcome::Mismatch,
+            });
+        }
+
+        // Step 4: Apply captured writes to the real DB.
+        let captured_writes = event_collector.take_writes();
+        let mut new_version = replay_response.version.clone();
+        for write in captured_writes {
+            new_version = apply_captured_write(&*db_conn, write).await?;
+        }
+
+        Ok(AdvanceResponse {
+            version: new_version,
+            outcome: AdvanceOutcome::Applied,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -492,7 +648,7 @@ mod tests {
     use concepts::storage::{
         CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest, HistoryEvent,
         JoinSetRequest, JoinSetResponse, Locked, PendingState, PendingStateFinished,
-        PendingStateFinishedError, PendingStateFinishedResultKind, Version,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStatePaused, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
@@ -2282,6 +2438,202 @@ mod tests {
             format!("{retval:?}")
         );
 
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_advance_call_stub(database: Database) {
+        use insta::assert_json_snapshot;
+
+        use crate::activity::activity_worker::test::compile_activity_stub;
+        use crate::workflow::workflow_worker::AdvanceOutcome;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function call_stub() {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            obelisk.stub(execId, { 'ok': 'hello' });
+            const response = js.joinNext();
+            if (!response.ok) throw 'stub failed';
+            return obelisk.getResult(execId).ok;
+        }";
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "call-stub");
+        let sim_clock = SimClock::epoch();
+
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+
+        let execution_id = ExecutionId::from_parts(0, 0);
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let (log_sender, _log_recv) = mpsc::channel(100);
+        let logs_storage_config = Some(LogStrageConfig {
+            min_level: concepts::storage::LogLevel::Debug,
+            log_sender: log_sender.clone(),
+        });
+
+        // Step 1: Replay to get expected events and version.
+        let replay = WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config.clone(),
+            js_source.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // The stub workflow produces events: JoinSetCreate, ChildExecutionRequest, Stub, JoinNext
+        assert_json_snapshot!(&replay.next_events);
+        // The workflow blocks at JoinNext (interrupt strategy), return_value is None.
+        assert!(
+            replay.return_value.is_none(),
+            "workflow should block at JoinNext"
+        );
+
+        // Step 2: Advance with correct expectations — writes events to DB.
+        let advance = WorkflowJsWorker::advance(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config.clone(),
+            js_source.to_string(),
+            replay.version.clone(),
+            replay.next_events.clone(),
+            replay.return_value.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(advance.outcome, AdvanceOutcome::Applied);
+        assert!(
+            advance.version.0 > replay.version.0,
+            "version should have advanced"
+        );
+
+        // Step 3: Verify DB was updated with the new events.
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(log.next_version, advance.version);
+        // The new events should be in the log (Created + Paused + 4 advanced = 6 events).
+        assert_eq!(
+            6,
+            log.events.len(),
+            "expected 6 events in log (Created + Paused + 4 advanced), got: {}",
+            log.events.len()
+        );
+        assert_matches!(
+            log.pending_state,
+            PendingState::Paused(PendingStatePaused::BlockedByJoinSet(_))
+        );
+        assert_eq!(
+            1,
+            log.responses.len(),
+            "unexpected responses {:?}",
+            log.responses
+        );
+
+        // Step 4: Replay again — workflow should finish.
+        let replay_after = WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config.clone(),
+            js_source.to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            replay_after.return_value.is_some(),
+            "replay after advance, expecting return value"
+        );
+        assert!(
+            replay_after.next_events.is_empty(),
+            "replay after advance, expecting no history events, got: {:?}",
+            replay_after.next_events,
+        );
+        assert!(
+            advance.version.0 > replay.version.0,
+            "version should have advanced"
+        );
+
+        // Step 5: Advance should write the `Finished` event.
+        let advance = WorkflowJsWorker::advance(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config.clone(),
+            js_source.to_string(),
+            replay_after.version.clone(),
+            replay_after.next_events.clone(),
+            replay_after.return_value.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(advance.outcome, AdvanceOutcome::Applied);
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(log.next_version, advance.version);
+        assert_matches!(log.pending_state, PendingState::Finished(_));
+
+        drop(db_connection);
         db_close.close().await;
     }
 }
