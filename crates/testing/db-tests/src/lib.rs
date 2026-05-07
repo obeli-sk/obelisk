@@ -100,7 +100,14 @@ impl DbPoolCloseable for DbPoolCloseableWrapper {
             DbPoolCloseableWrapper::Sqlite(db) => db.close().await,
             DbPoolCloseableWrapper::Postgres(db) => {
                 db.close().await; // Close the target db.
-                db.drop_database().await; // Drop it using the admin database.
+                std::cfg_select! {
+                    feature = "test" => {
+                        db.drop_database().await; // Drop it using the admin database.
+                    }
+                    _ => {
+                        unreachable!("test feature must be enabled");
+                    }
+                }
             }
         }
     }
