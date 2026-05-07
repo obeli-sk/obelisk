@@ -276,7 +276,7 @@ futures-concurrency = "7.7.1"
 futures-lite = "2.6.1"
 futures-util = "0.3.32"
 getrandom = "0.4"
-hashbrown = { version = "0.16.1", features = ["serde"] }
+hashbrown = { version = "0.17.0", features = ["serde"] }
 hdrhistogram = { version = "7.5.4", default-features = false }
 http = "1.4.0"
 http-body-util = "0.1"

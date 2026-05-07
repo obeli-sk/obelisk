@@ -2018,7 +2018,11 @@ version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -3110,7 +3114,7 @@ dependencies = [
  "deadpool-postgres",
  "derive-where",
  "derive_more",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "indexmap 2.14.0",
  "insta",
  "obeli-sk-val-json",
@@ -3140,7 +3144,7 @@ name = "obeli-sk-db-common"
 version = "0.37.7"
 dependencies = [
  "chrono",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "obeli-sk-concepts",
  "thiserror 2.0.18",
  "tokio",
@@ -3157,7 +3161,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "derive_more",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "itertools",
  "obeli-sk-concepts",
  "obeli-sk-utils",
@@ -3178,7 +3182,7 @@ dependencies = [
  "chrono",
  "deadpool-postgres",
  "derive_more",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "obeli-sk-concepts",
  "obeli-sk-db-common",
  "obeli-sk-val-json",
@@ -3202,7 +3206,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "derive_more",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "hdrhistogram",
  "itertools",
  "obeli-sk-concepts",
@@ -3232,7 +3236,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "derive_more",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "indexmap 2.14.0",
  "obeli-db-tests",
  "obeli-sk-concepts",
@@ -3297,7 +3301,7 @@ dependencies = [
  "chrono",
  "const_format",
  "derive_more",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "hyper",
  "id-arena",
  "indexmap 2.14.0",
@@ -3334,7 +3338,7 @@ version = "0.37.7"
 dependencies = [
  "anyhow",
  "assert_matches",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "indexmap 2.14.0",
  "insta",
  "itertools",
@@ -3362,7 +3366,7 @@ dependencies = [
  "croner",
  "derive_more",
  "futures-util",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -3440,7 +3444,7 @@ dependencies = [
  "directories",
  "docker_credential",
  "futures-util",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "hmac 0.12.1",
  "http",
  "indexmap 2.14.0",
