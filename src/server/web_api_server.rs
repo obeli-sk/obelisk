@@ -1320,6 +1320,8 @@ struct ReplayResponseSer {
     next_events: Vec<HistoryEvent>,
     /// If the workflow completed during replay, contains the return value
     return_value: Option<RetVal>,
+    /// Current version of the execution log at the time of replay
+    version: u32,
 }
 
 impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayResponseSer {
@@ -1327,6 +1329,7 @@ impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayRes
         Self {
             next_events: value.next_events,
             return_value: value.return_value.map(RetVal::from),
+            version: value.version.0,
         }
     }
 }
@@ -1689,6 +1692,7 @@ async fn execution_replay(
         AcceptHeader::Json => Json(ser).into_response(),
         AcceptHeader::Text => {
             let mut output = String::new();
+            writeln!(&mut output, "version: {}", ser.version).expect("writing to string");
             for event in &ser.next_events {
                 writeln!(&mut output, "{event}").expect("writing to string");
             }

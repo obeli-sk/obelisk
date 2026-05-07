@@ -666,6 +666,7 @@ message ReplayExecutionRequest {
 message ReplayExecutionResponse {
   repeated ExecutionEvent.HistoryEvent next_events = 1;
   optional SupportedFunctionResult return_value = 2;
+  uint32 version = 3;
 }
 
 

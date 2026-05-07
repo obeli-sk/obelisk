@@ -1900,7 +1900,8 @@
         "type": "object",
         "description": "Result of replaying a workflow execution",
         "required": [
-          "next_events"
+          "next_events",
+          "version"
         ],
         "properties": {
           "next_events": {
@@ -1920,6 +1921,12 @@
                 "description": "If the workflow completed during replay, contains the return value"
               }
             ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Current version of the execution log at the time of replay",
+            "minimum": 0
           }
         }
       },
