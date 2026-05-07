@@ -239,7 +239,7 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
 axum = { version = "0.8.9", features = ["http2"] }
-axum-accept = "0.0.5"
+axum-accept = "0.0.6"
 axum-extra = { version = "0.12.6", features = ["query"] }
 base64 = "0.22.1"
 bytes = "1.11.1"
