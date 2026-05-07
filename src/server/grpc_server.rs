@@ -830,6 +830,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             return_value: replay_response
                 .return_value
                 .map(grpc_gen::SupportedFunctionResult::from),
+            version: replay_response.version.0,
         }))
     }
 

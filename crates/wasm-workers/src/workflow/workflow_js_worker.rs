@@ -469,8 +469,9 @@ impl WorkflowJsWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
+        let version = ctx.version.clone();
         worker
-            .replay_internal(ctx, replay_kind, event_collector)
+            .replay_internal(ctx, replay_kind, event_collector, version)
             .await
     }
 }
@@ -953,7 +954,12 @@ mod tests {
         #[values(false, true)] explicit_close: bool,
     ) {
         let (_guard, db_pool, db_close) = database.set_up().await;
-        workflow_js_all_apis_inner(db_pool.clone(), activity_should_win, explicit_close).await;
+        Box::pin(workflow_js_all_apis_inner(
+            db_pool.clone(),
+            activity_should_win,
+            explicit_close,
+        ))
+        .await;
         db_close.close().await;
     }
 

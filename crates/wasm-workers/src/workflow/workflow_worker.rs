@@ -835,6 +835,7 @@ impl WorkflowWorker {
         ctx: WorkerContext,
         is_replay: ReplayKind,
         event_collector: ReplayEventCollector,
+        version: Version,
     ) -> Result<ReplayResponse, ReplayError> {
         let return_value = match self.run_internal(ctx, Some(is_replay)).await {
             Ok(Either::Left(WorkerResultOk::RunFinished { retval, .. })) => {
@@ -858,6 +859,7 @@ impl WorkflowWorker {
         Ok(ReplayResponse {
             next_events,
             return_value,
+            version,
         })
     }
 
@@ -981,8 +983,9 @@ impl WorkflowWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
+        let version = ctx.version.clone();
         worker
-            .replay_internal(ctx, replay_kind, event_collector)
+            .replay_internal(ctx, replay_kind, event_collector, version)
             .await
     }
 }
@@ -994,12 +997,14 @@ enum CloseJoinSetOk {
 }
 
 /// Result of replaying a workflow execution.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ReplayResponse {
     /// Events that the workflow would produce next.
     pub next_events: Vec<HistoryEvent>,
     /// If the workflow completed during replay, contains the return value.
     pub return_value: Option<SupportedFunctionReturnValue>,
+    /// Current version of the execution log at the time of replay.
+    pub version: Version,
 }
 
 #[derive(Debug, thiserror::Error)]
