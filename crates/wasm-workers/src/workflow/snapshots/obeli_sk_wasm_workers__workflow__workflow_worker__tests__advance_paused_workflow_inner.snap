@@ -66,7 +66,7 @@ expression: replay
             "component_id": {
               "component_type": "activity",
               "name": "",
-              "component_digest": "sha256:f8d5c0c9b1459a6c1e95df5c062b429c7d7e39f89b819536c4cc256fb72fab7a"
+              "component_digest": "sha256:f2dae3ccacdbc8f208d9c560cd2350474571638d8ac2e16f3a85eefb737957ac"
             },
             "deployment_id": "Dep_00000000000000000000000000",
             "metadata": {},

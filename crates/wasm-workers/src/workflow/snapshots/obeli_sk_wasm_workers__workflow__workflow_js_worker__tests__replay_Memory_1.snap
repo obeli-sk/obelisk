@@ -66,7 +66,7 @@ expression: replay
             "component_id": {
               "component_type": "activity_stub",
               "name": "",
-              "component_digest": "sha256:b63184fb6205cfb09f331f06d6c5437044f5a8017104f725b395b4caeca57205"
+              "component_digest": "sha256:72c42a985d504c9f95f02d31004987ddff06c31d1bb4469fb346765852d2621c"
             },
             "deployment_id": "Dep_00000000000000000000000000",
             "metadata": {},
@@ -80,7 +80,7 @@ expression: replay
             "component_id": {
               "component_type": "workflow",
               "name": "test_js_workflow",
-              "component_digest": "sha256:5bdb97e0af2365488ceb37f5db893e202bf40f262c2d917c40fc2f6a847f223a"
+              "component_digest": "sha256:3e0808b09be4044690fcffb284fc161828e8deba70709c3afa6cf5732a53b759"
             },
             "version_min_including": 3,
             "version_max_excluding": 4,
