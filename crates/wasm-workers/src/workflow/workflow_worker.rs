@@ -1210,8 +1210,8 @@ impl ReplayResponse {
             .flat_map(|w| {
                 let requests: &[concepts::storage::AppendRequest] = match w {
                     CapturedDbWrite::Append { req, .. } => std::slice::from_ref(req),
-                    CapturedDbWrite::AppendBatch { batch, .. } => batch,
-                    CapturedDbWrite::AppendBatchCreateNewExecution { batch, .. } => batch,
+                    CapturedDbWrite::AppendBatch { batch, .. }
+                    | CapturedDbWrite::AppendBatchCreateNewExecution { batch, .. } => batch,
                     CapturedDbWrite::AppendStubResponse { events, .. } => &events.batch,
                 };
                 requests.iter().filter_map(|req| {
@@ -4017,9 +4017,9 @@ pub(crate) mod tests {
         );
         // Verify event types: JoinSetCreate, JoinSetRequest (submit) * activity_iterations, JoinNext (await)
         assert_matches!(&next_events[0], HistoryEvent::JoinSetCreate { .. });
-        for i in 1..=activity_iterations {
+        for child_request in next_events.iter().take(activity_iterations + 1).skip(1) {
             assert_matches!(
-                &next_events[i],
+                child_request,
                 HistoryEvent::JoinSetRequest {
                     request: JoinSetRequest::ChildExecutionRequest { .. },
                     ..
