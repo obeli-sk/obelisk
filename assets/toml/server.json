@@ -3,33 +3,36 @@
   "title": "ServerConfigToml",
   "type": "object",
   "properties": {
-    "api": {
-      "$ref": "#/$defs/ApiConfig"
-    },
-    "cancel_watcher": {
-      "$ref": "#/$defs/CancelWatcherTomlConfig"
-    },
-    "database": {
-      "$ref": "#/$defs/DatabaseConfigToml"
-    },
-    "external": {
-      "$ref": "#/$defs/ExternalServerConfig"
-    },
-    "http_server": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/HttpServer"
-      }
-    },
-    "log": {
-      "$ref": "#/$defs/LoggingConfig"
-    },
     "obelisk-version": {
       "type": [
         "string",
         "null"
       ],
       "default": null
+    },
+    "api": {
+      "$ref": "#/$defs/ApiConfig"
+    },
+    "database": {
+      "$ref": "#/$defs/DatabaseConfigToml"
+    },
+    "webui": {
+      "$ref": "#/$defs/WebUIConfig"
+    },
+    "external": {
+      "$ref": "#/$defs/ExternalServerConfig"
+    },
+    "wasm": {
+      "$ref": "#/$defs/WasmGlobalConfigToml"
+    },
+    "workflows": {
+      "$ref": "#/$defs/WorkflowsGlobalConfigToml"
+    },
+    "timers_watcher": {
+      "$ref": "#/$defs/TimersWatcherTomlConfig"
+    },
+    "cancel_watcher": {
+      "$ref": "#/$defs/CancelWatcherTomlConfig"
     },
     "otlp": {
       "anyOf": [
@@ -41,17 +44,14 @@
         }
       ]
     },
-    "timers_watcher": {
-      "$ref": "#/$defs/TimersWatcherTomlConfig"
+    "log": {
+      "$ref": "#/$defs/LoggingConfig"
     },
-    "wasm": {
-      "$ref": "#/$defs/WasmGlobalConfigToml"
-    },
-    "webui": {
-      "$ref": "#/$defs/WebUIConfig"
-    },
-    "workflows": {
-      "$ref": "#/$defs/WorkflowsGlobalConfigToml"
+    "http_server": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/HttpServer"
+      }
     }
   },
   "additionalProperties": false,
@@ -70,112 +70,6 @@
       },
       "additionalProperties": false
     },
-    "AppenderConsole": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "level": {
-          "$ref": "#/$defs/EnvFilter"
-        },
-        "span": {
-          "$ref": "#/$defs/SpanConfig"
-        },
-        "style": {
-          "$ref": "#/$defs/LoggingStyle"
-        },
-        "target": {
-          "type": "boolean",
-          "default": false
-        },
-        "writer": {
-          "$ref": "#/$defs/AppenderConsoleWriter"
-        }
-      },
-      "additionalProperties": false
-    },
-    "AppenderConsoleWriter": {
-      "type": "string",
-      "enum": [
-        "Stderr",
-        "Stdout"
-      ]
-    },
-    "AppenderRollingFile": {
-      "type": "object",
-      "properties": {
-        "directory": {
-          "type": "string"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "level": {
-          "$ref": "#/$defs/EnvFilter"
-        },
-        "prefix": {
-          "type": "string"
-        },
-        "rotation": {
-          "$ref": "#/$defs/Rotation"
-        },
-        "span": {
-          "$ref": "#/$defs/SpanConfig"
-        },
-        "style": {
-          "$ref": "#/$defs/LoggingStyle"
-        },
-        "target": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "directory",
-        "prefix"
-      ]
-    },
-    "CancelWatcherTomlConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "tick_sleep": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "seconds": 1
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "CodegenCache": {
-      "type": "object",
-      "properties": {
-        "directory": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": false
-    },
-    "ConfigName": {
-      "description": "Activity, Webhook, Workflow or a Http server",
-      "type": "string"
-    },
     "DatabaseConfigToml": {
       "oneOf": [
         {
@@ -185,10 +79,10 @@
               "$ref": "#/$defs/SqliteConfigToml"
             }
           },
-          "additionalProperties": false,
           "required": [
             "sqlite"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -197,12 +91,49 @@
               "$ref": "#/$defs/PostgresConfigToml"
             }
           },
-          "additionalProperties": false,
           "required": [
             "postgres"
-          ]
+          ],
+          "additionalProperties": false
         }
       ]
+    },
+    "SqliteConfigToml": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "queue_capacity": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 100
+        },
+        "pragma": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "metrics_threshold": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
     },
     "DurationConfig": {
       "oneOf": [
@@ -215,10 +146,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "milliseconds"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -229,10 +160,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "seconds"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -243,10 +174,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "minutes"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -257,11 +188,45 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "hours"
-          ]
+          ],
+          "additionalProperties": false
         }
+      ]
+    },
+    "PostgresConfigToml": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "db_name": {
+          "type": "string"
+        },
+        "subscription_interruption": {
+          "description": "Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism.",
+          "$ref": "#/$defs/DurationConfigOptional",
+          "default": {
+            "seconds": 1
+          }
+        },
+        "provision_policy": {
+          "$ref": "#/$defs/PostgresProvisionPolicy"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "user",
+        "password",
+        "db_name"
       ]
     },
     "DurationConfigOptional": {
@@ -281,10 +246,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "milliseconds"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -295,10 +260,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "seconds"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -309,10 +274,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "minutes"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -323,140 +288,11 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "hours"
-          ]
+          ],
+          "additionalProperties": false
         }
-      ]
-    },
-    "EnvFilter": {
-      "type": "string"
-    },
-    "ExternalServerConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "listening_addr": {
-          "type": "string",
-          "default": "127.0.0.1:9090"
-        }
-      },
-      "additionalProperties": false
-    },
-    "HttpServer": {
-      "type": "object",
-      "properties": {
-        "listening_addr": {
-          "type": "string"
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "listening_addr"
-      ]
-    },
-    "InflightSemaphore": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Unlimited"
-        },
-        {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        }
-      ]
-    },
-    "LoggingConfig": {
-      "type": "object",
-      "properties": {
-        "console": {
-          "$ref": "#/$defs/AppenderConsole"
-        },
-        "file": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AppenderRollingFile"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "additionalProperties": false
-    },
-    "LoggingStyle": {
-      "type": "string",
-      "enum": [
-        "plain",
-        "plain_compact",
-        "json"
-      ]
-    },
-    "OtlpConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "level": {
-          "$ref": "#/$defs/EnvFilter"
-        },
-        "otlp_endpoint": {
-          "type": "string",
-          "default": "http://localhost:4317"
-        },
-        "service_name": {
-          "type": "string",
-          "default": "obelisk-server"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "enabled"
-      ]
-    },
-    "PostgresConfigToml": {
-      "type": "object",
-      "properties": {
-        "db_name": {
-          "type": "string"
-        },
-        "host": {
-          "type": "string"
-        },
-        "password": {
-          "type": "string"
-        },
-        "provision_policy": {
-          "$ref": "#/$defs/PostgresProvisionPolicy"
-        },
-        "subscription_interruption": {
-          "description": "Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism.",
-          "$ref": "#/$defs/DurationConfigOptional",
-          "default": {
-            "seconds": 1
-          }
-        },
-        "user": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "host",
-        "user",
-        "password",
-        "db_name"
       ]
     },
     "PostgresProvisionPolicy": {
@@ -474,13 +310,367 @@
         }
       ]
     },
-    "Rotation": {
+    "WebUIConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "listening_addr": {
+          "type": "string",
+          "default": "127.0.0.1:8080"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExternalServerConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "listening_addr": {
+          "type": "string",
+          "default": "127.0.0.1:9090"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WasmGlobalConfigToml": {
+      "type": "object",
+      "properties": {
+        "codegen_cache": {
+          "$ref": "#/$defs/CodegenCache"
+        },
+        "backtrace": {
+          "$ref": "#/$defs/WasmGlobalBacktrace"
+        },
+        "cache_directory": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "allocator_config": {
+          "$ref": "#/$defs/WasmtimeAllocatorConfig"
+        },
+        "global_executor_instance_limiter": {
+          "$ref": "#/$defs/InflightSemaphore"
+        },
+        "global_webhook_instance_limiter": {
+          "$ref": "#/$defs/InflightSemaphore"
+        },
+        "fuel": {
+          "$ref": "#/$defs/ValueOrUnlimited"
+        },
+        "build_semaphore": {
+          "$ref": "#/$defs/ValueOrUnlimited"
+        },
+        "parallel_compilation": {
+          "type": "boolean",
+          "default": true
+        },
+        "wasmtime_pooling_config": {
+          "$ref": "#/$defs/WasmtimePoolingAllocatorConfig"
+        },
+        "debug": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CodegenCache": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "directory": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "WasmGlobalBacktrace": {
+      "type": "object",
+      "properties": {
+        "persist": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "WasmtimeAllocatorConfig": {
       "type": "string",
       "enum": [
-        "minutely",
-        "hourly",
-        "daily",
-        "never"
+        "auto",
+        "on_demand",
+        "pooling"
+      ]
+    },
+    "InflightSemaphore": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Unlimited"
+        },
+        {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      ]
+    },
+    "Unlimited": {
+      "type": "string",
+      "enum": [
+        "unlimited"
+      ]
+    },
+    "ValueOrUnlimited": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Unlimited"
+        },
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      ]
+    },
+    "WasmtimePoolingAllocatorConfig": {
+      "type": "object",
+      "properties": {
+        "pooling_memory_keep_resident": {
+          "description": "How many bytes to keep resident between instantiations for the\npooling allocator in linear memories.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
+        },
+        "pooling_table_keep_resident": {
+          "description": "How many bytes to keep resident between instantiations for the\npooling allocator in tables.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
+        },
+        "memory_protection_keys": {
+          "description": "Enable memory protection keys for the pooling allocator; this can\noptimize the size of memory slots.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "pooling_total_core_instances": {
+          "description": "The maximum number of WebAssembly instances which can be created\nwith the pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "pooling_total_component_instances": {
+          "description": "The maximum number of WebAssembly components which can be created\nwith the pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "pooling_total_memories": {
+          "description": "The maximum number of WebAssembly memories which can be created with\nthe pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "pooling_total_tables": {
+          "description": "The maximum number of WebAssembly tables which can be created with\nthe pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "pooling_total_stacks": {
+          "description": "The maximum number of WebAssembly stacks which can be created with\nthe pooling allocator.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "pooling_max_memory_size": {
+          "description": "The maximum runtime size of each linear memory in the pooling\nallocator, in bytes.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0,
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowsGlobalConfigToml": {
+      "type": "object",
+      "properties": {
+        "lock_extension_leeway": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "TimersWatcherTomlConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "leeway": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 500
+          }
+        },
+        "tick_sleep": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "CancelWatcherTomlConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "tick_sleep": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "OtlpConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "level": {
+          "$ref": "#/$defs/EnvFilter"
+        },
+        "service_name": {
+          "type": "string",
+          "default": "obelisk-server"
+        },
+        "otlp_endpoint": {
+          "type": "string",
+          "default": "http://localhost:4317"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ]
+    },
+    "EnvFilter": {
+      "type": "string"
+    },
+    "LoggingConfig": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppenderRollingFile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "console": {
+          "$ref": "#/$defs/AppenderConsole"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AppenderRollingFile": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "level": {
+          "$ref": "#/$defs/EnvFilter"
+        },
+        "span": {
+          "$ref": "#/$defs/SpanConfig"
+        },
+        "target": {
+          "type": "boolean",
+          "default": false
+        },
+        "directory": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "rotation": {
+          "$ref": "#/$defs/Rotation"
+        },
+        "style": {
+          "$ref": "#/$defs/LoggingStyle"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "directory",
+        "prefix"
       ]
     },
     "SpanConfig": {
@@ -522,265 +712,75 @@
         }
       ]
     },
-    "SqliteConfigToml": {
-      "type": "object",
-      "properties": {
-        "directory": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "metrics_threshold": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DurationConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "pragma": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {}
-        },
-        "queue_capacity": {
-          "type": "integer",
-          "format": "uint",
-          "default": 100,
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false
+    "Rotation": {
+      "type": "string",
+      "enum": [
+        "minutely",
+        "hourly",
+        "daily",
+        "never"
+      ]
     },
-    "TimersWatcherTomlConfig": {
+    "LoggingStyle": {
+      "type": "string",
+      "enum": [
+        "plain",
+        "plain_compact",
+        "json"
+      ]
+    },
+    "AppenderConsole": {
       "type": "object",
       "properties": {
         "enabled": {
           "type": "boolean",
           "default": true
         },
-        "leeway": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 500
-          }
+        "level": {
+          "$ref": "#/$defs/EnvFilter"
         },
-        "tick_sleep": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "Unlimited": {
-      "type": "string",
-      "enum": [
-        "unlimited"
-      ]
-    },
-    "ValueOrUnlimited": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Unlimited"
+        "span": {
+          "$ref": "#/$defs/SpanConfig"
         },
-        {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        }
-      ]
-    },
-    "WasmGlobalBacktrace": {
-      "type": "object",
-      "properties": {
-        "persist": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": false
-    },
-    "WasmGlobalConfigToml": {
-      "type": "object",
-      "properties": {
-        "allocator_config": {
-          "$ref": "#/$defs/WasmtimeAllocatorConfig"
-        },
-        "backtrace": {
-          "$ref": "#/$defs/WasmGlobalBacktrace"
-        },
-        "build_semaphore": {
-          "$ref": "#/$defs/ValueOrUnlimited"
-        },
-        "cache_directory": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "codegen_cache": {
-          "$ref": "#/$defs/CodegenCache"
-        },
-        "debug": {
+        "target": {
           "type": "boolean",
           "default": false
         },
-        "fuel": {
-          "$ref": "#/$defs/ValueOrUnlimited"
+        "style": {
+          "$ref": "#/$defs/LoggingStyle"
         },
-        "global_executor_instance_limiter": {
-          "$ref": "#/$defs/InflightSemaphore"
-        },
-        "global_webhook_instance_limiter": {
-          "$ref": "#/$defs/InflightSemaphore"
-        },
-        "parallel_compilation": {
-          "type": "boolean",
-          "default": true
-        },
-        "wasmtime_pooling_config": {
-          "$ref": "#/$defs/WasmtimePoolingAllocatorConfig"
+        "writer": {
+          "$ref": "#/$defs/AppenderConsoleWriter"
         }
       },
       "additionalProperties": false
     },
-    "WasmtimeAllocatorConfig": {
+    "AppenderConsoleWriter": {
       "type": "string",
       "enum": [
-        "auto",
-        "on_demand",
-        "pooling"
+        "Stderr",
+        "Stdout"
       ]
     },
-    "WasmtimePoolingAllocatorConfig": {
+    "HttpServer": {
       "type": "object",
       "properties": {
-        "memory_protection_keys": {
-          "description": "Enable memory protection keys for the pooling allocator; this can\noptimize the size of memory slots.",
-          "type": [
-            "boolean",
-            "null"
-          ],
-          "default": null
-        },
-        "pooling_max_memory_size": {
-          "description": "The maximum runtime size of each linear memory in the pooling\nallocator, in bytes.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_memory_keep_resident": {
-          "description": "How many bytes to keep resident between instantiations for the\npooling allocator in linear memories.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_table_keep_resident": {
-          "description": "How many bytes to keep resident between instantiations for the\npooling allocator in tables.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_component_instances": {
-          "description": "The maximum number of WebAssembly components which can be created\nwith the pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_core_instances": {
-          "description": "The maximum number of WebAssembly instances which can be created\nwith the pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_memories": {
-          "description": "The maximum number of WebAssembly memories which can be created with\nthe pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_stacks": {
-          "description": "The maximum number of WebAssembly stacks which can be created with\nthe pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        },
-        "pooling_total_tables": {
-          "description": "The maximum number of WebAssembly tables which can be created with\nthe pooling allocator.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "default": null,
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false
-    },
-    "WebUIConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
+        "name": {
+          "$ref": "#/$defs/ConfigName"
         },
         "listening_addr": {
-          "type": "string",
-          "default": "127.0.0.1:8080"
+          "type": "string"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "listening_addr"
+      ]
     },
-    "WorkflowsGlobalConfigToml": {
-      "type": "object",
-      "properties": {
-        "lock_extension_leeway": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
-        }
-      },
-      "additionalProperties": false
+    "ConfigName": {
+      "description": "Activity, Webhook, Workflow or a Http server",
+      "type": "string"
     }
   }
 }
