@@ -7,15 +7,13 @@ use crate::workflow::caching_db_connection::{
     CachingBuffer, CachingDbConnection, WorkflowDbConnection,
 };
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
-use crate::workflow::replay_db_proxy::{
-    CapturedDbWrite, ReplayEventCollector, ReplayWorkflowDbConnection,
-};
+use crate::workflow::replay_db_proxy::{ReplayWorkflowDbConnection, apply_writes};
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
-use concepts::storage::{DbConnection, DbErrorWrite, DbPool, HistoryEvent, Locked, Version};
+use concepts::storage::{CapturedDbWrite, DbErrorWrite, DbPool, Locked, Version};
 use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
 use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, PackageIfcFns,
@@ -217,7 +215,7 @@ impl WorkflowWorkerCompiled {
             // Skip already linked functions to avoid unexpected behavior and security issues.
             .filter(|import| {
                 if import.ifc_fqn.is_namespace_obelisk() {
-                    warn!("Skipping mocked import {}", import.ifc_fqn); // FIXME: only if imported
+                    warn!("Skipping system import {}", import.ifc_fqn);
                     false
                 } else {
                     true
@@ -380,12 +378,12 @@ enum RunError {
 
 enum WorkerResultRefactored {
     Ok(SupportedFunctionReturnValue, WorkflowCtx),
-    DbUpdatedByWorkerOrWatcher,
+    DbUpdatedByWorkerOrWatcher(WorkflowCtx),
     FatalError(FatalError, WorkflowCtx),
     DbError(DbErrorWrite),
     LockExpired(WorkflowCtx),
     ExecutorClosing(WorkflowCtx),
-    ReplayWaitingForResponse,
+    ReplayWaitingForResponse(WorkflowCtx),
 }
 
 type CallFuncResult = Result<(SupportedFunctionReturnValue, WorkflowCtx), RunError>;
@@ -423,7 +421,9 @@ impl From<WorkflowError> for WorkerError {
 }
 
 enum PrepareFuncOk {
-    LockAlreadyExpired,
+    LockAlreadyExpired {
+        db_connection: Box<dyn WorkflowDbConnection>,
+    },
     Finished(PrepareFuncFinished),
 }
 struct PrepareFuncFinished {
@@ -454,7 +454,7 @@ impl WorkflowWorker {
                     info!(execution_deadline = %ctx.locked_event.lock_expires_at, started_at = %lock_already_expired.started_at,
                         "Lock is already expired");
                 });
-                return Ok(PrepareFuncOk::LockAlreadyExpired);
+                return Ok(PrepareFuncOk::LockAlreadyExpired { db_connection });
             }
         };
 
@@ -640,7 +640,13 @@ impl WorkflowWorker {
         worker_span: &Span,
         execution_deadline: DateTime<Utc>,
         assigned_fuel: Option<u64>,
-    ) -> Result<Either<WorkerResultOk, ReplayWaitingForResponse>, WorkflowError> {
+    ) -> Result<
+        (
+            Either<WorkerResultOk, ReplayWaitingForResponse>,
+            Box<dyn WorkflowDbConnection>,
+        ),
+        WorkflowError,
+    > {
         // call_func
         let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         let res = Self::call_func(store, func, component_func, params, assigned_fuel).await;
@@ -651,26 +657,33 @@ impl WorkflowWorker {
         match worker_result_refactored {
             WorkerResultRefactored::Ok(retval, mut workflow_ctx) => {
                 match Self::close_join_sets(&mut workflow_ctx).await {
-                    Ok(Either::Left(CloseJoinSetOk::Ok)) => {
-                        Ok(Either::Left(WorkerResultOk::RunFinished {
+                    Ok(Either::Left(CloseJoinSetOk::Ok)) => Ok((
+                        Either::Left(WorkerResultOk::RunFinished {
                             retval,
                             version: workflow_ctx.db_connection.version().clone(),
                             http_client_traces: None,
-                        }))
+                        }),
+                        workflow_ctx.db_connection,
+                    )),
+                    Ok(Either::Left(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher)) => Ok((
+                        Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher),
+                        workflow_ctx.db_connection,
+                    )),
+                    Ok(Either::Right(replay_response)) => {
+                        Ok((Either::Right(replay_response), workflow_ctx.db_connection))
                     }
-                    Ok(Either::Left(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher)) => {
-                        Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher))
-                    }
-                    Ok(Either::Right(replay_response)) => Ok(Either::Right(replay_response)),
                     Err(closing_err) => {
                         debug!("Error while closing join sets {closing_err:?}");
                         Err(closing_err)
                     }
                 }
             }
-            WorkerResultRefactored::DbUpdatedByWorkerOrWatcher => {
+            WorkerResultRefactored::DbUpdatedByWorkerOrWatcher(workflow_ctx) => {
                 // Made some progress.
-                Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher))
+                Ok((
+                    Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher),
+                    workflow_ctx.db_connection,
+                ))
             }
             WorkerResultRefactored::FatalError(err, mut workflow_ctx) => {
                 // Even on fatal error we try to cancel activities and wait for workflows.
@@ -717,9 +730,10 @@ impl WorkflowWorker {
                     workflow_ctx.db_connection.version().clone(),
                 ))
             }
-            WorkerResultRefactored::ReplayWaitingForResponse => {
-                Ok(Either::Right(ReplayWaitingForResponse))
-            }
+            WorkerResultRefactored::ReplayWaitingForResponse(workflow_ctx) => Ok((
+                Either::Right(ReplayWaitingForResponse),
+                workflow_ctx.db_connection,
+            )),
         }
     }
 
@@ -732,7 +746,7 @@ impl WorkflowWorker {
     ) -> WorkerResultRefactored {
         match res {
             Ok((supported_result, mut workflow_ctx)) => {
-                worker_span.in_scope(|| info!("Finished"));
+                worker_span.in_scope(|| debug!("Finished"));
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(|| error!("Database error: {db_err}"));
                     return WorkerResultRefactored::DbError(db_err);
@@ -751,7 +765,7 @@ impl WorkflowWorker {
                     );
                     return WorkerResultRefactored::DbError(db_err);
                 }
-                worker_span.in_scope(|| info!("Trap handled as a fatal error"));
+                worker_span.in_scope(|| debug!("Trap handled as a fatal error"));
                 WorkerResultRefactored::FatalError(
                     FatalError::WorkflowTrap {
                         reason,
@@ -770,12 +784,12 @@ impl WorkflowWorker {
                 }
                 match worker_partial_result {
                     WorkerPartialResult::FatalError(err, _version) => {
-                        worker_span.in_scope(|| info!("Finished with a fatal error: {err}"));
+                        worker_span.in_scope(|| debug!("Finished with a fatal error: {err}"));
                         WorkerResultRefactored::FatalError(err, workflow_ctx)
                     }
                     WorkerPartialResult::InterruptDbUpdated => {
-                        worker_span.in_scope(|| info!("Interrupt requested"));
-                        WorkerResultRefactored::DbUpdatedByWorkerOrWatcher
+                        worker_span.in_scope(|| debug!("Interrupt requested"));
+                        WorkerResultRefactored::DbUpdatedByWorkerOrWatcher(workflow_ctx)
                     }
                     WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::DbError(db_err),
                     WorkerPartialResult::LockExpired => {
@@ -787,7 +801,7 @@ impl WorkflowWorker {
                         WorkerResultRefactored::ExecutorClosing(workflow_ctx)
                     }
                     WorkerPartialResult::ReplayWaitingForResponse => {
-                        WorkerResultRefactored::ReplayWaitingForResponse
+                        WorkerResultRefactored::ReplayWaitingForResponse(workflow_ctx)
                     }
                 }
             }
@@ -835,49 +849,59 @@ impl WorkflowWorker {
     pub(crate) async fn replay_internal(
         &self,
         ctx: WorkerContext,
-        db_connection: Box<dyn WorkflowDbConnection>,
+        replay_db_connection: ReplayWorkflowDbConnection,
         is_replay: ReplayKind,
-        event_collector: ReplayEventCollector,
-        version: Version,
-    ) -> Result<ReplayResponse, ReplayError> {
-        let return_value = match self.run_internal(ctx, db_connection, Some(is_replay)).await {
-            Ok(Either::Left(WorkerResultOk::RunFinished { retval, .. })) => {
-                debug!("Replay finished returning a value");
-                Ok(Some(retval))
-            }
-            Ok(Either::Right(ReplayWaitingForResponse)) => {
-                debug!("Replay waiting for response");
-                Ok(None)
-            }
-            Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher)) => {
-                debug!("Replay interrupted after writing events");
-                Ok(None)
-            }
-            Err(err) => {
+    ) -> Result<
+        (
+            Option<SupportedFunctionReturnValue>, //retval
+            Vec<CapturedDbWrite>,
+        ),
+        ReplayError,
+    > {
+        let (return_value, replay_db_connection) = self
+            .run_internal(ctx, Box::new(replay_db_connection), Some(is_replay))
+            .await
+            .map_err(|err| {
                 debug!("Replay failed: {err:?}");
-                Err(ReplayError::from(err))
+                ReplayError::from(err)
+            })?;
+        let return_value = match return_value {
+            Either::Left(WorkerResultOk::RunFinished { retval, .. }) => {
+                debug!("Replay finished returning a value");
+                Some(retval)
             }
-        }?;
-        let next_events = event_collector.take_events();
-        Ok(ReplayResponse {
-            next_events,
-            return_value,
-            version,
-        })
+            Either::Right(ReplayWaitingForResponse) => {
+                debug!("Replay interrupt requested");
+                None
+            }
+            Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher) => {
+                debug!("Replay interrupted with a blocking event");
+                None
+            }
+        };
+
+        let Ok(replay_db_connection) = replay_db_connection
+            .as_any()
+            .downcast::<ReplayWorkflowDbConnection>()
+        else {
+            unreachable!("`run_internal` returns the same `db_connection` it was supplied")
+        };
+        Ok((return_value, replay_db_connection.into_writes()))
     }
 
+    // Returns the same `db_connection` it was supplied.
     async fn run_internal(
         &self,
         ctx: WorkerContext,
         db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
-    ) -> Result<Either<WorkerResultOk, ReplayWaitingForResponse>, WorkflowError> {
-        ctx.worker_span.in_scope(|| {
-            info!(
-                "Execution {} started",
-                is_replay.map(|_| "replay").unwrap_or("run")
-            );
-        });
+    ) -> Result<
+        (
+            Either<WorkerResultOk, ReplayWaitingForResponse>,
+            Box<dyn WorkflowDbConnection>,
+        ),
+        WorkflowError,
+    > {
         if !ctx.can_be_retried {
             warn!(
                 "Workflow configuration set to not retry anymore. This can lead to nondeterministic results."
@@ -887,8 +911,11 @@ impl WorkflowWorker {
         let execution_deadline = ctx.locked_event.lock_expires_at;
         let prepare_finished = match self.prepare_func(ctx, db_connection, is_replay).await? {
             PrepareFuncOk::Finished(finished) => finished,
-            PrepareFuncOk::LockAlreadyExpired => {
-                return Ok(Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher));
+            PrepareFuncOk::LockAlreadyExpired { db_connection } => {
+                return Ok((
+                    Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher),
+                    db_connection,
+                ));
             }
         };
         Self::call_func_convert_result(
@@ -940,18 +967,18 @@ impl WorkflowWorker {
         } else {
             ReplayKind::Unfinished
         };
+        info!("Execution replay {replay_kind} started");
         // TODO: consider using current exec's watcher for faster cancellation
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
-        let event_collector = ReplayEventCollector::new();
-        let replay_db_connection = Box::new(ReplayWorkflowDbConnection::new(
+        let replay_db_connection = ReplayWorkflowDbConnection::new(
             execution_id.clone(),
-            event_collector.clone(),
             log.next_version.clone(),
             real_db_pool
                 .connection()
                 .await
                 .map_err(DbErrorWrite::from)?,
-        ));
+        );
+
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
             metadata: ExecutionMetadata::empty(),
@@ -990,22 +1017,28 @@ impl WorkflowWorker {
             logs_storage_config,
         );
         let version = ctx.version.clone();
-        worker
-            .replay_internal(
-                ctx,
-                replay_db_connection,
-                replay_kind,
-                event_collector,
-                version,
-            )
-            .await
+
+        let (return_value, captured_writes) = worker
+            .replay_internal(ctx, replay_db_connection, replay_kind)
+            .await?;
+        info!(
+            "Execution replay completed, captured writes: {}, has return_value: {}, next version: {}",
+            captured_writes.len(),
+            return_value.is_some(),
+            version,
+        );
+        Ok(ReplayResponse {
+            captured_writes,
+            return_value,
+            version,
+        })
     }
 
     /// Advance a paused workflow by one interrupt boundary.
     ///
-    /// Replays the workflow to capture the next events, compares them against
-    /// the expected events/return value, and writes to the real DB if they match.
-    #[instrument(skip_all, fields(%execution_id))]
+    /// Replays the workflow to capture the next write operations, compares them
+    /// against the expected `ReplayResponse`, and writes to the real DB if they match.
+    #[instrument(skip_all, fields(%execution_id, %component_id, %deployment_id))]
     #[expect(clippy::too_many_arguments)]
     pub async fn advance(
         deployment_id: DeploymentId,
@@ -1017,11 +1050,10 @@ impl WorkflowWorker {
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
-        expected_version: Version,
-        expected_events: Vec<HistoryEvent>,
-        expected_return_value: Option<SupportedFunctionReturnValue>,
+        expected: ReplayResponse,
     ) -> Result<AdvanceResponse, ReplayError> {
-        // Step 1: Check version before replaying.
+        info!("Advance to expected {expected:?}");
+        // Check version before replaying.
         let db_conn = real_db_pool
             .connection()
             .await
@@ -1030,14 +1062,14 @@ impl WorkflowWorker {
             .get(&execution_id)
             .await
             .map_err(DbErrorWrite::from)?;
-        if log.next_version != expected_version {
+        if log.next_version != expected.version {
             return Ok(AdvanceResponse {
                 version: log.next_version,
                 outcome: AdvanceOutcome::VersionMismatch,
             });
         }
 
-        // Step 2: Replay to capture events and write operations.
+        // Replay to capture events and write operations.
         let replay_kind = if log.is_finished() {
             ReplayKind::Finished
         } else {
@@ -1054,16 +1086,15 @@ impl WorkflowWorker {
             fuel: None,
         };
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
-        let event_collector = ReplayEventCollector::new();
-        let replay_db_connection = Box::new(ReplayWorkflowDbConnection::new(
+
+        let replay_db_connection = ReplayWorkflowDbConnection::new(
             execution_id.clone(),
-            event_collector.clone(),
             log.next_version.clone(),
             real_db_pool
                 .connection()
                 .await
                 .map_err(DbErrorWrite::from)?,
-        ));
+        );
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
             metadata: ExecutionMetadata::empty(),
@@ -1100,88 +1131,41 @@ impl WorkflowWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        let version = ctx.version.clone();
-        let replay_response = worker
-            .replay_internal(
-                ctx,
-                replay_db_connection,
-                replay_kind,
-                event_collector.clone(),
-                version,
-            )
+        let old_version = ctx.version.clone();
+        let (return_value, captured_writes) = worker
+            .replay_internal(ctx, replay_db_connection, replay_kind)
             .await?;
+        debug!("Got captured_writes: {captured_writes:?} , return_value: {return_value:?}");
 
-        // Step 3: Compare against expected outcome.
-        if replay_response.next_events != expected_events
-            || replay_response.return_value != expected_return_value
-        {
+        // Compare against expected outcome and apply writes if they match.
+        if return_value != expected.return_value {
             return Ok(AdvanceResponse {
-                version: replay_response.version,
+                version: old_version,
                 outcome: AdvanceOutcome::Mismatch,
             });
         }
 
-        // Step 4: Apply captured writes to the real DB.
-        let captured_writes = event_collector.take_writes();
-        let mut new_version = replay_response.version.clone();
-        for write in captured_writes {
-            new_version = apply_captured_write(&*db_conn, write).await?;
-        }
+        // Apply writes
+        let outcome = if expected.captured_writes == captured_writes {
+            // Empty expected and captured writes will return `Applied`
+            let new_version = apply_writes(&*db_conn, captured_writes, old_version).await?;
+            AdvanceResponse {
+                version: new_version,
+                outcome: AdvanceOutcome::Applied,
+            }
+        } else {
+            debug!(
+                "Mismatch between expected and actual captured writes. Expected: {:?}, Actual: {captured_writes:?}",
+                expected.captured_writes
+            );
+            AdvanceResponse {
+                version: old_version,
+                outcome: AdvanceOutcome::Mismatch,
+            }
+        };
 
-        Ok(AdvanceResponse {
-            version: new_version,
-            outcome: AdvanceOutcome::Applied,
-        })
-    }
-}
-
-/// Apply a single captured write operation to a real database connection.
-pub(crate) async fn apply_captured_write(
-    conn: &dyn DbConnection,
-    write: CapturedDbWrite,
-) -> Result<Version, DbErrorWrite> {
-    debug!("Applying captured write {write:?}");
-    match write {
-        CapturedDbWrite::Append {
-            execution_id,
-            version,
-            req,
-        } => conn.append(execution_id, version, req).await,
-        CapturedDbWrite::AppendBatch {
-            current_time,
-            batch,
-            execution_id,
-            version,
-        } => {
-            conn.append_batch(current_time, batch, execution_id, version)
-                .await
-        }
-        CapturedDbWrite::AppendBatchCreateNewExecution {
-            current_time,
-            batch,
-            execution_id,
-            version,
-            child_req,
-            backtraces,
-        } => {
-            conn.append_batch_create_new_execution(
-                current_time,
-                batch,
-                execution_id,
-                version,
-                child_req,
-                backtraces,
-            )
-            .await
-        }
-        CapturedDbWrite::AppendBatchRespondToParent {
-            events,
-            response,
-            current_time,
-        } => {
-            conn.append_batch_respond_to_parent(events, response, current_time)
-                .await
-        }
+        info!("Advance finished with {outcome:?}");
+        Ok(outcome)
     }
 }
 
@@ -1193,13 +1177,47 @@ enum CloseJoinSetOk {
 
 /// Result of replaying a workflow execution.
 #[derive(Debug, Clone)]
+#[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
 pub struct ReplayResponse {
-    /// Events that the workflow would produce next.
-    pub next_events: Vec<HistoryEvent>,
+    /// Write operations that the workflow would produce next.
+    pub captured_writes: Vec<CapturedDbWrite>,
     /// If the workflow completed during replay, contains the return value.
     pub return_value: Option<SupportedFunctionReturnValue>,
     /// Current version of the execution log at the time of replay.
     pub version: Version,
+}
+
+impl ReplayResponse {
+    #[cfg(test)]
+    #[must_use]
+    // TODO: Replace with insta's json snapshots
+    pub(crate) fn history_events(&self) -> Vec<concepts::storage::HistoryEvent> {
+        self.captured_writes
+            .iter()
+            .flat_map(|w| Self::extract_history_events(w))
+            .cloned()
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn extract_history_events(write: &CapturedDbWrite) -> Vec<&concepts::storage::HistoryEvent> {
+        let requests: &[concepts::storage::AppendRequest] = match write {
+            CapturedDbWrite::Append { req, .. } => std::slice::from_ref(req),
+            CapturedDbWrite::AppendBatch { batch, .. } => batch,
+            CapturedDbWrite::AppendBatchCreateNewExecution { batch, .. } => batch,
+            CapturedDbWrite::AppendStubResponse { events, .. } => &events.batch,
+        };
+        requests
+            .iter()
+            .filter_map(|req| {
+                if let concepts::storage::ExecutionRequest::HistoryEvent { event } = &req.event {
+                    Some(event)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 /// Outcome of an advance operation.
@@ -1216,6 +1234,7 @@ pub enum AdvanceOutcome {
 /// Result of advancing a paused workflow execution.
 #[derive(Debug, Clone)]
 pub struct AdvanceResponse {
+    // Current version in database after advance call.
     pub version: Version,
     pub outcome: AdvanceOutcome,
 }
@@ -1271,18 +1290,28 @@ impl Worker for WorkflowWorker {
             CachingBuffer::new(self.config.join_next_blocking_strategy),
             ctx.version.clone(),
         ));
-        match self
+        let worker_span = ctx.worker_span.clone();
+        worker_span.in_scope(|| {
+            info!("Execution run started",);
+        });
+        let res = self
             .run_internal(
                 ctx,
                 db_connection,
                 None, // is_replay
             )
-            .await
-        {
-            Ok(Either::Left(ok)) => WorkerResult::Ok(ok),
-            Ok(Either::Right(_)) => unreachable!("not replaying"),
-            Err(workflow_err) => WorkerResult::Err(WorkerError::from(workflow_err)),
-        }
+            .await;
+        worker_span.in_scope(|| match res {
+            Ok((Either::Left(ok), _)) => {
+                info!("Execution run finished");
+                WorkerResult::Ok(ok)
+            }
+            Ok((Either::Right(_), _)) => unreachable!("not replaying"),
+            Err(workflow_err) => {
+                info!("Execution run finished with an error");
+                WorkerResult::Err(WorkerError::from(workflow_err))
+            }
+        })
     }
 }
 
@@ -1338,8 +1367,8 @@ pub(crate) mod tests {
     use chrono::DateTime;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived};
     use concepts::storage::{
-        AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, JoinSetRequest,
-        JoinSetResponse, Locked, LockedBy, PendingStateFinishedError,
+        AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, HistoryEvent,
+        JoinSetRequest, JoinSetResponse, Locked, LockedBy, PendingStateFinishedError,
     };
     use concepts::storage::{AppendRequest, DbConnection, DbPool, ExecutionRequest};
     use concepts::time::TokioSleep;
@@ -1361,6 +1390,7 @@ pub(crate) mod tests {
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
     };
+    use insta::assert_json_snapshot;
     use rstest::rstest;
     use serde_json::json;
     use std::collections::VecDeque;
@@ -3972,27 +4002,24 @@ pub(crate) mod tests {
             replay.return_value.is_none(),
             "workflow should not have completed yet"
         );
+        let next_events = replay.history_events();
         assert_eq!(
             2 + activity_iterations,
-            replay.next_events.len(),
-            "unexpected next_events: {:?}",
-            replay.next_events
+            next_events.len(),
+            "unexpected next_events: {next_events:?}"
         );
         // Verify event types: JoinSetCreate, JoinSetRequest (submit) * activity_iterations, JoinNext (await)
-        assert_matches!(&replay.next_events[0], HistoryEvent::JoinSetCreate { .. });
+        assert_matches!(&next_events[0], HistoryEvent::JoinSetCreate { .. });
         for i in 1..=activity_iterations {
             assert_matches!(
-                &replay.next_events[i],
+                &next_events[i],
                 HistoryEvent::JoinSetRequest {
                     request: JoinSetRequest::ChildExecutionRequest { .. },
                     ..
                 }
             );
         }
-        assert_matches!(
-            replay.next_events.last().unwrap(),
-            HistoryEvent::JoinNext { .. }
-        );
+        assert_matches!(next_events.last().unwrap(), HistoryEvent::JoinNext { .. });
 
         info!("Should end as BlockedByJoinSet");
 
@@ -4022,9 +4049,9 @@ pub(crate) mod tests {
         .unwrap();
 
         assert!(
-            replay.next_events.is_empty(),
-            "unexpected next_events: {:?}",
-            replay.next_events
+            replay.captured_writes.is_empty(),
+            "unexpected captured_writes: {:?}",
+            replay.captured_writes
         );
         assert!(
             replay.return_value.is_none(),
@@ -4047,8 +4074,9 @@ pub(crate) mod tests {
         }
 
         // Replay after all activities have finished but before the response was processed.
-        // With activity_iterations=1, the workflow completes → return_value is set, no next_events.
-        // With activity_iterations>1, the workflow processes one response and blocks on the next JoinNext.
+        // With activity_iterations=1, the workflow completes → return_value is set, no captured_writes.
+        // With activity_iterations>1, the replay is interrupted at FlushedCache after processing
+        // the first response, so return_value is None and captured_writes contains one step.
         let replay = WorkflowWorker::replay(
             DeploymentId::generate(),
             workflow_exec.config.component_id.clone(),
@@ -4065,16 +4093,26 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        // First JoinNext is already in db. Replay should return n - 1 JoinNext events
-        assert_eq!(
-            activity_iterations - 1,
-            replay.next_events.len(),
-            "unexpected replay response after activities finished: {replay:?}"
-        );
-        assert!(
-            replay.return_value.is_some(),
-            "workflow will complete in the next tick"
-        );
+        if activity_iterations == 1 {
+            assert!(
+                replay.captured_writes.is_empty(),
+                "single iteration: workflow completes during replay, no new writes"
+            );
+            assert!(
+                replay.return_value.is_some(),
+                "single iteration: workflow completes during replay"
+            );
+        } else {
+            // Replay is interrupted at FlushedCache after processing one response.
+            assert!(
+                !replay.captured_writes.is_empty(),
+                "multi iteration: replay should produce writes for one step"
+            );
+            assert!(
+                replay.return_value.is_none(),
+                "multi iteration: replay interrupted before completion"
+            );
+        }
 
         sim_clock.move_time_forward(LOCK_EXPIRY_WORKFLOW); // another lock will be appended when the current one expires
 
@@ -4088,8 +4126,10 @@ pub(crate) mod tests {
             .get_finished_result(&execution_id)
             .await
             .unwrap();
-        // Compare prediction with reality
-        assert_eq!(replay.return_value.unwrap(), res);
+        if activity_iterations == 1 {
+            // Compare prediction with reality
+            assert_eq!(replay.return_value.unwrap(), res);
+        }
 
         let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
 
@@ -4115,9 +4155,9 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert!(
-            replay.next_events.is_empty(),
-            "replay of a finished execution must have no next_events, got {:?}",
-            replay.next_events
+            replay.captured_writes.is_empty(),
+            "replay of a finished execution must have no captured_writes, got {:?}",
+            replay.captured_writes
         );
         assert!(
             replay.return_value.is_some(),
@@ -4153,11 +4193,11 @@ pub(crate) mod tests {
         ]);
 
         // Create a paused execution.
-        let execution_id = ExecutionId::generate();
+        let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection_test().await.unwrap();
 
-        db_connection
+        let version_created = db_connection
             .create(CreateRequest {
                 created_at,
                 execution_id: execution_id.clone(),
@@ -4180,9 +4220,11 @@ pub(crate) mod tests {
             log_sender: log_sender.clone(),
         });
 
+        let deployment_id = DeploymentId::from_parts(0, 0);
+
         // Step 1: Replay to get expected events and version.
         let replay = WorkflowWorker::replay(
-            DeploymentId::generate(),
+            deployment_id,
             workflow_component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
@@ -4194,20 +4236,26 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        debug!("Replay result: {replay:?}");
+
         assert!(
-            !replay.next_events.is_empty(),
-            "paused workflow should have next events"
+            !replay.captured_writes.is_empty(),
+            "paused workflow should have captured writes"
         );
         assert!(
             replay.return_value.is_none(),
             "workflow should not have completed yet"
         );
+        assert_eq!(
+            version_created, replay.version,
+            "expected replay version {} must equal to {version_created}",
+            replay.version
+        );
+        assert_json_snapshot!(replay);
 
         // Step 2: Advance with wrong version should fail.
         let wrong_version = Version::new(replay.version.0 + 999);
         let advance_result = WorkflowWorker::advance(
-            DeploymentId::generate(),
+            deployment_id,
             workflow_component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
@@ -4216,17 +4264,18 @@ pub(crate) mod tests {
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
-            wrong_version,
-            replay.next_events.clone(),
-            replay.return_value.clone(),
+            ReplayResponse {
+                version: wrong_version,
+                ..replay.clone()
+            },
         )
         .await
         .unwrap();
-        assert_eq!(advance_result.outcome, AdvanceOutcome::VersionMismatch);
+        assert_eq!(AdvanceOutcome::VersionMismatch, advance_result.outcome);
 
-        // Step 3: Advance with wrong expected events should fail.
+        // Step 3: Advance with zero expected writes should be a mismatch - version vs events.
         let advance_result = WorkflowWorker::advance(
-            DeploymentId::generate(),
+            deployment_id,
             workflow_component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
@@ -4235,17 +4284,18 @@ pub(crate) mod tests {
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
-            replay.version.clone(),
-            vec![], // wrong: empty events
-            replay.return_value.clone(),
+            ReplayResponse {
+                captured_writes: vec![], // empty writes
+                ..replay.clone()
+            },
         )
         .await
         .unwrap();
         assert_eq!(advance_result.outcome, AdvanceOutcome::Mismatch);
 
-        // Step 4: Advance with correct expected events should succeed.
+        // Step 4: Advance with correct expected replay should succeed.
         let advance_result = WorkflowWorker::advance(
-            DeploymentId::generate(),
+            deployment_id,
             workflow_component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
@@ -4254,9 +4304,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
-            replay.version.clone(),
-            replay.next_events.clone(),
-            replay.return_value.clone(),
+            replay.clone(),
         )
         .await
         .unwrap();
@@ -4275,7 +4323,7 @@ pub(crate) mod tests {
 
         // Step 6: Replaying again after advance should see the events already in the log.
         let replay_after = WorkflowWorker::replay(
-            DeploymentId::generate(),
+            deployment_id,
             workflow_component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
@@ -4294,9 +4342,9 @@ pub(crate) mod tests {
         // The workflow should now be blocked (waiting for child activity response)
         // since the advance wrote the JoinNext event.
         assert!(
-            replay_after.next_events.is_empty(),
-            "after advance, workflow should be blocked with no further events, got: {:?}",
-            replay_after.next_events,
+            replay_after.captured_writes.is_empty(),
+            "after advance, workflow should be blocked with no further writes, got: {:?}",
+            replay_after.captured_writes,
         );
     }
 }

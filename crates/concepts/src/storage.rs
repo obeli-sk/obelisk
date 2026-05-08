@@ -178,6 +178,8 @@ pub type VersionType = u32;
     Default,
     Clone,
     PartialEq,
+    PartialOrd,
+    Ord,
     Eq,
     Hash,
     derive_more::Display,
@@ -917,14 +919,15 @@ pub struct LockedExecution {
 pub type LockPendingResponse = Vec<LockedExecution>;
 pub type AppendBatchResponse = Version;
 
-#[derive(Debug, Clone, derive_more::Display, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, derive_more::Display, Serialize, Deserialize)]
 #[display("{event}")]
 pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionRequest,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct CreateRequest {
     pub created_at: DateTime<Utc>,
     pub execution_id: ExecutionId,
@@ -971,14 +974,16 @@ pub trait DbPoolCloseable {
     async fn close(&self);
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AppendEventsToExecution {
     pub execution_id: ExecutionId,
     pub version: Version,
     pub batch: Vec<AppendRequest>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AppendResponseToExecution {
     pub parent_execution_id: ExecutionId,
     pub created_at: DateTime<Utc>,
@@ -986,6 +991,37 @@ pub struct AppendResponseToExecution {
     pub child_execution_id: ExecutionIdDerived,
     pub finished_version: Version,
     pub result: SupportedFunctionReturnValue,
+}
+
+/// A captured database write operation with all arguments needed to replay it
+/// against the real database.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "test", derive(Serialize))]
+pub enum CapturedDbWrite {
+    Append {
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
+    },
+    AppendBatch {
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        version: Version,
+    },
+    AppendBatchCreateNewExecution {
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        version: Version,
+        child_req: Vec<CreateRequest>,
+        backtraces: Vec<BacktraceInfo>,
+    },
+    AppendStubResponse {
+        events: AppendEventsToExecution,
+        response: AppendResponseToExecution,
+        current_time: DateTime<Utc>,
+    },
 }
 
 #[async_trait]
@@ -1786,6 +1822,7 @@ pub enum BacktraceFilter {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "test", derive(Serialize))]
 pub struct BacktraceInfo {
     pub execution_id: ExecutionId,
     pub component_id: ComponentId,

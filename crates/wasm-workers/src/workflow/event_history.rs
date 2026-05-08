@@ -1420,7 +1420,7 @@ impl EventHistory {
                 // Cannot be cacheable, we need the result of response write imediately.
                 // Idempotently attempt to write to target_execution_id.
                 // The idempotent write is needed to avoid race with stub requests originating from remote systems.
-                debug!(target_execution_id = %params.target_execution_id, "StubRequest: Flushing and appending");
+                debug!(target_execution_id = %params.target_execution_id, "StubRequest: first write");
 
                 let flushed = db_connection
                     .flush_non_blocking_event_cache(called_at)
@@ -1459,7 +1459,7 @@ impl EventHistory {
                         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
                         let (parent_id, join_set_id) = params.target_execution_id.split_to_parts();
                         // Attempt to write to target_execution_id and its parent, ignoring the possible conflict error on this tx
-                        let write_attempt = {
+                        let first_write_attempt = {
                             let finished_req = AppendRequest {
                                 created_at: called_at,
                                 event: ExecutionRequest::Finished {
@@ -1493,13 +1493,14 @@ impl EventHistory {
                                 Ok(ok) => Ok(ok),
                                 Err(DbErrorWriteOrReplayInterrupt::DbError(err)) => Err(err),
                                 Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt) => {
+                                    debug!(target_execution_id = %params.target_execution_id, "StubRequest: first write interrupting replay");
                                     return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
                                 }
                             }
                         };
-                        debug!(target_execution_id = %params.target_execution_id, "Executed append_stub_response: {write_attempt:?}");
+                        debug!(target_execution_id = %params.target_execution_id, "Executed append_stub_response: {first_write_attempt:?}");
                         // The server might crash at this point, and restart processing.
-                        let result = match write_attempt {
+                        let result = match first_write_attempt {
                             Ok(_) => Ok(()),
                             Err(DbErrorWrite::NonRetriable(
                                 DbErrorWriteNonRetriable::AlreadyFinished,
@@ -1546,6 +1547,7 @@ impl EventHistory {
                             } // intermittent db error
                         };
                         // Second write tx: Append the HistoryEvent with target_result.
+                        debug!(target_execution_id = %params.target_execution_id, "Second stub write");
                         let event = HistoryEvent::Stub {
                             target_execution_id: params.target_execution_id.clone(),
                             retval_hash: params.retval_hash.clone(),

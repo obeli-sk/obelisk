@@ -15,13 +15,16 @@ use concepts::{
         ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
-use std::future::Future;
 use std::pin::Pin;
+use std::{any::Any, future::Future};
 use tracing::{debug, instrument, warn};
 
 #[async_trait]
-pub(crate) trait WorkflowDbConnection: Send {
+pub(crate) trait WorkflowDbConnection: Send + Any {
+    fn as_any(self: Box<Self>) -> Box<dyn Any>;
+
     fn execution_id(&self) -> &ExecutionId;
+
     fn version(&self) -> &Version;
 
     async fn append_non_blocking(
@@ -206,6 +209,10 @@ impl CachingBuffer {
 
 #[async_trait]
 impl WorkflowDbConnection for CachingDbConnection {
+    fn as_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+
     fn execution_id(&self) -> &ExecutionId {
         &self.execution_id
     }

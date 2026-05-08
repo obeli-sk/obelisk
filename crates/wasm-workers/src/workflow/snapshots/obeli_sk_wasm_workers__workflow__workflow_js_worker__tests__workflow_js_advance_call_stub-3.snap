@@ -1,0 +1,48 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
+expression: replay
+---
+{
+  "captured_writes": [
+    {
+      "AppendStubResponse": {
+        "events": {
+          "execution_id": "E_00000000000000000000000000.g:1_1",
+          "version": 1,
+          "batch": [
+            {
+              "created_at": "1970-01-01T00:00:00Z",
+              "event": {
+                "finished": {
+                  "retval": {
+                    "ok": {
+                      "type": "string",
+                      "value": "hello"
+                    }
+                  },
+                  "http_client_traces": null
+                }
+              }
+            }
+          ]
+        },
+        "response": {
+          "parent_execution_id": "E_00000000000000000000000000",
+          "created_at": "1970-01-01T00:00:00Z",
+          "join_set_id": "g:1",
+          "child_execution_id": "E_00000000000000000000000000.g:1_1",
+          "finished_version": 1,
+          "result": {
+            "ok": {
+              "type": "string",
+              "value": "hello"
+            }
+          }
+        },
+        "current_time": "1970-01-01T00:00:00Z"
+      }
+    }
+  ],
+  "return_value": null,
+  "version": 4
+}

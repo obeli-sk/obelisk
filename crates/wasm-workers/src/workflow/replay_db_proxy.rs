@@ -1,5 +1,5 @@
-//! A workflow database proxy for replay that captures all appended `HistoryEvent`s in memory
-//! instead of persisting them. This allows `replay_internal` to collect the events
+//! A workflow database proxy for replay that captures all write operations in memory
+//! instead of persisting them. This allows `replay_internal` to collect the operations
 //! that the workflow would produce next.
 
 use super::caching_db_connection::{CacheableDbEvent, WorkflowDbConnection};
@@ -14,72 +14,90 @@ use concepts::{
     prefixed_ulid::DelayId,
     storage::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
-        AppendResponseToExecution, BacktraceInfo, CancelOutcome, CreateRequest, DbConnection,
-        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ExecutionRequest,
-        HistoryEvent, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version,
+        AppendResponseToExecution, BacktraceInfo, CancelOutcome, CapturedDbWrite, CreateRequest,
+        DbConnection, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
+        ExecutionEvent, ExecutionRequest, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
+        Version,
     },
 };
-use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::{any::Any, future::Future};
 
-/// A captured database write operation with all arguments needed to replay it
-/// against the real database.
-#[derive(Debug, Clone)]
-pub(crate) enum CapturedDbWrite {
-    Append {
-        execution_id: ExecutionId,
-        version: Version,
-        req: AppendRequest,
-    },
-    AppendBatch {
-        current_time: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
-        execution_id: ExecutionId,
-        version: Version,
-    },
-    AppendBatchCreateNewExecution {
-        current_time: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
-        execution_id: ExecutionId,
-        version: Version,
-        child_req: Vec<CreateRequest>,
-        backtraces: Vec<BacktraceInfo>,
-    },
-    AppendBatchRespondToParent {
-        events: AppendEventsToExecution,
-        response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
-    },
-}
-
-/// Shared buffer that accumulates `HistoryEvent`s and full write operations during replay.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct ReplayEventCollector {
-    events: Arc<Mutex<Vec<HistoryEvent>>>,
-    writes: Arc<Mutex<Vec<CapturedDbWrite>>>,
+#[derive(Debug, Default)]
+struct ReplayEventCollector {
+    writes: Vec<CapturedDbWrite>,
 }
 
 impl ReplayEventCollector {
-    pub(crate) fn new() -> Self {
-        Self {
-            events: Arc::new(Mutex::new(Vec::new())),
-            writes: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    /// Extract collected events, consuming the buffer.
-    pub(crate) fn take_events(&self) -> Vec<HistoryEvent> {
-        std::mem::take(&mut *self.events.lock().unwrap())
-    }
-
-    /// Extract collected write operations, consuming the buffer.
-    pub(crate) fn take_writes(&self) -> Vec<CapturedDbWrite> {
-        std::mem::take(&mut *self.writes.lock().unwrap())
+    fn into_writes(self) -> Vec<CapturedDbWrite> {
+        self.writes
     }
 }
 
-/// A `WorkflowDbConnection` that captures history events instead of persisting them.
+pub(crate) async fn apply_writes(
+    conn: &dyn DbConnection,
+    actual: Vec<CapturedDbWrite>,
+    version: Version,
+) -> Result<Version, DbErrorWrite> {
+    let mut new_version = version;
+    for write in &actual {
+        if let Some(v) = apply_captured_write(write, conn).await? {
+            new_version = v;
+        }
+    }
+    Ok(new_version)
+}
+
+async fn apply_captured_write(
+    write: &CapturedDbWrite,
+    conn: &dyn DbConnection,
+) -> Result<Option<Version>, DbErrorWrite> {
+    match write.clone() {
+        CapturedDbWrite::Append {
+            execution_id,
+            version,
+            req,
+        } => conn.append(execution_id, version, req).await.map(Some),
+        CapturedDbWrite::AppendBatch {
+            current_time,
+            batch,
+            execution_id,
+            version,
+        } => conn
+            .append_batch(current_time, batch, execution_id, version)
+            .await
+            .map(Some),
+        CapturedDbWrite::AppendBatchCreateNewExecution {
+            current_time,
+            batch,
+            execution_id,
+            version,
+            child_req,
+            backtraces,
+        } => conn
+            .append_batch_create_new_execution(
+                current_time,
+                batch,
+                execution_id,
+                version,
+                child_req,
+                backtraces,
+            )
+            .await
+            .map(Some),
+        CapturedDbWrite::AppendStubResponse {
+            events,
+            response,
+            current_time,
+        } => {
+            conn.append_batch_respond_to_parent(events, response, current_time)
+                .await?;
+            Ok(None)
+        }
+    }
+}
+
+/// A `WorkflowDbConnection` that captures write operations instead of persisting them.
 /// Read operations are delegated to the real database connection.
 pub(crate) struct ReplayWorkflowDbConnection {
     execution_id: ExecutionId,
@@ -91,31 +109,18 @@ pub(crate) struct ReplayWorkflowDbConnection {
 impl ReplayWorkflowDbConnection {
     pub(crate) fn new(
         execution_id: ExecutionId,
-        collector: ReplayEventCollector,
         version: Version,
         real_connection: Box<dyn DbConnection>,
     ) -> Self {
         Self {
             execution_id,
-            collector,
+            collector: ReplayEventCollector::default(),
             version,
             real_connection,
         }
     }
-
-    fn collect_history_event(&self, req: &AppendRequest) {
-        if let ExecutionRequest::HistoryEvent { event } = &req.event {
-            self.collector.events.lock().unwrap().push(event.clone());
-        }
-    }
-
-    fn collect_history_events_from_batch(&self, batch: &[AppendRequest]) {
-        let mut events = self.collector.events.lock().unwrap();
-        for req in batch {
-            if let ExecutionRequest::HistoryEvent { event } = &req.event {
-                events.push(event.clone());
-            }
-        }
+    pub(crate) fn into_writes(self) -> Vec<CapturedDbWrite> {
+        self.collector.into_writes()
     }
 }
 
@@ -184,6 +189,10 @@ fn cacheable_event_parts(
 
 #[async_trait]
 impl WorkflowDbConnection for ReplayWorkflowDbConnection {
+    fn as_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+
     fn execution_id(&self) -> &ExecutionId {
         &self.execution_id
     }
@@ -198,28 +207,23 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         _called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
         let (request, version, child_req, backtrace) = cacheable_event_parts(non_blocking_event);
-        self.collect_history_event(&request);
         if let Some(child_req) = child_req {
-            self.collector.writes.lock().unwrap().push(
-                CapturedDbWrite::AppendBatchCreateNewExecution {
+            self.collector
+                .writes
+                .push(CapturedDbWrite::AppendBatchCreateNewExecution {
                     current_time: _called_at,
                     batch: vec![request],
                     execution_id: self.execution_id.clone(),
                     version: version.clone(),
                     child_req: vec![child_req],
                     backtraces: backtrace.into_iter().collect(),
-                },
-            );
-        } else {
-            self.collector
-                .writes
-                .lock()
-                .unwrap()
-                .push(CapturedDbWrite::Append {
-                    execution_id: self.execution_id.clone(),
-                    version: version.clone(),
-                    req: request,
                 });
+        } else {
+            self.collector.writes.push(CapturedDbWrite::Append {
+                execution_id: self.execution_id.clone(),
+                version: version.clone(),
+                req: request,
+            });
         }
         self.version = Version::new(version.0 + 1);
         Ok(())
@@ -233,17 +237,12 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         _component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
-        self.collect_history_event(&req);
         let version = self.version.clone();
-        self.collector
-            .writes
-            .lock()
-            .unwrap()
-            .push(CapturedDbWrite::Append {
-                execution_id,
-                version: version.clone(),
-                req,
-            });
+        self.collector.writes.push(CapturedDbWrite::Append {
+            execution_id,
+            version: version.clone(),
+            req,
+        });
         self.version = Version::new(version.0 + 1);
         Ok(())
     }
@@ -257,19 +256,14 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         _component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
-        self.collect_history_events_from_batch(&batch);
         let version = self.version.clone();
         let next = next_version(&version, batch.len());
-        self.collector
-            .writes
-            .lock()
-            .unwrap()
-            .push(CapturedDbWrite::AppendBatch {
-                current_time,
-                batch,
-                execution_id,
-                version,
-            });
+        self.collector.writes.push(CapturedDbWrite::AppendBatch {
+            current_time,
+            batch,
+            execution_id,
+            version,
+        });
         self.version = next;
         Ok(())
     }
@@ -284,19 +278,18 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         _component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
-        self.collect_history_events_from_batch(&batch);
         let version = self.version.clone();
         let next = next_version(&version, batch.len());
-        self.collector.writes.lock().unwrap().push(
-            CapturedDbWrite::AppendBatchCreateNewExecution {
+        self.collector
+            .writes
+            .push(CapturedDbWrite::AppendBatchCreateNewExecution {
                 current_time,
                 batch,
                 execution_id,
                 version,
                 child_req,
                 backtraces: Vec::new(),
-            },
-        );
+            });
         self.version = next;
         Ok(())
     }
@@ -307,13 +300,29 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt> {
-        assert_eq!(self.execution_id, events.execution_id);
-        self.collect_history_events_from_batch(&events);
+        let target_execution_id = &events.execution_id;
+        // Query the database first.
+        let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
+        if let Ok(found_stub) = self
+            .real_connection
+            .get_execution_event(target_execution_id, &stub_finished_version)
+            .await
+        {
+            if matches!(found_stub.event, ExecutionRequest::Finished { .. }) {
+                // First stub write sends AlreadyFinished, caller will do the retval comparison.
+                return Err(DbErrorWriteOrReplayInterrupt::DbError(
+                    DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished),
+                ));
+            }
+            // This must not be a stub execution.
+            return Err(DbErrorWriteOrReplayInterrupt::DbError(
+                DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict),
+            ));
+        }
+
         self.collector
             .writes
-            .lock()
-            .unwrap()
-            .push(CapturedDbWrite::AppendBatchRespondToParent {
+            .push(CapturedDbWrite::AppendStubResponse {
                 events,
                 response,
                 current_time,
@@ -353,7 +362,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         &mut self,
         _current_time: DateTime<Utc>,
     ) -> Result<FlushOutcome, DbErrorWrite> {
-        if self.collector.writes.lock().unwrap().is_empty() {
+        if self.collector.writes.is_empty() {
             Ok(FlushOutcome::Noop)
         } else {
             Ok(FlushOutcome::FlushedCache)
