@@ -1089,7 +1089,7 @@ mod tests {
         assert_eq!(json!("delay"), result["responseType"]);
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("allProcessed"), result["afterStatus"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1589,7 +1589,7 @@ mod tests {
         assert_eq!(json!("execution"), result["responseType"]);
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("stubbed-result-42"), result["result"]["ok"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1619,7 +1619,7 @@ mod tests {
         let result = harness.get_result_json().await;
         assert_eq!(json!(false), result["responseOk"]);
         assert_eq!(json!(null), result["result"]["err"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1653,7 +1653,7 @@ mod tests {
             error_msg.contains("NotFound") || error_msg.contains("ExecutionNotFound"),
             "Expected 'NotFound' in error message, got: {error_msg}"
         );
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1684,7 +1684,7 @@ mod tests {
         let result = harness.get_result_json().await;
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("same-value"), result["result"]["ok"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1714,7 +1714,7 @@ mod tests {
         let result = harness.get_result_json().await;
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!(null), result["result"]["ok"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1765,7 +1765,7 @@ mod tests {
         );
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("first-value"), result["result"]["ok"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1808,7 +1808,8 @@ mod tests {
             create_request.ffqn,
             FunctionFqn::new_static("testing:stub-activity/activity", "foo")
         );
-
+        drop(harness);
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1961,7 +1962,7 @@ mod tests {
             "expected Unlocked event in execution log, got: {:?}",
             log.events
         );
-
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -2023,7 +2024,7 @@ mod tests {
             )),
             "expected at least one Persist event for Math.random()"
         );
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -2078,7 +2079,8 @@ mod tests {
             )),
             "expected a JoinSetRequest::DelayRequest event for Date.now()"
         );
-
+        drop(harness);
+        drop(db_conn);
         db_close.close().await;
     }
 
@@ -2117,7 +2119,7 @@ mod tests {
             result["ms"],
             "sleep() should return a Date whose getTime() equals the wake-up ms: {result}"
         );
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -2309,7 +2311,7 @@ mod tests {
             replay3.return_value().is_some(),
             "replay of a finished execution should include the return value"
         );
-
+        drop(db_connection);
         db_close.close().await;
     }
 

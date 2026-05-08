@@ -3664,9 +3664,8 @@ mod tests {
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool, db_close) = db.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
-        let db_connection = db_connection.as_ref();
 
-        let execution_id = create_execution(db_connection, &sim_clock).await;
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
         let join_set_id =
             JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
         let target_activity_stub = execution_id.next_level(&join_set_id);
@@ -3723,7 +3722,7 @@ mod tests {
         drop(execution_id);
         // Second execution
         {
-            let execution_id = create_execution(db_connection, &sim_clock).await;
+            let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
             let (mut event_history, mut caching_db_connection) = load_event_history(
                 db_pool.connection_test().await.unwrap(),
                 execution_id.clone(),
@@ -3761,7 +3760,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-
+        drop(db_connection);
         db_close.close().await;
     }
 
