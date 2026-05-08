@@ -4,12 +4,12 @@ expression: logs
 ---
 [
   {
-    "created_at": "<TIMESTAMP>",
     "cursor": "<TIMESTAMP>",
-    "execution_id": "E_<REDACTED>",
-    "level": "info",
-    "message": "Greeting World",
     "run_id": "Run_<REDACTED>",
-    "type": "log"
+    "execution_id": "E_<REDACTED>",
+    "type": "log",
+    "created_at": "<TIMESTAMP>",
+    "level": "info",
+    "message": "Greeting World"
   }
 ]

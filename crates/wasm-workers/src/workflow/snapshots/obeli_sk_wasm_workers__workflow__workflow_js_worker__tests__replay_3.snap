@@ -6,24 +6,24 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
   "captured_writes": [
     {
       "AppendBatch": {
+        "current_time": "<TIMESTAMP>",
         "batch": [
           {
             "created_at": "<TIMESTAMP>",
             "event": {
               "history_event": {
                 "event": {
+                  "type": "stub",
+                  "target_execution_id": "E_<REDACTED>",
+                  "retval_hash": "011f9f1089426c4e2d1d6c761441181fba8e690f2baeccde7036a92c7d49d6b0e1",
                   "result": {
                     "Ok": null
-                  },
-                  "retval_hash": "011f9f1089426c4e2d1d6c761441181fba8e690f2baeccde7036a92c7d49d6b0e1",
-                  "target_execution_id": "E_<REDACTED>",
-                  "type": "stub"
+                  }
                 }
               }
             }
           }
         ],
-        "current_time": "<TIMESTAMP>",
         "execution_id": "E_<REDACTED>",
         "version": 4
       }
@@ -31,31 +31,31 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
     {
       "Append": {
         "execution_id": "E_<REDACTED>",
+        "version": 5,
         "req": {
           "created_at": "<TIMESTAMP>",
           "event": {
             "history_event": {
               "event": {
-                "closing": false,
+                "type": "join_next",
                 "join_set_id": "g:1",
-                "requested_ffqn": null,
                 "run_expires_at": "<TIMESTAMP>",
-                "type": "join_next"
+                "requested_ffqn": null,
+                "closing": false
               }
             }
           }
-        },
-        "version": 5
+        }
       }
     },
     {
       "Append": {
         "execution_id": "E_<REDACTED>",
+        "version": 6,
         "req": {
           "created_at": "<TIMESTAMP>",
           "event": {
             "finished": {
-              "http_client_traces": null,
               "retval": {
                 "ok": {
                   "type": "result<string, string>",
@@ -63,11 +63,11 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
                     "ok": "\"hello\""
                   }
                 }
-              }
+              },
+              "http_client_traces": null
             }
           }
-        },
-        "version": 6
+        }
       }
     }
   ]

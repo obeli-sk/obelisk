@@ -7,59 +7,54 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
     {
       "Append": {
         "execution_id": "E_<REDACTED>",
+        "version": 2,
         "req": {
           "created_at": "<TIMESTAMP>",
           "event": {
             "history_event": {
               "event": {
-                "join_set_id": "g:1",
-                "type": "join_set_create"
+                "type": "join_set_create",
+                "join_set_id": "g:1"
               }
             }
           }
-        },
-        "version": 2
+        }
       }
     },
     {
       "AppendBatchCreateNewExecution": {
-        "backtraces": [],
+        "current_time": "<TIMESTAMP>",
         "batch": [
           {
             "created_at": "<TIMESTAMP>",
             "event": {
               "history_event": {
                 "event": {
+                  "type": "join_set_request",
                   "join_set_id": "g:1",
                   "request": {
+                    "type": "child_execution_request",
                     "child_execution_id": "E_<REDACTED>",
+                    "target_ffqn": "testing:fibo/fibo.fibo",
                     "params": [
                       10
                     ],
                     "result": {
                       "Ok": null
-                    },
-                    "target_ffqn": "testing:fibo/fibo.fibo",
-                    "type": "child_execution_request"
-                  },
-                  "type": "join_set_request"
+                    }
+                  }
                 }
               }
             }
           }
         ],
+        "execution_id": "E_<REDACTED>",
+        "version": 3,
         "child_req": [
           {
-            "component_id": {
-              "component_digest": "sha256:<REDACTED>",
-              "component_type": "activity",
-              "name": ""
-            },
             "created_at": "<TIMESTAMP>",
-            "deployment_id": "Dep_<REDACTED>",
             "execution_id": "E_<REDACTED>",
             "ffqn": "testing:fibo/fibo.fibo",
-            "metadata": {},
             "params": [
               10
             ],
@@ -67,34 +62,39 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
               "E_<REDACTED>",
               "g:1"
             ],
-            "paused": false,
             "scheduled_at": "<TIMESTAMP>",
-            "scheduled_by": null
+            "component_id": {
+              "component_type": "activity",
+              "name": "",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "deployment_id": "Dep_<REDACTED>",
+            "metadata": {},
+            "scheduled_by": null,
+            "paused": false
           }
         ],
-        "current_time": "<TIMESTAMP>",
-        "execution_id": "E_<REDACTED>",
-        "version": 3
+        "backtraces": []
       }
     },
     {
       "Append": {
         "execution_id": "E_<REDACTED>",
+        "version": 4,
         "req": {
           "created_at": "<TIMESTAMP>",
           "event": {
             "history_event": {
               "event": {
-                "closing": false,
+                "type": "join_next",
                 "join_set_id": "g:1",
-                "requested_ffqn": "testing:fibo/fibo.fibo",
                 "run_expires_at": "<TIMESTAMP>",
-                "type": "join_next"
+                "requested_ffqn": "testing:fibo/fibo.fibo",
+                "closing": false
               }
             }
           }
-        },
-        "version": 4
+        }
       }
     }
   ]

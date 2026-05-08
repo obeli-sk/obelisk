@@ -6,40 +6,40 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
   "captured_writes": [
     {
       "AppendStubResponse": {
-        "current_time": "<TIMESTAMP>",
         "events": {
+          "execution_id": "E_<REDACTED>",
+          "version": 1,
           "batch": [
             {
               "created_at": "<TIMESTAMP>",
               "event": {
                 "finished": {
-                  "http_client_traces": null,
                   "retval": {
                     "ok": {
                       "type": "string",
                       "value": "hello"
                     }
-                  }
+                  },
+                  "http_client_traces": null
                 }
               }
             }
-          ],
-          "execution_id": "E_<REDACTED>",
-          "version": 1
+          ]
         },
         "response": {
-          "child_execution_id": "E_<REDACTED>",
-          "created_at": "<TIMESTAMP>",
-          "finished_version": 1,
-          "join_set_id": "g:1",
           "parent_execution_id": "E_<REDACTED>",
+          "created_at": "<TIMESTAMP>",
+          "join_set_id": "g:1",
+          "child_execution_id": "E_<REDACTED>",
+          "finished_version": 1,
           "result": {
             "ok": {
               "type": "string",
               "value": "hello"
             }
           }
-        }
+        },
+        "current_time": "<TIMESTAMP>"
       }
     }
   ]

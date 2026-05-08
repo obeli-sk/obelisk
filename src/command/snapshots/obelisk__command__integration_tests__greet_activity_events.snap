@@ -9,21 +9,21 @@ expression: events
       "event": {
         "locked": {
           "component_id": {
-            "component_digest": "sha256:<REDACTED>",
             "component_type": "activity",
-            "name": "test_greet_activity"
+            "name": "test_greet_activity",
+            "component_digest": "sha256:<REDACTED>"
           },
-          "deployment_id": "Dep_<REDACTED>",
           "executor_id": "Exr_<REDACTED>",
+          "deployment_id": "Dep_<REDACTED>",
+          "run_id": "Run_<REDACTED>",
           "lock_expires_at": "<TIMESTAMP>",
           "retry_config": {
             "max_retries": 5,
             "retry_exp_backoff": {
-              "nanos": 100000000,
-              "secs": 0
+              "secs": 0,
+              "nanos": 100000000
             }
-          },
-          "run_id": "Run_<REDACTED>"
+          }
         }
       },
       "version": 1
@@ -32,13 +32,13 @@ expression: events
       "created_at": "<TIMESTAMP>",
       "event": {
         "finished": {
-          "http_client_traces": [],
           "retval": {
             "ok": {
               "type": "string",
               "value": "Hello, World!"
             }
-          }
+          },
+          "http_client_traces": []
         }
       },
       "version": 2
