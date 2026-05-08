@@ -9,21 +9,21 @@ expression: events
       "event": {
         "locked": {
           "component_id": {
-            "component_digest": "sha256:<REDACTED>",
             "component_type": "workflow",
-            "name": "test_call_activity_workflow"
+            "name": "test_call_activity_workflow",
+            "component_digest": "sha256:<REDACTED>"
           },
-          "deployment_id": "Dep_<REDACTED>",
           "executor_id": "Exr_<REDACTED>",
+          "deployment_id": "Dep_<REDACTED>",
+          "run_id": "Run_<REDACTED>",
           "lock_expires_at": "<TIMESTAMP>",
           "retry_config": {
             "max_retries": null,
             "retry_exp_backoff": {
-              "nanos": 100000000,
-              "secs": 0
+              "secs": 0,
+              "nanos": 100000000
             }
-          },
-          "run_id": "Run_<REDACTED>"
+          }
         }
       },
       "version": 1
@@ -33,8 +33,8 @@ expression: events
       "event": {
         "history_event": {
           "event": {
-            "join_set_id": "o:1-add",
-            "type": "join_set_create"
+            "type": "join_set_create",
+            "join_set_id": "o:1-add"
           }
         }
       },
@@ -45,20 +45,20 @@ expression: events
       "event": {
         "history_event": {
           "event": {
+            "type": "join_set_request",
             "join_set_id": "o:1-add",
             "request": {
+              "type": "child_execution_request",
               "child_execution_id": "E_<REDACTED>",
+              "target_ffqn": "testing:integration/activity-add.add",
               "params": [
                 3,
                 4
               ],
               "result": {
                 "Ok": null
-              },
-              "target_ffqn": "testing:integration/activity-add.add",
-              "type": "child_execution_request"
-            },
-            "type": "join_set_request"
+              }
+            }
           }
         }
       },
@@ -69,11 +69,11 @@ expression: events
       "event": {
         "history_event": {
           "event": {
-            "closing": false,
+            "type": "join_next",
             "join_set_id": "o:1-add",
-            "requested_ffqn": "testing:integration/activity-add.add",
             "run_expires_at": "<TIMESTAMP>",
-            "type": "join_next"
+            "requested_ffqn": "testing:integration/activity-add.add",
+            "closing": false
           }
         }
       },
@@ -83,13 +83,13 @@ expression: events
       "created_at": "<TIMESTAMP>",
       "event": {
         "finished": {
-          "http_client_traces": null,
           "retval": {
             "ok": {
               "type": "string",
               "value": "7"
             }
-          }
+          },
+          "http_client_traces": null
         }
       },
       "version": 5

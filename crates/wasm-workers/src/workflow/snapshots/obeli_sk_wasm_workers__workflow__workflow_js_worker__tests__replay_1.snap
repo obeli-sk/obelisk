@@ -7,86 +7,54 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
     {
       "Append": {
         "execution_id": "E_<REDACTED>",
+        "version": 2,
         "req": {
           "created_at": "<TIMESTAMP>",
           "event": {
             "history_event": {
               "event": {
-                "join_set_id": "g:1",
-                "type": "join_set_create"
+                "type": "join_set_create",
+                "join_set_id": "g:1"
               }
             }
           }
-        },
-        "version": 2
+        }
       }
     },
     {
       "AppendBatchCreateNewExecution": {
-        "backtraces": [
-          {
-            "component_id": {
-              "component_digest": "sha256:<REDACTED>",
-              "component_type": "workflow",
-              "name": "test_js_workflow"
-            },
-            "execution_id": "E_<REDACTED>",
-            "version_max_excluding": 4,
-            "version_min_including": 3,
-            "wasm_backtrace": {
-              "frames": [
-                {
-                  "func_name": "call_stub",
-                  "module": "unknown",
-                  "symbols": [
-                    {
-                      "col": 37,
-                      "file": null,
-                      "func_name": null,
-                      "line": 4
-                    }
-                  ]
-                }
-              ]
-            }
-          }
-        ],
+        "current_time": "<TIMESTAMP>",
         "batch": [
           {
             "created_at": "<TIMESTAMP>",
             "event": {
               "history_event": {
                 "event": {
+                  "type": "join_set_request",
                   "join_set_id": "g:1",
                   "request": {
+                    "type": "child_execution_request",
                     "child_execution_id": "E_<REDACTED>",
+                    "target_ffqn": "testing:stub-activity/activity.foo",
                     "params": [
                       "test-input"
                     ],
                     "result": {
                       "Ok": null
-                    },
-                    "target_ffqn": "testing:stub-activity/activity.foo",
-                    "type": "child_execution_request"
-                  },
-                  "type": "join_set_request"
+                    }
+                  }
                 }
               }
             }
           }
         ],
+        "execution_id": "E_<REDACTED>",
+        "version": 3,
         "child_req": [
           {
-            "component_id": {
-              "component_digest": "sha256:<REDACTED>",
-              "component_type": "activity_stub",
-              "name": ""
-            },
             "created_at": "<TIMESTAMP>",
-            "deployment_id": "Dep_<REDACTED>",
             "execution_id": "E_<REDACTED>",
             "ffqn": "testing:stub-activity/activity.foo",
-            "metadata": {},
             "params": [
               "test-input"
             ],
@@ -94,14 +62,46 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
               "E_<REDACTED>",
               "g:1"
             ],
-            "paused": false,
             "scheduled_at": "<TIMESTAMP>",
-            "scheduled_by": null
+            "component_id": {
+              "component_type": "activity_stub",
+              "name": "",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "deployment_id": "Dep_<REDACTED>",
+            "metadata": {},
+            "scheduled_by": null,
+            "paused": false
           }
         ],
-        "current_time": "<TIMESTAMP>",
-        "execution_id": "E_<REDACTED>",
-        "version": 3
+        "backtraces": [
+          {
+            "execution_id": "E_<REDACTED>",
+            "component_id": {
+              "component_type": "workflow",
+              "name": "test_js_workflow",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "version_min_including": 3,
+            "version_max_excluding": 4,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "module": "unknown",
+                  "func_name": "call_stub",
+                  "symbols": [
+                    {
+                      "func_name": null,
+                      "file": null,
+                      "line": 4,
+                      "col": 37
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
       }
     }
   ]

@@ -5,289 +5,289 @@ expression: components
 [
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_add_activity"
+      "name": "test_add_activity",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_greet_activity"
+      "name": "test_greet_activity",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_fetch_denied_activity"
+      "name": "test_fetch_denied_activity",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_fetch_allowed_activity"
+      "name": "test_fetch_allowed_activity",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_read_env_activity"
+      "name": "test_read_env_activity",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_make_record_activity"
+      "name": "test_make_record_activity",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_throw_variant_activity"
+      "name": "test_throw_variant_activity",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_throw_null_activity"
+      "name": "test_throw_null_activity",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "test_hmac_sign_verify_activity"
+      "name": "test_hmac_sign_verify_activity",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-add.add"
+      "name": "exec-add.add",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-greet.greet-include"
+      "name": "exec-greet.greet-include",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-greet.greet-external"
+      "name": "exec-greet.greet-external",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-greet.greet-inline"
+      "name": "exec-greet.greet-inline",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-env.read-env"
+      "name": "exec-env.read-env",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-error.fail"
+      "name": "exec-error.fail",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-record.make-record"
+      "name": "exec-record.make-record",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-stdin.expose-secrets"
+      "name": "exec-stdin.expose-secrets",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-void.void-ok"
+      "name": "exec-void.void-ok",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-void.void-err"
+      "name": "exec-void.void-err",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-args.echo-args"
+      "name": "exec-args.echo-args",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity",
-      "name": "exec-stream.stream-test"
+      "name": "exec-stream.stream-test",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "activity_stub",
-      "name": "stubs.my-stub"
+      "name": "stubs.my-stub",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
-      "name": "test_add_workflow"
+      "name": "test_add_workflow",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
-      "name": "test_add_via_activity_workflow"
+      "name": "test_add_via_activity_workflow",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
-      "name": "test_call_activity_workflow"
+      "name": "test_call_activity_workflow",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
-      "name": "test_make_record_workflow"
+      "name": "test_make_record_workflow",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
-      "name": "test_throw_variant_workflow"
+      "name": "test_throw_variant_workflow",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
-      "name": "test_throw_null_workflow"
+      "name": "test_throw_null_workflow",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
-      "name": "test_call_stub_workflow"
+      "name": "test_call_stub_workflow",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
-      "name": "test_math_random_workflow"
+      "name": "test_math_random_workflow",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "workflow",
-      "name": "test_date_now_workflow"
+      "name": "test_date_now_workflow",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_hello_webhook"
+      "name": "test_hello_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_headers_webhook"
+      "name": "test_headers_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_fetch_allowed_webhook"
+      "name": "test_fetch_allowed_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_fetch_denied_webhook"
+      "name": "test_fetch_denied_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_call_activity_webhook"
+      "name": "test_call_activity_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_read_env_webhook"
+      "name": "test_read_env_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_generate_execution_id_webhook"
+      "name": "test_generate_execution_id_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_body_text_webhook"
+      "name": "test_body_text_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_body_json_webhook"
+      "name": "test_body_json_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   },
   {
     "component_id": {
-      "component_digest": "sha256:<REDACTED>",
       "component_type": "webhook_endpoint",
-      "name": "test_body_form_data_webhook"
+      "name": "test_body_form_data_webhook",
+      "component_digest": "sha256:<REDACTED>"
     }
   }
 ]

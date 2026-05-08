@@ -3,427 +3,87 @@
   "title": "DeploymentToml",
   "type": "object",
   "properties": {
-    "activity_exec": {
+    "activity_wasm": {
       "type": "array",
-      "default": [],
       "items": {
-        "$ref": "#/$defs/ActivityExecComponentConfigToml"
-      }
-    },
-    "activity_external": {
-      "type": "array",
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/ActivityExternalComponentConfigToml"
-      }
-    },
-    "activity_js": {
-      "type": "array",
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/ActivityJsComponentConfigToml"
-      }
+        "$ref": "#/$defs/ActivityWasmComponentConfigToml"
+      },
+      "default": []
     },
     "activity_stub": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/ActivityStubComponentConfigToml"
-      }
+      },
+      "default": []
     },
-    "activity_wasm": {
+    "activity_external": {
       "type": "array",
-      "default": [],
       "items": {
-        "$ref": "#/$defs/ActivityWasmComponentConfigToml"
-      }
+        "$ref": "#/$defs/ActivityExternalComponentConfigToml"
+      },
+      "default": []
     },
-    "cron": {
+    "activity_js": {
       "type": "array",
-      "default": [],
       "items": {
-        "$ref": "#/$defs/CronComponentConfigToml"
-      }
+        "$ref": "#/$defs/ActivityJsComponentConfigToml"
+      },
+      "default": []
     },
-    "webhook_endpoint_js": {
+    "activity_exec": {
       "type": "array",
-      "default": [],
       "items": {
-        "$ref": "#/$defs/WebhookJsComponentConfigToml"
-      }
-    },
-    "webhook_endpoint_wasm": {
-      "type": "array",
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/WebhookWasmComponentConfigToml"
-      }
-    },
-    "workflow_js": {
-      "type": "array",
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/WorkflowJsComponentConfigToml"
-      }
+        "$ref": "#/$defs/ActivityExecComponentConfigToml"
+      },
+      "default": []
     },
     "workflow_wasm": {
       "type": "array",
-      "default": [],
       "items": {
         "$ref": "#/$defs/WorkflowWasmComponentConfigToml"
-      }
+      },
+      "default": []
+    },
+    "workflow_js": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WorkflowJsComponentConfigToml"
+      },
+      "default": []
+    },
+    "webhook_endpoint_wasm": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WebhookWasmComponentConfigToml"
+      },
+      "default": []
+    },
+    "webhook_endpoint_js": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WebhookJsComponentConfigToml"
+      },
+      "default": []
+    },
+    "cron": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CronComponentConfigToml"
+      },
+      "default": []
     }
   },
   "additionalProperties": false,
   "$defs": {
-    "ActivityExecComponentConfigToml": {
-      "type": "object",
-      "properties": {
-        "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "cwd": {
-          "description": "Working directory for the child process. Supports `${DEPLOYMENT_DIR}` expansion.\nDefaults to the server's working directory.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "env_vars": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/EnvVarConfig"
-          }
-        },
-        "exec": {
-          "$ref": "#/$defs/ExecConfigToml",
-          "default": {
-            "batch_size": 5,
-            "lock_expiry": {
-              "seconds": 1
-            },
-            "locking_strategy": null,
-            "tick_sleep": {
-              "milliseconds": 200
-            }
-          }
-        },
-        "ffqn": {
-          "type": "string"
-        },
-        "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
-        },
-        "max_output_bytes": {
-          "description": "Maximum bytes collected from stdout to form the response.\nExceeding the limit fails the execution.\nNot used when `return_type` is result (default), since the response carries no data.",
-          "type": "integer",
-          "format": "uint64",
-          "default": 4096,
-          "minimum": 0
-        },
-        "max_retries": {
-          "type": "integer",
-          "format": "uint32",
-          "default": 5,
-          "minimum": 0
-        },
-        "name": {
-          "description": "Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ConfigName"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "params": {
-          "description": "Custom parameters for the exec activity.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/JsParamToml"
-          }
-        },
-        "program": {
-          "description": "Program specification. Exactly one of `external`, `inline`, or `include`.",
-          "$ref": "#/$defs/ExecProgramToml"
-        },
-        "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
-        },
-        "return_type": {
-          "description": "WIT return type. Defaults to `result`.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "secrets": {
-          "description": "Secrets pushed to stdin. See `ExecSecretsToml`.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ExecSecretsToml"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "program",
-        "ffqn"
-      ]
-    },
-    "ActivityExternalComponentConfigToml": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/ActivityExternalFileConfigToml"
-        },
-        {
-          "$ref": "#/$defs/ActivityStubExtInlineConfigToml"
-        }
-      ]
-    },
-    "ActivityExternalFileConfigToml": {
-      "type": "object",
-      "properties": {
-        "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "location": {
-          "type": "string"
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "location"
-      ]
-    },
-    "ActivityJsComponentConfigToml": {
-      "type": "object",
-      "properties": {
-        "allowed_host": {
-          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/AllowedHostToml"
-          }
-        },
-        "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the digest derived from the JS source, ffqn, and params.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "content_digest": {
-          "description": "Content digest of the JS source file.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "env_vars": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/EnvVarConfig"
-          }
-        },
-        "exec": {
-          "$ref": "#/$defs/ExecConfigToml",
-          "default": {
-            "batch_size": 5,
-            "lock_expiry": {
-              "seconds": 1
-            },
-            "locking_strategy": null,
-            "tick_sleep": {
-              "milliseconds": 200
-            }
-          }
-        },
-        "ffqn": {
-          "type": "string"
-        },
-        "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
-          "$ref": "#/$defs/JsLocationToml"
-        },
-        "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
-        },
-        "max_retries": {
-          "type": "integer",
-          "format": "uint32",
-          "default": 5,
-          "minimum": 0
-        },
-        "name": {
-          "description": "Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ConfigName"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "params": {
-          "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/JsParamToml"
-          }
-        },
-        "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
-        },
-        "return_type": {
-          "description": "WIT return type. Defaults to `result`.\nMust be `result<T, string>` — the error type must be `string` since JS throws strings.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "location",
-        "ffqn"
-      ]
-    },
-    "ActivityStubComponentConfigToml": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/ActivityStubFileConfigToml"
-        },
-        {
-          "$ref": "#/$defs/ActivityStubExtInlineConfigToml"
-        }
-      ]
-    },
-    "ActivityStubExtInlineConfigToml": {
-      "type": "object",
-      "properties": {
-        "ffqn": {
-          "type": "string"
-        },
-        "name": {
-          "description": "Component name. Optional — defaults to `{ifc_name}.{function_name}` from `ffqn`.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ConfigName"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "params": {
-          "type": [
-            "array",
-            "null"
-          ],
-          "default": null,
-          "items": {
-            "$ref": "#/$defs/JsParamToml"
-          }
-        },
-        "return_type": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "ffqn"
-      ]
-    },
-    "ActivityStubFileConfigToml": {
-      "type": "object",
-      "properties": {
-        "location": {
-          "type": "string"
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "location"
-      ]
-    },
     "ActivityWasmComponentConfigToml": {
       "type": "object",
       "properties": {
-        "allowed_host": {
-          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/AllowedHostToml"
-          }
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "location": {
+          "type": "string"
         },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
@@ -433,13 +93,6 @@
           ],
           "default": null
         },
-        "env_vars": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/EnvVarConfig"
-          }
-        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
           "default": {
@@ -447,218 +100,96 @@
             "lock_expiry": {
               "seconds": 1
             },
-            "locking_strategy": null,
             "tick_sleep": {
               "milliseconds": 200
-            }
+            },
+            "locking_strategy": null
           }
-        },
-        "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "location": {
-          "type": "string"
-        },
-        "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
         },
         "max_retries": {
           "type": "integer",
           "format": "uint32",
-          "default": 5,
-          "minimum": 0
-        },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
+          "minimum": 0,
+          "default": 5
         },
         "retry_exp_backoff": {
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "milliseconds": 100
           }
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          },
+          "default": []
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
+        },
+        "allowed_host": {
+          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          },
+          "default": []
         }
       },
       "additionalProperties": false,
       "required": [
         "name",
         "location"
-      ]
-    },
-    "AllowedHostSecretsToml": {
-      "description": "Secrets configuration for an allowed host.",
-      "type": "object",
-      "properties": {
-        "env_vars": {
-          "description": "Env vars using the same syntax as top-level `env_vars`.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/EnvVarConfig"
-          }
-        },
-        "replace_in": {
-          "description": "Where in the request to perform replacement.\nDefault: empty (no replacement — deny by default).",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/ReplaceIn"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "env_vars"
-      ]
-    },
-    "AllowedHostToml": {
-      "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.",
-      "type": "object",
-      "properties": {
-        "methods": {
-          "description": "Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = \"*\"` or `methods = [\"*\"]` to allow all methods.\n- `methods = [\"GET\", \"POST\"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MethodsInput"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "pattern": {
-          "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`).",
-          "type": "string"
-        },
-        "secrets": {
-          "description": "Optional secrets for this host.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AllowedHostSecretsToml"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "pattern"
-      ]
-    },
-    "BlockingStrategyConfigCustomized": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "await"
-            },
-            "non_blocking_event_batching": {
-              "type": "integer",
-              "format": "uint32",
-              "default": 100,
-              "minimum": 0
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "kind"
-          ]
-        }
-      ]
-    },
-    "BlockingStrategyConfigSimple": {
-      "type": "string",
-      "enum": [
-        "interrupt",
-        "await"
-      ]
-    },
-    "BlockingStrategyConfigToml": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/BlockingStrategyConfigCustomized"
-        },
-        {
-          "$ref": "#/$defs/BlockingStrategyConfigSimple"
-        }
-      ]
-    },
-    "ComponentBacktraceConfig": {
-      "type": "object",
-      "properties": {
-        "sources": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "sources"
-      ]
-    },
-    "ComponentStdOutputToml": {
-      "type": "string",
-      "enum": [
-        "none",
-        "stdout",
-        "stderr",
-        "db"
       ]
     },
     "ConfigName": {
       "description": "Activity, Webhook, Workflow or a Http server",
       "type": "string"
     },
-    "CronComponentConfigToml": {
+    "ExecConfigToml": {
       "type": "object",
       "properties": {
-        "exec": {
-          "$ref": "#/$defs/ExecConfigToml",
+        "batch_size": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 5
+        },
+        "lock_expiry": {
+          "$ref": "#/$defs/DurationConfig",
           "default": {
-            "batch_size": 5,
-            "lock_expiry": {
-              "seconds": 1
-            },
-            "locking_strategy": null,
-            "tick_sleep": {
-              "milliseconds": 200
-            }
+            "seconds": 1
           }
         },
-        "ffqn": {
-          "description": "Fully qualified function name of the target to invoke on each schedule tick.",
-          "type": "string"
+        "tick_sleep": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 200
+          }
         },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
-        },
-        "params": {
-          "description": "JSON-encoded parameters to pass to the target function.",
-          "type": "string",
-          "default": "[]"
-        },
-        "schedule": {
-          "description": "Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.",
-          "type": "string"
+        "locking_strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LockingStrategy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "ffqn",
-        "schedule"
-      ]
+      "additionalProperties": false
     },
     "DurationConfig": {
       "oneOf": [
@@ -671,10 +202,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "milliseconds"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -685,10 +216,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "seconds"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -699,10 +230,10 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "minutes"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -713,11 +244,27 @@
               "minimum": 0
             }
           },
-          "additionalProperties": false,
           "required": [
             "hours"
-          ]
+          ],
+          "additionalProperties": false
         }
+      ]
+    },
+    "LockingStrategy": {
+      "type": "string",
+      "enum": [
+        "by_ffqns",
+        "by_component_digest"
+      ]
+    },
+    "ComponentStdOutputToml": {
+      "type": "string",
+      "enum": [
+        "none",
+        "stdout",
+        "stderr",
+        "db"
       ]
     },
     "EnvVarConfig": {
@@ -744,133 +291,6 @@
         }
       ]
     },
-    "ExecConfigToml": {
-      "type": "object",
-      "properties": {
-        "batch_size": {
-          "type": "integer",
-          "format": "uint32",
-          "default": 5,
-          "minimum": 0
-        },
-        "lock_expiry": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "seconds": 1
-          }
-        },
-        "locking_strategy": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LockingStrategy"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "tick_sleep": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 200
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "ExecProgramToml": {
-      "description": "Program specification for exec activities (TOML input form).",
-      "oneOf": [
-        {
-          "description": "Explicit argv. The first element is the executable; remaining elements are fixed arguments.\nActivity params are JSON-serialized and appended as trailing args.\nDoes not support `${DEPLOYMENT_DIR}/` prefix.",
-          "type": "object",
-          "properties": {
-            "external": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "external"
-          ]
-        },
-        {
-          "description": "Inline script content. Written to a temp file at each execution.\nActivity params are appended as args.",
-          "type": "object",
-          "properties": {
-            "inline": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "inline"
-          ]
-        },
-        {
-          "description": "File path to include. Resolved to `inline` at canonicalization time.\nSupports `${DEPLOYMENT_DIR}/` prefix.",
-          "type": "object",
-          "properties": {
-            "include": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "include"
-          ]
-        }
-      ]
-    },
-    "ExecSecretsToml": {
-      "description": "Secrets configuration for exec activities.",
-      "type": "object",
-      "properties": {
-        "env_vars": {
-          "description": "Secret entries resolved from environment variables.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/SecretEnvVarToml"
-          }
-        }
-      },
-      "additionalProperties": false
-    },
-    "JsLocationToml": {
-      "description": "Location of a JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
-      "type": "string"
-    },
-    "JsParamToml": {
-      "description": "A parameter declaration for a JS activity function.",
-      "type": "object",
-      "properties": {
-        "name": {
-          "description": "Parameter name (used in WIT metadata).\nStored in kebab-case for WIT compatibility.",
-          "type": "string"
-        },
-        "type": {
-          "description": "WIT type string, e.g. `string`, `u32`, `list<string>`, `option<u64>`.",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "type"
-      ]
-    },
-    "LockingStrategy": {
-      "type": "string",
-      "enum": [
-        "by_ffqns",
-        "by_component_digest"
-      ]
-    },
     "LogLevelToml": {
       "type": "string",
       "enum": [
@@ -880,6 +300,43 @@
         "info",
         "warn",
         "error"
+      ]
+    },
+    "AllowedHostToml": {
+      "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.",
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`).",
+          "type": "string"
+        },
+        "methods": {
+          "description": "Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = \"*\"` or `methods = [\"*\"]` to allow all methods.\n- `methods = [\"GET\", \"POST\"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MethodsInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "secrets": {
+          "description": "Optional secrets for this host.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AllowedHostSecretsToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern"
       ]
     },
     "MethodsInput": {
@@ -901,6 +358,31 @@
     "MethodsInputStar": {
       "type": "null"
     },
+    "AllowedHostSecretsToml": {
+      "description": "Secrets configuration for an allowed host.",
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "description": "Env vars using the same syntax as top-level `env_vars`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
+        "replace_in": {
+          "description": "Where in the request to perform replacement.\nDefault: empty (no replacement — deny by default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReplaceIn"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "env_vars"
+      ]
+    },
     "ReplaceIn": {
       "description": "Where in the outgoing request placeholders are replaced.",
       "type": "string",
@@ -909,6 +391,429 @@
         "body",
         "params"
       ]
+    },
+    "ActivityStubComponentConfigToml": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActivityStubFileConfigToml"
+        },
+        {
+          "$ref": "#/$defs/ActivityStubExtInlineConfigToml"
+        }
+      ]
+    },
+    "ActivityStubFileConfigToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "location": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
+      ]
+    },
+    "ActivityStubExtInlineConfigToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Component name. Optional — defaults to `{ifc_name}.{function_name}` from `ffqn`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "params": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          },
+          "default": null
+        },
+        "return_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ffqn"
+      ]
+    },
+    "JsParamToml": {
+      "description": "A parameter declaration for a JS activity function.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Parameter name (used in WIT metadata).\nStored in kebab-case for WIT compatibility.",
+          "type": "string"
+        },
+        "type": {
+          "description": "WIT type string, e.g. `string`, `u32`, `list<string>`, `option<u64>`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "ActivityExternalComponentConfigToml": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActivityExternalFileConfigToml"
+        },
+        {
+          "$ref": "#/$defs/ActivityStubExtInlineConfigToml"
+        }
+      ]
+    },
+    "ActivityExternalFileConfigToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "location": {
+          "type": "string"
+        },
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
+      ]
+    },
+    "ActivityJsComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "location": {
+          "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
+          "$ref": "#/$defs/JsLocationToml"
+        },
+        "content_digest": {
+          "description": "Content digest of the JS source file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the digest derived from the JS source, ffqn, and params.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "params": {
+          "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          },
+          "default": []
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "tick_sleep": {
+              "milliseconds": 200
+            },
+            "locking_strategy": null
+          }
+        },
+        "max_retries": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 5
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
+        },
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          },
+          "default": []
+        },
+        "allowed_host": {
+          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          },
+          "default": []
+        },
+        "return_type": {
+          "description": "WIT return type. Defaults to `result`.\nMust be `result<T, string>` — the error type must be `string` since JS throws strings.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "location",
+        "ffqn"
+      ]
+    },
+    "JsLocationToml": {
+      "description": "Location of a JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
+      "type": "string"
+    },
+    "ActivityExecComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "program": {
+          "description": "Program specification. Exactly one of `external`, `inline`, or `include`.",
+          "$ref": "#/$defs/ExecProgramToml"
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "params": {
+          "description": "Custom parameters for the exec activity.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          },
+          "default": []
+        },
+        "return_type": {
+          "description": "WIT return type. Defaults to `result`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "tick_sleep": {
+              "milliseconds": 200
+            },
+            "locking_strategy": null
+          }
+        },
+        "max_retries": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 5
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
+        },
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          },
+          "default": []
+        },
+        "cwd": {
+          "description": "Working directory for the child process. Supports `${DEPLOYMENT_DIR}` expansion.\nDefaults to the server's working directory.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "max_output_bytes": {
+          "description": "Maximum bytes collected from stdout to form the response.\nExceeding the limit fails the execution.\nNot used when `return_type` is result (default), since the response carries no data.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 4096
+        },
+        "secrets": {
+          "description": "Secrets pushed to stdin. See `ExecSecretsToml`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecSecretsToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "program",
+        "ffqn"
+      ]
+    },
+    "ExecProgramToml": {
+      "description": "Program specification for exec activities (TOML input form).",
+      "oneOf": [
+        {
+          "description": "Explicit argv. The first element is the executable; remaining elements are fixed arguments.\nActivity params are JSON-serialized and appended as trailing args.\nDoes not support `${DEPLOYMENT_DIR}/` prefix.",
+          "type": "object",
+          "properties": {
+            "external": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "external"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Inline script content. Written to a temp file at each execution.\nActivity params are appended as args.",
+          "type": "object",
+          "properties": {
+            "inline": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "inline"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "File path to include. Resolved to `inline` at canonicalization time.\nSupports `${DEPLOYMENT_DIR}/` prefix.",
+          "type": "object",
+          "properties": {
+            "include": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ExecSecretsToml": {
+      "description": "Secrets configuration for exec activities.",
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "description": "Secret entries resolved from environment variables.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SecretEnvVarToml"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
     },
     "SecretEnvVarToml": {
       "description": "Secret entry: resolved from environment variables at startup.",
@@ -929,16 +834,144 @@
         "name"
       ]
     },
-    "WebhookJsComponentConfigToml": {
+    "WorkflowWasmComponentConfigToml": {
       "type": "object",
       "properties": {
-        "allowed_host": {
-          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/AllowedHostToml"
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "location": {
+          "type": "string"
+        },
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "tick_sleep": {
+              "milliseconds": 200
+            },
+            "locking_strategy": null
           }
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
+        },
+        "blocking_strategy": {
+          "$ref": "#/$defs/BlockingStrategyConfigToml",
+          "default": "await"
+        },
+        "backtrace": {
+          "$ref": "#/$defs/ComponentBacktraceConfig",
+          "default": {
+            "sources": {}
+          }
+        },
+        "stub_wasi": {
+          "type": "boolean",
+          "default": false
+        },
+        "lock_extension": {
+          "type": "boolean",
+          "default": true
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "location"
+      ]
+    },
+    "BlockingStrategyConfigToml": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BlockingStrategyConfigCustomized"
+        },
+        {
+          "$ref": "#/$defs/BlockingStrategyConfigSimple"
+        }
+      ]
+    },
+    "BlockingStrategyConfigCustomized": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "non_blocking_event_batching": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0,
+              "default": 100
+            },
+            "kind": {
+              "type": "string",
+              "const": "await"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "BlockingStrategyConfigSimple": {
+      "type": "string",
+      "enum": [
+        "interrupt",
+        "await"
+      ]
+    },
+    "ComponentBacktraceConfig": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sources"
+      ]
+    },
+    "WorkflowJsComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "location": {
+          "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
+          "$ref": "#/$defs/JsLocationToml"
         },
         "content_digest": {
           "description": "Content digest of the JS source file.",
@@ -948,43 +981,122 @@
           ],
           "default": null
         },
-        "env_vars": {
+        "component_digest": {
+          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the digest derived from the JS source, ffqn, and params.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "params": {
+          "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
           "type": "array",
-          "default": [],
           "items": {
-            "$ref": "#/$defs/EnvVarConfig"
+            "$ref": "#/$defs/JsParamToml"
+          },
+          "default": []
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "tick_sleep": {
+              "milliseconds": 200
+            },
+            "locking_strategy": null
           }
         },
-        "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
         },
-        "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
+        "blocking_strategy": {
+          "$ref": "#/$defs/BlockingStrategyConfigToml",
+          "default": "await"
         },
-        "http_server": {
-          "description": "The HTTP server to bind this webhook to.",
-          "$ref": "#/$defs/ConfigName",
-          "default": "external"
-        },
-        "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths.",
-          "$ref": "#/$defs/JsLocationToml"
+        "lock_extension": {
+          "type": "boolean",
+          "default": true
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",
           "default": "debug"
         },
+        "return_type": {
+          "description": "WIT return type. Defaults to `result`.\nMust be `result`, `result<T>`, `result<T, string>`, or\n`result<T, variant { execution-failed, ... }>`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "location",
+        "ffqn"
+      ]
+    },
+    "WebhookWasmComponentConfigToml": {
+      "type": "object",
+      "properties": {
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
+        "location": {
+          "type": "string"
+        },
+        "http_server": {
+          "$ref": "#/$defs/ConfigName",
+          "default": "external"
+        },
         "routes": {
-          "description": "Routes that this webhook responds to.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/WebhookRoute"
           }
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          },
+          "default": []
+        },
+        "backtrace": {
+          "$ref": "#/$defs/ComponentBacktraceConfig",
+          "default": {
+            "sources": {}
+          }
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
+        },
+        "allowed_host": {
+          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          },
+          "default": []
         }
       },
       "additionalProperties": false,
@@ -1009,10 +1121,10 @@
       "properties": {
         "methods": {
           "type": "array",
-          "default": [],
           "items": {
             "type": "string"
-          }
+          },
+          "default": []
         },
         "route": {
           "type": "string"
@@ -1023,80 +1135,15 @@
         "route"
       ]
     },
-    "WebhookWasmComponentConfigToml": {
+    "WebhookJsComponentConfigToml": {
       "type": "object",
       "properties": {
-        "allowed_host": {
-          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/AllowedHostToml"
-          }
-        },
-        "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfig",
-          "default": {
-            "sources": {}
-          }
-        },
-        "env_vars": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/EnvVarConfig"
-          }
-        },
-        "forward_stderr": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "forward_stdout": {
-          "$ref": "#/$defs/ComponentStdOutputToml",
-          "default": "db"
-        },
-        "http_server": {
-          "$ref": "#/$defs/ConfigName",
-          "default": "external"
-        },
-        "location": {
-          "type": "string"
-        },
-        "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
-        },
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
-        "routes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/WebhookRoute"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "location",
-        "routes"
-      ]
-    },
-    "WorkflowJsComponentConfigToml": {
-      "type": "object",
-      "properties": {
-        "blocking_strategy": {
-          "$ref": "#/$defs/BlockingStrategyConfigToml",
-          "default": "await"
-        },
-        "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the digest derived from the JS source, ffqn, and params.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
+        "location": {
+          "description": "Location of the JavaScript source file.\nSupports local file paths.",
+          "$ref": "#/$defs/JsLocationToml"
         },
         "content_digest": {
           "description": "Content digest of the JS source file.",
@@ -1106,138 +1153,91 @@
           ],
           "default": null
         },
-        "exec": {
-          "$ref": "#/$defs/ExecConfigToml",
-          "default": {
-            "batch_size": 5,
-            "lock_expiry": {
-              "seconds": 1
-            },
-            "locking_strategy": null,
-            "tick_sleep": {
-              "milliseconds": 200
-            }
-          }
+        "http_server": {
+          "description": "The HTTP server to bind this webhook to.",
+          "$ref": "#/$defs/ConfigName",
+          "default": "external"
         },
-        "ffqn": {
-          "type": "string"
-        },
-        "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
-          "$ref": "#/$defs/JsLocationToml"
-        },
-        "lock_extension": {
-          "type": "boolean",
-          "default": true
-        },
-        "logs_store_min_level": {
-          "$ref": "#/$defs/LogLevelToml",
-          "default": "debug"
-        },
-        "name": {
-          "description": "Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ConfigName"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "params": {
-          "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
+        "routes": {
+          "description": "Routes that this webhook responds to.",
           "type": "array",
-          "default": [],
           "items": {
-            "$ref": "#/$defs/JsParamToml"
+            "$ref": "#/$defs/WebhookRoute"
           }
         },
-        "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
-        "return_type": {
-          "description": "WIT return type. Defaults to `result`.\nMust be `result`, `result<T>`, `result<T, string>`, or\n`result<T, variant { execution-failed, ... }>`.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "location",
-        "ffqn"
-      ]
-    },
-    "WorkflowWasmComponentConfigToml": {
-      "type": "object",
-      "properties": {
-        "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfig",
-          "default": {
-            "sources": {}
-          }
-        },
-        "blocking_strategy": {
-          "$ref": "#/$defs/BlockingStrategyConfigToml",
-          "default": "await"
-        },
-        "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "exec": {
-          "$ref": "#/$defs/ExecConfigToml",
-          "default": {
-            "batch_size": 5,
-            "lock_expiry": {
-              "seconds": 1
-            },
-            "locking_strategy": null,
-            "tick_sleep": {
-              "milliseconds": 200
-            }
-          }
-        },
-        "location": {
-          "type": "string"
-        },
-        "lock_extension": {
-          "type": "boolean",
-          "default": true
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",
           "default": "debug"
         },
-        "name": {
-          "$ref": "#/$defs/ConfigName"
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          },
+          "default": []
         },
-        "retry_exp_backoff": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "milliseconds": 100
-          }
-        },
-        "stub_wasi": {
-          "type": "boolean",
-          "default": false
+        "allowed_host": {
+          "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          },
+          "default": []
         }
       },
       "additionalProperties": false,
       "required": [
         "name",
-        "location"
+        "location",
+        "routes"
+      ]
+    },
+    "CronComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ConfigName"
+        },
+        "ffqn": {
+          "description": "Fully qualified function name of the target to invoke on each schedule tick.",
+          "type": "string"
+        },
+        "params": {
+          "description": "JSON-encoded parameters to pass to the target function.",
+          "type": "string",
+          "default": "[]"
+        },
+        "schedule": {
+          "description": "Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.",
+          "type": "string"
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 1
+            },
+            "tick_sleep": {
+              "milliseconds": 200
+            },
+            "locking_strategy": null
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "ffqn",
+        "schedule"
       ]
     }
   }

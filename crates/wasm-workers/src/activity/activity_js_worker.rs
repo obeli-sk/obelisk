@@ -680,7 +680,7 @@ mod tests {
             )
             => {
                 assert_eq!(
-                    "failed to type check the ok variant value `{\"count\":42,\"name\":\"test\"}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 1",
+                    "failed to type check the ok variant value `{\"name\":\"test\",\"count\":42}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 1",
                     reason);
             }
         );
