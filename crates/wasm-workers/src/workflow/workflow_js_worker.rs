@@ -666,8 +666,8 @@ mod tests {
     use std::str::FromStr as _;
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
-    use test_utils::ExecutionLogSanitized;
     use test_utils::sim_clock::SimClock;
+    use test_utils::{ExecutionLogSanitized, sanitize_json};
     use tokio::sync::mpsc;
     use tracing::{info, info_span};
     use utils::sha256sum::calculate_sha256_file;
@@ -2530,7 +2530,10 @@ mod tests {
             .await
             .unwrap();
 
-            insta::assert_json_snapshot!(format!("replay_{db_suffix}_{iteration}"), replay);
+            insta::assert_json_snapshot!(
+                format!("replay_{iteration}"),
+                sanitize_json(&serde_json::to_value(&replay).unwrap())
+            );
 
             // Advance with correct expectations — writes events to DB.
             let advance = WorkflowJsWorker::advance(

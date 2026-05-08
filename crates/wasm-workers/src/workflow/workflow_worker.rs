@@ -1405,8 +1405,8 @@ pub(crate) mod tests {
     use std::str::FromStr;
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
-    use test_utils::ExecutionLogSanitized;
     use test_utils::sim_clock::SimClock;
+    use test_utils::{ExecutionLogSanitized, sanitize_json};
     use tokio::sync::mpsc;
     use tracing::debug;
     use tracing::info_span;
@@ -4248,7 +4248,7 @@ pub(crate) mod tests {
             replay.starting_version().unwrap(),
             "expected replay starting version must equal to {version_created}",
         );
-        assert_json_snapshot!(replay);
+        assert_json_snapshot!(sanitize_json(&serde_json::to_value(&replay).unwrap()));
 
         // Step 2: Advance with wrong version should fail.
         let wrong_version = Version::new(replay.starting_version().unwrap().0 + 999);

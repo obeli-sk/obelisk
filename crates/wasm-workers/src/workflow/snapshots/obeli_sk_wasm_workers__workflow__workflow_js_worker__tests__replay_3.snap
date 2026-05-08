@@ -1,61 +1,61 @@
 ---
 source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
-expression: replay
+expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
 ---
 {
   "captured_writes": [
     {
       "AppendBatch": {
-        "current_time": "1970-01-01T00:00:00Z",
         "batch": [
           {
-            "created_at": "1970-01-01T00:00:00Z",
+            "created_at": "<TIMESTAMP>",
             "event": {
               "history_event": {
                 "event": {
-                  "type": "stub",
-                  "target_execution_id": "E_00000000000000000000000000.g:1_1",
-                  "retval_hash": "011f9f1089426c4e2d1d6c761441181fba8e690f2baeccde7036a92c7d49d6b0e1",
                   "result": {
                     "Ok": null
-                  }
+                  },
+                  "retval_hash": "011f9f1089426c4e2d1d6c761441181fba8e690f2baeccde7036a92c7d49d6b0e1",
+                  "target_execution_id": "E_<REDACTED>",
+                  "type": "stub"
                 }
               }
             }
           }
         ],
-        "execution_id": "E_00000000000000000000000000",
+        "current_time": "<TIMESTAMP>",
+        "execution_id": "E_<REDACTED>",
         "version": 4
       }
     },
     {
       "Append": {
-        "execution_id": "E_00000000000000000000000000",
-        "version": 5,
+        "execution_id": "E_<REDACTED>",
         "req": {
-          "created_at": "1970-01-01T00:00:00Z",
+          "created_at": "<TIMESTAMP>",
           "event": {
             "history_event": {
               "event": {
-                "type": "join_next",
+                "closing": false,
                 "join_set_id": "g:1",
-                "run_expires_at": "1970-01-01T00:00:00Z",
                 "requested_ffqn": null,
-                "closing": false
+                "run_expires_at": "<TIMESTAMP>",
+                "type": "join_next"
               }
             }
           }
-        }
+        },
+        "version": 5
       }
     },
     {
       "Append": {
-        "execution_id": "E_00000000000000000000000000",
-        "version": 6,
+        "execution_id": "E_<REDACTED>",
         "req": {
-          "created_at": "1970-01-01T00:00:00Z",
+          "created_at": "<TIMESTAMP>",
           "event": {
             "finished": {
+              "http_client_traces": null,
               "retval": {
                 "ok": {
                   "type": "result<string, string>",
@@ -63,11 +63,11 @@ expression: replay
                     "ok": "\"hello\""
                   }
                 }
-              },
-              "http_client_traces": null
+              }
             }
           }
-        }
+        },
+        "version": 6
       }
     }
   ]

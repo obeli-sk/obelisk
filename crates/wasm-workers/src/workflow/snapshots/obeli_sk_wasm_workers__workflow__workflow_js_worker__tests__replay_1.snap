@@ -1,5 +1,5 @@
 ---
-source: crates/wasm-workers/src/workflow/workflow_worker.rs
+source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
 expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
 ---
 {
@@ -23,7 +23,34 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
     },
     {
       "AppendBatchCreateNewExecution": {
-        "backtraces": [],
+        "backtraces": [
+          {
+            "component_id": {
+              "component_digest": "sha256:<REDACTED>",
+              "component_type": "workflow",
+              "name": "test_js_workflow"
+            },
+            "execution_id": "E_<REDACTED>",
+            "version_max_excluding": 4,
+            "version_min_including": 3,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "func_name": "call_stub",
+                  "module": "unknown",
+                  "symbols": [
+                    {
+                      "col": 37,
+                      "file": null,
+                      "func_name": null,
+                      "line": 4
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
         "batch": [
           {
             "created_at": "<TIMESTAMP>",
@@ -34,12 +61,12 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
                   "request": {
                     "child_execution_id": "E_<REDACTED>",
                     "params": [
-                      10
+                      "test-input"
                     ],
                     "result": {
                       "Ok": null
                     },
-                    "target_ffqn": "testing:fibo/fibo.fibo",
+                    "target_ffqn": "testing:stub-activity/activity.foo",
                     "type": "child_execution_request"
                   },
                   "type": "join_set_request"
@@ -52,16 +79,16 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
           {
             "component_id": {
               "component_digest": "sha256:<REDACTED>",
-              "component_type": "activity",
+              "component_type": "activity_stub",
               "name": ""
             },
             "created_at": "<TIMESTAMP>",
             "deployment_id": "Dep_<REDACTED>",
             "execution_id": "E_<REDACTED>",
-            "ffqn": "testing:fibo/fibo.fibo",
+            "ffqn": "testing:stub-activity/activity.foo",
             "metadata": {},
             "params": [
-              10
+              "test-input"
             ],
             "parent": [
               "E_<REDACTED>",
@@ -75,26 +102,6 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
         "current_time": "<TIMESTAMP>",
         "execution_id": "E_<REDACTED>",
         "version": 3
-      }
-    },
-    {
-      "Append": {
-        "execution_id": "E_<REDACTED>",
-        "req": {
-          "created_at": "<TIMESTAMP>",
-          "event": {
-            "history_event": {
-              "event": {
-                "closing": false,
-                "join_set_id": "g:1",
-                "requested_ffqn": "testing:fibo/fibo.fibo",
-                "run_expires_at": "<TIMESTAMP>",
-                "type": "join_next"
-              }
-            }
-          }
-        },
-        "version": 4
       }
     }
   ]
