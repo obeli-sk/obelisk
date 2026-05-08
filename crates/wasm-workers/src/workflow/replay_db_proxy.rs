@@ -37,15 +37,15 @@ impl ReplayEventCollector {
 pub(crate) async fn apply_writes(
     conn: &dyn DbConnection,
     actual: Vec<CapturedDbWrite>,
-    version: Version,
+    old_version: Version,
 ) -> Result<Version, DbErrorWrite> {
-    let mut new_version = version;
+    let mut version = old_version; // In case `actual` is empty, just return the old version.
     for write in &actual {
         if let Some(v) = apply_captured_write(write, conn).await? {
-            new_version = v;
+            version = v;
         }
     }
-    Ok(new_version)
+    Ok(version)
 }
 
 async fn apply_captured_write(

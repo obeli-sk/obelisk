@@ -5,30 +5,26 @@
 //! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
 use super::workflow_worker::{
-    AdvanceOutcome, AdvanceResponse, ReplayError, WorkflowConfig, WorkflowWorker,
-    WorkflowWorkerCompiled,
+    AdvanceOutcome, AdvanceResponse, ReplayError, WorkflowWorker, WorkflowWorkerCompiled,
 };
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
-use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryForReplay};
-use crate::workflow::replay_db_proxy::{ReplayWorkflowDbConnection, apply_writes};
-use crate::workflow::workflow_ctx::ReplayKind;
+use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
 use crate::workflow::workflow_worker::ReplayResponse;
 use async_trait::async_trait;
-use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
-use concepts::storage::{DbPool, Locked};
-use concepts::time::{ClockFn, ConstClock};
+use concepts::prefixed_ulid::DeploymentId;
+use concepts::storage::DbPool;
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
-    ExecutionMetadata, FinishedExecutionError, FunctionFqn, FunctionMetadata, FunctionRegistry,
-    PackageIfcFns, ParameterType, Params, ResultParsingError, ResultParsingErrorFromVal,
-    ReturnTypeExtendable, SupportedFunctionReturnValue,
+    ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionError,
+    FunctionFqn, FunctionMetadata, FunctionRegistry, PackageIfcFns, ParameterType, Params,
+    ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
+    SupportedFunctionReturnValue,
 };
 use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
 use std::sync::Arc;
-use tracing::{Span, debug, info};
+use tracing::{debug, info};
 use utils::wasm_tools::WasmComponent;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
@@ -154,23 +150,15 @@ pub struct WorkflowJsWorker {
     user_exports_noext: Vec<FunctionMetadata>,
 }
 
-#[async_trait]
-impl Worker for WorkflowJsWorker {
-    fn exported_functions_noext(&self) -> &[FunctionMetadata] {
-        &self.user_exports_noext
-    }
-
-    async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
-        // Serialize each user parameter individually as a JSON string.
-        let json_params = ctx
-            .params
+impl WorkflowJsWorker {
+    fn boa_invocation(
+        params: &Params,
+        js_source: String,
+        js_file_name: Option<String>,
+    ) -> (FunctionFqn, Params) {
+        let json_params = params
             .as_json_values()
-            .expect("params come from database, not wasmtime"); // TODO: Extract ParamsInternal
-        assert_eq!(
-            self.user_params.len(),
-            json_params.len(),
-            "type checked in Params::from_json_values"
-        );
+            .expect("params come from database, not wasmtime");
         let params_json_list: Vec<serde_json::Value> = json_params
             .iter()
             .map(|v| {
@@ -179,26 +167,47 @@ impl Worker for WorkflowJsWorker {
                 )
             })
             .collect();
-
-        // Rewrite context to call workflow-js-runtime
-        ctx.ffqn =
+        let ffqn =
             FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
-        // run: func(js-code: string, params-json: list<string>, js-file-name: option<string>) -> result<result<string, string>, js-runtime-error>
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(self.js_source.clone()), // js-code: string
-            serde_json::Value::Array(params_json_list),        // params-json: list<string>
-            serde_json::Value::String(self.js_file_name.clone()), // js-file-name: option<string>
+            serde_json::Value::String(js_source),
+            serde_json::Value::Array(params_json_list),
+            js_file_name.map_or(serde_json::Value::Null, serde_json::Value::String),
         ]);
-        ctx.params = Params::from_json_values(
+        let params = Params::from_json_values(
             boa_params,
             [
-                &TypeWrapper::String,                                // js-code: string
-                &TypeWrapper::List(Box::new(TypeWrapper::String)),   // params-json: list<string>
-                &TypeWrapper::Option(Box::new(TypeWrapper::String)), // js-file-name: option<string>
+                &TypeWrapper::String,
+                &TypeWrapper::List(Box::new(TypeWrapper::String)),
+                &TypeWrapper::Option(Box::new(TypeWrapper::String)),
             ]
             .into_iter(),
         )
         .expect("types checked at compile time");
+        (ffqn, params)
+    }
+}
+
+#[async_trait]
+impl Worker for WorkflowJsWorker {
+    fn exported_functions_noext(&self) -> &[FunctionMetadata] {
+        &self.user_exports_noext
+    }
+
+    async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
+        assert_eq!(
+            self.user_params.len(),
+            ctx.params
+                .as_json_values()
+                .expect("params come from database, not wasmtime")
+                .len(),
+            "type checked in Params::from_json_values"
+        );
+        (ctx.ffqn, ctx.params) = Self::boa_invocation(
+            &ctx.params,
+            self.js_source.clone(),
+            Some(self.js_file_name.clone()),
+        );
 
         let inner_worker_ok = self.inner.run(ctx).await?;
         debug!("Workflow worker returned {inner_worker_ok:?}");
@@ -366,17 +375,6 @@ impl WorkflowJsWorker {
         logs_storage_config: Option<LogStrageConfig>,
         js_source: String,
     ) -> Result<ReplayResponse, ReplayError> {
-        let clock_fn = ConstClock(chrono::DateTime::from_timestamp_nanos(0));
-        let config = WorkflowConfig {
-            join_next_blocking_strategy:
-                super::workflow_worker::JoinNextBlockingStrategy::Interrupt,
-            backtrace_persist: false,
-            lock_extension: None,
-            subscription_interruption: None,
-            component_id,
-            stub_wasi: true, // no harm, stub it in any case
-            fuel: None,
-        };
         let db_conn = real_db_pool
             .connection()
             .await
@@ -385,99 +383,22 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
-        let replay_kind = if log.is_finished() {
-            ReplayKind::Finished
-        } else {
-            ReplayKind::Unfinished
-        };
-        info!("Execution replay {replay_kind} started");
-
-        // Transform the stored params to the workflow-js-runtime format
-        let original_params = log.params().clone();
-
-        // Build the transformed params for the JS runtime
-        // Serialize each stored parameter individually as a JSON string
-        let json_params = original_params
-            .as_json_values()
-            .expect("params come from database");
-        let params_json_list: Vec<serde_json::Value> = json_params
-            .iter()
-            .map(|v| {
-                serde_json::Value::String(
-                    serde_json::to_string(v).expect("serde_json::Value must be serializable"),
-                )
-            })
-            .collect();
-
-        let boa_ffqn =
-            FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
-        let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(js_source),
-            serde_json::Value::Array(params_json_list),
-            serde_json::Value::Null, // no backtrace is going to be persisted anyway
-        ]);
-        let transformed_params = Params::from_json_values(
-            boa_params,
-            [
-                &TypeWrapper::String,                                // js-code: string
-                &TypeWrapper::List(Box::new(TypeWrapper::String)),   // params-json: list<string>
-                &TypeWrapper::Option(Box::new(TypeWrapper::String)), // js-file-name: option<string>
-            ]
-            .into_iter(),
-        )
-        .expect("types checked at compile time");
-        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false); // TODO: consider using current exec's watcher
-        let replay_db_connection = ReplayWorkflowDbConnection::new(
-            execution_id.clone(),
-            log.next_version.clone(),
-            real_db_pool
-                .connection()
-                .await
-                .map_err(concepts::storage::DbErrorWrite::from)?,
-        );
-        let ctx = WorkerContext {
-            execution_id,
-            metadata: ExecutionMetadata::empty(),
-            ffqn: boa_ffqn,
-            params: transformed_params,
-            event_history: log.event_history().collect(),
-            responses: log.responses,
-            version: log.next_version,
-            can_be_retried: true,
-            worker_span: Span::current(),
-            locked_event: Locked {
-                component_id: config.component_id.clone(),
-                deployment_id,
-                executor_id: ExecutorId::generate(),
-                run_id: RunId::generate(),
-                lock_expires_at: clock_fn.now(),
-                retry_config: ComponentRetryConfig::WORKFLOW,
-            },
-            executor_close_watcher,
-        };
-
-        let compiled = WorkflowWorkerCompiled::new_with_config_inner(
+        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
+        let captured_writes = WorkflowWorker::capture_replay_writes_from_log(
+            deployment_id,
+            component_id,
             wasmtime_component,
             exim,
-            config,
             engine,
-            clock_fn.clone_box(),
-        )?;
-        let linked = compiled.link(fn_registry)?;
-        let worker = linked.into_worker(
-            deployment_id,
+            fn_registry,
             real_db_pool,
-            Arc::new(DeadlineTrackerFactoryForReplay {}),
-            CancelRegistry::new(),
+            execution_id,
             logs_storage_config,
-        );
-        let captured_writes = worker
-            .replay_internal(ctx, replay_db_connection, replay_kind)
-            .await?;
-        info!(
-            "Execution replay completed, captured writes: {}",
-            captured_writes.len(),
-        );
+            log,
+            ffqn,
+            params,
+        )
+        .await?;
         Ok(ReplayResponse { captured_writes })
     }
 
@@ -497,7 +418,6 @@ impl WorkflowJsWorker {
         expected: ReplayResponse,
     ) -> Result<AdvanceResponse, ReplayError> {
         info!("Advance to expected {expected:?}");
-        // Check version before replaying.
         let db_conn = real_db_pool
             .connection()
             .await
@@ -515,121 +435,24 @@ impl WorkflowJsWorker {
             });
         }
 
-        // Replay to capture events and write operations.
-        let replay_kind = if log.is_finished() {
-            ReplayKind::Finished
-        } else {
-            ReplayKind::Unfinished
-        };
-        let clock_fn = ConstClock(chrono::DateTime::from_timestamp_nanos(0));
-        let config = WorkflowConfig {
-            join_next_blocking_strategy:
-                super::workflow_worker::JoinNextBlockingStrategy::Interrupt,
-            backtrace_persist: false,
-            lock_extension: None,
-            subscription_interruption: None,
+        let old_version = log.next_version.clone();
+        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
+        let captured_writes = WorkflowWorker::capture_replay_writes_from_log(
+            deployment_id,
             component_id,
-            stub_wasi: true,
-            fuel: None,
-        };
-
-        let original_params = log.params().clone();
-        let json_params = original_params
-            .as_json_values()
-            .expect("params come from database");
-        let params_json_list: Vec<serde_json::Value> = json_params
-            .iter()
-            .map(|v| {
-                serde_json::Value::String(
-                    serde_json::to_string(v).expect("serde_json::Value must be serializable"),
-                )
-            })
-            .collect();
-        let boa_ffqn =
-            FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
-        let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(js_source),
-            serde_json::Value::Array(params_json_list),
-            serde_json::Value::Null,
-        ]);
-        let transformed_params = Params::from_json_values(
-            boa_params,
-            [
-                &TypeWrapper::String,
-                &TypeWrapper::List(Box::new(TypeWrapper::String)),
-                &TypeWrapper::Option(Box::new(TypeWrapper::String)),
-            ]
-            .into_iter(),
-        )
-        .expect("types checked at compile time");
-
-        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
-        let replay_db_connection = ReplayWorkflowDbConnection::new(
-            execution_id.clone(),
-            log.next_version.clone(),
-            real_db_pool
-                .connection()
-                .await
-                .map_err(concepts::storage::DbErrorWrite::from)?,
-        );
-        let ctx = WorkerContext {
-            execution_id: execution_id.clone(),
-            metadata: ExecutionMetadata::empty(),
-            ffqn: boa_ffqn,
-            params: transformed_params,
-            event_history: log.event_history().collect(),
-            responses: log.responses,
-            version: log.next_version.clone(),
-            can_be_retried: true,
-            worker_span: Span::current(),
-            locked_event: Locked {
-                component_id: config.component_id.clone(),
-                deployment_id,
-                executor_id: ExecutorId::generate(),
-                run_id: RunId::generate(),
-                lock_expires_at: clock_fn.now(),
-                retry_config: ComponentRetryConfig::WORKFLOW,
-            },
-            executor_close_watcher,
-        };
-
-        let compiled = WorkflowWorkerCompiled::new_with_config_inner(
             wasmtime_component,
             exim,
-            config,
             engine,
-            clock_fn.clone_box(),
-        )?;
-        let linked = compiled.link(fn_registry)?;
-        let worker = linked.into_worker(
-            deployment_id,
+            fn_registry,
             real_db_pool,
-            Arc::new(DeadlineTrackerFactoryForReplay {}),
-            CancelRegistry::new(),
+            execution_id,
             logs_storage_config,
-        );
-        let old_version = ctx.version.clone();
-        let captured_writes = worker
-            .replay_internal(ctx, replay_db_connection, replay_kind)
-            .await?;
-        debug!("Got captured_writes: {captured_writes:?}");
-
-        // Compare against expected outcome and apply writes if they match.
-        let outcome = if expected.captured_writes == captured_writes {
-            let new_version = apply_writes(&*db_conn, captured_writes, old_version).await?;
-            AdvanceResponse {
-                version: new_version,
-                outcome: AdvanceOutcome::Applied,
-            }
-        } else {
-            AdvanceResponse {
-                version: old_version,
-                outcome: AdvanceOutcome::Mismatch,
-            }
-        };
-
-        info!("Advance finished with {outcome:?}");
-        Ok(outcome)
+            log,
+            ffqn,
+            params,
+        )
+        .await?;
+        WorkflowWorker::advance_from_log(&*db_conn, expected, captured_writes, old_version).await
     }
 }
 

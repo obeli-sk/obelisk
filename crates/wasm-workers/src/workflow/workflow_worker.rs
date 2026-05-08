@@ -13,11 +13,13 @@ use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
-use concepts::storage::{CapturedDbWrite, DbErrorWrite, DbPool, Locked, Version};
+use concepts::storage::{
+    CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog, Locked, Version,
+};
 use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
 use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, PackageIfcFns,
-    ResultParsingError, StrVariant, TrapKind,
+    Params, ResultParsingError, StrVariant, TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
@@ -436,6 +438,121 @@ struct PrepareFuncFinished {
 struct ReplayWaitingForResponse;
 
 impl WorkflowWorker {
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) async fn capture_replay_writes_from_log(
+        deployment_id: DeploymentId,
+        component_id: ComponentId,
+        wasmtime_component: wasmtime::component::Component,
+        exim: &ExIm,
+        engine: Arc<Engine>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        real_db_pool: Arc<dyn DbPool>,
+        execution_id: ExecutionId,
+        logs_storage_config: Option<LogStrageConfig>,
+        log: ExecutionLog,
+        ffqn: FunctionFqn,
+        params: Params,
+    ) -> Result<Vec<CapturedDbWrite>, ReplayError> {
+        let replay_kind = if log.is_finished() {
+            ReplayKind::Finished
+        } else {
+            ReplayKind::Unfinished
+        };
+        info!("Execution replay {replay_kind} started");
+
+        let clock_fn = ConstClock(DateTime::UNIX_EPOCH);
+        let config = WorkflowConfig {
+            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+            backtrace_persist: false,
+            lock_extension: None,
+            subscription_interruption: None,
+            component_id,
+            stub_wasi: true,
+            fuel: None,
+        };
+        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let replay_db_connection = ReplayWorkflowDbConnection::new(
+            execution_id.clone(),
+            log.next_version.clone(),
+            real_db_pool
+                .connection()
+                .await
+                .map_err(DbErrorWrite::from)?,
+        );
+        let ctx = WorkerContext {
+            execution_id,
+            metadata: ExecutionMetadata::empty(),
+            ffqn,
+            params,
+            event_history: log.event_history().collect(),
+            responses: log.responses,
+            version: log.next_version,
+            can_be_retried: true, // Avoid retryability warnings during replay/advance.
+            worker_span: Span::current(),
+            locked_event: Locked {
+                component_id: config.component_id.clone(),
+                deployment_id,
+                executor_id: ExecutorId::generate(),
+                run_id: RunId::generate(),
+                lock_expires_at: clock_fn.now(),
+                retry_config: concepts::ComponentRetryConfig::WORKFLOW,
+            },
+            executor_close_watcher,
+        };
+
+        let compiled = WorkflowWorkerCompiled::new_with_config_inner(
+            wasmtime_component,
+            exim,
+            config,
+            engine,
+            clock_fn.clone_box(),
+        )?;
+        let linked = compiled.link(fn_registry)?;
+        let worker = linked.into_worker(
+            deployment_id,
+            real_db_pool,
+            Arc::new(DeadlineTrackerFactoryForReplay {}),
+            CancelRegistry::new(),
+            logs_storage_config,
+        );
+        let captured_writes = worker
+            .replay_internal(ctx, replay_db_connection, replay_kind)
+            .await?;
+        info!(
+            "Execution replay completed, captured writes: {}",
+            captured_writes.len(),
+        );
+        Ok(captured_writes)
+    }
+
+    pub(crate) async fn advance_from_log(
+        db_conn: &dyn DbConnection,
+        expected: ReplayResponse,
+        captured_writes: Vec<CapturedDbWrite>,
+        old_version: Version,
+    ) -> Result<AdvanceResponse, ReplayError> {
+        debug!("Advancing with captured_writes: {captured_writes:?}");
+        let outcome = if expected.captured_writes == captured_writes {
+            let new_version = apply_writes(db_conn, captured_writes, old_version).await?;
+            AdvanceResponse {
+                version: new_version,
+                outcome: AdvanceOutcome::Applied,
+            }
+        } else {
+            debug!(
+                "Mismatch between expected and actual captured writes. Expected: {:?}, Actual: {captured_writes:?}",
+                expected.captured_writes
+            );
+            AdvanceResponse {
+                version: old_version,
+                outcome: AdvanceOutcome::Mismatch,
+            }
+        };
+
+        info!("Advance finished with {outcome:?}");
+        Ok(outcome)
+    }
+
     async fn prepare_func(
         &self,
         ctx: WorkerContext,
@@ -950,17 +1067,6 @@ impl WorkflowWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> Result<ReplayResponse, ReplayError> {
-        let clock_fn = ConstClock(DateTime::UNIX_EPOCH);
-        let config = WorkflowConfig {
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-            backtrace_persist: false,
-            lock_extension: None,
-            subscription_interruption: None,
-            component_id,
-            stub_wasi: true, // no harm, stub it in any case
-            fuel: None,
-        };
-
         let db_conn = real_db_pool
             .connection()
             .await
@@ -969,67 +1075,23 @@ impl WorkflowWorker {
             .get(&execution_id)
             .await
             .map_err(DbErrorWrite::from)?;
-        let replay_kind = if log.is_finished() {
-            ReplayKind::Finished
-        } else {
-            ReplayKind::Unfinished
-        };
-        info!("Execution replay {replay_kind} started");
-        // TODO: consider using current exec's watcher for faster cancellation
-        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
-        let replay_db_connection = ReplayWorkflowDbConnection::new(
-            execution_id.clone(),
-            log.next_version.clone(),
-            real_db_pool
-                .connection()
-                .await
-                .map_err(DbErrorWrite::from)?,
-        );
-
-        let ctx = WorkerContext {
-            execution_id: execution_id.clone(),
-            metadata: ExecutionMetadata::empty(),
-            ffqn: log.ffqn().clone(),
-            params: log.params().clone(),
-            event_history: log.event_history().collect(),
-            responses: log.responses,
-            version: log.next_version,
-            can_be_retried: true, // Just to avoid "Workflow configuration set to not retry anymore" warning
-            worker_span: Span::current(),
-            locked_event: Locked {
-                component_id: config.component_id.clone(),
-                deployment_id,
-                executor_id: ExecutorId::generate(),
-                run_id: RunId::generate(),
-                lock_expires_at: clock_fn.now(), // does not matter, using DeadlineTrackerFactoryForReplay
-                retry_config: concepts::ComponentRetryConfig::WORKFLOW,
-            },
-            executor_close_watcher,
-        };
-
-        let compiled = WorkflowWorkerCompiled::new_with_config_inner(
+        let ffqn = log.ffqn().clone();
+        let params = log.params().clone();
+        let captured_writes = Self::capture_replay_writes_from_log(
+            deployment_id,
+            component_id,
             wasmtime_component,
             exim,
-            config,
             engine,
-            clock_fn.clone_box(),
-        )?;
-        let linked = compiled.link(fn_registry)?;
-
-        let worker = linked.into_worker(
-            deployment_id,
+            fn_registry,
             real_db_pool,
-            Arc::new(DeadlineTrackerFactoryForReplay {}),
-            CancelRegistry::new(),
+            execution_id,
             logs_storage_config,
-        );
-        let captured_writes = worker
-            .replay_internal(ctx, replay_db_connection, replay_kind)
-            .await?;
-        info!(
-            "Execution replay completed, captured writes: {}",
-            captured_writes.len(),
-        );
+            log,
+            ffqn,
+            params,
+        )
+        .await?;
         Ok(ReplayResponse { captured_writes })
     }
 
@@ -1071,95 +1133,26 @@ impl WorkflowWorker {
             });
         }
 
-        // Replay to capture events and write operations.
-        let replay_kind = if log.is_finished() {
-            ReplayKind::Finished
-        } else {
-            ReplayKind::Unfinished
-        };
-        let clock_fn = ConstClock(DateTime::UNIX_EPOCH);
-        let config = WorkflowConfig {
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-            backtrace_persist: false,
-            lock_extension: None,
-            subscription_interruption: None,
+        let old_version = log.next_version.clone();
+        let ffqn = log.ffqn().clone();
+        let params = log.params().clone();
+        let captured_writes = Self::capture_replay_writes_from_log(
+            deployment_id,
             component_id,
-            stub_wasi: true,
-            fuel: None,
-        };
-        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
-
-        let replay_db_connection = ReplayWorkflowDbConnection::new(
-            execution_id.clone(),
-            log.next_version.clone(),
-            real_db_pool
-                .connection()
-                .await
-                .map_err(DbErrorWrite::from)?,
-        );
-        let ctx = WorkerContext {
-            execution_id: execution_id.clone(),
-            metadata: ExecutionMetadata::empty(),
-            ffqn: log.ffqn().clone(),
-            params: log.params().clone(),
-            event_history: log.event_history().collect(),
-            responses: log.responses,
-            version: log.next_version.clone(),
-            can_be_retried: true,
-            worker_span: Span::current(),
-            locked_event: Locked {
-                component_id: config.component_id.clone(),
-                deployment_id,
-                executor_id: ExecutorId::generate(),
-                run_id: RunId::generate(),
-                lock_expires_at: clock_fn.now(),
-                retry_config: concepts::ComponentRetryConfig::WORKFLOW,
-            },
-            executor_close_watcher,
-        };
-
-        let compiled = WorkflowWorkerCompiled::new_with_config_inner(
             wasmtime_component,
             exim,
-            config,
             engine,
-            clock_fn.clone_box(),
-        )?;
-        let linked = compiled.link(fn_registry)?;
-        let worker = linked.into_worker(
-            deployment_id,
+            fn_registry,
             real_db_pool,
-            Arc::new(DeadlineTrackerFactoryForReplay {}),
-            CancelRegistry::new(),
+            execution_id,
             logs_storage_config,
-        );
-        let old_version = ctx.version.clone();
-        let captured_writes = worker
-            .replay_internal(ctx, replay_db_connection, replay_kind)
-            .await?;
-        debug!("Got captured_writes: {captured_writes:?}");
+            log,
+            ffqn,
+            params,
+        )
+        .await?;
 
-        // Compare against expected outcome and apply writes if they match.
-        // TODO: Allow trimming if requested by user.
-        let outcome = if expected.captured_writes == captured_writes {
-            let new_version = apply_writes(&*db_conn, captured_writes, old_version).await?;
-            AdvanceResponse {
-                version: new_version,
-                outcome: AdvanceOutcome::Applied,
-            }
-        } else {
-            debug!(
-                "Mismatch between expected and actual captured writes. Expected: {:?}, Actual: {captured_writes:?}",
-                expected.captured_writes
-            );
-            AdvanceResponse {
-                version: old_version,
-                outcome: AdvanceOutcome::Mismatch,
-            }
-        };
-
-        info!("Advance finished with {outcome:?}");
-        Ok(outcome)
+        Self::advance_from_log(&*db_conn, expected, captured_writes, old_version).await
     }
 }
 
