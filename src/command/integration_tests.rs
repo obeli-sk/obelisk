@@ -819,6 +819,102 @@ impl TestDeployClient {
     }
 }
 
+/// Selects which protocol to use for execution replay in parametrized tests.
+#[derive(Debug, Clone, Copy)]
+enum TestExecutionClient {
+    /// Replay via gRPC.
+    Grpc,
+    /// Replay via the Web API.
+    WebApi,
+}
+
+#[derive(Debug)]
+struct ReplayCapturedWritesSummary {
+    captured_writes_len: usize,
+    last_write_is_finished: bool,
+    finished_retval_has_ok: bool,
+}
+
+impl TestExecutionClient {
+    async fn replay_captured_writes_summary(
+        self,
+        server: &TestServer,
+        execution_id: &str,
+    ) -> ReplayCapturedWritesSummary {
+        match self {
+            TestExecutionClient::WebApi => {
+                let replay_resp = server.replay(execution_id).await;
+                assert_eq!(replay_resp.status().as_u16(), 200);
+                let replay_body: Value = replay_resp.json().await.unwrap();
+
+                let writes = replay_body["captured_writes"]
+                    .as_array()
+                    .expect("captured_writes must be an array");
+                let last_write = writes.last().expect("captured_writes must not be empty");
+
+                ReplayCapturedWritesSummary {
+                    captured_writes_len: writes.len(),
+                    last_write_is_finished: last_write["type"] == "append"
+                        && last_write["event"]["event"]["finished"].is_object(),
+                    finished_retval_has_ok:
+                        last_write["event"]["event"]["finished"]["retval"]["ok"].is_object(),
+                }
+            }
+            TestExecutionClient::Grpc => {
+                let mut grpc_client =
+                    ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+                        .await
+                        .unwrap();
+                let replay_resp = grpc_client
+                    .replay_execution(ReplayExecutionRequest {
+                        execution_id: Some(GrpcExecutionId {
+                            id: execution_id.to_string(),
+                        }),
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner();
+
+                let last_write = replay_resp
+                    .captured_writes
+                    .last()
+                    .expect("captured_writes must not be empty");
+
+                let (last_write_is_finished, finished_retval_has_ok) = match last_write
+                    .write
+                    .as_ref()
+                    .expect("write oneof must be set")
+                {
+                    grpc::grpc_gen::captured_write::Write::Append(a) => {
+                        let event = a.event.as_ref().expect("event must be present");
+                        match event.event.as_ref().expect("event variant must be present") {
+                            grpc::grpc_gen::execution_event::Event::Finished(finished) => (
+                                true,
+                                finished.value.as_ref().is_some_and(|retval| {
+                                    matches!(
+                                        retval.value,
+                                        Some(grpc::grpc_gen::supported_function_result::Value::Ok(
+                                            _
+                                        ))
+                                    )
+                                }),
+                            ),
+                            _ => (false, false),
+                        }
+                    }
+                    _ => (false, false),
+                };
+
+                ReplayCapturedWritesSummary {
+                    captured_writes_len: replay_resp.captured_writes.len(),
+                    last_write_is_finished,
+                    finished_retval_has_ok,
+                }
+            }
+        }
+    }
+}
+
 // ---- Component / function listing ----
 
 #[tokio::test]
@@ -974,108 +1070,39 @@ async fn submit_workflow_and_replay() {
 // ---- Workflow: replay captured_writes (Web API + gRPC) ----
 
 #[tokio::test]
-async fn replay_captured_writes_webapi() {
-    let server = TestServer::start(test_addr!(62)).await;
-    let exec_id = server.generate_execution_id().await;
-
-    // Run a workflow that calls a child activity so the replay produces interesting writes.
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/workflow-add-via-activity.add-via-activity",
-            vec![json!(3), json!(4)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "7" }));
-
-    // Replay via Web API and inspect the response body.
-    let replay_resp = server.replay(&exec_id).await;
-    assert_eq!(replay_resp.status().as_u16(), 200);
-    let replay_body: Value = replay_resp.json().await.unwrap();
-
-    // The response must have captured_writes.
-    let writes = replay_body["captured_writes"]
-        .as_array()
-        .expect("captured_writes must be an array");
-    assert!(
-        !writes.is_empty(),
-        "captured_writes must not be empty for a finished workflow"
-    );
-
-    // The last captured write must be a Finished event (Append with a "finished" event).
-    let last_write = writes.last().unwrap();
-    assert_eq!(last_write["type"], "append", "last write must be an Append");
-    assert!(
-        last_write["event"]["event"]["finished"].is_object(),
-        "last captured write must be a Finished event, got: {last_write}"
-    );
-
-    // The Finished event must contain the return value.
-    let retval = &last_write["event"]["event"]["finished"]["retval"];
-    assert!(
-        retval["ok"].is_object(),
-        "Finished event must contain an ok return value, got: {retval}"
-    );
-
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn replay_captured_writes_grpc() {
+async fn replay_captured_writes() {
     let server = TestServer::start(test_addr!(63)).await;
-    let exec_id = server.generate_execution_id().await;
 
-    // Run a workflow that calls a child activity.
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/workflow-add-via-activity.add-via-activity",
-            vec![json!(3), json!(4)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "7" }));
+    for client in [TestExecutionClient::WebApi, TestExecutionClient::Grpc] {
+        let exec_id = server.generate_execution_id().await;
 
-    // Replay via gRPC.
-    let mut grpc_client =
-        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap();
-    let replay_resp = grpc_client
-        .replay_execution(ReplayExecutionRequest {
-            execution_id: Some(GrpcExecutionId {
-                id: exec_id.clone(),
-            }),
-        })
-        .await
-        .unwrap()
-        .into_inner();
+        // Run a workflow that calls a child activity so replay produces interesting writes.
+        let resp = server
+            .submit_follow_with_id(
+                &exec_id,
+                "testing:integration/workflow-add-via-activity.add-via-activity",
+                vec![json!(3), json!(4)],
+            )
+            .await;
+        assert_eq!(resp.status().as_u16(), 201);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body, json!({ "ok": "7" }));
 
-    // The response must have captured_writes.
-    assert!(
-        !replay_resp.captured_writes.is_empty(),
-        "captured_writes must not be empty for a finished workflow"
-    );
-
-    // The last captured write must contain a Finished event.
-    let last_write = replay_resp.captured_writes.last().unwrap();
-    let append = last_write.write.as_ref().expect("write oneof must be set");
-    // The Append variant wraps a single event; check it's Finished.
-    match append {
-        grpc::grpc_gen::captured_write::Write::Append(a) => {
-            let event = a.event.as_ref().expect("event must be present");
-            assert!(
-                event.event.as_ref().is_some_and(|e| matches!(
-                    e,
-                    grpc::grpc_gen::execution_event::Event::Finished(_)
-                )),
-                "last captured write must be a Finished event"
-            );
-        }
-        other => panic!("last captured write must be Append with Finished event, got: {other:?}"),
+        let replay = client
+            .replay_captured_writes_summary(&server, &exec_id)
+            .await;
+        assert!(
+            replay.captured_writes_len > 0,
+            "captured_writes must not be empty for a finished workflow: {client:?}"
+        );
+        assert!(
+            replay.last_write_is_finished,
+            "last captured write must be a Finished event: {client:?}"
+        );
+        assert!(
+            replay.finished_retval_has_ok,
+            "Finished event must contain an ok return value: {client:?}"
+        );
     }
 
     server.shutdown().await;
