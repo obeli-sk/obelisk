@@ -3,7 +3,10 @@
 //! that the workflow would produce next.
 
 use super::caching_db_connection::{CacheableDbEvent, WorkflowDbConnection};
-use crate::activity::cancel_registry::CancelRegistry;
+use crate::{
+    activity::cancel_registry::CancelRegistry,
+    workflow::{caching_db_connection::FlushOutcome, event_history::DbErrorWriteOrReplayInterrupt},
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -226,7 +229,6 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         &mut self,
         execution_id: ExecutionId,
         req: AppendRequest,
-        _called_at: DateTime<Utc>,
         _wasm_backtrace: Option<storage::WasmBacktrace>,
         _component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
@@ -299,15 +301,14 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         Ok(())
     }
 
-    async fn append_batch_respond_to_parent(
+    async fn append_stub_response(
         &mut self,
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorWrite> {
+    ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt> {
         assert_eq!(self.execution_id, events.execution_id);
-        self.collect_history_events_from_batch(&events.batch);
-        let next = next_version(&self.version, events.batch.len());
+        self.collect_history_events_from_batch(&events);
         self.collector
             .writes
             .lock()
@@ -317,8 +318,8 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 response,
                 current_time,
             });
-        self.version = next.clone();
-        Ok(next)
+        // no idea about the response
+        Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt)
     }
 
     async fn get_create_request(
@@ -351,9 +352,12 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     async fn flush_non_blocking_event_cache(
         &mut self,
         _current_time: DateTime<Utc>,
-    ) -> Result<(), DbErrorWrite> {
-        // No caching in replay — nothing to flush.
-        Ok(())
+    ) -> Result<FlushOutcome, DbErrorWrite> {
+        if self.collector.writes.lock().unwrap().is_empty() {
+            Ok(FlushOutcome::Noop)
+        } else {
+            Ok(FlushOutcome::FlushedCache)
+        }
     }
 
     async fn cancel_activity(

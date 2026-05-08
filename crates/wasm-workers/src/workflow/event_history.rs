@@ -8,6 +8,7 @@ use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
+use crate::workflow::caching_db_connection::FlushOutcome;
 use crate::workflow::deadline_tracker::PreemptRequested;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
@@ -104,8 +105,24 @@ pub(crate) enum ApplyError {
     ConstraintViolation(StrVariant),
     #[error("executor closing")]
     ExecutorClosing,
-    #[error("replay waiting for response")]
-    ReplayWaitingForResponse, // Same state as `InterruptDbUpdated`, but db might not have been updated.
+    #[error("replay interrupt")]
+    ReplayWaitingForResponse, // TODO: Rename to ReplayInterrupt
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub(crate) enum DbErrorWriteOrReplayInterrupt {
+    #[error(transparent)]
+    DbError(#[from] DbErrorWrite),
+    #[error("replay interrupt")]
+    ReplayInterrupt,
+}
+impl From<DbErrorWriteOrReplayInterrupt> for ApplyError {
+    fn from(value: DbErrorWriteOrReplayInterrupt) -> Self {
+        match value {
+            DbErrorWriteOrReplayInterrupt::DbError(err) => ApplyError::DbError(err),
+            DbErrorWriteOrReplayInterrupt::ReplayInterrupt => ApplyError::ReplayWaitingForResponse,
+        }
+    }
 }
 
 #[expect(clippy::struct_field_names)]
@@ -334,11 +351,14 @@ impl EventHistory {
             "Extending the lock at version {version}",
             version = db_connection.version()
         );
+        // Replay interruption correctness: Never extending a lock during replay.
+        let _ = db_connection
+            .flush_non_blocking_event_cache(called_at)
+            .await?;
         db_connection
             .append_blocking(
                 db_connection.execution_id().clone(),
                 append_req,
-                called_at,
                 None,
                 &self.locked_event.component_id,
             )
@@ -486,9 +506,12 @@ impl EventHistory {
         let join_next_count = response_ids.len();
         // Attempt to cancel activities and delays.
         // Flush the DB cache, -submit requests might not have been written!
-        db_connection
+        let flushed = db_connection
             .flush_non_blocking_event_cache(called_at)
             .await?;
+        if self.replaying_unfinished_execution && flushed == FlushOutcome::FlushedCache {
+            return Err(ApplyError::ReplayWaitingForResponse);
+        }
 
         for (response_id, component_type) in response_ids.iter().rev() {
             if let ResponseId::ChildExecutionId(child_execution_id_derived) = response_id
@@ -1125,7 +1148,7 @@ impl EventHistory {
         event_call: EventCallNonBlocking,
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<(HistoryEvent, Version), DbErrorWrite> {
+    ) -> Result<(HistoryEvent, Version), DbErrorWriteOrReplayInterrupt> {
         trace!("append_to_db_non_blocking {}", db_connection.version());
         match event_call {
             EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
@@ -1394,10 +1417,20 @@ impl EventHistory {
                 params,
                 wasm_backtrace,
             }) => {
-                // Cannot be cacheable as we need the result now.
+                // Cannot be cacheable, we need the result of response write imediately.
                 // Idempotently attempt to write to target_execution_id.
                 // The idempotent write is needed to avoid race with stub requests originating from remote systems.
                 debug!(target_execution_id = %params.target_execution_id, "StubRequest: Flushing and appending");
+
+                let flushed = db_connection
+                    .flush_non_blocking_event_cache(called_at)
+                    .await?;
+                assert_eq!(
+                    FlushOutcome::Noop,
+                    flushed,
+                    "get_stub_intent and get_stub_intent_and_params flushed before searching for the execution"
+                );
+
                 match intent {
                     StubIntent::Err(err) => {
                         let event = HistoryEvent::Stub {
@@ -1410,6 +1443,7 @@ impl EventHistory {
                             created_at: called_at,
                             event: ExecutionRequest::HistoryEvent { event },
                         };
+                        // Replay interruption correctness: asserted that flush is noop.
                         db_connection
                             .append_batch(
                                 called_at,
@@ -1433,8 +1467,9 @@ impl EventHistory {
                                     http_client_traces: None,
                                 },
                             };
-                            db_connection
-                                .append_batch_respond_to_parent(
+                            // Replay interruption correctness: asserted that flush is noop.
+                            let stub_outcome = db_connection
+                                .append_stub_response(
                                     AppendEventsToExecution {
                                         execution_id: ExecutionId::Derived(
                                             params.target_execution_id.clone(),
@@ -1452,9 +1487,17 @@ impl EventHistory {
                                     },
                                     called_at,
                                 )
-                                .await
+                                .await;
+                            // Replay will always interrupt here as it cannot guess the write result.
+                            match stub_outcome {
+                                Ok(ok) => Ok(ok),
+                                Err(DbErrorWriteOrReplayInterrupt::DbError(err)) => Err(err),
+                                Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt) => {
+                                    return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
+                                }
+                            }
                         };
-                        debug!(target_execution_id = %params.target_execution_id, "Executed append_batch_respond_to_parent: {write_attempt:?}");
+                        debug!(target_execution_id = %params.target_execution_id, "Executed append_stub_response: {write_attempt:?}");
                         // The server might crash at this point, and restart processing.
                         let result = match write_attempt {
                             Ok(_) => Ok(()),
@@ -1470,7 +1513,8 @@ impl EventHistory {
                                         &ExecutionId::Derived(params.target_execution_id.clone()),
                                         &stub_finished_version,
                                     )
-                                    .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
+                                    .await
+                                    .map_err(DbErrorWrite::from)?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
                                 match found.event {
                                     ExecutionRequest::Finished {
                                         retval: found_result,
@@ -1497,7 +1541,9 @@ impl EventHistory {
                                 );
                                 Err(StubError::Conflict)
                             }
-                            Err(db_error_write) => return Err(db_error_write), // intermittent db error
+                            Err(db_error_write) => {
+                                return Err(DbErrorWriteOrReplayInterrupt::DbError(db_error_write));
+                            } // intermittent db error
                         };
                         // Second write tx: Append the HistoryEvent with target_result.
                         let event = HistoryEvent::Stub {
@@ -1510,6 +1556,14 @@ impl EventHistory {
                             created_at: called_at,
                             event: ExecutionRequest::HistoryEvent { event },
                         };
+                        let flushed = db_connection
+                            .flush_non_blocking_event_cache(called_at)
+                            .await?;
+                        assert_eq!(
+                            FlushOutcome::Noop,
+                            flushed,
+                            "CachingDbConnection must have applied the first write directly to db, replay must have been interrupted unless first write is in db"
+                        );
                         db_connection
                             .append_batch(
                                 called_at,
@@ -1608,11 +1662,14 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
+                // Replay interruption correctness: blocking requests will interrupt, no way join next can be dependent on a previous mocked write.
+                let _ = db_connection
+                    .flush_non_blocking_event_cache(called_at)
+                    .await?;
                 db_connection
                     .append_blocking(
                         db_connection.execution_id().clone(),
                         join_next,
-                        called_at,
                         wasm_backtrace,
                         &self.locked_event.component_id,
                     )
@@ -1645,11 +1702,14 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
+                // Replay interruption correctness: blocking requests will interrupt, no way join next can be dependent on a previous mocked write.
+                let _ = db_connection
+                    .flush_non_blocking_event_cache(called_at)
+                    .await?;
                 db_connection
                     .append_blocking(
                         db_connection.execution_id().clone(),
                         append_request,
-                        called_at,
                         wasm_backtrace,
                         &self.locked_event.component_id,
                     )
@@ -1719,6 +1779,10 @@ impl EventHistory {
                     scheduled_by: None,
                     paused: false,
                 };
+                // Replay interruption correctness: blocking requests will interrupt, no way oneoff can be dependent on a previous mocked write.
+                let _ = db_connection
+                    .flush_non_blocking_event_cache(called_at)
+                    .await?;
                 db_connection
                     .append_batch_create_new_execution(
                         called_at,
@@ -1778,6 +1842,10 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
 
+                // Replay interruption correctness: blocking requests will interrupt, no way sleep can be dependent on a previous mocked write.
+                let _ = db_connection
+                    .flush_non_blocking_event_cache(called_at)
+                    .await?;
                 db_connection
                     .append_batch(
                         called_at,

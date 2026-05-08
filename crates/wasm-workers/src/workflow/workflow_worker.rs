@@ -695,7 +695,8 @@ impl WorkflowWorker {
             WorkerResultRefactored::DbError(err) => Err(WorkflowError::DbError(err)),
             WorkerResultRefactored::LockExpired(mut workflow_ctx) => {
                 let called_at = workflow_ctx.clock_fn.now();
-                workflow_ctx
+                // Flushing result has no causality effect during replay - lock does not expire.
+                let _ = workflow_ctx
                     .db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await
@@ -706,7 +707,8 @@ impl WorkflowWorker {
             }
             WorkerResultRefactored::ExecutorClosing(mut workflow_ctx) => {
                 let called_at = workflow_ctx.clock_fn.now();
-                workflow_ctx
+                // Flushing result has no causality effect during replay when executor is closing.
+                let _ = workflow_ctx
                     .db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await
