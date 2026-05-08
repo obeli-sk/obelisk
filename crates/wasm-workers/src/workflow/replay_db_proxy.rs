@@ -122,6 +122,19 @@ impl ReplayWorkflowDbConnection {
     pub(crate) fn into_writes(self) -> Vec<CapturedDbWrite> {
         self.collector.into_writes()
     }
+
+    /// Push a captured write and advance the version.
+    pub(crate) fn push_write(&mut self, write: CapturedDbWrite) {
+        self.collector.writes.push(write);
+    }
+
+    pub(crate) fn version(&self) -> &Version {
+        &self.version
+    }
+
+    pub(crate) fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
+    }
 }
 
 fn next_version(curr_version: &Version, batch_size: usize) -> Version {

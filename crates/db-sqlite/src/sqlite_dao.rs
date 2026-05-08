@@ -1235,6 +1235,7 @@ impl SqlitePool {
                     join_set_id = NULL,
                     join_set_closing = NULL,
 
+                    is_paused = FALSE,
                     result_kind = :result_kind
                 WHERE execution_id = :execution_id
             ",

@@ -1046,7 +1046,12 @@ fn append_requests_to_grpc_events(
     batch
         .into_iter()
         .enumerate()
-        .map(|(i, req)| append_request_to_grpc_event(req, start_version + i as u32))
+        .map(|(i, req)| {
+            append_request_to_grpc_event(
+                req,
+                start_version + u32::try_from(i).expect("unsupported number of batch events > u32"),
+            )
+        })
         .collect()
 }
 

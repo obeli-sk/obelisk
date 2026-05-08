@@ -1,5 +1,5 @@
 ---
-source: crates/wasm-workers/src/workflow/workflow_worker.rs
+source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
 expression: replay
 ---
 {
@@ -35,9 +35,9 @@ expression: replay
                   "request": {
                     "type": "child_execution_request",
                     "child_execution_id": "E_00000000000000000000000000.g:1_1",
-                    "target_ffqn": "testing:fibo/fibo.fibo",
+                    "target_ffqn": "testing:stub-activity/activity.foo",
                     "params": [
-                      10
+                      "test-input"
                     ],
                     "result": {
                       "Ok": null
@@ -54,9 +54,9 @@ expression: replay
           {
             "created_at": "1970-01-01T00:00:00Z",
             "execution_id": "E_00000000000000000000000000.g:1_1",
-            "ffqn": "testing:fibo/fibo.fibo",
+            "ffqn": "testing:stub-activity/activity.foo",
             "params": [
-              10
+              "test-input"
             ],
             "parent": [
               "E_00000000000000000000000000",
@@ -64,9 +64,9 @@ expression: replay
             ],
             "scheduled_at": "1970-01-01T00:00:00Z",
             "component_id": {
-              "component_type": "activity",
+              "component_type": "activity_stub",
               "name": "",
-              "component_digest": "sha256:f8d5c0c9b1459a6c1e95df5c062b429c7d7e39f89b819536c4cc256fb72fab7a"
+              "component_digest": "sha256:b63184fb6205cfb09f331f06d6c5437044f5a8017104f725b395b4caeca57205"
             },
             "deployment_id": "Dep_00000000000000000000000000",
             "metadata": {},
@@ -74,27 +74,34 @@ expression: replay
             "paused": false
           }
         ],
-        "backtraces": []
-      }
-    },
-    {
-      "Append": {
-        "execution_id": "E_00000000000000000000000000",
-        "version": 4,
-        "req": {
-          "created_at": "1970-01-01T00:00:00Z",
-          "event": {
-            "history_event": {
-              "event": {
-                "type": "join_next",
-                "join_set_id": "g:1",
-                "run_expires_at": "1970-01-01T00:00:00Z",
-                "requested_ffqn": "testing:fibo/fibo.fibo",
-                "closing": false
-              }
+        "backtraces": [
+          {
+            "execution_id": "E_00000000000000000000000000",
+            "component_id": {
+              "component_type": "workflow",
+              "name": "test_js_workflow",
+              "component_digest": "sha256:5bdb97e0af2365488ceb37f5db893e202bf40f262c2d917c40fc2f6a847f223a"
+            },
+            "version_min_including": 3,
+            "version_max_excluding": 4,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "module": "unknown",
+                  "func_name": "call_stub",
+                  "symbols": [
+                    {
+                      "func_name": null,
+                      "file": null,
+                      "line": 4,
+                      "col": 37
+                    }
+                  ]
+                }
+              ]
             }
           }
-        }
+        ]
       }
     }
   ]

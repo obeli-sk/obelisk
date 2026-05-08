@@ -792,6 +792,7 @@ async fn update_state_finished(
                 join_set_id = NULL,
                 join_set_closing = NULL,
 
+                is_paused = false,
                 result_kind = $4
             WHERE execution_id = $5
             ",

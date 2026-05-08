@@ -47,15 +47,28 @@ expression: replay
           }
         }
       }
-    }
-  ],
-  "return_value": {
-    "ok": {
-      "type": "result<string, string>",
-      "value": {
-        "ok": "\"hello\""
+    },
+    {
+      "Append": {
+        "execution_id": "E_00000000000000000000000000",
+        "version": 6,
+        "req": {
+          "created_at": "1970-01-01T00:00:00Z",
+          "event": {
+            "finished": {
+              "retval": {
+                "ok": {
+                  "type": "result<string, string>",
+                  "value": {
+                    "ok": "\"hello\""
+                  }
+                }
+              },
+              "http_client_traces": null
+            }
+          }
+        }
       }
     }
-  },
-  "version": 4
+  ]
 }

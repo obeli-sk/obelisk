@@ -471,21 +471,14 @@ impl WorkflowJsWorker {
             CancelRegistry::new(),
             logs_storage_config,
         );
-        let version = ctx.version.clone();
-        let (return_value, captured_writes) = worker
+        let captured_writes = worker
             .replay_internal(ctx, replay_db_connection, replay_kind)
             .await?;
         info!(
-            "Execution replay completed, captured writes: {}, has return_value: {}, next version: {}",
+            "Execution replay completed, captured writes: {}",
             captured_writes.len(),
-            return_value.is_some(),
-            version,
         );
-        Ok(ReplayResponse {
-            captured_writes,
-            return_value,
-            version,
-        })
+        Ok(ReplayResponse { captured_writes })
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
@@ -513,7 +506,9 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
-        if log.next_version != expected.version {
+        if let Some(expected_version) = expected.starting_version()
+            && log.next_version != *expected_version
+        {
             return Ok(AdvanceResponse {
                 version: log.next_version,
                 outcome: AdvanceOutcome::VersionMismatch,
@@ -614,22 +609,13 @@ impl WorkflowJsWorker {
             logs_storage_config,
         );
         let old_version = ctx.version.clone();
-        let (return_value, captured_writes) = worker
+        let captured_writes = worker
             .replay_internal(ctx, replay_db_connection, replay_kind)
             .await?;
-        debug!("Got captured_writes: {captured_writes:?} , return_value: {return_value:?}");
+        debug!("Got captured_writes: {captured_writes:?}");
 
         // Compare against expected outcome and apply writes if they match.
-        if return_value != expected.return_value {
-            return Ok(AdvanceResponse {
-                version: old_version,
-                outcome: AdvanceOutcome::Mismatch,
-            });
-        }
-
-        // Apply writes
         let outcome = if expected.captured_writes == captured_writes {
-            // Empty expected and captured writes will return `Applied`
             let new_version = apply_writes(&*db_conn, captured_writes, old_version).await?;
             AdvanceResponse {
                 version: new_version,
@@ -2218,7 +2204,7 @@ mod tests {
 
         info!("Stage 1 replay: {replay:?}");
         assert!(
-            replay.return_value.is_some(),
+            replay.return_value().is_some(),
             "workflow should complete during preview (non-blocking events only)"
         );
         let next_events = replay.history_events();
@@ -2267,7 +2253,7 @@ mod tests {
 
         info!("Stage 2 replay: {replay2:?}");
         assert!(
-            replay2.return_value.is_some(),
+            replay2.return_value().is_some(),
             "workflow should complete even with partial event log (JoinSetCreate already present)"
         );
         // The JoinSetCreate is already in the log, so it should not appear as a next_event.
@@ -2320,12 +2306,7 @@ mod tests {
 
         info!("Stage 3 replay: {replay3:?}");
         assert!(
-            replay3.captured_writes.is_empty(),
-            "replay of a finished execution must have no captured_writes, got {:?}",
-            replay3.captured_writes
-        );
-        assert!(
-            replay3.return_value.is_some(),
+            replay3.return_value().is_some(),
             "replay of a finished execution should include the return value"
         );
 
@@ -2449,8 +2430,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(replay.captured_writes.is_empty());
-        let retval = replay.return_value.expect("retval should be computed");
+        let retval = replay.return_value().expect("retval should be computed");
         let retval = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(WastValWithType{ r#type: _, value })) => value);
         assert_eq!(
             "Result(Ok(Some(String(\"\\\"hello\\\"\"))))",
@@ -2464,8 +2444,6 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn workflow_js_advance_call_stub(database: Database) {
-        use insta::assert_json_snapshot;
-
         use crate::activity::activity_worker::test::compile_activity_stub;
         use crate::workflow::workflow_worker::AdvanceOutcome;
 
@@ -2531,7 +2509,10 @@ mod tests {
 
         let deployment_id = DeploymentId::from_parts(0, 0);
 
+        let db_suffix = format!("{database:?}");
+        let mut iteration = 0;
         loop {
+            iteration += 1;
             let replay = WorkflowJsWorker::replay(
                 deployment_id,
                 component_id.clone(),
@@ -2547,7 +2528,7 @@ mod tests {
             .await
             .unwrap();
 
-            assert_json_snapshot!(replay);
+            insta::assert_json_snapshot!(format!("replay_{db_suffix}_{iteration}"), replay);
 
             // Advance with correct expectations — writes events to DB.
             let advance = WorkflowJsWorker::advance(
@@ -2569,10 +2550,12 @@ mod tests {
 
             // Verify DB was updated with the new events.
             let log = db_connection.get(&execution_id).await.unwrap();
-            insta::assert_json_snapshot!(ExecutionLogSanitized::from(log));
+            insta::assert_json_snapshot!(
+                format!("log_{db_suffix}_{iteration}"),
+                ExecutionLogSanitized::from(log)
+            );
 
-            if replay.captured_writes.is_empty() {
-                replay.return_value.unwrap(); // must be some.
+            if replay.return_value().is_some() {
                 break;
             }
         }

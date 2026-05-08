@@ -1457,10 +1457,6 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
 struct ReplayResponseSer {
     /// Write operations that the workflow would produce next
     captured_writes: Vec<CapturedWriteSer>,
-    /// If the workflow completed during replay, contains the return value
-    return_value: Option<RetVal>,
-    /// Current version of the execution log at the time of replay
-    version: u32,
 }
 
 impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayResponseSer {
@@ -1471,8 +1467,6 @@ impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayRes
                 .into_iter()
                 .map(CapturedWriteSer::from)
                 .collect(),
-            return_value: value.return_value.map(RetVal::from),
-            version: value.version.0,
         }
     }
 }
@@ -1835,12 +1829,8 @@ async fn execution_replay(
         AcceptHeader::Json => Json(ser).into_response(),
         AcceptHeader::Text => {
             let mut output = String::new();
-            writeln!(&mut output, "version: {}", ser.version).expect("writing to string");
             for write in &ser.captured_writes {
                 writeln!(&mut output, "{write:?}").expect("writing to string");
-            }
-            if let Some(retval) = &ser.return_value {
-                writeln!(&mut output, "return_value: {retval:?}").expect("writing to string");
             }
             output.into_response()
         }

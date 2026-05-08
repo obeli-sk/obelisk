@@ -1359,6 +1359,158 @@
           }
         }
       },
+      "CapturedWriteSer": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "execution_id",
+              "version",
+              "event",
+              "type"
+            ],
+            "properties": {
+              "event": {
+                "type": "object"
+              },
+              "execution_id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "append"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "current_time",
+              "events",
+              "execution_id",
+              "version",
+              "type"
+            ],
+            "properties": {
+              "current_time": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "execution_id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "append_batch"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "current_time",
+              "events",
+              "execution_id",
+              "version",
+              "child_requests",
+              "type"
+            ],
+            "properties": {
+              "child_requests": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CreateRequestSer"
+                }
+              },
+              "current_time": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "execution_id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "append_batch_create_new_execution"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "execution_id",
+              "version",
+              "events",
+              "response",
+              "current_time",
+              "type"
+            ],
+            "properties": {
+              "current_time": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "execution_id": {
+                "type": "string"
+              },
+              "response": {
+                "$ref": "#/components/schemas/StubResponseSer"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "append_batch_respond_to_parent"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "A serializable captured database write operation."
+      },
       "ComponentConfig": {
         "type": "object",
         "description": "Component configuration with optional imports/exports",
@@ -1389,6 +1541,51 @@
               "$ref": "#/components/schemas/FunctionMetadataLite"
             },
             "description": "Imported functions"
+          }
+        }
+      },
+      "CreateRequestSer": {
+        "type": "object",
+        "description": "A serializable mirror of `CreateRequest` from concepts.",
+        "required": [
+          "created_at",
+          "execution_id",
+          "ffqn",
+          "params",
+          "scheduled_at",
+          "component_id",
+          "deployment_id",
+          "paused"
+        ],
+        "properties": {
+          "component_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deployment_id": {
+            "type": "string"
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "ffqn": {
+            "type": "string"
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -1900,33 +2097,15 @@
         "type": "object",
         "description": "Result of replaying a workflow execution",
         "required": [
-          "next_events",
-          "version"
+          "captured_writes"
         ],
         "properties": {
-          "next_events": {
+          "captured_writes": {
             "type": "array",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/CapturedWriteSer"
             },
-            "description": "Events that the workflow would produce next"
-          },
-          "return_value": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/RetVal",
-                "description": "If the workflow completed during replay, contains the return value"
-              }
-            ]
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Current version of the execution log at the time of replay",
-            "minimum": 0
+            "description": "Write operations that the workflow would produce next"
           }
         }
       },
@@ -1979,6 +2158,41 @@
           }
         ],
         "description": "Return value from a finished execution"
+      },
+      "StubResponseSer": {
+        "type": "object",
+        "description": "A serializable mirror of `AppendResponseToExecution` from concepts.",
+        "required": [
+          "parent_execution_id",
+          "created_at",
+          "join_set_id",
+          "child_execution_id",
+          "finished_version",
+          "result"
+        ],
+        "properties": {
+          "child_execution_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "join_set_id": {
+            "type": "string"
+          },
+          "parent_execution_id": {
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/RetVal"
+          }
+        }
       }
     }
   },

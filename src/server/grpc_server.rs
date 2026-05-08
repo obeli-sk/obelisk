@@ -827,10 +827,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .into_iter()
                 .map(grpc_mapping::captured_write_to_grpc)
                 .collect(),
-            return_value: replay_response
-                .return_value
-                .map(grpc_gen::SupportedFunctionResult::from),
-            version: replay_response.version.0,
         }))
     }
 

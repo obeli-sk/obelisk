@@ -716,8 +716,6 @@ message CreateExecutionRequest {
 
 message ReplayExecutionResponse {
   repeated CapturedWrite captured_writes = 1;
-  optional SupportedFunctionResult return_value = 2;
-  uint32 version = 3;
 }
 
 
