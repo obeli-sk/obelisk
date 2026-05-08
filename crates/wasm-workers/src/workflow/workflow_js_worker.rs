@@ -4,11 +4,14 @@
 //! This wrapper translates the user's typed interface `func(params) -> result<T, E>`
 //! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
-use super::workflow_worker::{ReplayError, WorkflowConfig, WorkflowWorker, WorkflowWorkerCompiled};
+use super::workflow_worker::{
+    AdvanceOutcome, AdvanceResponse, ReplayError, WorkflowConfig, WorkflowWorker,
+    WorkflowWorkerCompiled,
+};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactory, DeadlineTrackerFactoryForReplay};
-use crate::workflow::replay_db_proxy::{ReplayDbPool, ReplayEventCollector};
+use crate::workflow::replay_db_proxy::{ReplayWorkflowDbConnection, apply_writes};
 use crate::workflow::workflow_ctx::ReplayKind;
 use crate::workflow::workflow_worker::ReplayResponse;
 use async_trait::async_trait;
@@ -25,7 +28,7 @@ use executor::worker::{
     FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
 use std::sync::Arc;
-use tracing::{Span, debug};
+use tracing::{Span, debug, info};
 use utils::wasm_tools::WasmComponent;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
@@ -364,7 +367,6 @@ impl WorkflowJsWorker {
         js_source: String,
     ) -> Result<ReplayResponse, ReplayError> {
         let clock_fn = ConstClock(chrono::DateTime::from_timestamp_nanos(0));
-
         let config = WorkflowConfig {
             join_next_blocking_strategy:
                 super::workflow_worker::JoinNextBlockingStrategy::Interrupt,
@@ -375,7 +377,6 @@ impl WorkflowJsWorker {
             stub_wasi: true, // no harm, stub it in any case
             fuel: None,
         };
-
         let db_conn = real_db_pool
             .connection()
             .await
@@ -384,9 +385,14 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
+        let replay_kind = if log.is_finished() {
+            ReplayKind::Finished
+        } else {
+            ReplayKind::Unfinished
+        };
+        info!("Execution replay {replay_kind} started");
 
         // Transform the stored params to the workflow-js-runtime format
-        let _original_ffqn = log.ffqn().clone();
         let original_params = log.params().clone();
 
         // Build the transformed params for the JS runtime
@@ -421,18 +427,14 @@ impl WorkflowJsWorker {
         )
         .expect("types checked at compile time");
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false); // TODO: consider using current exec's watcher
-        let replay_kind = if log.is_finished() {
-            ReplayKind::Finished
-        } else {
-            ReplayKind::Unfinished
-        };
-        let event_collector = ReplayEventCollector::new();
-        let db_pool = Arc::new(ReplayDbPool::new(
+        let replay_db_connection = ReplayWorkflowDbConnection::new(
             execution_id.clone(),
-            event_collector.clone(),
             log.next_version.clone(),
-            real_db_pool,
-        ));
+            real_db_pool
+                .connection()
+                .await
+                .map_err(concepts::storage::DbErrorWrite::from)?,
+        );
         let ctx = WorkerContext {
             execution_id,
             metadata: ExecutionMetadata::empty(),
@@ -464,15 +466,170 @@ impl WorkflowJsWorker {
         let linked = compiled.link(fn_registry)?;
         let worker = linked.into_worker(
             deployment_id,
-            db_pool,
+            real_db_pool,
             Arc::new(DeadlineTrackerFactoryForReplay {}),
             CancelRegistry::new(),
             logs_storage_config,
         );
-        let version = ctx.version.clone();
-        worker
-            .replay_internal(ctx, replay_kind, event_collector, version)
+        let captured_writes = worker
+            .replay_internal(ctx, replay_db_connection, replay_kind)
+            .await?;
+        info!(
+            "Execution replay completed, captured writes: {}",
+            captured_writes.len(),
+        );
+        Ok(ReplayResponse { captured_writes })
+    }
+
+    /// Advance a paused JS workflow by one interrupt boundary.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn advance(
+        deployment_id: DeploymentId,
+        component_id: ComponentId,
+        wasmtime_component: wasmtime::component::Component,
+        exim: &utils::wasm_tools::ExIm,
+        engine: Arc<Engine>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        real_db_pool: Arc<dyn DbPool>,
+        execution_id: ExecutionId,
+        logs_storage_config: Option<LogStrageConfig>,
+        js_source: String,
+        expected: ReplayResponse,
+    ) -> Result<AdvanceResponse, ReplayError> {
+        info!("Advance to expected {expected:?}");
+        // Check version before replaying.
+        let db_conn = real_db_pool
+            .connection()
             .await
+            .map_err(concepts::storage::DbErrorWrite::from)?;
+        let log = db_conn
+            .get(&execution_id)
+            .await
+            .map_err(concepts::storage::DbErrorWrite::from)?;
+        if let Some(expected_version) = expected.starting_version()
+            && log.next_version != *expected_version
+        {
+            return Ok(AdvanceResponse {
+                version: log.next_version,
+                outcome: AdvanceOutcome::VersionMismatch,
+            });
+        }
+
+        // Replay to capture events and write operations.
+        let replay_kind = if log.is_finished() {
+            ReplayKind::Finished
+        } else {
+            ReplayKind::Unfinished
+        };
+        let clock_fn = ConstClock(chrono::DateTime::from_timestamp_nanos(0));
+        let config = WorkflowConfig {
+            join_next_blocking_strategy:
+                super::workflow_worker::JoinNextBlockingStrategy::Interrupt,
+            backtrace_persist: false,
+            lock_extension: None,
+            subscription_interruption: None,
+            component_id,
+            stub_wasi: true,
+            fuel: None,
+        };
+
+        let original_params = log.params().clone();
+        let json_params = original_params
+            .as_json_values()
+            .expect("params come from database");
+        let params_json_list: Vec<serde_json::Value> = json_params
+            .iter()
+            .map(|v| {
+                serde_json::Value::String(
+                    serde_json::to_string(v).expect("serde_json::Value must be serializable"),
+                )
+            })
+            .collect();
+        let boa_ffqn =
+            FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
+        let boa_params: Arc<[serde_json::Value]> = Arc::from([
+            serde_json::Value::String(js_source),
+            serde_json::Value::Array(params_json_list),
+            serde_json::Value::Null,
+        ]);
+        let transformed_params = Params::from_json_values(
+            boa_params,
+            [
+                &TypeWrapper::String,
+                &TypeWrapper::List(Box::new(TypeWrapper::String)),
+                &TypeWrapper::Option(Box::new(TypeWrapper::String)),
+            ]
+            .into_iter(),
+        )
+        .expect("types checked at compile time");
+
+        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let replay_db_connection = ReplayWorkflowDbConnection::new(
+            execution_id.clone(),
+            log.next_version.clone(),
+            real_db_pool
+                .connection()
+                .await
+                .map_err(concepts::storage::DbErrorWrite::from)?,
+        );
+        let ctx = WorkerContext {
+            execution_id: execution_id.clone(),
+            metadata: ExecutionMetadata::empty(),
+            ffqn: boa_ffqn,
+            params: transformed_params,
+            event_history: log.event_history().collect(),
+            responses: log.responses,
+            version: log.next_version.clone(),
+            can_be_retried: true,
+            worker_span: Span::current(),
+            locked_event: Locked {
+                component_id: config.component_id.clone(),
+                deployment_id,
+                executor_id: ExecutorId::generate(),
+                run_id: RunId::generate(),
+                lock_expires_at: clock_fn.now(),
+                retry_config: ComponentRetryConfig::WORKFLOW,
+            },
+            executor_close_watcher,
+        };
+
+        let compiled = WorkflowWorkerCompiled::new_with_config_inner(
+            wasmtime_component,
+            exim,
+            config,
+            engine,
+            clock_fn.clone_box(),
+        )?;
+        let linked = compiled.link(fn_registry)?;
+        let worker = linked.into_worker(
+            deployment_id,
+            real_db_pool,
+            Arc::new(DeadlineTrackerFactoryForReplay {}),
+            CancelRegistry::new(),
+            logs_storage_config,
+        );
+        let old_version = ctx.version.clone();
+        let captured_writes = worker
+            .replay_internal(ctx, replay_db_connection, replay_kind)
+            .await?;
+        debug!("Got captured_writes: {captured_writes:?}");
+
+        // Compare against expected outcome and apply writes if they match.
+        let outcome = if expected.captured_writes == captured_writes {
+            let new_version = apply_writes(&*db_conn, captured_writes, old_version).await?;
+            AdvanceResponse {
+                version: new_version,
+                outcome: AdvanceOutcome::Applied,
+            }
+        } else {
+            AdvanceResponse {
+                version: old_version,
+                outcome: AdvanceOutcome::Mismatch,
+            }
+        };
+
+        info!("Advance finished with {outcome:?}");
+        Ok(outcome)
     }
 }
 
@@ -510,6 +667,7 @@ mod tests {
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
     use test_utils::sim_clock::SimClock;
+    use test_utils::{ExecutionLogSanitized, sanitize_json};
     use tokio::sync::mpsc;
     use tracing::{info, info_span};
     use utils::sha256sum::calculate_sha256_file;
@@ -931,7 +1089,7 @@ mod tests {
         assert_eq!(json!("delay"), result["responseType"]);
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("allProcessed"), result["afterStatus"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1431,7 +1589,7 @@ mod tests {
         assert_eq!(json!("execution"), result["responseType"]);
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("stubbed-result-42"), result["result"]["ok"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1461,7 +1619,7 @@ mod tests {
         let result = harness.get_result_json().await;
         assert_eq!(json!(false), result["responseOk"]);
         assert_eq!(json!(null), result["result"]["err"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1495,7 +1653,7 @@ mod tests {
             error_msg.contains("NotFound") || error_msg.contains("ExecutionNotFound"),
             "Expected 'NotFound' in error message, got: {error_msg}"
         );
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1526,7 +1684,7 @@ mod tests {
         let result = harness.get_result_json().await;
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("same-value"), result["result"]["ok"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1556,7 +1714,7 @@ mod tests {
         let result = harness.get_result_json().await;
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!(null), result["result"]["ok"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1607,7 +1765,7 @@ mod tests {
         );
         assert_eq!(json!(true), result["responseOk"]);
         assert_eq!(json!("first-value"), result["result"]["ok"]);
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1650,7 +1808,8 @@ mod tests {
             create_request.ffqn,
             FunctionFqn::new_static("testing:stub-activity/activity", "foo")
         );
-
+        drop(harness);
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1803,7 +1962,7 @@ mod tests {
             "expected Unlocked event in execution log, got: {:?}",
             log.events
         );
-
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1865,7 +2024,7 @@ mod tests {
             )),
             "expected at least one Persist event for Math.random()"
         );
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -1920,7 +2079,8 @@ mod tests {
             )),
             "expected a JoinSetRequest::DelayRequest event for Date.now()"
         );
-
+        drop(harness);
+        drop(db_conn);
         db_close.close().await;
     }
 
@@ -1959,7 +2119,7 @@ mod tests {
             result["ms"],
             "sleep() should return a Date whose getTime() equals the wake-up ms: {result}"
         );
-
+        drop(harness);
         db_close.close().await;
     }
 
@@ -2046,19 +2206,20 @@ mod tests {
 
         info!("Stage 1 replay: {replay:?}");
         assert!(
-            replay.return_value.is_some(),
+            replay.return_value().is_some(),
             "workflow should complete during preview (non-blocking events only)"
         );
+        let next_events = replay.history_events();
         assert!(
-            !replay.next_events.is_empty(),
+            !next_events.is_empty(),
             "preview should contain at least the JoinSetCreate event"
         );
-        assert_matches!(&replay.next_events[0], HistoryEvent::JoinSetCreate { .. });
+        assert_matches!(&next_events[0], HistoryEvent::JoinSetCreate { .. });
 
         // --- Stage 2: Manually insert JoinSetCreate event, execution not finished ---
         // Extract the JoinSetCreate event from the replay preview and insert it.
         use concepts::storage::AppendRequest;
-        let join_set_create_event = replay.next_events[0].clone();
+        let join_set_create_event = next_events[0].clone();
         db_connection
             .append_batch(
                 sim_clock.now(),
@@ -2094,13 +2255,13 @@ mod tests {
 
         info!("Stage 2 replay: {replay2:?}");
         assert!(
-            replay2.return_value.is_some(),
+            replay2.return_value().is_some(),
             "workflow should complete even with partial event log (JoinSetCreate already present)"
         );
         // The JoinSetCreate is already in the log, so it should not appear as a next_event.
         assert!(
             !replay2
-                .next_events
+                .history_events()
                 .iter()
                 .any(|e| matches!(e, HistoryEvent::JoinSetCreate { .. })),
             "JoinSetCreate should not appear in next_events since it's already in the log"
@@ -2147,15 +2308,10 @@ mod tests {
 
         info!("Stage 3 replay: {replay3:?}");
         assert!(
-            replay3.next_events.is_empty(),
-            "replay of a finished execution must have no next_events, got {:?}",
-            replay3.next_events
-        );
-        assert!(
-            replay3.return_value.is_some(),
+            replay3.return_value().is_some(),
             "replay of a finished execution should include the return value"
         );
-
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -2243,8 +2399,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(4, replay.next_events.len());
-        assert_json_snapshot!(replay.next_events);
+        // With FlushedCache interruption, replay stops after the first cache flush.
+        // The first flush covers JoinSetCreate and child execution submit.
+        assert_eq!(2, replay.history_events().len());
+        assert_json_snapshot!(replay.history_events());
 
         // Tick - should end with JoinNext
         // Tick the execution (which already has JoinSetCreate in the log) to completion.
@@ -2274,14 +2432,145 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(replay.next_events.is_empty());
-        let retval = replay.return_value.expect("retval should be computed");
+        let retval = replay.return_value().expect("retval should be computed");
         let retval = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(WastValWithType{ r#type: _, value })) => value);
         assert_eq!(
             "Result(Ok(Some(String(\"\\\"hello\\\"\"))))",
             format!("{retval:?}")
         );
+        drop(db_connection);
+        db_close.close().await;
+    }
 
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_advance_call_stub(database: Database) {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+        use crate::workflow::workflow_worker::AdvanceOutcome;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function call_stub() {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            obelisk.stub(execId, { 'ok': 'hello' });
+            const response = js.joinNext();
+            if (!response.ok) throw 'stub failed';
+            return obelisk.getResult(execId).ok;
+        }";
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "call-stub");
+        let sim_clock = SimClock::epoch();
+
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+
+        let execution_id = ExecutionId::from_parts(0, 0);
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let (log_sender, _log_recv) = mpsc::channel(100);
+        let logs_storage_config = Some(LogStrageConfig {
+            min_level: concepts::storage::LogLevel::Debug,
+            log_sender: log_sender.clone(),
+        });
+
+        let deployment_id = DeploymentId::from_parts(0, 0);
+
+        let db_suffix = format!("{database:?}");
+        let mut iteration = 0;
+        loop {
+            iteration += 1;
+            let replay = WorkflowJsWorker::replay(
+                deployment_id,
+                component_id.clone(),
+                runnable_component.wasmtime_component.clone(),
+                &runnable_component.wasm_component.exim,
+                workflow_engine.clone(),
+                fn_registry.clone(),
+                db_pool.clone(),
+                execution_id.clone(),
+                logs_storage_config.clone(),
+                js_source.to_string(),
+            )
+            .await
+            .unwrap();
+
+            insta::assert_json_snapshot!(
+                format!("replay_{iteration}"),
+                sanitize_json(&serde_json::to_value(&replay).unwrap())
+            );
+
+            // Advance with correct expectations — writes events to DB.
+            let advance = WorkflowJsWorker::advance(
+                deployment_id,
+                component_id.clone(),
+                runnable_component.wasmtime_component.clone(),
+                &runnable_component.wasm_component.exim,
+                workflow_engine.clone(),
+                fn_registry.clone(),
+                db_pool.clone(),
+                execution_id.clone(),
+                logs_storage_config.clone(),
+                js_source.to_string(),
+                replay.clone(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(advance.outcome, AdvanceOutcome::Applied);
+
+            // Verify DB was updated with the new events.
+            let log = db_connection.get(&execution_id).await.unwrap();
+            insta::assert_json_snapshot!(
+                format!("log_{db_suffix}_{iteration}"),
+                ExecutionLogSanitized::from(log)
+            );
+
+            if replay.return_value().is_some() {
+                break;
+            }
+        }
+
+        db_connection
+            .get_finished_result(&execution_id)
+            .await
+            .unwrap();
+
+        drop(db_connection);
         db_close.close().await;
     }
 }

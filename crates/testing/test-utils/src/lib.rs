@@ -9,6 +9,7 @@ use concepts::{
 use rand::rngs::StdRng;
 use rand::{Rng as _, SeedableRng as _};
 use serde::Serialize;
+use serde_json::Value;
 use std::str::FromStr;
 use std::{env::VarError, fmt};
 use tracing::{Event, Subscriber};
@@ -173,5 +174,39 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
             pending_state: value.pending_state,
             component_digest: COMPONENT_DIGEST_DUMMY,
         }
+    }
+}
+
+/// Sanitize dynamic fields in a JSON value for snapshot testing.
+pub fn sanitize_json(value: &Value) -> Value {
+    match value {
+        Value::String(s) => {
+            if s.starts_with("E_") && s.len() > 4 {
+                Value::String("E_<REDACTED>".to_string())
+            } else if s.starts_with("Dep_") && s.len() > 6 {
+                Value::String("Dep_<REDACTED>".to_string())
+            } else if s.starts_with("R_") && s.len() > 4 {
+                Value::String("R_<REDACTED>".to_string())
+            } else if s.starts_with("Run_") && s.len() > 6 {
+                Value::String("Run_<REDACTED>".to_string())
+            } else if s.starts_with("Exr_") && s.len() > 6 {
+                Value::String("Exr_<REDACTED>".to_string())
+            } else if s.starts_with("sha256:") {
+                Value::String("sha256:<REDACTED>".to_string())
+            } else if chrono::DateTime::parse_from_rfc3339(s).is_ok() {
+                Value::String("<TIMESTAMP>".to_string())
+            } else {
+                value.clone()
+            }
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(sanitize_json).collect()),
+        Value::Object(map) => {
+            let mut new_map = serde_json::Map::new();
+            for (k, v) in map {
+                new_map.insert(k.clone(), sanitize_json(v));
+            }
+            Value::Object(new_map)
+        }
+        _ => value.clone(),
     }
 }

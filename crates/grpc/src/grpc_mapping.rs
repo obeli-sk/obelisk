@@ -5,12 +5,12 @@ use concepts::{
     component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, RunId},
     storage::{
-        CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
+        CancelOutcome, CapturedDbWrite, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState, HistoryEvent,
         HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy, LogEntry, LogEntryRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStateLocked, PendingStatePendingAt, PersistKind, VersionParseError,
+        PendingStateLocked, PendingStatePendingAt, PersistKind, Version, VersionParseError,
         http_client_trace::HttpClientTrace,
     },
 };
@@ -1024,5 +1024,129 @@ impl From<LogEntryRow> for grpc_gen::list_logs_response::LogEntry {
             run_id: Some(value.run_id.into()),
             execution_id: Some(value.execution_id.into()),
         }
+    }
+}
+
+fn append_request_to_grpc_event(
+    req: concepts::storage::AppendRequest,
+    version: u32,
+) -> grpc_gen::ExecutionEvent {
+    from_execution_event_to_grpc(ExecutionEvent {
+        created_at: req.created_at,
+        event: req.event,
+        backtrace_id: None,
+        version: Version::new(version),
+    })
+}
+
+fn append_requests_to_grpc_events(
+    batch: Vec<concepts::storage::AppendRequest>,
+    start_version: u32,
+) -> Vec<grpc_gen::ExecutionEvent> {
+    batch
+        .into_iter()
+        .enumerate()
+        .map(|(i, req)| {
+            append_request_to_grpc_event(
+                req,
+                start_version + u32::try_from(i).expect("unsupported number of batch events > u32"),
+            )
+        })
+        .collect()
+}
+
+fn create_request_to_grpc(
+    req: concepts::storage::CreateRequest,
+) -> grpc_gen::CreateExecutionRequest {
+    grpc_gen::CreateExecutionRequest {
+        execution_id: Some(grpc_gen::ExecutionId {
+            id: req.execution_id.to_string(),
+        }),
+        function_name: Some(grpc_gen::FunctionName::from(req.ffqn)),
+        params: Some(
+            to_any(req.params, "urn:obelisk:json:params".to_string())
+                .expect("Params must be JSON-serializable"),
+        ),
+        scheduled_at: Some(prost_wkt_types::Timestamp::from(req.scheduled_at)),
+        component_id: Some(req.component_id.into()),
+        deployment_id: Some(req.deployment_id.into()),
+        parent_execution_id: req
+            .parent
+            .as_ref()
+            .map(|(id, _)| grpc_gen::ExecutionId { id: id.to_string() }),
+        parent_join_set_id: req.parent.map(|(_, js)| js.into()),
+    }
+}
+
+pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite {
+    grpc_gen::CapturedWrite {
+        write: Some(match write {
+            CapturedDbWrite::Append {
+                execution_id,
+                version,
+                req,
+            } => grpc_gen::captured_write::Write::Append(grpc_gen::captured_write::Append {
+                execution_id: Some(grpc_gen::ExecutionId {
+                    id: execution_id.to_string(),
+                }),
+                version: version.0,
+                event: Some(append_request_to_grpc_event(req, version.0)),
+            }),
+            CapturedDbWrite::AppendBatch {
+                current_time,
+                batch,
+                execution_id,
+                version,
+            } => grpc_gen::captured_write::Write::AppendBatch(
+                grpc_gen::captured_write::AppendBatch {
+                    current_time: Some(prost_wkt_types::Timestamp::from(current_time)),
+                    events: append_requests_to_grpc_events(batch, version.0),
+                    execution_id: Some(grpc_gen::ExecutionId {
+                        id: execution_id.to_string(),
+                    }),
+                    version: version.0,
+                },
+            ),
+            CapturedDbWrite::AppendBatchCreateNewExecution {
+                current_time,
+                batch,
+                execution_id,
+                version,
+                child_req,
+                backtraces: _,
+            } => grpc_gen::captured_write::Write::AppendBatchCreateNewExecution(
+                grpc_gen::captured_write::AppendBatchCreateNewExecution {
+                    current_time: Some(prost_wkt_types::Timestamp::from(current_time)),
+                    events: append_requests_to_grpc_events(batch, version.0),
+                    execution_id: Some(grpc_gen::ExecutionId {
+                        id: execution_id.to_string(),
+                    }),
+                    version: version.0,
+                    child_requests: child_req.into_iter().map(create_request_to_grpc).collect(),
+                },
+            ),
+            CapturedDbWrite::AppendStubResponse {
+                events,
+                response,
+                current_time,
+            } => grpc_gen::captured_write::Write::AppendBatchRespondToParent(
+                grpc_gen::captured_write::AppendBatchRespondToParent {
+                    execution_id: Some(grpc_gen::ExecutionId {
+                        id: events.execution_id.to_string(),
+                    }),
+                    version: events.version.0,
+                    events: append_requests_to_grpc_events(events.batch, events.version.0),
+                    parent_execution_id: Some(grpc_gen::ExecutionId {
+                        id: response.parent_execution_id.to_string(),
+                    }),
+                    join_set_id: Some(response.join_set_id.into()),
+                    child_execution_id: Some(grpc_gen::ExecutionId {
+                        id: response.child_execution_id.to_string(),
+                    }),
+                    result: Some(grpc_gen::SupportedFunctionResult::from(response.result)),
+                    current_time: Some(prost_wkt_types::Timestamp::from(current_time)),
+                },
+            ),
+        }),
     }
 }

@@ -822,15 +822,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             tonic::Status::internal(format!("replay failed: {err}"))
         })?;
         Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {
-            next_events: replay_response
-                .next_events
+            captured_writes: replay_response
+                .captured_writes
                 .into_iter()
-                .map(grpc_mapping::history_event_to_grpc)
+                .map(grpc_mapping::captured_write_to_grpc)
                 .collect(),
-            return_value: replay_response
-                .return_value
-                .map(grpc_gen::SupportedFunctionResult::from),
-            version: replay_response.version.0,
         }))
     }
 

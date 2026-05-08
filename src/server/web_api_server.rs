@@ -28,9 +28,8 @@ use concepts::{
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, ExecutionEvent, ExecutionListPagination,
-        ExecutionRequest, ExecutionWithState, HistoryEvent, ListExecutionsFilter, LogInfoAppendRow,
-        Pagination, PendingState, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version,
-        VersionType,
+        ExecutionRequest, ExecutionWithState, ListExecutionsFilter, LogInfoAppendRow, Pagination,
+        PendingState, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -1312,24 +1311,162 @@ impl From<SupportedFunctionReturnValue> for RetVal {
     }
 }
 
+/// A serializable mirror of `CreateRequest` from concepts.
+#[derive(Debug, Serialize, ToSchema)]
+struct CreateRequestSer {
+    created_at: DateTime<Utc>,
+    execution_id: String,
+    ffqn: String,
+    #[schema(value_type = Vec<Object>)]
+    params: concepts::Params,
+    scheduled_at: DateTime<Utc>,
+    component_id: String,
+    deployment_id: String,
+    paused: bool,
+}
+
+impl From<concepts::storage::CreateRequest> for CreateRequestSer {
+    fn from(r: concepts::storage::CreateRequest) -> Self {
+        Self {
+            created_at: r.created_at,
+            execution_id: r.execution_id.to_string(),
+            ffqn: r.ffqn.to_string(),
+            params: r.params,
+            scheduled_at: r.scheduled_at,
+            component_id: r.component_id.to_string(),
+            deployment_id: r.deployment_id.to_string(),
+            paused: r.paused,
+        }
+    }
+}
+
+/// A serializable mirror of `AppendResponseToExecution` from concepts.
+#[derive(Debug, Serialize, ToSchema)]
+struct StubResponseSer {
+    parent_execution_id: String,
+    created_at: DateTime<Utc>,
+    join_set_id: String,
+    child_execution_id: String,
+    finished_version: u32,
+    result: RetVal,
+}
+
+impl From<concepts::storage::AppendResponseToExecution> for StubResponseSer {
+    fn from(r: concepts::storage::AppendResponseToExecution) -> Self {
+        Self {
+            parent_execution_id: r.parent_execution_id.to_string(),
+            created_at: r.created_at,
+            join_set_id: r.join_set_id.to_string(),
+            child_execution_id: r.child_execution_id.to_string(),
+            finished_version: r.finished_version.0,
+            result: RetVal::from(r.result),
+        }
+    }
+}
+
+/// A serializable captured database write operation.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum CapturedWriteSer {
+    Append {
+        execution_id: String,
+        version: u32,
+        #[schema(value_type = Object)]
+        event: concepts::storage::AppendRequest,
+    },
+    AppendBatch {
+        current_time: DateTime<Utc>,
+        #[schema(value_type = Vec<Object>)]
+        events: Vec<concepts::storage::AppendRequest>,
+        execution_id: String,
+        version: u32,
+    },
+    AppendBatchCreateNewExecution {
+        current_time: DateTime<Utc>,
+        #[schema(value_type = Vec<Object>)]
+        events: Vec<concepts::storage::AppendRequest>,
+        execution_id: String,
+        version: u32,
+        child_requests: Vec<CreateRequestSer>,
+    },
+    AppendBatchRespondToParent {
+        execution_id: String,
+        version: u32,
+        #[schema(value_type = Vec<Object>)]
+        events: Vec<concepts::storage::AppendRequest>,
+        response: StubResponseSer,
+        current_time: DateTime<Utc>,
+    },
+}
+
+impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
+    fn from(w: concepts::storage::CapturedDbWrite) -> Self {
+        use concepts::storage::CapturedDbWrite;
+        match w {
+            CapturedDbWrite::Append {
+                execution_id,
+                version,
+                req,
+            } => CapturedWriteSer::Append {
+                execution_id: execution_id.to_string(),
+                version: version.0,
+                event: req,
+            },
+            CapturedDbWrite::AppendBatch {
+                current_time,
+                batch,
+                execution_id,
+                version,
+            } => CapturedWriteSer::AppendBatch {
+                current_time,
+                events: batch,
+                execution_id: execution_id.to_string(),
+                version: version.0,
+            },
+            CapturedDbWrite::AppendBatchCreateNewExecution {
+                current_time,
+                batch,
+                execution_id,
+                version,
+                child_req,
+                backtraces: _,
+            } => CapturedWriteSer::AppendBatchCreateNewExecution {
+                current_time,
+                events: batch,
+                execution_id: execution_id.to_string(),
+                version: version.0,
+                child_requests: child_req.into_iter().map(CreateRequestSer::from).collect(),
+            },
+            CapturedDbWrite::AppendStubResponse {
+                events,
+                response,
+                current_time,
+            } => CapturedWriteSer::AppendBatchRespondToParent {
+                execution_id: events.execution_id.to_string(),
+                version: events.version.0,
+                events: events.batch,
+                response: StubResponseSer::from(response),
+                current_time,
+            },
+        }
+    }
+}
+
 /// Result of replaying a workflow execution
 #[derive(Debug, Serialize, ToSchema)]
 struct ReplayResponseSer {
-    /// Events that the workflow would produce next
-    #[schema(value_type = Vec<Object>)]
-    next_events: Vec<HistoryEvent>,
-    /// If the workflow completed during replay, contains the return value
-    return_value: Option<RetVal>,
-    /// Current version of the execution log at the time of replay
-    version: u32,
+    /// Write operations that the workflow would produce next
+    captured_writes: Vec<CapturedWriteSer>,
 }
 
 impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayResponseSer {
     fn from(value: wasm_workers::workflow::workflow_worker::ReplayResponse) -> Self {
         Self {
-            next_events: value.next_events,
-            return_value: value.return_value.map(RetVal::from),
-            version: value.version.0,
+            captured_writes: value
+                .captured_writes
+                .into_iter()
+                .map(CapturedWriteSer::from)
+                .collect(),
         }
     }
 }
@@ -1692,12 +1829,8 @@ async fn execution_replay(
         AcceptHeader::Json => Json(ser).into_response(),
         AcceptHeader::Text => {
             let mut output = String::new();
-            writeln!(&mut output, "version: {}", ser.version).expect("writing to string");
-            for event in &ser.next_events {
-                writeln!(&mut output, "{event}").expect("writing to string");
-            }
-            if let Some(retval) = &ser.return_value {
-                writeln!(&mut output, "return_value: {retval:?}").expect("writing to string");
+            for write in &ser.captured_writes {
+                writeln!(&mut output, "{write:?}").expect("writing to string");
             }
             output.into_response()
         }

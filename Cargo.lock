@@ -5500,6 +5500,7 @@ dependencies = [
  "rand 0.9.4",
  "rustls",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-error",

@@ -17,6 +17,7 @@ chrono.workspace = true
 rand.workspace = true
 rustls.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-error.workspace = true

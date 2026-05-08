@@ -1,0 +1,74 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
+expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
+---
+{
+  "captured_writes": [
+    {
+      "AppendBatch": {
+        "batch": [
+          {
+            "created_at": "<TIMESTAMP>",
+            "event": {
+              "history_event": {
+                "event": {
+                  "result": {
+                    "Ok": null
+                  },
+                  "retval_hash": "011f9f1089426c4e2d1d6c761441181fba8e690f2baeccde7036a92c7d49d6b0e1",
+                  "target_execution_id": "E_<REDACTED>",
+                  "type": "stub"
+                }
+              }
+            }
+          }
+        ],
+        "current_time": "<TIMESTAMP>",
+        "execution_id": "E_<REDACTED>",
+        "version": 4
+      }
+    },
+    {
+      "Append": {
+        "execution_id": "E_<REDACTED>",
+        "req": {
+          "created_at": "<TIMESTAMP>",
+          "event": {
+            "history_event": {
+              "event": {
+                "closing": false,
+                "join_set_id": "g:1",
+                "requested_ffqn": null,
+                "run_expires_at": "<TIMESTAMP>",
+                "type": "join_next"
+              }
+            }
+          }
+        },
+        "version": 5
+      }
+    },
+    {
+      "Append": {
+        "execution_id": "E_<REDACTED>",
+        "req": {
+          "created_at": "<TIMESTAMP>",
+          "event": {
+            "finished": {
+              "http_client_traces": null,
+              "retval": {
+                "ok": {
+                  "type": "result<string, string>",
+                  "value": {
+                    "ok": "\"hello\""
+                  }
+                }
+              }
+            }
+          }
+        },
+        "version": 6
+      }
+    }
+  ]
+}

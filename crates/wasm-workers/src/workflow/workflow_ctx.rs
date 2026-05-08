@@ -1,4 +1,4 @@
-use super::caching_db_connection::CachingDbConnection;
+use super::caching_db_connection::WorkflowDbConnection;
 use super::deadline_tracker::DeadlineTracker;
 use super::event_history::{
     ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
@@ -14,9 +14,11 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
+use crate::workflow::caching_db_connection::FlushOutcome;
 use crate::workflow::deadline_tracker::EpochCallbackError;
 use crate::workflow::event_history::{
-    JoinSetCreate, ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitChildIntent,
+    DbErrorWriteOrReplayInterrupt, JoinSetCreate, ScheduleIntent, StubIntent, StubIntentErr,
+    StubParams, SubmitChildIntent,
 };
 use crate::workflow::host_exports::latest::{self, DelayIdTypes, ExecutionIdTypes};
 use crate::workflow::host_exports::{
@@ -77,6 +79,16 @@ pub(crate) enum WorkflowFunctionError {
     ExecutorClosing,
     #[error("replay waiting for response")]
     ReplayWaitingForResponse,
+}
+impl From<DbErrorWriteOrReplayInterrupt> for WorkflowFunctionError {
+    fn from(value: DbErrorWriteOrReplayInterrupt) -> Self {
+        match value {
+            DbErrorWriteOrReplayInterrupt::DbError(err) => WorkflowFunctionError::DbError(err),
+            DbErrorWriteOrReplayInterrupt::ReplayInterrupt => {
+                WorkflowFunctionError::ReplayWaitingForResponse
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -148,12 +160,12 @@ pub(crate) struct WorkflowCtx {
     event_history: EventHistory,
     rng: StdRng,
     pub(crate) clock_fn: Box<dyn ClockFn>,
-    pub(crate) db_connection: CachingDbConnection,
+    pub(crate) db_connection: Box<dyn WorkflowDbConnection>,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
     backtrace_persist: bool,
     wasi_ctx: WasiCtx,
-    is_replay: bool, // Used for lowering logs to trace
+    is_replay: Option<ReplayKind>,
 }
 
 #[derive(derive_more::Debug)]
@@ -192,7 +204,7 @@ impl DirectFnCall<'_> {
             Params::from_wasmtime(Arc::from(params)),
             wasm_backtrace,
             &mut ctx.event_history,
-            &mut ctx.db_connection,
+            &mut *ctx.db_connection,
             called_at,
         )
         .await
@@ -296,7 +308,7 @@ impl ScheduleFnCall<'_> {
             },
             wasm_backtrace,
         }
-        .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
+        .apply(&mut ctx.event_history, &mut *ctx.db_connection, called_at)
         .await?
         .map(|()| execution_id_val)
         .expect("Ok intent cannot produce ScheduleRequestError"))
@@ -364,7 +376,7 @@ impl SubmitExecutionFnCall<'_> {
             child_execution_id,
             wasm_backtrace,
         }
-        .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
+        .apply(&mut ctx.event_history, &mut *ctx.db_connection, called_at)
         .await?
         .map(|()| child_execution_id_val)
         .expect("Ok intent cannot produce ChildExecutionRequestError"))
@@ -429,7 +441,7 @@ impl AwaitNextFnCall {
             wasm_backtrace,
             requested_ffqn: target_ffqn,
         }
-        .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
+        .apply(&mut ctx.event_history, &mut *ctx.db_connection, called_at)
         .await
     }
 }
@@ -497,12 +509,17 @@ impl StubFnCall<'_> {
         target_ffqn: &FunctionFqn,
         retval: SupportedFunctionReturnValue,
         called_at: DateTime<Utc>,
-    ) -> Result<StubIntent, DbErrorWrite> {
-        // Flush the cache before getting the stub's create request, because it might be this execution's child.
+    ) -> Result<StubIntent, WorkflowFunctionError> {
+        // Flush the cache before getting the stub's create request, because it might be this execution's child - `-submit` that only lives in cache.
         // TODO(perf): Just search cache + db instead.
-        ctx.db_connection
+        let flushed = ctx
+            .db_connection
             .flush_non_blocking_event_cache(called_at)
-            .await?;
+            .await
+            .map_err(WorkflowFunctionError::DbError)?;
+        if ctx.is_replay == Some(ReplayKind::Unfinished) && flushed == FlushOutcome::FlushedCache {
+            return Err(WorkflowFunctionError::ReplayWaitingForResponse);
+        }
         match ctx
             .db_connection
             .get_create_request(&ExecutionId::Derived(target_execution_id))
@@ -520,7 +537,7 @@ impl StubFnCall<'_> {
                 create_req.ffqn
             )))),
             Err(DbErrorRead::NotFound) => Ok(StubIntent::Err(StubIntentErr::ExecutionNotFound)),
-            Err(err) => Err(err.into()), // intermittent error
+            Err(err) => Err(WorkflowFunctionError::DbError(DbErrorWrite::from(err))), // intermittent error
         }
     }
 
@@ -550,15 +567,14 @@ impl StubFnCall<'_> {
         };
         let intent =
             Self::get_stub_intent(ctx, target_execution_id, &target_ffqn, retval, called_at)
-                .await
-                .map_err(WorkflowFunctionError::DbError)?;
+                .await?;
 
         let stub_result = Stub {
             intent,
             params,
             wasm_backtrace,
         }
-        .apply(&mut ctx.event_history, &mut ctx.db_connection, called_at)
+        .apply(&mut ctx.event_history, &mut *ctx.db_connection, called_at)
         .await?;
 
         Ok(stub_result_to_wast_val(stub_result).as_val())
@@ -853,7 +869,7 @@ impl WasiView for WorkflowCtx {
 
 const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@5.1.0";
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum ReplayKind {
     Finished,
     Unfinished,
@@ -863,7 +879,7 @@ impl WorkflowCtx {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         deployment_id: DeploymentId,
-        db_connection: CachingDbConnection,
+        db_connection: Box<dyn WorkflowDbConnection>,
         event_history: Vec<(HistoryEvent, Version)>,
         responses: Vec<ResponseWithCursor>,
         seed: u64,
@@ -885,7 +901,7 @@ impl WorkflowCtx {
         wasi_ctx_builder.allow_udp(false);
         wasi_ctx_builder.insecure_random_seed(0);
         let run_id = locked_event.run_id;
-        let execution_id = db_connection.execution_id.clone();
+        let execution_id = db_connection.execution_id().clone();
         Self {
             execution_id: execution_id.clone(),
             db_connection,
@@ -914,7 +930,7 @@ impl WorkflowCtx {
             resource_table: wasmtime::component::ResourceTable::default(),
             backtrace_persist,
             wasi_ctx: wasi_ctx_builder.build(),
-            is_replay: is_replay.is_some(),
+            is_replay,
         }
     }
 
@@ -922,7 +938,7 @@ impl WorkflowCtx {
         self.event_history.deadline_tracker.check_epoch_callback()
     }
 
-    pub(crate) async fn flush(&mut self) -> Result<(), DbErrorWrite> {
+    pub(crate) async fn flush(&mut self) -> Result<FlushOutcome, DbErrorWrite> {
         self.db_connection
             .flush_non_blocking_event_cache(self.clock_fn.now())
             .await
@@ -952,7 +968,7 @@ impl WorkflowCtx {
             expires_at_if_new,
             wasm_backtrace,
             &mut self.event_history,
-            &mut self.db_connection,
+            &mut *self.db_connection,
             self.clock_fn.now(),
         )
         .await
@@ -987,7 +1003,7 @@ impl WorkflowCtx {
             }
             .apply(
                 &mut self.event_history,
-                &mut self.db_connection,
+                &mut *self.db_connection,
                 self.clock_fn.now(),
             )
             .await
@@ -1868,7 +1884,7 @@ impl WorkflowCtx {
     pub(crate) async fn join_sets_close_on_finish(&mut self) -> Result<(), ApplyError> {
         debug!("Closing opened join sets");
         self.event_history
-            .finalize(&mut self.db_connection, self.clock_fn.now())
+            .finalize(&mut *self.db_connection, self.clock_fn.now())
             .await?;
         Ok(())
     }
@@ -1923,15 +1939,16 @@ pub(crate) mod workflow_support {
         Schedule, Stub, SubmitChildExecution, WorkflowCtx, WorkflowFunctionError, typesTypes,
     };
     use crate::component_logger::log_activities::obelisk::log::log::Host as LogHost;
+    use crate::workflow::caching_db_connection::FlushOutcome;
     use crate::workflow::event_history::{
-        JoinNext, JoinNextTry, Persist, ScheduleIntent, StubIntent, StubIntentErr, StubParams,
-        SubmitDelay,
+        DbErrorWriteOrReplayInterrupt, JoinNext, JoinNextTry, Persist, ScheduleIntent, StubIntent,
+        StubIntentErr, StubParams, SubmitDelay,
     };
     use crate::workflow::host_exports::latest::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, latest};
-    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT, JoinSetCreateError};
+    use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT, JoinSetCreateError, ReplayKind};
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
     use concepts::storage::{DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, StubRetVal};
@@ -1965,7 +1982,7 @@ pub(crate) mod workflow_support {
             self.event_history
                 .join_set_close(
                     join_set_id,
-                    &mut self.db_connection,
+                    &mut *self.db_connection,
                     self.clock_fn.now(),
                     wasm_backtrace,
                 )
@@ -2005,7 +2022,7 @@ pub(crate) mod workflow_support {
                 max_inclusive,
                 wasm_backtrace,
                 &mut self.event_history,
-                &mut self.db_connection,
+                &mut *self.db_connection,
                 self.clock_fn.now(),
             )
             .await?;
@@ -2024,7 +2041,7 @@ pub(crate) mod workflow_support {
                 &execution_id,
                 wasm_backtrace,
                 &mut self.event_history,
-                &mut self.db_connection,
+                &mut *self.db_connection,
                 self.clock_fn.now(),
             )
             .await?;
@@ -2071,7 +2088,7 @@ pub(crate) mod workflow_support {
                 u64::from(max_length_exclusive),
                 wasm_backtrace,
                 &mut self.event_history,
-                &mut self.db_connection,
+                &mut *self.db_connection,
                 self.clock_fn.now(),
             )
             .await?;
@@ -2086,7 +2103,7 @@ pub(crate) mod workflow_support {
         ) -> Result<typesTypes::execution::DelayId, WorkflowFunctionError> {
             let delay_id = self
                 .event_history
-                .next_delay_id(&join_set_id, &self.db_connection.execution_id);
+                .next_delay_id(&join_set_id, self.db_connection.execution_id());
             let expires_at_if_new =
                 schedule_at
                     .as_date_time(self.clock_fn.now())
@@ -2109,7 +2126,7 @@ pub(crate) mod workflow_support {
             }
             .apply(
                 &mut self.event_history,
-                &mut self.db_connection,
+                &mut *self.db_connection,
                 self.clock_fn.now(),
             )
             .await?;
@@ -2218,7 +2235,7 @@ pub(crate) mod workflow_support {
             }
             .apply(
                 &mut self.event_history,
-                &mut self.db_connection,
+                &mut *self.db_connection,
                 self.clock_fn.now(),
             )
             .await
@@ -2238,7 +2255,7 @@ pub(crate) mod workflow_support {
             }
             .apply(
                 &mut self.event_history,
-                &mut self.db_connection,
+                &mut *self.db_connection,
                 self.clock_fn.now(),
             )
             .await?;
@@ -2294,7 +2311,7 @@ pub(crate) mod workflow_support {
             };
 
             let result = submit
-                .apply(&mut self.event_history, &mut self.db_connection, called_at)
+                .apply(&mut self.event_history, &mut *self.db_connection, called_at)
                 .await
                 .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
 
@@ -2400,7 +2417,7 @@ pub(crate) mod workflow_support {
                 intent,
                 wasm_backtrace,
             }
-            .apply(&mut self.event_history, &mut self.db_connection, called_at)
+            .apply(&mut self.event_history, &mut *self.db_connection, called_at)
             .await
             .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
 
@@ -2463,13 +2480,18 @@ pub(crate) mod workflow_support {
             target_execution_id: ExecutionIdDerived,
             retval: String,
             called_at: DateTime<Utc>,
-        ) -> Result<(StubIntent, StubParams), DbErrorWrite> {
+        ) -> Result<(StubIntent, StubParams), DbErrorWriteOrReplayInterrupt> {
             // Flush the cache before getting the stub's create request, because it might be this execution's child.
             // TODO(perf): Just search cache + db instead.
-            self.db_connection
+            let flushed = self
+                .db_connection
                 .flush_non_blocking_event_cache(called_at)
                 .await?;
-
+            if self.is_replay == Some(ReplayKind::Unfinished)
+                && flushed == FlushOutcome::FlushedCache
+            {
+                return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
+            }
             // Look up the target function's FFQN
             let target_ffqn = match self
                 .db_connection
@@ -2486,7 +2508,11 @@ pub(crate) mod workflow_support {
                         },
                     ));
                 }
-                Err(db_err) => return Err(db_err.into()), // intermittent error
+                Err(db_err) => {
+                    return Err(DbErrorWriteOrReplayInterrupt::DbError(DbErrorWrite::from(
+                        db_err,
+                    )));
+                } // intermittent error
             };
 
             // Get the function metadata to determine the return type
@@ -2610,8 +2636,7 @@ pub(crate) mod workflow_support {
             let called_at = self.clock_fn.now();
             let (intent, params) = self
                 .get_stub_intent_and_params(target_execution_id, retval, called_at)
-                .await
-                .map_err(WorkflowFunctionError::DbError)?;
+                .await?;
 
             // Apply the stub
 
@@ -2620,7 +2645,7 @@ pub(crate) mod workflow_support {
                 params,
                 wasm_backtrace,
             }
-            .apply(&mut self.event_history, &mut self.db_connection, called_at)
+            .apply(&mut self.event_history, &mut *self.db_connection, called_at)
             .await?;
 
             match stub_result {
@@ -2684,7 +2709,7 @@ pub(crate) mod workflow_support {
                 .event_history
                 .next_join_set_one_off_named(&target_ffqn.function_name)
                 .expect("function names only contain alphanumeric and dash, no illegal chars");
-            let child_execution_id = self.db_connection.execution_id.next_level(&join_set_id);
+            let child_execution_id = self.db_connection.execution_id().next_level(&join_set_id);
 
             let called_at = self.clock_fn.now();
             OneOffChildExecutionRequest::apply(
@@ -2693,7 +2718,7 @@ pub(crate) mod workflow_support {
                 params,
                 wasm_backtrace,
                 &mut self.event_history,
-                &mut self.db_connection,
+                &mut *self.db_connection,
                 called_at,
             )
             .await
@@ -2726,7 +2751,9 @@ pub(crate) mod workflow_support {
 }
 
 fn trace_on_replay(ctx: &mut WorkflowCtx, level: LogLevel, message: String) {
-    if ctx.event_history.has_unprocessed_requests() || ctx.is_replay {
+    if ctx.event_history.has_unprocessed_requests()  // This log message already appeared with proper level unless code changed.
+    || ctx.is_replay.is_some()
+    {
         ctx.component_logger
             .log(LogLevel::Trace, format!("(replay) {message}"));
     } else {
@@ -2955,7 +2982,7 @@ pub(crate) mod tests {
             let cancel_registry = CancelRegistry::new();
             let mut workflow_ctx = WorkflowCtx::new(
                 DEPLOYMENT_ID_DUMMY,
-                caching_db_connection,
+                Box::new(caching_db_connection),
                 ctx.event_history,
                 ctx.responses,
                 seed,
@@ -3099,7 +3126,7 @@ pub(crate) mod tests {
                 if let Err(err) = res {
                     info!("Sending {err:?}");
                     return err
-                        .into_worker_partial_result(workflow_ctx.db_connection.version.clone())
+                        .into_worker_partial_result(workflow_ctx.db_connection.version().clone())
                         .into();
                 }
             }
@@ -3108,7 +3135,7 @@ pub(crate) mod tests {
                     info!("Finishing");
                     WorkerResult::Ok(WorkerResultOk::RunFinished {
                         retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                        version: workflow_ctx.db_connection.version.clone(),
+                        version: workflow_ctx.db_connection.version().clone(),
                         http_client_traces: None,
                     })
                 }

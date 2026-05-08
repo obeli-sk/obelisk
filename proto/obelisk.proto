@@ -663,10 +663,59 @@ message CancelResponse {
 message ReplayExecutionRequest {
   ExecutionId execution_id = 1;
 }
+
+// A database write operation captured during replay.
+message CapturedWrite {
+  message Append {
+    ExecutionId execution_id = 1;
+    uint32 version = 2;
+    ExecutionEvent event = 3;
+  }
+  message AppendBatch {
+    google.protobuf.Timestamp current_time = 1;
+    repeated ExecutionEvent events = 2;
+    ExecutionId execution_id = 3;
+    uint32 version = 4;
+  }
+  message AppendBatchCreateNewExecution {
+    google.protobuf.Timestamp current_time = 1;
+    repeated ExecutionEvent events = 2;
+    ExecutionId execution_id = 3;
+    uint32 version = 4;
+    repeated CreateExecutionRequest child_requests = 5;
+  }
+  message AppendBatchRespondToParent {
+    ExecutionId execution_id = 1;
+    uint32 version = 2;
+    repeated ExecutionEvent events = 3;
+    ExecutionId parent_execution_id = 4;
+    JoinSetId join_set_id = 5;
+    ExecutionId child_execution_id = 6;
+    SupportedFunctionResult result = 7;
+    google.protobuf.Timestamp current_time = 8;
+  }
+  oneof write {
+    Append append = 1;
+    AppendBatch append_batch = 2;
+    AppendBatchCreateNewExecution append_batch_create_new_execution = 3;
+    AppendBatchRespondToParent append_batch_respond_to_parent = 4;
+  }
+}
+
+// Child execution creation request (part of CapturedWrite).
+message CreateExecutionRequest {
+  ExecutionId execution_id = 1;
+  FunctionName function_name = 2;
+  google.protobuf.Any params = 3;
+  google.protobuf.Timestamp scheduled_at = 4;
+  ComponentId component_id = 5;
+  DeploymentId deployment_id = 6;
+  optional ExecutionId parent_execution_id = 7;
+  optional JoinSetId parent_join_set_id = 8;
+}
+
 message ReplayExecutionResponse {
-  repeated ExecutionEvent.HistoryEvent next_events = 1;
-  optional SupportedFunctionResult return_value = 2;
-  uint32 version = 3;
+  repeated CapturedWrite captured_writes = 1;
 }
 
 

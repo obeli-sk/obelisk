@@ -1,5 +1,9 @@
 use super::workflow_worker::JoinNextBlockingStrategy;
-use crate::activity::cancel_registry::CancelRegistry;
+use crate::{
+    activity::cancel_registry::CancelRegistry,
+    workflow::event_history::DbErrorWriteOrReplayInterrupt,
+};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId,
@@ -12,13 +16,106 @@ use concepts::{
     },
 };
 use std::pin::Pin;
+use std::{any::Any, future::Future};
 use tracing::{debug, instrument, warn};
+
+#[async_trait]
+pub(crate) trait WorkflowDbConnection: Send + Any {
+    fn as_any(self: Box<Self>) -> Box<dyn Any>;
+
+    fn execution_id(&self) -> &ExecutionId;
+
+    fn version(&self) -> &Version;
+
+    async fn append_non_blocking(
+        &mut self,
+        non_blocking_event: CacheableDbEvent,
+        called_at: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_blocking(
+        &mut self,
+        execution_id: ExecutionId,
+        req: AppendRequest,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_batch(
+        &mut self,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_batch_create_new_execution(
+        &mut self,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        child_req: Vec<CreateRequest>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_stub_response(
+        &mut self,
+        events: AppendEventsToExecution,
+        response: AppendResponseToExecution,
+        current_time: DateTime<Utc>,
+    ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt>;
+
+    async fn get_create_request(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<CreateRequest, DbErrorRead>;
+
+    async fn get_execution_event(
+        &self,
+        execution_id: &ExecutionId,
+        version: &Version,
+    ) -> Result<ExecutionEvent, DbErrorRead>;
+
+    async fn subscribe_to_next_responses(
+        &self,
+        execution_id: &ExecutionId,
+        last_response: ResponseCursor,
+        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
+    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout>;
+
+    async fn flush_non_blocking_event_cache(
+        &mut self,
+        current_time: DateTime<Utc>,
+    ) -> Result<FlushOutcome, DbErrorWrite>;
+
+    async fn cancel_activity(
+        &mut self,
+        cancel_registry: &CancelRegistry,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite>;
+
+    async fn cancel_delay(
+        &mut self,
+        delay_id: DelayId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub(crate) enum FlushOutcome {
+    Noop,
+    FlushedCache,
+}
 
 pub(crate) struct CachingDbConnection {
     db_connection: Box<dyn DbConnection>,
-    pub(crate) execution_id: ExecutionId,
+    execution_id: ExecutionId,
     pub(crate) caching_buffer: Option<CachingBuffer>,
-    pub(crate) version: Version,
+    version: Version,
 }
 impl CachingDbConnection {
     pub(crate) fn new(
@@ -110,8 +207,21 @@ impl CachingBuffer {
     }
 }
 
-impl CachingDbConnection {
-    pub(crate) async fn append_non_blocking(
+#[async_trait]
+impl WorkflowDbConnection for CachingDbConnection {
+    fn as_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+
+    fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
+    }
+
+    fn version(&self) -> &Version {
+        &self.version
+    }
+
+    async fn append_non_blocking(
         &mut self,
         non_blocking_event: CacheableDbEvent,
         called_at: DateTime<Utc>,
@@ -201,15 +311,13 @@ impl CachingDbConnection {
         Ok(())
     }
 
-    pub(crate) async fn append_blocking(
+    async fn append_blocking(
         &mut self,
         execution_id: ExecutionId,
         req: AppendRequest,
-        called_at: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
-        self.flush_non_blocking_event_cache(called_at).await?;
         let next_version = self
             .db_connection
             .append(execution_id, self.version.clone(), req)
@@ -225,7 +333,7 @@ impl CachingDbConnection {
         Ok(())
     }
 
-    pub(crate) async fn append_batch(
+    async fn append_batch(
         &mut self,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
@@ -233,7 +341,6 @@ impl CachingDbConnection {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
-        self.flush_non_blocking_event_cache(current_time).await?;
         let next_version = self
             .db_connection
             .append_batch(current_time, batch, execution_id, self.version.clone())
@@ -249,7 +356,7 @@ impl CachingDbConnection {
         Ok(())
     }
 
-    pub(crate) async fn append_batch_create_new_execution(
+    async fn append_batch_create_new_execution(
         &mut self,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
@@ -258,7 +365,6 @@ impl CachingDbConnection {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
-        self.flush_non_blocking_event_cache(current_time).await?;
         let expected_next_version =
             Version(self.version.0 + u32::try_from(batch.len()).expect("max 3 won't overflow"));
         let backtrace_info = wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
@@ -285,26 +391,26 @@ impl CachingDbConnection {
         Ok(())
     }
 
-    pub(crate) async fn append_batch_respond_to_parent(
+    async fn append_stub_response(
         &mut self,
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorWrite> {
-        self.flush_non_blocking_event_cache(current_time).await?;
+    ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt> {
         self.db_connection
             .append_batch_respond_to_parent(events, response, current_time)
             .await
+            .map_err(DbErrorWriteOrReplayInterrupt::DbError)
     }
 
-    pub(crate) async fn get_create_request(
+    async fn get_create_request(
         &self,
         execution_id: &ExecutionId,
     ) -> Result<CreateRequest, DbErrorRead> {
         self.db_connection.get_create_request(execution_id).await
     }
 
-    pub(crate) async fn get_execution_event(
+    async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,
         version: &Version,
@@ -314,7 +420,7 @@ impl CachingDbConnection {
             .await
     }
 
-    pub(crate) async fn subscribe_to_next_responses(
+    async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
         last_response: ResponseCursor,
@@ -325,25 +431,11 @@ impl CachingDbConnection {
             .await
     }
 
-    async fn flush_non_blocking_event_cache_if_full(
-        &mut self,
-        current_time: DateTime<Utc>,
-    ) -> Result<(), DbErrorWrite> {
-        if let Some(caching_buffer) = &self.caching_buffer {
-            let too_many = caching_buffer.non_blocking_event_batch.len()
-                >= caching_buffer.non_blocking_event_batch_size;
-            if too_many {
-                self.flush_non_blocking_event_cache(current_time).await?;
-            }
-        }
-        Ok(())
-    }
-
     #[instrument(level = tracing::Level::DEBUG, skip(self))]
-    pub(crate) async fn flush_non_blocking_event_cache(
+    async fn flush_non_blocking_event_cache(
         &mut self,
         current_time: DateTime<Utc>,
-    ) -> Result<(), DbErrorWrite> {
+    ) -> Result<FlushOutcome, DbErrorWrite> {
         if let Some(caching_buffer) = &mut self.caching_buffer
             && !caching_buffer.non_blocking_event_batch.is_empty()
         {
@@ -428,28 +520,38 @@ impl CachingDbConnection {
                 .await?;
 
             debug!("Flushing the non-blocking event cache finished");
+            Ok(FlushOutcome::FlushedCache)
+        } else {
+            Ok(FlushOutcome::Noop)
         }
-        Ok(())
     }
 
-    pub(crate) async fn cancel_activity(
+    async fn cancel_activity(
         &mut self,
         cancel_registry: &CancelRegistry,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
-        self.flush_non_blocking_event_cache(cancelled_at).await?;
+        assert_eq!(
+            FlushOutcome::Noop,
+            self.flush_non_blocking_event_cache(cancelled_at).await?,
+            "`cancel_activity` called only in `join_set_close_inner` after flush"
+        );
         cancel_registry
             .cancel_activity(self.db_connection.as_ref(), execution_id, cancelled_at)
             .await
     }
 
-    pub(crate) async fn cancel_delay(
+    async fn cancel_delay(
         &mut self,
         delay_id: DelayId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
-        self.flush_non_blocking_event_cache(cancelled_at).await?;
+        assert_eq!(
+            FlushOutcome::Noop,
+            self.flush_non_blocking_event_cache(cancelled_at).await?,
+            "`cancel_delay` called only in `join_set_close_inner` after flush"
+        );
         storage::cancel_delay(self.db_connection.as_ref(), delay_id, cancelled_at).await
     }
 }
@@ -469,6 +571,22 @@ impl Drop for CachingDbConnection {
 }
 
 impl CachingDbConnection {
+    async fn flush_non_blocking_event_cache_if_full(
+        &mut self,
+        current_time: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        if let Some(caching_buffer) = &self.caching_buffer {
+            let too_many = caching_buffer.non_blocking_event_batch.len()
+                >= caching_buffer.non_blocking_event_batch_size;
+            if too_many {
+                // Ignore the outcome, this flush has no correctness implications
+                let _ = WorkflowDbConnection::flush_non_blocking_event_cache(self, current_time)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn persist_backtrace_blocking(
         &mut self,
         version: &Version,

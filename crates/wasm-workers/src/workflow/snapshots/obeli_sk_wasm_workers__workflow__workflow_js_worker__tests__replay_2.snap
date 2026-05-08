@@ -1,0 +1,46 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
+expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
+---
+{
+  "captured_writes": [
+    {
+      "AppendStubResponse": {
+        "current_time": "<TIMESTAMP>",
+        "events": {
+          "batch": [
+            {
+              "created_at": "<TIMESTAMP>",
+              "event": {
+                "finished": {
+                  "http_client_traces": null,
+                  "retval": {
+                    "ok": {
+                      "type": "string",
+                      "value": "hello"
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "execution_id": "E_<REDACTED>",
+          "version": 1
+        },
+        "response": {
+          "child_execution_id": "E_<REDACTED>",
+          "created_at": "<TIMESTAMP>",
+          "finished_version": 1,
+          "join_set_id": "g:1",
+          "parent_execution_id": "E_<REDACTED>",
+          "result": {
+            "ok": {
+              "type": "string",
+              "value": "hello"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
