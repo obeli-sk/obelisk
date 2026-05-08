@@ -880,30 +880,27 @@ impl TestExecutionClient {
                     .last()
                     .expect("captured_writes must not be empty");
 
-                let (last_write_is_finished, finished_retval_has_ok) = match last_write
-                    .write
-                    .as_ref()
-                    .expect("write oneof must be set")
-                {
-                    grpc::grpc_gen::captured_write::Write::Append(a) => {
-                        let event = a.event.as_ref().expect("event must be present");
-                        match event.event.as_ref().expect("event variant must be present") {
-                            grpc::grpc_gen::execution_event::Event::Finished(finished) => (
-                                true,
-                                finished.value.as_ref().is_some_and(|retval| {
-                                    matches!(
+                let (last_write_is_finished, finished_retval_has_ok) =
+                    match last_write.write.as_ref().expect("write oneof must be set") {
+                        grpc::grpc_gen::captured_write::Write::Append(a) => {
+                            let event = a.event.as_ref().expect("event must be present");
+                            match event.event.as_ref().expect("event variant must be present") {
+                                grpc::grpc_gen::execution_event::Event::Finished(finished) => (
+                                    true,
+                                    finished.value.as_ref().is_some_and(|retval| {
+                                        matches!(
                                         retval.value,
                                         Some(grpc::grpc_gen::supported_function_result::Value::Ok(
                                             _
                                         ))
                                     )
-                                }),
-                            ),
-                            _ => (false, false),
+                                    }),
+                                ),
+                                _ => (false, false),
+                            }
                         }
-                    }
-                    _ => (false, false),
-                };
+                        _ => (false, false),
+                    };
 
                 ReplayCapturedWritesSummary {
                     captured_writes_len: replay_resp.captured_writes.len(),

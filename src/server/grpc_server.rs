@@ -831,6 +831,25 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
     }
 
     #[instrument(skip_all, fields(execution_id))]
+    async fn advance_execution(
+        &self,
+        request: tonic::Request<grpc_gen::AdvanceExecutionRequest>,
+    ) -> Result<tonic::Response<grpc_gen::AdvanceExecutionResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+
+        let _expected_replay_json = request.expected_replay_json;
+
+        Err(tonic::Status::unimplemented(
+            "AdvanceExecution is drafted, but the replay payload wire format is not finalized yet",
+        ))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
     async fn upgrade_execution_component(
         &self,
         request: tonic::Request<grpc_gen::UpgradeExecutionComponentRequest>,

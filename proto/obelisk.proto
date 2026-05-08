@@ -24,6 +24,7 @@ service ExecutionRepository {
     rpc ListLogs(ListLogsRequest) returns (ListLogsResponse);
 
     rpc ReplayExecution(ReplayExecutionRequest) returns (ReplayExecutionResponse);
+    rpc AdvanceExecution(AdvanceExecutionRequest) returns (AdvanceExecutionResponse);
     rpc UpgradeExecutionComponent(UpgradeExecutionComponentRequest) returns (UpgradeExecutionComponentResponse);
 
     rpc PauseExecution(PauseExecutionRequest) returns (PauseExecutionResponse);
@@ -716,6 +717,26 @@ message CreateExecutionRequest {
 
 message ReplayExecutionResponse {
   repeated CapturedWrite captured_writes = 1;
+}
+
+message AdvanceExecutionRequest {
+  ExecutionId execution_id = 1;
+  // Draft wire format for a future replay->advance roundtrip.
+  // This stays opaque for now because `CapturedWrite` is not yet
+  // sufficiently lossless to reconstruct all internal replay data.
+  string expected_replay_json = 2;
+}
+
+message AdvanceExecutionResponse {
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_APPLIED = 1;
+    OUTCOME_VERSION_MISMATCH = 2;
+    OUTCOME_MISMATCH = 3;
+  }
+
+  uint32 version = 1;
+  Outcome outcome = 2;
 }
 
 
