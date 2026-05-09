@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 export RUST_BACKTRACE=1
 export RUST_LOG="${RUST_LOG:-info,obeli=debug,app=trace}"
+export NEXTEST_NO_OUTPUT_INDENT=1
 
 args=("$@")
 
@@ -17,10 +18,12 @@ for arg in "${args[@]}"; do
 done
 
 cmd=(
-  cargo nextest run
-  --no-output-indent
+  cargo insta test
+  --test-runner nextest
+  --check
   --workspace
   --profile ci-test
+  --disable-nextest-doctest
 )
 
 # Additional features are inserted before `--`

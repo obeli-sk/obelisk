@@ -4,7 +4,7 @@
 
 set -exuo pipefail
 cd "$(dirname "$0")/.."
-DEFAULT_FEATURES="-F activity-js-local -F workflow-js-local -F webhook-js-local"
+DEFAULT_FEATURES="-F activity-js-local,workflow-js-local,webhook-js-local"
 
 export ADDITIONAL_FEATURES="${DEFAULT_FEATURES}${ADDITIONAL_FEATURES:+ $ADDITIONAL_FEATURES}"
 scripts/test.sh "$@"
