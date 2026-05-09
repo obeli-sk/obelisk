@@ -14,7 +14,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
-    CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog, Locked, Version,
+    CapturedDbWrite, CreateRequest, DbConnection, DbErrorWrite, DbPool, ExecutionLog, Locked,
+    Version,
 };
 use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
 use concepts::{
@@ -1186,7 +1187,12 @@ impl ReplayResponse {
     }
 
     fn is_prefix_of(&self, fresh_replay: &[CapturedDbWrite]) -> bool {
-        fresh_replay.starts_with(&self.captured_writes)
+        self.captured_writes.len() <= fresh_replay.len()
+            && self
+                .captured_writes
+                .iter()
+                .zip(fresh_replay)
+                .all(|(requested, fresh)| requested_write_matches_fresh_replay(requested, fresh))
     }
 
     #[cfg(test)]
@@ -1228,6 +1234,84 @@ impl ReplayResponse {
         captured_writes.truncate(len);
         Self { captured_writes }
     }
+}
+
+fn requested_write_matches_fresh_replay(
+    requested: &CapturedDbWrite,
+    fresh: &CapturedDbWrite,
+) -> bool {
+    match (requested, fresh) {
+        (
+            CapturedDbWrite::AppendBatchCreateNewExecution {
+                current_time: requested_current_time,
+                batch: requested_batch,
+                execution_id: requested_execution_id,
+                version: requested_version,
+                child_req: requested_child_req,
+                backtraces: requested_backtraces,
+            },
+            CapturedDbWrite::AppendBatchCreateNewExecution {
+                current_time: fresh_current_time,
+                batch: fresh_batch,
+                execution_id: fresh_execution_id,
+                version: fresh_version,
+                child_req: fresh_child_req,
+                backtraces: fresh_backtraces,
+            },
+        ) => {
+            requested_current_time == fresh_current_time
+                && requested_batch == fresh_batch
+                && requested_execution_id == fresh_execution_id
+                && requested_version == fresh_version
+                && requested_backtraces == fresh_backtraces
+                && requested_child_req.len() == fresh_child_req.len()
+                && requested_child_req
+                    .iter()
+                    .zip(fresh_child_req)
+                    .all(|(requested, fresh)| create_request_matches_fresh_replay(requested, fresh))
+        }
+        _ => requested == fresh,
+    }
+}
+
+fn create_request_matches_fresh_replay(requested: &CreateRequest, fresh: &CreateRequest) -> bool {
+    let CreateRequest {
+        created_at: requested_created_at,
+        execution_id: requested_execution_id,
+        ffqn: requested_ffqn,
+        params: requested_params,
+        parent: requested_parent,
+        scheduled_at: requested_scheduled_at,
+        component_id: requested_component_id,
+        deployment_id: requested_deployment_id,
+        metadata: requested_metadata,
+        scheduled_by: requested_scheduled_by,
+        paused: _, // ignored
+    } = requested;
+    let CreateRequest {
+        created_at: fresh_created_at,
+        execution_id: fresh_execution_id,
+        ffqn: fresh_ffqn,
+        params: fresh_params,
+        parent: fresh_parent,
+        scheduled_at: fresh_scheduled_at,
+        component_id: fresh_component_id,
+        deployment_id: fresh_deployment_id,
+        metadata: fresh_metadata,
+        scheduled_by: fresh_scheduled_by,
+        paused: _, // ignored
+    } = fresh;
+
+    requested_created_at == fresh_created_at
+        && requested_execution_id == fresh_execution_id
+        && requested_ffqn == fresh_ffqn
+        && requested_params == fresh_params
+        && requested_parent == fresh_parent
+        && requested_scheduled_at == fresh_scheduled_at
+        && requested_component_id == fresh_component_id
+        && requested_deployment_id == fresh_deployment_id
+        && requested_metadata == fresh_metadata
+        && requested_scheduled_by == fresh_scheduled_by
 }
 
 /// Outcome of an advance operation.
@@ -1396,6 +1480,7 @@ pub(crate) mod tests {
             wait_for_pending_state_fn,
         },
     };
+    use db_mem::inmemory_dao::InMemoryPool;
     use db_tests::Database;
     use executor::executor::{LockingStrategy, extract_exported_ffqns_noext_test};
     use executor::{
@@ -4487,5 +4572,163 @@ pub(crate) mod tests {
             })) => val
         );
         assert_eq!(result, FIBO_10_OUTPUT);
+    }
+
+    #[test]
+    fn replay_response_accepts_paused_override_for_new_child_execution() {
+        let created_at = DateTime::default();
+        let execution_id = ExecutionId::from_parts(0, 1);
+        let child_execution_id = ExecutionId::from_parts(0, 2);
+        let component_id = ComponentId::dummy_activity();
+        let deployment_id = DEPLOYMENT_ID_DUMMY;
+        let ffqn = FunctionFqn::new_static_tuple(
+            test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO,
+        );
+        let params = Params::from_json_values_test(vec![json!(1u32)]);
+        let batch = vec![AppendRequest {
+            created_at,
+            event: ExecutionRequest::Unpaused,
+        }];
+        let fresh = ReplayResponse {
+            captured_writes: vec![CapturedDbWrite::AppendBatchCreateNewExecution {
+                current_time: created_at,
+                batch: batch.clone(),
+                execution_id: execution_id.clone(),
+                version: Version::new(1),
+                child_req: vec![CreateRequest {
+                    created_at,
+                    execution_id: child_execution_id.clone(),
+                    ffqn: ffqn.clone(),
+                    params: params.clone(),
+                    parent: None,
+                    scheduled_at: created_at,
+                    component_id: component_id.clone(),
+                    deployment_id,
+                    metadata: ExecutionMetadata::empty(),
+                    scheduled_by: None,
+                    paused: false,
+                }],
+                backtraces: vec![],
+            }],
+        };
+        let requested = ReplayResponse {
+            captured_writes: vec![CapturedDbWrite::AppendBatchCreateNewExecution {
+                current_time: created_at,
+                batch,
+                execution_id,
+                version: Version::new(1),
+                child_req: vec![CreateRequest {
+                    created_at,
+                    execution_id: child_execution_id,
+                    ffqn,
+                    params,
+                    parent: None,
+                    scheduled_at: created_at,
+                    component_id,
+                    deployment_id,
+                    metadata: ExecutionMetadata::empty(),
+                    scheduled_by: None,
+                    paused: true,
+                }],
+                backtraces: vec![],
+            }],
+        };
+
+        assert!(requested.is_prefix_of(&fresh.captured_writes));
+    }
+
+    #[tokio::test]
+    async fn advance_paused_workflow_can_pause_new_child_execution() {
+        test_utils::set_up();
+
+        let sim_clock = SimClock::epoch();
+        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (workflow_runnable, workflow_component_id) = compile_workflow_with_engine(
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+            &workflow_engine,
+        )
+        .await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            (workflow_runnable.clone(), workflow_component_id.clone()),
+        ]);
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = ExecutionId::from_parts(0, 9001);
+        let created_at = sim_clock.now();
+
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: FIBOA_CONCURRENT_WORKFLOW_FFQN,
+                params: Params::from_json_values_test(vec![json!(FIBO_10_INPUT), json!(1u32)]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: workflow_component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let deployment_id = DeploymentId::from_parts(0, 0);
+        let replay = WorkflowWorker::replay(
+            deployment_id,
+            workflow_component_id.clone(),
+            workflow_runnable.wasmtime_component.clone(),
+            &workflow_runnable.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mut requested = replay.clone();
+        let child_execution_id = requested
+            .captured_writes
+            .iter_mut()
+            .find_map(|write| match write {
+                CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } => {
+                    for child in child_req.iter_mut() {
+                        child.paused = true;
+                    }
+                    child_req.first().map(|child| child.execution_id.clone())
+                }
+                _ => None,
+            })
+            .expect("replay should create a child execution");
+
+        let advance = WorkflowWorker::advance(
+            deployment_id,
+            workflow_component_id,
+            workflow_runnable.wasmtime_component,
+            &workflow_runnable.wasm_component.exim,
+            workflow_engine,
+            fn_registry,
+            db_pool.clone(),
+            execution_id,
+            None,
+            requested,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(AdvanceOutcome::Applied, advance.outcome);
+        assert_matches!(
+            db_connection
+                .get_pending_state(&child_execution_id)
+                .await
+                .unwrap()
+                .pending_state,
+            PendingState::Paused(_)
+        );
     }
 }
