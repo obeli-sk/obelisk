@@ -1,0 +1,28 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
+expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
+---
+{
+  "captured_writes": [
+    {
+      "Append": {
+        "execution_id": "E_<REDACTED>",
+        "version": 5,
+        "req": {
+          "created_at": "<TIMESTAMP>",
+          "event": {
+            "finished": {
+              "retval": {
+                "ok": {
+                  "type": "u64",
+                  "value": 55
+                }
+              },
+              "http_client_traces": null
+            }
+          }
+        }
+      }
+    }
+  ]
+}

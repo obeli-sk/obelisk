@@ -415,9 +415,9 @@ impl WorkflowJsWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         js_source: String,
-        expected: ReplayResponse,
+        requested: ReplayResponse,
     ) -> Result<AdvanceResponse, ReplayError> {
-        info!("Advance to expected {expected:?}");
+        info!("Advance to requested {requested:?}");
         let db_conn = real_db_pool
             .connection()
             .await
@@ -426,7 +426,7 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
-        if let Some(expected_version) = expected.starting_version()
+        if let Some(expected_version) = requested.starting_version()
             && log.next_version != *expected_version
         {
             return Ok(AdvanceResponse {
@@ -437,7 +437,7 @@ impl WorkflowJsWorker {
 
         let old_version = log.next_version.clone();
         let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
-        let captured_writes = WorkflowWorker::capture_replay_writes_from_log(
+        let fresh_replay = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
             component_id,
             wasmtime_component,
@@ -452,7 +452,7 @@ impl WorkflowJsWorker {
             params,
         )
         .await?;
-        WorkflowWorker::advance_from_log(&*db_conn, expected, captured_writes, old_version).await
+        WorkflowWorker::advance_from_log(&*db_conn, requested, fresh_replay, old_version).await
     }
 }
 
@@ -484,6 +484,7 @@ mod tests {
     use executor::executor::{ExecConfig, ExecTask, LockingStrategy};
     use executor::worker::{WorkerContext, WorkerError, WorkerResultOk};
     use executor::{expired_timers_watcher, worker::Worker};
+    use insta::assert_json_snapshot;
     use rstest::rstest;
     use serde_json::json;
     use std::str::FromStr as _;
@@ -2267,10 +2268,16 @@ mod tests {
 
     #[expand_enum_database]
     #[rstest]
+    #[case::full(None, "full", 0)]
+    #[case::trimmed_to_1(Some(1), "trimmed_to_1", 1)]
     #[tokio::test]
-    async fn workflow_js_advance_call_stub(database: Database) {
+    async fn workflow_js_advance_call_stub(
+        database: Database,
+        #[case] trim_to: Option<usize>,
+        #[case] snapshot_suffix: &str,
+        #[case] execution_idx: u16,
+    ) {
         use crate::activity::activity_worker::test::compile_activity_stub;
-        use crate::workflow::workflow_worker::AdvanceOutcome;
 
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
@@ -2305,26 +2312,7 @@ mod tests {
         )
         .await;
 
-        let execution_id = ExecutionId::from_parts(0, 0);
-        let created_at = sim_clock.now();
         let db_connection = db_pool.connection_test().await.unwrap();
-
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn: user_ffqn,
-                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
-                parent: None,
-                metadata: ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                component_id: component_id.clone(),
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-                paused: true,
-            })
-            .await
-            .unwrap();
 
         let (log_sender, _log_recv) = mpsc::channel(100);
         let logs_storage_config = Some(LogStrageConfig {
@@ -2333,67 +2321,168 @@ mod tests {
         });
 
         let deployment_id = DeploymentId::from_parts(0, 0);
+        let create_paused_execution = |execution_id: ExecutionId| CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id,
+            ffqn: user_ffqn.clone(),
+            params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+            parent: None,
+            metadata: ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: true,
+        };
 
-        let db_suffix = format!("{database:?}");
-        let mut iteration = 0;
-        loop {
-            iteration += 1;
-            let replay = WorkflowJsWorker::replay(
+        let execution_id = ExecutionId::from_parts(0, execution_idx.into());
+        db_connection
+            .create(create_paused_execution(execution_id.clone()))
+            .await
+            .unwrap();
+        let result = workflow_js_step_execution_until_finished(
+            &*db_connection,
+            WorkflowJsAdvanceHarness {
                 deployment_id,
-                component_id.clone(),
-                runnable_component.wasmtime_component.clone(),
-                &runnable_component.wasm_component.exim,
-                workflow_engine.clone(),
-                fn_registry.clone(),
-                db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config.clone(),
-                js_source.to_string(),
+                component_id,
+                runnable_component,
+                workflow_engine,
+                fn_registry,
+                db_pool,
+                execution_id,
+                logs_storage_config,
+                js_source: js_source.to_string(),
+            },
+            format!("{database:?}_{snapshot_suffix}"),
+            16,
+            trim_to,
+        )
+        .await;
+
+        let ok_val = assert_matches!(
+            result,
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType { value, .. })) => value
+        );
+        assert_eq!(
+            format!("{ok_val:?}"),
+            "Result(Ok(Some(String(\"\\\"hello\\\"\"))))"
+        );
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    #[derive(Clone)]
+    struct WorkflowJsAdvanceHarness {
+        deployment_id: DeploymentId,
+        component_id: ComponentId,
+        runnable_component: RunnableComponent,
+        workflow_engine: Arc<Engine>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        db_pool: Arc<dyn DbPool>,
+        execution_id: ExecutionId,
+        logs_storage_config: Option<LogStrageConfig>,
+        js_source: String,
+    }
+
+    async fn workflow_js_step_execution_until_finished(
+        db_connection: &dyn DbConnectionTest,
+        harness: WorkflowJsAdvanceHarness,
+        snapshot_prefix: String,
+        max_steps: usize,
+        trim_to: Option<usize>,
+    ) -> SupportedFunctionReturnValue {
+        use crate::workflow::workflow_worker::AdvanceOutcome;
+
+        let mut steps = 0;
+        let mut saw_trimmed_preview = false;
+        loop {
+            let replay = WorkflowJsWorker::replay(
+                harness.deployment_id,
+                harness.component_id.clone(),
+                harness.runnable_component.wasmtime_component.clone(),
+                &harness.runnable_component.wasm_component.exim,
+                harness.workflow_engine.clone(),
+                harness.fn_registry.clone(),
+                harness.db_pool.clone(),
+                harness.execution_id.clone(),
+                harness.logs_storage_config.clone(),
+                harness.js_source.clone(),
             )
             .await
             .unwrap();
+            assert!(
+                !replay.captured_writes.is_empty(),
+                "captured_writes must not be empty while stepping paused JS workflow",
+            );
 
-            insta::assert_json_snapshot!(
-                format!("replay_{iteration}"),
+            steps += 1;
+            assert_json_snapshot!(
+                format!("{snapshot_prefix}_replay_{steps}"),
                 sanitize_json(&serde_json::to_value(&replay).unwrap())
             );
 
-            // Advance with correct expectations — writes events to DB.
+            let requested = match trim_to {
+                Some(trim_to) => replay.truncate_to(trim_to),
+                None => replay.clone(),
+            };
+            saw_trimmed_preview |= requested.captured_writes.len() < replay.captured_writes.len();
+
             let advance = WorkflowJsWorker::advance(
-                deployment_id,
-                component_id.clone(),
-                runnable_component.wasmtime_component.clone(),
-                &runnable_component.wasm_component.exim,
-                workflow_engine.clone(),
-                fn_registry.clone(),
-                db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config.clone(),
-                js_source.to_string(),
-                replay.clone(),
+                harness.deployment_id,
+                harness.component_id.clone(),
+                harness.runnable_component.wasmtime_component.clone(),
+                &harness.runnable_component.wasm_component.exim,
+                harness.workflow_engine.clone(),
+                harness.fn_registry.clone(),
+                harness.db_pool.clone(),
+                harness.execution_id.clone(),
+                harness.logs_storage_config.clone(),
+                harness.js_source.clone(),
+                requested.clone(),
             )
             .await
             .unwrap();
             assert_eq!(advance.outcome, AdvanceOutcome::Applied);
 
-            // Verify DB was updated with the new events.
-            let log = db_connection.get(&execution_id).await.unwrap();
-            insta::assert_json_snapshot!(
-                format!("log_{db_suffix}_{iteration}"),
+            assert_json_snapshot!(
+                format!("{snapshot_prefix}_advance_{steps}"),
+                sanitize_json(&json!({
+                    "version": advance.version.0,
+                    "outcome": format!("{:?}", advance.outcome),
+                    "trim_to": trim_to,
+                    "requested_captured_writes_len": requested.captured_writes.len(),
+                    "replayed_captured_writes_len": replay.captured_writes.len(),
+                }))
+            );
+
+            let log = db_connection.get(&harness.execution_id).await.unwrap();
+            assert_json_snapshot!(
+                format!("{snapshot_prefix}_log_{steps}"),
                 ExecutionLogSanitized::from(log)
             );
 
-            if replay.return_value().is_some() {
-                break;
+            if let Ok(finished_result) = db_connection
+                .get_finished_result(&harness.execution_id)
+                .await
+            {
+                assert!(
+                    steps > 0,
+                    "step-through harness must execute at least one replay+advance round",
+                );
+                if trim_to.is_some() {
+                    assert!(
+                        saw_trimmed_preview,
+                        "test must exercise trimmed replay writes",
+                    );
+                }
+                return finished_result;
             }
+
+            assert!(
+                steps < max_steps,
+                "execution did not finish after {steps} replay+advance steps",
+            );
         }
-
-        db_connection
-            .get_finished_result(&execution_id)
-            .await
-            .unwrap();
-
-        drop(db_connection);
-        db_close.close().await;
     }
 }

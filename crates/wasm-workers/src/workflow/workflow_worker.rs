@@ -527,21 +527,20 @@ impl WorkflowWorker {
 
     pub(crate) async fn advance_from_log(
         db_conn: &dyn DbConnection,
-        expected: ReplayResponse,
-        captured_writes: Vec<CapturedDbWrite>,
+        requested: ReplayResponse,
+        fresh_replay: Vec<CapturedDbWrite>,
         old_version: Version,
     ) -> Result<AdvanceResponse, ReplayError> {
-        debug!("Advancing with captured_writes: {captured_writes:?}");
-        let outcome = if expected.captured_writes == captured_writes {
-            let new_version = apply_writes(db_conn, captured_writes, old_version).await?;
+        let outcome = if requested.is_prefix_of(&fresh_replay) {
+            let new_version = apply_writes(db_conn, requested.captured_writes, old_version).await?;
             AdvanceResponse {
                 version: new_version,
                 outcome: AdvanceOutcome::Applied,
             }
         } else {
             debug!(
-                "Mismatch between expected and actual captured writes. Expected: {:?}, Actual: {captured_writes:?}",
-                expected.captured_writes
+                "Mismatch between expected and actual captured writes. Requested: {:?}, fresh replay produced: {fresh_replay:?}",
+                requested.captured_writes
             );
             AdvanceResponse {
                 version: old_version,
@@ -1111,9 +1110,9 @@ impl WorkflowWorker {
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
-        expected: ReplayResponse,
+        requested: ReplayResponse,
     ) -> Result<AdvanceResponse, ReplayError> {
-        info!("Advance to expected {expected:?}");
+        info!("Advance to requested {requested:?}");
         // Check version before replaying.
         let db_conn = real_db_pool
             .connection()
@@ -1124,7 +1123,7 @@ impl WorkflowWorker {
             .await
             .map_err(DbErrorWrite::from)?;
 
-        if let Some(expected_version) = expected.starting_version() // None means user sent empty list of events, which should end with `Applied`
+        if let Some(expected_version) = requested.starting_version() // None means user sent empty list of events, which should end with `Applied`
             && log.next_version != *expected_version
         {
             return Ok(AdvanceResponse {
@@ -1136,7 +1135,7 @@ impl WorkflowWorker {
         let old_version = log.next_version.clone();
         let ffqn = log.ffqn().clone();
         let params = log.params().clone();
-        let captured_writes = Self::capture_replay_writes_from_log(
+        let fresh_replay = Self::capture_replay_writes_from_log(
             deployment_id,
             component_id,
             wasmtime_component,
@@ -1152,7 +1151,7 @@ impl WorkflowWorker {
         )
         .await?;
 
-        Self::advance_from_log(&*db_conn, expected, captured_writes, old_version).await
+        Self::advance_from_log(&*db_conn, requested, fresh_replay, old_version).await
     }
 }
 
@@ -1186,6 +1185,10 @@ impl ReplayResponse {
         })
     }
 
+    fn is_prefix_of(&self, fresh_replay: &[CapturedDbWrite]) -> bool {
+        fresh_replay.starts_with(&self.captured_writes)
+    }
+
     #[cfg(test)]
     pub(crate) fn return_value(&self) -> Option<&SupportedFunctionReturnValue> {
         if let Some(CapturedDbWrite::Append { req, .. }) = self.captured_writes.last()
@@ -1217,6 +1220,13 @@ impl ReplayResponse {
                 })
             })
             .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn truncate_to(&self, len: usize) -> Self {
+        let mut captured_writes = self.captured_writes.clone();
+        captured_writes.truncate(len);
+        Self { captured_writes }
     }
 }
 
@@ -1370,7 +1380,9 @@ pub(crate) mod tests {
         AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, HistoryEvent,
         JoinSetRequest, JoinSetResponse, Locked, LockedBy, PendingStateFinishedError,
     };
-    use concepts::storage::{AppendRequest, DbConnection, DbPool, ExecutionRequest};
+    use concepts::storage::{
+        AppendRequest, DbConnection, DbConnectionTest, DbPool, ExecutionRequest,
+    };
     use concepts::time::TokioSleep;
     use concepts::{
         ComponentRetryConfig, ExecutionFailureKind, ExecutionId, Params,
@@ -4158,15 +4170,150 @@ pub(crate) mod tests {
 
     #[expand_enum_database]
     #[rstest]
+    #[case::full(None, "full", 0)]
+    #[case::trimmed_to_1(Some(1), "trimmed_to_1", 1)]
     #[tokio::test]
-    async fn advance_paused_workflow(db: Database) {
+    async fn advance_paused_workflow(
+        db: Database,
+        #[case] trim_to: Option<usize>,
+        #[case] snapshot_suffix: &str,
+        #[case] execution_idx: u128,
+    ) {
         let sim_clock = SimClock::epoch();
         let (_guard, db_pool, db_close) = db.set_up().await;
-        Box::pin(advance_paused_workflow_inner(db_pool.clone(), sim_clock)).await;
+        Box::pin(advance_paused_workflow_inner(
+            db_pool.clone(),
+            sim_clock,
+            trim_to,
+            snapshot_suffix,
+            execution_idx,
+            &format!("{db:?}"),
+        ))
+        .await;
         db_close.close().await;
     }
 
-    async fn advance_paused_workflow_inner(db_pool: Arc<dyn DbPool>, sim_clock: SimClock) {
+    #[derive(Clone)]
+    struct WorkflowAdvanceHarness {
+        deployment_id: DeploymentId,
+        workflow_component_id: ComponentId,
+        workflow_runnable: RunnableComponent,
+        workflow_engine: Arc<Engine>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        db_pool: Arc<dyn DbPool>,
+        execution_id: ExecutionId,
+        logs_storage_config: Option<LogStrageConfig>,
+    }
+
+    async fn advance_paused_workflow_until_finished(
+        db_connection: &dyn DbConnectionTest,
+        harness: WorkflowAdvanceHarness,
+        snapshot_prefix: String,
+        trim_to: Option<usize>,
+        activity_exec: Option<&ExecTask>,
+        sim_clock: &SimClock,
+        max_steps: usize,
+    ) -> (usize, bool, SupportedFunctionReturnValue) {
+        let mut steps = 0;
+        let mut saw_trimmed_preview = false;
+
+        loop {
+            let replay = WorkflowWorker::replay(
+                harness.deployment_id,
+                harness.workflow_component_id.clone(),
+                harness.workflow_runnable.wasmtime_component.clone(),
+                &harness.workflow_runnable.wasm_component.exim,
+                harness.workflow_engine.clone(),
+                harness.fn_registry.clone(),
+                harness.db_pool.clone(),
+                harness.execution_id.clone(),
+                harness.logs_storage_config.clone(),
+            )
+            .await
+            .unwrap();
+
+            if replay.captured_writes.is_empty() {
+                if let Some(activity_exec) = activity_exec {
+                    let executed_activities = activity_exec
+                        .tick_test_await(sim_clock.now(), RunId::generate())
+                        .await;
+                    assert_eq!(
+                        executed_activities.len(),
+                        1,
+                        "expected one pending child activity when workflow replay is blocked",
+                    );
+                    continue;
+                }
+                panic!("captured_writes must not be empty while stepping paused workflow");
+            }
+
+            steps += 1;
+            assert_json_snapshot!(
+                format!("{snapshot_prefix}_replay_{steps}"),
+                sanitize_json(&serde_json::to_value(&replay).unwrap())
+            );
+
+            let requested = match trim_to {
+                Some(trim_to) => replay.truncate_to(trim_to),
+                None => replay.clone(),
+            };
+            saw_trimmed_preview |= requested.captured_writes.len() < replay.captured_writes.len();
+
+            let advance = WorkflowWorker::advance(
+                harness.deployment_id,
+                harness.workflow_component_id.clone(),
+                harness.workflow_runnable.wasmtime_component.clone(),
+                &harness.workflow_runnable.wasm_component.exim,
+                harness.workflow_engine.clone(),
+                harness.fn_registry.clone(),
+                harness.db_pool.clone(),
+                harness.execution_id.clone(),
+                harness.logs_storage_config.clone(),
+                requested.clone(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(advance.outcome, AdvanceOutcome::Applied);
+
+            assert_json_snapshot!(
+                format!("{snapshot_prefix}_advance_{steps}"),
+                sanitize_json(&json!({
+                    "version": advance.version.0,
+                    "outcome": format!("{:?}", advance.outcome),
+                    "trim_to": trim_to,
+                    "requested_captured_writes_len": requested.captured_writes.len(),
+                    "replayed_captured_writes_len": replay.captured_writes.len(),
+                }))
+            );
+
+            let log = db_connection.get(&harness.execution_id).await.unwrap();
+            assert_json_snapshot!(
+                format!("{snapshot_prefix}_log_{steps}"),
+                ExecutionLogSanitized::from(log)
+            );
+
+            if let Ok(finished_result) = db_connection
+                .get_finished_result(&harness.execution_id)
+                .await
+            {
+                return (steps, saw_trimmed_preview, finished_result);
+            }
+
+            assert!(
+                steps < max_steps,
+                "execution did not finish after {steps} replay+advance steps",
+            );
+        }
+    }
+
+    async fn advance_paused_workflow_inner(
+        db_pool: Arc<dyn DbPool>,
+        sim_clock: SimClock,
+        trim_to: Option<usize>,
+        snapshot_suffix: &str,
+        execution_idx: u128,
+        db_name: &str,
+    ) {
         test_utils::set_up();
 
         let workflow_engine =
@@ -4184,7 +4331,7 @@ pub(crate) mod tests {
         ]);
 
         // Create a paused execution.
-        let execution_id = ExecutionId::from_parts(0, 0);
+        let execution_id = ExecutionId::from_parts(0, execution_idx);
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -4210,6 +4357,13 @@ pub(crate) mod tests {
             min_level: concepts::storage::LogLevel::Debug,
             log_sender: log_sender.clone(),
         });
+        let activity_exec = new_activity_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            TokioSleep,
+            LockingStrategy::ByFfqns,
+        )
+        .await;
 
         let deployment_id = DeploymentId::from_parts(0, 0);
 
@@ -4241,7 +4395,6 @@ pub(crate) mod tests {
             replay.starting_version().unwrap(),
             "expected replay starting version must equal to {version_created}",
         );
-        assert_json_snapshot!(sanitize_json(&serde_json::to_value(&replay).unwrap()));
 
         // Step 2: Advance with wrong version should fail.
         let wrong_version = Version::new(replay.starting_version().unwrap().0 + 999);
@@ -4271,7 +4424,7 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(AdvanceOutcome::VersionMismatch, advance_result.outcome);
 
-        // Step 3: Advance with zero expected writes should be a mismatch - version vs events.
+        // Step 3: Advancing with zero requested writes should be a no-op.
         let advance_result = WorkflowWorker::advance(
             deployment_id,
             workflow_component_id.clone(),
@@ -4288,58 +4441,51 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(advance_result.outcome, AdvanceOutcome::Mismatch);
-
-        // Step 4: Advance with correct expected replay should succeed.
-        let advance_result = WorkflowWorker::advance(
-            deployment_id,
-            workflow_component_id.clone(),
-            workflow_runnable.wasmtime_component.clone(),
-            &workflow_runnable.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            logs_storage_config.clone(),
-            replay.clone(),
-        )
-        .await
-        .unwrap();
         assert_eq!(advance_result.outcome, AdvanceOutcome::Applied);
+        assert_eq!(advance_result.version, version_created);
+
+        // Step 4: Step the paused workflow to completion.
+        let (steps, saw_trimmed_preview, finished_result) = advance_paused_workflow_until_finished(
+            &*db_connection,
+            WorkflowAdvanceHarness {
+                deployment_id,
+                workflow_component_id,
+                workflow_runnable,
+                workflow_engine,
+                fn_registry,
+                db_pool: db_pool.clone(),
+                execution_id: execution_id.clone(),
+                logs_storage_config,
+            },
+            format!("{db_name}_{snapshot_suffix}"),
+            trim_to,
+            Some(&activity_exec),
+            &sim_clock,
+            32,
+        )
+        .await;
         assert!(
-            advance_result.version.0 > replay.starting_version().unwrap().0,
-            "version should have advanced"
+            steps > 0,
+            "step-through harness must execute at least one replay+advance round",
         );
+        if trim_to.is_some() {
+            assert!(
+                saw_trimmed_preview,
+                "test must exercise trimmed replay writes",
+            );
+        }
 
         // Step 5: Verify the execution log was updated.
         let log = db_connection.get(&execution_id).await.unwrap();
-        assert_eq!(
-            log.next_version, advance_result.version,
-            "DB version should match advance response"
-        );
+        assert!(log.next_version.0 > version_created.0);
 
-        // Step 6: Replaying again after advance should see the events already in the log.
-        let replay_after = WorkflowWorker::replay(
-            deployment_id,
-            workflow_component_id.clone(),
-            workflow_runnable.wasmtime_component.clone(),
-            &workflow_runnable.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            logs_storage_config.clone(),
-        )
-        .await
-        .unwrap();
-        // After advance, a new replay should have no writes (workflow is blocked).
-        // If there are writes, the starting version should match the advance result version.
-        // The workflow should now be blocked (waiting for child activity response)
-        // since the advance wrote the JoinNext event.
-        assert!(
-            replay_after.captured_writes.is_empty(),
-            "after advance, workflow should be blocked with no further writes, got: {:?}",
-            replay_after.captured_writes,
+        let result = assert_matches!(
+            finished_result,
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                value: WastVal::U64(val),
+                r#type: TypeWrapper::U64,
+            })) => val
         );
+        assert_eq!(result, FIBO_10_OUTPUT);
     }
 }

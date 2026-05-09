@@ -1,0 +1,101 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
+expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
+---
+{
+  "captured_writes": [
+    {
+      "Append": {
+        "execution_id": "E_<REDACTED>",
+        "version": 2,
+        "req": {
+          "created_at": "<TIMESTAMP>",
+          "event": {
+            "history_event": {
+              "event": {
+                "type": "join_set_create",
+                "join_set_id": "g:1"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "AppendBatchCreateNewExecution": {
+        "current_time": "<TIMESTAMP>",
+        "batch": [
+          {
+            "created_at": "<TIMESTAMP>",
+            "event": {
+              "history_event": {
+                "event": {
+                  "type": "join_set_request",
+                  "join_set_id": "g:1",
+                  "request": {
+                    "type": "child_execution_request",
+                    "child_execution_id": "E_<REDACTED>",
+                    "target_ffqn": "testing:fibo/fibo.fibo",
+                    "params": [
+                      10
+                    ],
+                    "result": {
+                      "Ok": null
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "execution_id": "E_<REDACTED>",
+        "version": 3,
+        "child_req": [
+          {
+            "created_at": "<TIMESTAMP>",
+            "execution_id": "E_<REDACTED>",
+            "ffqn": "testing:fibo/fibo.fibo",
+            "params": [
+              10
+            ],
+            "parent": [
+              "E_<REDACTED>",
+              "g:1"
+            ],
+            "scheduled_at": "<TIMESTAMP>",
+            "component_id": {
+              "component_type": "activity",
+              "name": "",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "deployment_id": "Dep_<REDACTED>",
+            "metadata": {},
+            "scheduled_by": null,
+            "paused": false
+          }
+        ],
+        "backtraces": []
+      }
+    },
+    {
+      "Append": {
+        "execution_id": "E_<REDACTED>",
+        "version": 4,
+        "req": {
+          "created_at": "<TIMESTAMP>",
+          "event": {
+            "history_event": {
+              "event": {
+                "type": "join_next",
+                "join_set_id": "g:1",
+                "run_expires_at": "<TIMESTAMP>",
+                "requested_ffqn": "testing:fibo/fibo.fibo",
+                "closing": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
