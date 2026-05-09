@@ -818,15 +818,23 @@ message AdvanceExecutionRequest {
 }
 
 message AdvanceExecutionResponse {
-  enum Outcome {
-    OUTCOME_UNSPECIFIED = 0;
-    OUTCOME_APPLIED = 1;
-    OUTCOME_VERSION_MISMATCH = 2;
-    OUTCOME_MISMATCH = 3;
+  message Applied {
+    uint32 version = 1;
+    optional SupportedFunctionResult finished_result = 2;
   }
 
-  uint32 version = 1;
-  Outcome outcome = 2;
+  message VersionMismatch {
+    uint32 version = 1;
+  }
+
+  message Mismatch {
+  }
+
+  oneof outcome {
+    Applied applied = 1;
+    VersionMismatch version_mismatch = 2;
+    Mismatch mismatch = 3;
+  }
 }
 
 

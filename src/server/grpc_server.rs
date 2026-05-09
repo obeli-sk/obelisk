@@ -913,16 +913,49 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             tonic::Status::internal(format!("advance failed: {err}"))
         })?;
 
-        Ok(tonic::Response::new(grpc_gen::AdvanceExecutionResponse {
-            version: advance_response.version.0,
-            outcome: match advance_response.outcome {
-                AdvanceOutcome::Applied => grpc_gen::advance_execution_response::Outcome::Applied,
-                AdvanceOutcome::VersionMismatch => {
-                    grpc_gen::advance_execution_response::Outcome::VersionMismatch
-                }
-                AdvanceOutcome::Mismatch => grpc_gen::advance_execution_response::Outcome::Mismatch,
+        let outcome = match advance_response.outcome {
+            AdvanceOutcome::Applied => {
+                let finished_result = match conn
+                    .get_pending_state(&execution_id)
+                    .await
+                    .to_status()?
+                    .pending_state
+                {
+                    PendingState::Finished(finished) => {
+                        let finished_event = conn
+                            .get_execution_event(&execution_id, &Version(finished.version))
+                            .await
+                            .to_status()?;
+                        let ExecutionRequest::Finished { retval, .. } = finished_event.event else {
+                            return Err(tonic::Status::internal(
+                                "pending state finished implies `Finished` event",
+                            ));
+                        };
+                        Some(grpc_gen::SupportedFunctionResult::from(retval))
+                    }
+                    _ => None,
+                };
+                grpc_gen::advance_execution_response::Outcome::Applied(
+                    grpc_gen::advance_execution_response::Applied {
+                        version: advance_response.version.0,
+                        finished_result,
+                    },
+                )
             }
-            .into(),
+            AdvanceOutcome::VersionMismatch => {
+                grpc_gen::advance_execution_response::Outcome::VersionMismatch(
+                    grpc_gen::advance_execution_response::VersionMismatch {
+                        version: advance_response.version.0,
+                    },
+                )
+            }
+            AdvanceOutcome::Mismatch => grpc_gen::advance_execution_response::Outcome::Mismatch(
+                grpc_gen::advance_execution_response::Mismatch {},
+            ),
+        };
+
+        Ok(tonic::Response::new(grpc_gen::AdvanceExecutionResponse {
+            outcome: Some(outcome),
         }))
     }
 

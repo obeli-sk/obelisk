@@ -952,11 +952,7 @@ impl TestServer {
     async fn grpc_get_status_summary(
         &self,
         execution_id: &str,
-        send_finished_status: bool,
-    ) -> (
-        grpc::grpc_gen::ExecutionSummary,
-        Option<grpc::grpc_gen::FinishedStatus>,
-    ) {
+    ) -> grpc::grpc_gen::ExecutionSummary {
         let mut grpc_client =
             ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
@@ -967,22 +963,21 @@ impl TestServer {
                     id: execution_id.to_string(),
                 }),
                 follow: false,
-                send_finished_status,
+                send_finished_status: false,
             })
             .await
             .unwrap()
             .into_inner();
 
         let mut summary = None;
-        let mut finished_status = None;
         while let Some(message) = stream.next().await {
             let message = message.unwrap();
             match message.message {
                 Some(grpc::grpc_gen::get_status_response::Message::Summary(found)) => {
                     summary = Some(found);
                 }
-                Some(grpc::grpc_gen::get_status_response::Message::FinishedStatus(found)) => {
-                    finished_status = Some(found);
+                Some(grpc::grpc_gen::get_status_response::Message::FinishedStatus(_)) => {
+                    panic!("send_finished_status=false should not emit finished_status")
                 }
                 Some(grpc::grpc_gen::get_status_response::Message::CurrentStatus(_)) => {
                     panic!("follow=false should not emit current_status")
@@ -990,13 +985,14 @@ impl TestServer {
                 None => panic!("get_status message must be set"),
             }
         }
-        (summary.expect("summary must be present"), finished_status)
+        summary.expect("summary must be present")
     }
 
     async fn grpc_step_execution_until_finished(
         &self,
         ffqn: &str,
         params: Vec<Value>,
+        max_steps: usize,
     ) -> GrpcAdvanceExecutionSummary {
         let exec_id = self.generate_execution_id().await;
         let submit = self.grpc_submit_paused(&exec_id, ffqn, params).await;
@@ -1005,7 +1001,7 @@ impl TestServer {
             grpc::grpc_gen::submit_response::Outcome::Created
         );
 
-        let (initial_summary, _) = self.grpc_get_status_summary(&exec_id, false).await;
+        let initial_summary = self.grpc_get_status_summary(&exec_id).await;
         assert!(matches!(
             initial_summary
                 .current_status
@@ -1046,40 +1042,50 @@ impl TestServer {
                 .await
                 .unwrap()
                 .into_inner();
-            assert_eq!(
-                advance.outcome(),
-                grpc::grpc_gen::advance_execution_response::Outcome::Applied,
-                "advance must apply on step {steps}"
-            );
-
-            let (summary, finished_status) = self.grpc_get_status_summary(&exec_id, true).await;
-            if matches!(
-                summary
-                    .current_status
-                    .as_ref()
-                    .and_then(|status| status.status.as_ref()),
-                Some(grpc::grpc_gen::execution_status::Status::Finished(_))
-            ) {
-                let finished_status = finished_status.expect("finished status must be present");
-                let value = finished_status
-                    .value
-                    .expect("finished value must be present");
-                let ok_payload = match value.value {
-                    Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
-                    other => panic!("expected ok finished value, got {other:?}"),
-                };
-                let return_value = ok_payload.return_value.expect("ok return_value must exist");
-                return GrpcAdvanceExecutionSummary {
-                    steps,
-                    final_value_json: return_value.value,
-                };
+            match advance.outcome.expect("advance outcome must be set") {
+                grpc::grpc_gen::advance_execution_response::Outcome::Applied(applied) => {
+                    if let Some(value) = applied.finished_result {
+                        let ok_payload = match value.value {
+                            Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
+                            other => panic!("expected ok finished value, got {other:?}"),
+                        };
+                        let return_value =
+                            ok_payload.return_value.expect("ok return_value must exist");
+                        return GrpcAdvanceExecutionSummary {
+                            steps,
+                            final_value_json: return_value.value,
+                        };
+                    }
+                }
+                grpc::grpc_gen::advance_execution_response::Outcome::VersionMismatch(_) => {
+                    panic!("advance returned version mismatch on step {steps}")
+                }
+                grpc::grpc_gen::advance_execution_response::Outcome::Mismatch(_) => {
+                    panic!("advance returned mismatch on step {steps}")
+                }
             }
 
+            let summary = self.grpc_get_status_summary(&exec_id).await;
             assert!(
-                steps < 16,
+                !Self::is_finished(&summary),
+                "finished executions should return finished_result from AdvanceExecution"
+            );
+
+            assert!(
+                steps < max_steps,
                 "execution did not finish after {steps} replay+advance steps"
             );
         }
+    }
+
+    fn is_finished(summary: &grpc::grpc_gen::ExecutionSummary) -> bool {
+        matches!(
+            summary
+                .current_status
+                .as_ref()
+                .and_then(|status| status.status.as_ref()),
+            Some(grpc::grpc_gen::execution_status::Status::Finished(_))
+        )
     }
 }
 
@@ -1284,6 +1290,7 @@ async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
         .grpc_step_execution_until_finished(
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
+            16, // max_steps
         )
         .await;
 
