@@ -239,7 +239,7 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
 axum = { version = "0.8.9", features = ["http2"] }
-axum-accept = "0.0.5"
+axum-accept = "0.0.6"
 axum-extra = { version = "0.12.6", features = ["query"] }
 base64 = "0.22.1"
 bytes = "1.11.1"
@@ -254,7 +254,7 @@ config = { version = "0.15.22", default-features = false, features = [
 ] }
 console-subscriber = "0.5.0"
 const_format = "0.2.36"
-croner = "2"
+croner = "3"
 criterion = "0.8"
 crossterm = "0.29.0"
 deadpool-postgres = "0.14.1"
@@ -276,7 +276,7 @@ futures-concurrency = "7.7.1"
 futures-lite = "2.6.1"
 futures-util = "0.3.32"
 getrandom = "0.4"
-hashbrown = { version = "0.16.1", features = ["serde"] }
+hashbrown = { version = "0.17.0", features = ["serde"] }
 hdrhistogram = { version = "7.5.4", default-features = false }
 http = "1.4.0"
 http-body-util = "0.1"
@@ -295,7 +295,7 @@ paste = "1.0"
 prost = "0.14.3"
 prost-wkt-types = "0.7"
 quote = "1"
-rand = "0.9"
+rand = "0.10"
 refinery = { git = "https://github.com/tomasol/refinery.git", rev = "3b5a6eb7903e6d5d9ebce0fd17b518f9d1a5c1d2", features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
@@ -319,9 +319,9 @@ secrecy = "0.10.3"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
-serde_with = "3.18.0"
-hmac = "0.12.1"
-sha2 = "0.10.9"
+serde_with = "3.19.0"
+hmac = "0.13.0"
+sha2 = "0.11.0"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3.27"
@@ -342,34 +342,34 @@ tokio = { version = "1", features = [
 tokio-stream = "0.1.18"
 toml = { version = "1.1.2", features = ["preserve_order"] }
 toml_edit = "0.25.11"
-tonic = { version = "0.14.5", default-features = false }
-tonic-prost = "0.14.5"
-tonic-prost-build = "0.14.5"
-tonic-reflection = "0.14.5"
-tonic-web = "0.14.5"
+tonic = { version = "0.14.6", default-features = false }
+tonic-prost = "0.14.6"
+tonic-prost-build = "0.14.6"
+tonic-reflection = "0.14.6"
+tonic-web = "0.14.6"
 tower = "0.5.3"
-tower-http = { version = "0.6.8", features = ["trace", "cors"] }
+tower-http = { version = "0.6.10", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.5"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ulid = { version = "1.2", features = ["serde"] }
 url = "2.5.8"
-utoipa = { version = "5.4.0", features = ["chrono"] }
+utoipa = { version = "5.5.0", features = ["chrono"] }
 utoipa-axum = "0.2.0"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "44.0.0", features = ["memory-protection-keys"] }
-wasmtime-wasi = "44.0.0"
-wasmtime-wasi-io = "44.0.0"
-wasmtime-wasi-http = "44.0.0"
-wasmtime-environ = "44.0.0"
+wasmtime = { version = "43.0.2", features = ["memory-protection-keys"] }
+wasmtime-wasi = "43.0.2"
+wasmtime-wasi-io = "43.0.2"
+wasmtime-wasi-http = "43.0.2"
+wasmtime-environ = "43.0.2"
 # wasm-tools
-wast = "246.0.2"
-wit-parser = "0.246.2"
-wasmparser = "0.246.2"
-wit-component = "0.246.2"
+wast = "248.0.0"
+wit-parser = "0.248.0"
+wasmparser = "0.248.0"
+wit-component = "0.248.0"
 
 # boa
 boa_engine = { package="obeli-sk-boa-engine", version="1.0.0-obeli-sk.7", default-features = false }
@@ -391,10 +391,10 @@ wit-bindgen-rust = "0.57.1"
 wstd = "0.6.5"
 
 # otlp
-opentelemetry = "0.31.0"
-opentelemetry-http = "0.31.0"
-opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.1", default-features = false, features = [
+opentelemetry = "0.32.0"
+opentelemetry-http = "0.32.0"
+opentelemetry_sdk = { version = "0.32.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
     "tls",
     "tls-roots",
     "grpc-tonic",
@@ -402,7 +402,7 @@ opentelemetry-otlp = { version = "0.31.1", default-features = false, features = 
     "logs",
     "metrics",
 ] }
-opentelemetry-semantic-conventions = "0.31.0"
+opentelemetry-semantic-conventions = "0.32.0"
 tracing-opentelemetry = "0.32"
 
 [workspace.lints]
