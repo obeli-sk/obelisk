@@ -319,7 +319,7 @@ secrecy = "0.10.3"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
-serde_with = "3.18.0"
+serde_with = "3.19.0"
 hmac = "0.12.1"
 sha2 = "0.10.9"
 strum = { version = "0.28.0", features = ["derive"] }
@@ -342,20 +342,20 @@ tokio = { version = "1", features = [
 tokio-stream = "0.1.18"
 toml = { version = "1.1.2", features = ["preserve_order"] }
 toml_edit = "0.25.11"
-tonic = { version = "0.14.5", default-features = false }
-tonic-prost = "0.14.5"
-tonic-prost-build = "0.14.5"
-tonic-reflection = "0.14.5"
-tonic-web = "0.14.5"
+tonic = { version = "0.14.6", default-features = false }
+tonic-prost = "0.14.6"
+tonic-prost-build = "0.14.6"
+tonic-reflection = "0.14.6"
+tonic-web = "0.14.6"
 tower = "0.5.3"
-tower-http = { version = "0.6.8", features = ["trace", "cors"] }
+tower-http = { version = "0.6.10", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.5"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ulid = { version = "1.2", features = ["serde"] }
 url = "2.5.8"
-utoipa = { version = "5.4.0", features = ["chrono"] }
+utoipa = { version = "5.5.0", features = ["chrono"] }
 utoipa-axum = "0.2.0"
 wiremock = "0.6"
 
