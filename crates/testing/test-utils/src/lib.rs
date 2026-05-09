@@ -176,6 +176,25 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
         }
     }
 }
+pub fn redact_component_digest(value: Value) -> Value {
+    match value {
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(redact_component_digest).collect())
+        }
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    if key == "component_digest" {
+                        (key, Value::String("sha256:<REDACTED>".to_string()))
+                    } else {
+                        (key, redact_component_digest(value))
+                    }
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
 
 /// Sanitize dynamic fields in a JSON value for snapshot testing.
 pub fn sanitize_json(value: &Value) -> Value {

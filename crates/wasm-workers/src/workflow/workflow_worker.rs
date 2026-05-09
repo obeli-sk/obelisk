@@ -1,5 +1,8 @@
 use super::deadline_tracker::DeadlineTrackerFactory;
 use super::event_history::ApplyError;
+use super::replay_advance::{
+    merge_requested_overrides_into_fresh_prefix, requested_write_matches_fresh_replay,
+};
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
@@ -14,10 +17,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
-    CapturedDbWrite, CreateRequest, DbConnection, DbErrorWrite, DbPool, ExecutionLog, Locked,
-    Version,
+    CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog, Locked, Version,
 };
-use concepts::time::{ClockFn, ConstClock, now_tokio_instant};
+use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, PackageIfcFns,
     Params, ResultParsingError, StrVariant, TrapKind,
@@ -450,6 +452,7 @@ impl WorkflowWorker {
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
+        clock_fn: Box<dyn ClockFn>,
         log: ExecutionLog,
         ffqn: FunctionFqn,
         params: Params,
@@ -461,7 +464,6 @@ impl WorkflowWorker {
         };
         info!("Execution replay {replay_kind} started");
 
-        let clock_fn = ConstClock(DateTime::UNIX_EPOCH);
         let config = WorkflowConfig {
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             backtrace_persist: false,
@@ -533,7 +535,11 @@ impl WorkflowWorker {
         old_version: Version,
     ) -> Result<AdvanceResponse, ReplayError> {
         let outcome = if requested.is_prefix_of(&fresh_replay) {
-            let new_version = apply_writes(db_conn, requested.captured_writes, old_version).await?;
+            let writes_to_apply = merge_requested_overrides_into_fresh_prefix(
+                &requested.captured_writes,
+                &fresh_replay,
+            );
+            let new_version = apply_writes(db_conn, writes_to_apply, old_version).await?;
             AdvanceResponse {
                 version: new_version,
                 outcome: AdvanceOutcome::Applied,
@@ -994,7 +1000,7 @@ impl WorkflowWorker {
                     execution_id,
                     version,
                     req: concepts::storage::AppendRequest {
-                        created_at: DateTime::UNIX_EPOCH, // FIXME: unix epoch
+                        created_at: self.clock_fn.now(),
                         event: concepts::storage::ExecutionRequest::Finished {
                             retval,
                             http_client_traces: None,
@@ -1066,6 +1072,7 @@ impl WorkflowWorker {
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
+        clock_fn: Box<dyn ClockFn>,
     ) -> Result<ReplayResponse, ReplayError> {
         let db_conn = real_db_pool
             .connection()
@@ -1087,6 +1094,7 @@ impl WorkflowWorker {
             real_db_pool,
             execution_id,
             logs_storage_config,
+            clock_fn,
             log,
             ffqn,
             params,
@@ -1111,6 +1119,7 @@ impl WorkflowWorker {
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
+        clock_fn: Box<dyn ClockFn>,
         requested: ReplayResponse,
     ) -> Result<AdvanceResponse, ReplayError> {
         info!("Advance to requested {requested:?}");
@@ -1146,6 +1155,7 @@ impl WorkflowWorker {
             real_db_pool,
             execution_id,
             logs_storage_config,
+            clock_fn,
             log,
             ffqn,
             params,
@@ -1234,84 +1244,6 @@ impl ReplayResponse {
         captured_writes.truncate(len);
         Self { captured_writes }
     }
-}
-
-fn requested_write_matches_fresh_replay(
-    requested: &CapturedDbWrite,
-    fresh: &CapturedDbWrite,
-) -> bool {
-    match (requested, fresh) {
-        (
-            CapturedDbWrite::AppendBatchCreateNewExecution {
-                current_time: requested_current_time,
-                batch: requested_batch,
-                execution_id: requested_execution_id,
-                version: requested_version,
-                child_req: requested_child_req,
-                backtraces: requested_backtraces,
-            },
-            CapturedDbWrite::AppendBatchCreateNewExecution {
-                current_time: fresh_current_time,
-                batch: fresh_batch,
-                execution_id: fresh_execution_id,
-                version: fresh_version,
-                child_req: fresh_child_req,
-                backtraces: fresh_backtraces,
-            },
-        ) => {
-            requested_current_time == fresh_current_time
-                && requested_batch == fresh_batch
-                && requested_execution_id == fresh_execution_id
-                && requested_version == fresh_version
-                && requested_backtraces == fresh_backtraces
-                && requested_child_req.len() == fresh_child_req.len()
-                && requested_child_req
-                    .iter()
-                    .zip(fresh_child_req)
-                    .all(|(requested, fresh)| create_request_matches_fresh_replay(requested, fresh))
-        }
-        _ => requested == fresh,
-    }
-}
-
-fn create_request_matches_fresh_replay(requested: &CreateRequest, fresh: &CreateRequest) -> bool {
-    let CreateRequest {
-        created_at: requested_created_at,
-        execution_id: requested_execution_id,
-        ffqn: requested_ffqn,
-        params: requested_params,
-        parent: requested_parent,
-        scheduled_at: requested_scheduled_at,
-        component_id: requested_component_id,
-        deployment_id: requested_deployment_id,
-        metadata: requested_metadata,
-        scheduled_by: requested_scheduled_by,
-        paused: _, // ignored
-    } = requested;
-    let CreateRequest {
-        created_at: fresh_created_at,
-        execution_id: fresh_execution_id,
-        ffqn: fresh_ffqn,
-        params: fresh_params,
-        parent: fresh_parent,
-        scheduled_at: fresh_scheduled_at,
-        component_id: fresh_component_id,
-        deployment_id: fresh_deployment_id,
-        metadata: fresh_metadata,
-        scheduled_by: fresh_scheduled_by,
-        paused: _, // ignored
-    } = fresh;
-
-    requested_created_at == fresh_created_at
-        && requested_execution_id == fresh_execution_id
-        && requested_ffqn == fresh_ffqn
-        && requested_params == fresh_params
-        && requested_parent == fresh_parent
-        && requested_scheduled_at == fresh_scheduled_at
-        && requested_component_id == fresh_component_id
-        && requested_deployment_id == fresh_deployment_id
-        && requested_metadata == fresh_metadata
-        && requested_scheduled_by == fresh_scheduled_by
 }
 
 /// Outcome of an advance operation.
@@ -1489,6 +1421,7 @@ pub(crate) mod tests {
     };
     use insta::assert_json_snapshot;
     use rstest::rstest;
+
     use serde_json::json;
     use std::collections::VecDeque;
     use std::ops::Deref;
@@ -1496,7 +1429,7 @@ pub(crate) mod tests {
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
     use test_utils::sim_clock::SimClock;
-    use test_utils::{ExecutionLogSanitized, sanitize_json};
+    use test_utils::{ExecutionLogSanitized, redact_component_digest};
     use tokio::sync::mpsc;
     use tracing::debug;
     use tracing::info_span;
@@ -1524,6 +1457,7 @@ pub(crate) mod tests {
     const TEST_SUBMIT_JSON_MALFORMED_PARAMS_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::TEST_SUBMIT_JSON_MALFORMED_PARAMS,
     );
+
     const TEST_GET_RESULT_JSON_BEFORE_AWAIT_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::TEST_GET_RESULT_JSON_BEFORE_AWAIT,
     );
@@ -4091,6 +4025,7 @@ pub(crate) mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
+            sim_clock.clone_box(),
         )
         .await
         .unwrap();
@@ -4141,6 +4076,7 @@ pub(crate) mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
+            sim_clock.clone_box(),
         )
         .await
         .unwrap();
@@ -4187,6 +4123,7 @@ pub(crate) mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
+            sim_clock.clone_box(),
         )
         .await
         .unwrap();
@@ -4244,6 +4181,7 @@ pub(crate) mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
+            sim_clock.clone_box(),
         )
         .await
         .unwrap();
@@ -4303,6 +4241,7 @@ pub(crate) mod tests {
         let mut saw_trimmed_preview = false;
 
         loop {
+            sim_clock.move_time_forward(Duration::from_millis(100));
             let replay = WorkflowWorker::replay(
                 harness.deployment_id,
                 harness.workflow_component_id.clone(),
@@ -4313,6 +4252,7 @@ pub(crate) mod tests {
                 harness.db_pool.clone(),
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
+                sim_clock.clone_box(),
             )
             .await
             .unwrap();
@@ -4335,7 +4275,7 @@ pub(crate) mod tests {
             steps += 1;
             assert_json_snapshot!(
                 format!("{snapshot_prefix}_replay_{steps}"),
-                sanitize_json(&serde_json::to_value(&replay).unwrap())
+                redact_component_digest(serde_json::to_value(&replay).unwrap())
             );
 
             let requested = match trim_to {
@@ -4343,6 +4283,7 @@ pub(crate) mod tests {
                 None => replay.clone(),
             };
             saw_trimmed_preview |= requested.captured_writes.len() < replay.captured_writes.len();
+            sim_clock.move_time_forward(Duration::from_millis(100));
 
             let advance = WorkflowWorker::advance(
                 harness.deployment_id,
@@ -4354,6 +4295,7 @@ pub(crate) mod tests {
                 harness.db_pool.clone(),
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
+                sim_clock.clone_box(),
                 requested.clone(),
             )
             .await
@@ -4362,13 +4304,13 @@ pub(crate) mod tests {
 
             assert_json_snapshot!(
                 format!("{snapshot_prefix}_advance_{steps}"),
-                sanitize_json(&json!({
+                json!({
                     "version": advance.version.0,
                     "outcome": format!("{:?}", advance.outcome),
                     "trim_to": trim_to,
                     "requested_captured_writes_len": requested.captured_writes.len(),
                     "replayed_captured_writes_len": replay.captured_writes.len(),
-                }))
+                })
             );
 
             let log = db_connection.get(&harness.execution_id).await.unwrap();
@@ -4463,6 +4405,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
+            sim_clock.clone_box(),
         )
         .await
         .unwrap();
@@ -4503,6 +4446,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
+            sim_clock.clone_box(),
             wrong_replay,
         )
         .await
@@ -4520,6 +4464,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
+            sim_clock.clone_box(),
             ReplayResponse {
                 captured_writes: vec![], // empty writes
             },
@@ -4677,6 +4622,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let deployment_id = DeploymentId::from_parts(0, 0);
+        sim_clock.move_time_forward(Duration::from_millis(100));
         let replay = WorkflowWorker::replay(
             deployment_id,
             workflow_component_id.clone(),
@@ -4687,24 +4633,48 @@ pub(crate) mod tests {
             db_pool.clone(),
             execution_id.clone(),
             None,
+            sim_clock.clone_box(),
         )
         .await
         .unwrap();
 
         let mut requested = replay.clone();
+        let replayed_child_created_at = requested
+            .captured_writes
+            .iter()
+            .find_map(|write| match write {
+                CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } => {
+                    child_req.first().map(|child| child.created_at)
+                }
+                _ => None,
+            })
+            .expect("replay should create a child execution");
+        assert_eq!(replayed_child_created_at, sim_clock.now());
         let child_execution_id = requested
             .captured_writes
             .iter_mut()
             .find_map(|write| match write {
-                CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } => {
+                CapturedDbWrite::AppendBatchCreateNewExecution {
+                    current_time,
+                    batch,
+                    child_req,
+                    ..
+                } => {
+                    *current_time = DateTime::UNIX_EPOCH;
+                    for req in batch.iter_mut() {
+                        req.created_at = DateTime::UNIX_EPOCH;
+                    }
                     for child in child_req.iter_mut() {
                         child.paused = true;
+                        child.created_at = DateTime::UNIX_EPOCH;
+                        child.scheduled_at = DateTime::UNIX_EPOCH;
                     }
                     child_req.first().map(|child| child.execution_id.clone())
                 }
                 _ => None,
             })
             .expect("replay should create a child execution");
+        sim_clock.move_time_forward(Duration::from_millis(100));
 
         let advance = WorkflowWorker::advance(
             deployment_id,
@@ -4716,6 +4686,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             execution_id,
             None,
+            sim_clock.clone_box(),
             requested,
         )
         .await
@@ -4730,5 +4701,14 @@ pub(crate) mod tests {
                 .pending_state,
             PendingState::Paused(_)
         );
+        let create_event = db_connection
+            .get_execution_event(&child_execution_id, &Version::new(0))
+            .await
+            .unwrap();
+        assert_eq!(create_event.created_at, sim_clock.now());
+        let ExecutionRequest::Created { scheduled_at, .. } = create_event.event else {
+            panic!("child execution log must start with Created");
+        };
+        assert_eq!(scheduled_at, sim_clock.now());
     }
 }

@@ -800,6 +800,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 self.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
+                Now.clone_box(),
                 js_info.js_source.clone(),
             )
             .await
@@ -814,6 +815,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 self.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
+                Now.clone_box(),
             )
             .await
         };
@@ -888,6 +890,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 self.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
+                Now.clone_box(),
                 js_info.js_source.clone(),
                 expected,
             )
@@ -903,6 +906,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 self.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
+                Now.clone_box(),
                 expected,
             )
             .await
@@ -1007,6 +1011,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     self.db_pool.clone(),
                     execution_id.clone(),
                     logs_storage_config,
+                    Now.clone_box(),
                     js_info.js_source.clone(),
                 )
                 .await
@@ -1021,6 +1026,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     self.db_pool.clone(),
                     execution_id.clone(),
                     logs_storage_config,
+                    Now.clone_box(),
                 )
                 .await
             };

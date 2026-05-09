@@ -34,7 +34,7 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 1
     },
     {
-      "created_at": "1970-01-01T00:00:00Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
         "history_event": {
           "event": {
@@ -46,7 +46,7 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 2
     },
     {
-      "created_at": "1970-01-01T00:00:00Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
         "history_event": {
           "event": {
@@ -69,13 +69,13 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 3
     },
     {
-      "created_at": "1970-01-01T00:00:00Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
         "history_event": {
           "event": {
             "type": "join_next",
             "join_set_id": "g:1",
-            "run_expires_at": "1970-01-01T00:00:00Z",
+            "run_expires_at": "1970-01-01T00:00:00.200Z",
             "requested_ffqn": "testing:fibo/fibo.fibo",
             "closing": false
           }
@@ -89,7 +89,7 @@ expression: "ExecutionLogSanitized::from(log)"
   "pending_state": {
     "status": "blocked_by_join_set",
     "join_set_id": "g:1",
-    "lock_expires_at": "1970-01-01T00:00:00Z",
+    "lock_expires_at": "1970-01-01T00:00:00.200Z",
     "closing": false
   },
   "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
