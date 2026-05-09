@@ -1,0 +1,91 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
+expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
+---
+{
+  "captured_writes": [
+    {
+      "AppendBatchCreateNewExecution": {
+        "current_time": "<TIMESTAMP>",
+        "batch": [
+          {
+            "created_at": "<TIMESTAMP>",
+            "event": {
+              "history_event": {
+                "event": {
+                  "type": "join_set_request",
+                  "join_set_id": "g:1",
+                  "request": {
+                    "type": "child_execution_request",
+                    "child_execution_id": "E_<REDACTED>",
+                    "target_ffqn": "testing:stub-activity/activity.foo",
+                    "params": [
+                      "test-input"
+                    ],
+                    "result": {
+                      "Ok": null
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "execution_id": "E_<REDACTED>",
+        "version": 3,
+        "child_req": [
+          {
+            "created_at": "<TIMESTAMP>",
+            "execution_id": "E_<REDACTED>",
+            "ffqn": "testing:stub-activity/activity.foo",
+            "params": [
+              "test-input"
+            ],
+            "parent": [
+              "E_<REDACTED>",
+              "g:1"
+            ],
+            "scheduled_at": "<TIMESTAMP>",
+            "component_id": {
+              "component_type": "activity_stub",
+              "name": "",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "deployment_id": "Dep_<REDACTED>",
+            "metadata": {},
+            "scheduled_by": null,
+            "paused": false
+          }
+        ],
+        "backtraces": [
+          {
+            "execution_id": "E_<REDACTED>",
+            "component_id": {
+              "component_type": "workflow",
+              "name": "test_js_workflow",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "version_min_including": 3,
+            "version_max_excluding": 4,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "module": "unknown",
+                  "func_name": "call_stub",
+                  "symbols": [
+                    {
+                      "func_name": null,
+                      "file": null,
+                      "line": 4,
+                      "col": 37
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+---
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
+expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
+---
+{
+  "captured_writes": [
+    {
+      "Append": {
+        "execution_id": "E_<REDACTED>",
+        "version": 4,
+        "req": {
+          "created_at": "<TIMESTAMP>",
+          "event": {
+            "history_event": {
+              "event": {
+                "type": "join_next",
+                "join_set_id": "g:1",
+                "run_expires_at": "<TIMESTAMP>",
+                "requested_ffqn": "testing:fibo/fibo.fibo",
+                "closing": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
