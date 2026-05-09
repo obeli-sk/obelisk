@@ -3259,6 +3259,7 @@ version = "0.37.7"
 dependencies = [
  "http",
  "obeli-sk-concepts",
+ "obeli-sk-val-json",
  "opentelemetry",
  "opentelemetry-http",
  "prost",

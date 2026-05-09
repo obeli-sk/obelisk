@@ -76,7 +76,7 @@ use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
-use wasm_workers::workflow::workflow_worker::WorkflowWorker;
+use wasm_workers::workflow::workflow_worker::{AdvanceOutcome, ReplayResponse, WorkflowWorker};
 
 pub(crate) struct GrpcServer {
     server_verified: ServerVerified,
@@ -841,12 +841,89 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let (deployment_id, component_registry_ro) = {
+            let ctx = self.deployment_ctx.read().await;
+            (ctx.deployment_id, ctx.component_registry_ro.clone())
+        };
+        let conn = self.db_pool.connection().await.map_err(map_to_status)?;
+        let create_req = conn.get_create_request(&execution_id).await.to_status()?;
+        let (component_id, _fn_metadata) = component_registry_ro
+            .find_by_exported_ffqn_submittable(&create_req.ffqn)
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "component for function '{}' not found",
+                    create_req.ffqn
+                ))
+            })?;
+        Span::current().record("component_id", tracing::field::display(component_id));
 
-        let _expected_replay_json = request.expected_replay_json;
+        let (component_id, replay_info) = component_registry_ro
+            .get_workflow_replay_info(&component_id.component_digest)
+            .expect("digest taken from found component id");
 
-        Err(tonic::Status::unimplemented(
-            "AdvanceExecution is drafted, but the replay payload wire format is not finalized yet",
-        ))
+        let logs_storage_config =
+            replay_info
+                .logs_store_min_level
+                .map(|min_level| LogStrageConfig {
+                    min_level,
+                    log_sender: self.log_forwarder_sender.clone(),
+                });
+
+        let expected = ReplayResponse {
+            captured_writes: request
+                .captured_writes
+                .into_iter()
+                .map(grpc_mapping::captured_write_from_grpc)
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+
+        let advance_res = if let Some(js_info) = &replay_info.js_workflow_info {
+            WorkflowJsWorker::advance(
+                deployment_id,
+                component_id.clone(),
+                replay_info.runnable_component.wasmtime_component.clone(),
+                &replay_info.runnable_component.wasm_component.exim,
+                self.engines.workflow_engine.clone(),
+                Arc::new(component_registry_ro.clone()),
+                self.db_pool.clone(),
+                execution_id.clone(),
+                logs_storage_config,
+                js_info.js_source.clone(),
+                expected,
+            )
+            .await
+        } else {
+            WorkflowWorker::advance(
+                deployment_id,
+                component_id.clone(),
+                replay_info.runnable_component.wasmtime_component.clone(),
+                &replay_info.runnable_component.wasm_component.exim,
+                self.engines.workflow_engine.clone(),
+                Arc::new(component_registry_ro.clone()),
+                self.db_pool.clone(),
+                execution_id.clone(),
+                logs_storage_config,
+                expected,
+            )
+            .await
+        };
+
+        let advance_response = advance_res.map_err(|err| {
+            info!("Advance failed: {err:?}");
+            tonic::Status::internal(format!("advance failed: {err}"))
+        })?;
+
+        Ok(tonic::Response::new(grpc_gen::AdvanceExecutionResponse {
+            version: advance_response.version.0,
+            outcome: match advance_response.outcome {
+                AdvanceOutcome::Applied => grpc_gen::advance_execution_response::Outcome::Applied,
+                AdvanceOutcome::VersionMismatch => {
+                    grpc_gen::advance_execution_response::Outcome::VersionMismatch
+                }
+                AdvanceOutcome::Mismatch => grpc_gen::advance_execution_response::Outcome::Mismatch,
+            }
+            .into(),
+        }))
     }
 
     #[instrument(skip_all, fields(execution_id))]

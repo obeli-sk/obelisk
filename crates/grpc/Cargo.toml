@@ -11,6 +11,7 @@ version.workspace = true
 
 [dependencies]
 concepts.workspace = true
+val-json.workspace = true
 
 http.workspace = true
 prost-wkt-types.workspace = true

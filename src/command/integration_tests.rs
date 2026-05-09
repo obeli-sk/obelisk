@@ -18,14 +18,16 @@ use crate::{
         toml::DeploymentCanonical,
     },
 };
+use concepts::FunctionFqn;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::DbPool as _;
 use concepts::storage::DbPoolCloseable;
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
-    DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId, ListComponentsRequest,
-    ReplayExecutionRequest, SubmitDeploymentRequest, SwitchDeploymentRequest,
+    AdvanceExecutionRequest, DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId,
+    GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, SubmitDeploymentRequest,
+    SubmitRequest, SwitchDeploymentRequest,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -37,6 +39,7 @@ use std::fmt::Write as _;
 use std::{path::PathBuf, time::Duration};
 use test_utils::sanitize_json;
 use tokio::{sync::watch, task::JoinHandle};
+use tokio_stream::StreamExt;
 use tracing::{debug, instrument};
 
 #[cfg(test)]
@@ -835,6 +838,12 @@ struct ReplayCapturedWritesSummary {
     finished_retval_has_ok: bool,
 }
 
+#[derive(Debug)]
+struct GrpcAdvanceExecutionSummary {
+    steps: usize,
+    final_value_json: Vec<u8>,
+}
+
 impl TestExecutionClient {
     async fn replay_captured_writes_summary(
         self,
@@ -908,6 +917,168 @@ impl TestExecutionClient {
                     finished_retval_has_ok,
                 }
             }
+        }
+    }
+}
+
+impl TestServer {
+    async fn grpc_submit_paused(
+        &self,
+        execution_id: &str,
+        ffqn: &str,
+        params: Vec<Value>,
+    ) -> grpc::grpc_gen::SubmitResponse {
+        let mut grpc_client =
+            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        grpc_client
+            .submit(SubmitRequest {
+                execution_id: Some(GrpcExecutionId {
+                    id: execution_id.to_string(),
+                }),
+                function_name: Some(ffqn.parse::<FunctionFqn>().unwrap().into()),
+                params: Some(
+                    grpc::grpc_mapping::to_any(params, format!("urn:obelisk:json:params:{ffqn}"))
+                        .unwrap(),
+                ),
+                paused: true,
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    }
+
+    async fn grpc_get_status_summary(
+        &self,
+        execution_id: &str,
+        send_finished_status: bool,
+    ) -> (
+        grpc::grpc_gen::ExecutionSummary,
+        Option<grpc::grpc_gen::FinishedStatus>,
+    ) {
+        let mut grpc_client =
+            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        let mut stream = grpc_client
+            .get_status(GetStatusRequest {
+                execution_id: Some(GrpcExecutionId {
+                    id: execution_id.to_string(),
+                }),
+                follow: false,
+                send_finished_status,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+
+        let mut summary = None;
+        let mut finished_status = None;
+        while let Some(message) = stream.next().await {
+            let message = message.unwrap();
+            match message.message {
+                Some(grpc::grpc_gen::get_status_response::Message::Summary(found)) => {
+                    summary = Some(found);
+                }
+                Some(grpc::grpc_gen::get_status_response::Message::FinishedStatus(found)) => {
+                    finished_status = Some(found);
+                }
+                Some(grpc::grpc_gen::get_status_response::Message::CurrentStatus(_)) => {
+                    panic!("follow=false should not emit current_status")
+                }
+                None => panic!("get_status message must be set"),
+            }
+        }
+        (summary.expect("summary must be present"), finished_status)
+    }
+
+    async fn grpc_step_execution_until_finished(
+        &self,
+        ffqn: &str,
+        params: Vec<Value>,
+    ) -> GrpcAdvanceExecutionSummary {
+        let exec_id = self.generate_execution_id().await;
+        let submit = self.grpc_submit_paused(&exec_id, ffqn, params).await;
+        assert_eq!(
+            submit.outcome(),
+            grpc::grpc_gen::submit_response::Outcome::Created
+        );
+
+        let (initial_summary, _) = self.grpc_get_status_summary(&exec_id, false).await;
+        assert!(matches!(
+            initial_summary
+                .current_status
+                .as_ref()
+                .and_then(|status| status.status.as_ref()),
+            Some(grpc::grpc_gen::execution_status::Status::Paused(_))
+        ));
+
+        let mut grpc_client =
+            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+
+        let mut steps = 0;
+        loop {
+            let replay = grpc_client
+                .replay_execution(ReplayExecutionRequest {
+                    execution_id: Some(GrpcExecutionId {
+                        id: exec_id.clone(),
+                    }),
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(
+                !replay.captured_writes.is_empty(),
+                "captured_writes must not be empty while stepping {ffqn}"
+            );
+
+            steps += 1;
+            let advance = grpc_client
+                .advance_execution(AdvanceExecutionRequest {
+                    execution_id: Some(GrpcExecutionId {
+                        id: exec_id.clone(),
+                    }),
+                    captured_writes: replay.captured_writes,
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            assert_eq!(
+                advance.outcome(),
+                grpc::grpc_gen::advance_execution_response::Outcome::Applied,
+                "advance must apply on step {steps}"
+            );
+
+            let (summary, finished_status) = self.grpc_get_status_summary(&exec_id, true).await;
+            if matches!(
+                summary
+                    .current_status
+                    .as_ref()
+                    .and_then(|status| status.status.as_ref()),
+                Some(grpc::grpc_gen::execution_status::Status::Finished(_))
+            ) {
+                let finished_status = finished_status.expect("finished status must be present");
+                let value = finished_status
+                    .value
+                    .expect("finished value must be present");
+                let ok_payload = match value.value {
+                    Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
+                    other => panic!("expected ok finished value, got {other:?}"),
+                };
+                let return_value = ok_payload.return_value.expect("ok return_value must exist");
+                return GrpcAdvanceExecutionSummary {
+                    steps,
+                    final_value_json: return_value.value,
+                };
+            }
+
+            assert!(
+                steps < 16,
+                "execution did not finish after {steps} replay+advance steps"
+            );
         }
     }
 }
@@ -1101,6 +1272,26 @@ async fn replay_captured_writes() {
             "Finished event must contain an ok return value: {client:?}"
         );
     }
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
+    let server = TestServer::start(test_addr!(64)).await;
+
+    let stepped = server
+        .grpc_step_execution_until_finished(
+            "testing:integration/workflow-call-stub.call-stub",
+            vec![json!(123_u64)],
+        )
+        .await;
+
+    assert!(
+        stepped.steps > 0,
+        "step-through harness must execute at least one replay+advance round"
+    );
+    assert_eq!(stepped.final_value_json, br#"{"ok":"\"stub-ok\""}"#);
 
     server.shutdown().await;
 }

@@ -205,6 +205,11 @@ message FunctionName {
     string function_name = 2;
 }
 
+message ComponentRetryConfig {
+    optional uint32 max_retries = 1;
+    google.protobuf.Duration retry_exp_backoff = 2;
+}
+
 message SubmitRequest {
     ExecutionId execution_id = 1;
     FunctionName function_name = 2;
@@ -323,6 +328,7 @@ message SupportedFunctionResult {
         ErrorPayload error = 2;
         ExecutionFailure execution_failure = 4;
     }
+    optional string wit_type_inline = 5;
 }
 
 message GetStatusResponse {
@@ -345,6 +351,9 @@ message ExecutionEvent {
         ComponentId component_id = 4;
         optional ExecutionId scheduled_by = 5;
         DeploymentId deployment_id = 6;
+        optional ExecutionId parent_execution_id = 7;
+        optional JoinSetId parent_join_set_id = 8;
+        map<string, string> metadata = 9;
     }
 
     message Locked {
@@ -352,6 +361,8 @@ message ExecutionEvent {
         DeploymentId deployment_id = 2;
         google.protobuf.Timestamp lock_expires_at = 3;
         string run_id = 4;
+        string executor_id = 5;
+        ComponentRetryConfig retry_config = 6;
     }
 
     message Unlocked {
@@ -387,8 +398,12 @@ message ExecutionEvent {
         message Persist {
             message PersistKind {
                 message RandomString {
+                    uint64 min_length = 1;
+                    uint64 max_length_exclusive = 2;
                 }
                 message RandomU64 {
+                    uint64 min = 1;
+                    uint64 max_inclusive = 2;
                 }
                 message ExecutionId {
                 }
@@ -409,13 +424,47 @@ message ExecutionEvent {
         message JoinSetRequest {
 
             message DelayRequest {
+                message ScheduledAt {
+                    message Now {}
+
+                    message At {
+                        google.protobuf.Timestamp at = 1;
+                    }
+
+                    message In {
+                        google.protobuf.Duration in = 1;
+                    }
+
+                    oneof variant {
+                        Now now = 1;
+                        At at = 2;
+                        In in = 3;
+                    }
+                }
                 DelayId delay_id = 1;
                 google.protobuf.Timestamp expires_at = 2;
+                ScheduledAt scheduled_at = 3;
             }
 
             message ChildExecutionRequest {
+                message Ok {
+                }
+                message Error {
+                    enum Kind {
+                        KIND_UNSPECIFIED = 0;
+                        KIND_FUNCTION_NOT_FOUND = 1;
+                        KIND_TYPE_CHECK_ERROR = 2;
+                    }
+                    Kind kind = 1;
+                    optional string detail = 2;
+                }
                 ExecutionId child_execution_id = 1;
-                bool success = 2;  // false if function not found or params parsing error
+                FunctionName function_name = 2;
+                google.protobuf.Any params = 3;
+                oneof result {
+                    Ok ok = 4;
+                    Error error = 5;
+                }
             }
 
             JoinSetId join_set_id = 1;
@@ -429,6 +478,7 @@ message ExecutionEvent {
             JoinSetId join_set_id = 1;
             google.protobuf.Timestamp run_expires_at = 2;
             bool closing = 3;
+            optional FunctionName function = 4;
         }
 
         message JoinNextTooMany {
@@ -448,6 +498,17 @@ message ExecutionEvent {
         }
 
         message Schedule {
+            message Ok {
+            }
+            message Error {
+                enum Kind {
+                    KIND_UNSPECIFIED = 0;
+                    KIND_FUNCTION_NOT_FOUND = 1;
+                    KIND_TYPE_CHECK_ERROR = 2;
+                }
+                Kind kind = 1;
+                optional string detail = 2;
+            }
             message ScheduledAt {
                 message Now {}
 
@@ -467,12 +528,31 @@ message ExecutionEvent {
             }
             ExecutionId execution_id = 1;
             ScheduledAt scheduled_at = 2;
-            bool success = 3;  // false if function not found or params parsing error
+            oneof result {
+                Ok ok = 3;
+                Error error = 4;
+            }
         }
 
         message Stub {
+            message Ok {
+            }
+            message Error {
+                enum Kind {
+                    KIND_UNSPECIFIED = 0;
+                    KIND_EXECUTION_NOT_FOUND = 1;
+                    KIND_TYPE_CHECK_ERROR = 2;
+                    KIND_CONFLICT = 3;
+                }
+                Kind kind = 1;
+                optional string detail = 2;
+            }
             ExecutionId execution_id = 1;
-            bool success = 2;
+            string retval_hash = 2;
+            oneof result {
+                Ok ok = 3;
+                Error error = 4;
+            }
         }
 
         oneof event {
@@ -614,6 +694,12 @@ message WasmBacktrace {
     uint32 version_max_excluding = 3;
 }
 
+message CapturedBacktrace {
+    ExecutionId execution_id = 1;
+    ComponentId component_id = 2;
+    WasmBacktrace wasm_backtrace = 3;
+}
+
 message FrameInfo {
   string module = 1;
   string func_name = 2;
@@ -684,6 +770,7 @@ message CapturedWrite {
     ExecutionId execution_id = 3;
     uint32 version = 4;
     repeated CreateExecutionRequest child_requests = 5;
+    repeated CapturedBacktrace backtraces = 6;
   }
   message AppendBatchRespondToParent {
     ExecutionId execution_id = 1;
@@ -694,6 +781,8 @@ message CapturedWrite {
     ExecutionId child_execution_id = 6;
     SupportedFunctionResult result = 7;
     google.protobuf.Timestamp current_time = 8;
+    google.protobuf.Timestamp created_at = 9;
+    uint32 finished_version = 10;
   }
   oneof write {
     Append append = 1;
@@ -713,6 +802,10 @@ message CreateExecutionRequest {
   DeploymentId deployment_id = 6;
   optional ExecutionId parent_execution_id = 7;
   optional JoinSetId parent_join_set_id = 8;
+  google.protobuf.Timestamp created_at = 9;
+  map<string, string> metadata = 10;
+  bool paused = 11;
+  optional ExecutionId scheduled_by = 12;
 }
 
 message ReplayExecutionResponse {
@@ -721,10 +814,7 @@ message ReplayExecutionResponse {
 
 message AdvanceExecutionRequest {
   ExecutionId execution_id = 1;
-  // Draft wire format for a future replay->advance roundtrip.
-  // This stays opaque for now because `CapturedWrite` is not yet
-  // sufficiently lossless to reconstruct all internal replay data.
-  string expected_replay_json = 2;
+  repeated CapturedWrite captured_writes = 2;
 }
 
 message AdvanceExecutionResponse {
