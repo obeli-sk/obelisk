@@ -13,11 +13,12 @@ pub use crate::component_id::{
     ComponentId, ComponentType, ContentDigest, InvalidNameError, check_name,
 };
 use ::serde::{Deserialize, Serialize};
-use assert_matches::assert_matches;
 use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::BuildHasherDefault;
 use std::{
     borrow::Borrow,
     fmt::{Debug, Display, Write},
@@ -2340,6 +2341,9 @@ pub trait FunctionRegistry: Send + Sync {
     fn all_exports(&self) -> &[PackageIfcFns];
 }
 
+// Use a concrete hasher so we can keep `ExecutionMetadata::empty()` const.
+type MetadataMap = hashbrown::HashMap<String, String, BuildHasherDefault<DefaultHasher>>;
+
 #[derive(
     Debug,
     Default,
@@ -2351,16 +2355,18 @@ pub trait FunctionRegistry: Send + Sync {
     Eq,
     schemars::JsonSchema,
 )]
-#[schemars(with = "Option<std::collections::HashMap<String, String>>")]
+#[schemars(with = "std::collections::HashMap<String, String>")]
 #[display("{_0:?}")]
-pub struct ExecutionMetadata(Option<hashbrown::HashMap<String, String>>);
+pub struct ExecutionMetadata(MetadataMap);
 
 impl ExecutionMetadata {
     const LINKED_KEY: &str = "obelisk-tracing-linked";
+
+    const EMPTY_MAP: MetadataMap = hashbrown::HashMap::with_hasher(BuildHasherDefault::new());
+
     #[must_use]
     pub const fn empty() -> Self {
-        // Remove `Optional` when const hashmap creation is allowed - https://github.com/rust-lang/rust/issues/123197
-        Self(None)
+        Self(Self::EMPTY_MAP)
     }
 
     #[must_use]
@@ -2380,7 +2386,7 @@ impl ExecutionMetadata {
     #[must_use]
     fn create(span: &Span, link_marker: bool) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        let mut metadata = Self(Some(hashbrown::HashMap::default()));
+        let mut metadata = Self(hashbrown::HashMap::default());
         let mut metadata_view = ExecutionMetadataInjectorView {
             metadata: &mut metadata,
         };
@@ -2424,23 +2430,14 @@ struct ExecutionMetadataInjectorView<'a> {
 
 impl ExecutionMetadataInjectorView<'_> {
     fn is_empty(&self) -> bool {
-        self.metadata
-            .0
-            .as_ref()
-            .is_some_and(hashbrown::HashMap::is_empty)
+        self.metadata.0.is_empty()
     }
 }
 
 impl opentelemetry::propagation::Injector for ExecutionMetadataInjectorView<'_> {
     fn set(&mut self, key: &str, value: String) {
         let key = format!("tracing:{key}");
-        let map = if let Some(map) = self.metadata.0.as_mut() {
-            map
-        } else {
-            self.metadata.0 = Some(hashbrown::HashMap::new());
-            assert_matches!(&mut self.metadata.0, Some(map) => map)
-        };
-        map.insert(key, value);
+        self.metadata.0.insert(key, value);
     }
 }
 
@@ -2452,19 +2449,16 @@ impl opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'_
     fn get(&self, key: &str) -> Option<&str> {
         self.metadata
             .0
-            .as_ref()
-            .and_then(|map| map.get(&format!("tracing:{key}")))
+            .get(&format!("tracing:{key}"))
             .map(std::string::String::as_str)
     }
 
     fn keys(&self) -> Vec<&str> {
-        match &self.metadata.0.as_ref() {
-            Some(map) => map
-                .keys()
-                .filter_map(|key| key.strip_prefix("tracing:"))
-                .collect(),
-            None => vec![],
-        }
+        self.metadata
+            .0
+            .keys()
+            .filter_map(|key| key.strip_prefix("tracing:"))
+            .collect()
     }
 }
 

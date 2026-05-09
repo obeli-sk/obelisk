@@ -76,7 +76,7 @@ use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
-use wasm_workers::workflow::workflow_worker::WorkflowWorker;
+use wasm_workers::workflow::workflow_worker::{AdvanceOutcome, ReplayResponse, WorkflowWorker};
 
 pub(crate) struct GrpcServer {
     server_verified: ServerVerified,
@@ -827,6 +827,135 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .into_iter()
                 .map(grpc_mapping::captured_write_to_grpc)
                 .collect(),
+        }))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn advance_execution(
+        &self,
+        request: tonic::Request<grpc_gen::AdvanceExecutionRequest>,
+    ) -> Result<tonic::Response<grpc_gen::AdvanceExecutionResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let (deployment_id, component_registry_ro) = {
+            let ctx = self.deployment_ctx.read().await;
+            (ctx.deployment_id, ctx.component_registry_ro.clone())
+        };
+        let conn = self.db_pool.connection().await.map_err(map_to_status)?;
+        let create_req = conn.get_create_request(&execution_id).await.to_status()?;
+        let (component_id, _fn_metadata) = component_registry_ro
+            .find_by_exported_ffqn_submittable(&create_req.ffqn)
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "component for function '{}' not found",
+                    create_req.ffqn
+                ))
+            })?;
+        Span::current().record("component_id", tracing::field::display(component_id));
+
+        let (component_id, replay_info) = component_registry_ro
+            .get_workflow_replay_info(&component_id.component_digest)
+            .expect("digest taken from found component id");
+
+        let logs_storage_config =
+            replay_info
+                .logs_store_min_level
+                .map(|min_level| LogStrageConfig {
+                    min_level,
+                    log_sender: self.log_forwarder_sender.clone(),
+                });
+
+        let expected = ReplayResponse {
+            captured_writes: request
+                .captured_writes
+                .into_iter()
+                .map(grpc_mapping::captured_write_from_grpc)
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+
+        let advance_res = if let Some(js_info) = &replay_info.js_workflow_info {
+            WorkflowJsWorker::advance(
+                deployment_id,
+                component_id.clone(),
+                replay_info.runnable_component.wasmtime_component.clone(),
+                &replay_info.runnable_component.wasm_component.exim,
+                self.engines.workflow_engine.clone(),
+                Arc::new(component_registry_ro.clone()),
+                self.db_pool.clone(),
+                execution_id.clone(),
+                logs_storage_config,
+                js_info.js_source.clone(),
+                expected,
+            )
+            .await
+        } else {
+            WorkflowWorker::advance(
+                deployment_id,
+                component_id.clone(),
+                replay_info.runnable_component.wasmtime_component.clone(),
+                &replay_info.runnable_component.wasm_component.exim,
+                self.engines.workflow_engine.clone(),
+                Arc::new(component_registry_ro.clone()),
+                self.db_pool.clone(),
+                execution_id.clone(),
+                logs_storage_config,
+                expected,
+            )
+            .await
+        };
+
+        let advance_response = advance_res.map_err(|err| {
+            info!("Advance failed: {err:?}");
+            tonic::Status::internal(format!("advance failed: {err}"))
+        })?;
+
+        let outcome = match advance_response.outcome {
+            AdvanceOutcome::Applied => {
+                let finished_result = match conn
+                    .get_pending_state(&execution_id)
+                    .await
+                    .to_status()?
+                    .pending_state
+                {
+                    PendingState::Finished(finished) => {
+                        let finished_event = conn
+                            .get_execution_event(&execution_id, &Version(finished.version))
+                            .await
+                            .to_status()?;
+                        let ExecutionRequest::Finished { retval, .. } = finished_event.event else {
+                            return Err(tonic::Status::internal(
+                                "pending state finished implies `Finished` event",
+                            ));
+                        };
+                        Some(grpc_gen::SupportedFunctionResult::from(retval))
+                    }
+                    _ => None,
+                };
+                grpc_gen::advance_execution_response::Outcome::Applied(
+                    grpc_gen::advance_execution_response::Applied {
+                        version: advance_response.version.0,
+                        finished_result,
+                    },
+                )
+            }
+            AdvanceOutcome::VersionMismatch => {
+                grpc_gen::advance_execution_response::Outcome::VersionMismatch(
+                    grpc_gen::advance_execution_response::VersionMismatch {
+                        version: advance_response.version.0,
+                    },
+                )
+            }
+            AdvanceOutcome::Mismatch => grpc_gen::advance_execution_response::Outcome::Mismatch(
+                grpc_gen::advance_execution_response::Mismatch {},
+            ),
+        };
+
+        Ok(tonic::Response::new(grpc_gen::AdvanceExecutionResponse {
+            outcome: Some(outcome),
         }))
     }
 

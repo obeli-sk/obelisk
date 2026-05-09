@@ -103,10 +103,7 @@
                   "type": "string"
                 },
                 "metadata": {
-                  "type": [
-                    "object",
-                    "null"
-                  ],
+                  "type": "object",
                   "additionalProperties": {
                     "type": "string"
                   }
@@ -123,7 +120,8 @@
                 "params",
                 "scheduled_at",
                 "component_id",
-                "deployment_id"
+                "deployment_id",
+                "metadata"
               ]
             }
           },

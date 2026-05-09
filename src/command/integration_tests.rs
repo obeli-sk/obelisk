@@ -18,14 +18,16 @@ use crate::{
         toml::DeploymentCanonical,
     },
 };
+use concepts::FunctionFqn;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::DbPool as _;
 use concepts::storage::DbPoolCloseable;
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
-    DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId, ListComponentsRequest,
-    ReplayExecutionRequest, SubmitDeploymentRequest, SwitchDeploymentRequest,
+    AdvanceExecutionRequest, DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId,
+    GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, SubmitDeploymentRequest,
+    SubmitRequest, SwitchDeploymentRequest,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -37,6 +39,7 @@ use std::fmt::Write as _;
 use std::{path::PathBuf, time::Duration};
 use test_utils::sanitize_json;
 use tokio::{sync::watch, task::JoinHandle};
+use tokio_stream::StreamExt;
 use tracing::{debug, instrument};
 
 #[cfg(test)]
@@ -819,6 +822,273 @@ impl TestDeployClient {
     }
 }
 
+/// Selects which protocol to use for execution replay in parametrized tests.
+#[derive(Debug, Clone, Copy)]
+enum TestExecutionClient {
+    /// Replay via gRPC.
+    Grpc,
+    /// Replay via the Web API.
+    WebApi,
+}
+
+#[derive(Debug)]
+struct ReplayCapturedWritesSummary {
+    captured_writes_len: usize,
+    last_write_is_finished: bool,
+    finished_retval_has_ok: bool,
+}
+
+#[derive(Debug)]
+struct GrpcAdvanceExecutionSummary {
+    steps: usize,
+    final_value_json: Vec<u8>,
+}
+
+impl TestExecutionClient {
+    async fn replay_captured_writes_summary(
+        self,
+        server: &TestServer,
+        execution_id: &str,
+    ) -> ReplayCapturedWritesSummary {
+        match self {
+            TestExecutionClient::WebApi => {
+                let replay_resp = server.replay(execution_id).await;
+                assert_eq!(replay_resp.status().as_u16(), 200);
+                let replay_body: Value = replay_resp.json().await.unwrap();
+
+                let writes = replay_body["captured_writes"]
+                    .as_array()
+                    .expect("captured_writes must be an array");
+                let last_write = writes.last().expect("captured_writes must not be empty");
+
+                ReplayCapturedWritesSummary {
+                    captured_writes_len: writes.len(),
+                    last_write_is_finished: last_write["type"] == "append"
+                        && last_write["event"]["event"]["finished"].is_object(),
+                    finished_retval_has_ok:
+                        last_write["event"]["event"]["finished"]["retval"]["ok"].is_object(),
+                }
+            }
+            TestExecutionClient::Grpc => {
+                let mut grpc_client =
+                    ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+                        .await
+                        .unwrap();
+                let replay_resp = grpc_client
+                    .replay_execution(ReplayExecutionRequest {
+                        execution_id: Some(GrpcExecutionId {
+                            id: execution_id.to_string(),
+                        }),
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner();
+
+                let last_write = replay_resp
+                    .captured_writes
+                    .last()
+                    .expect("captured_writes must not be empty");
+
+                let (last_write_is_finished, finished_retval_has_ok) =
+                    match last_write.write.as_ref().expect("write oneof must be set") {
+                        grpc::grpc_gen::captured_write::Write::Append(a) => {
+                            let event = a.event.as_ref().expect("event must be present");
+                            match event.event.as_ref().expect("event variant must be present") {
+                                grpc::grpc_gen::execution_event::Event::Finished(finished) => (
+                                    true,
+                                    finished.value.as_ref().is_some_and(|retval| {
+                                        matches!(
+                                        retval.value,
+                                        Some(grpc::grpc_gen::supported_function_result::Value::Ok(
+                                            _
+                                        ))
+                                    )
+                                    }),
+                                ),
+                                _ => (false, false),
+                            }
+                        }
+                        _ => (false, false),
+                    };
+
+                ReplayCapturedWritesSummary {
+                    captured_writes_len: replay_resp.captured_writes.len(),
+                    last_write_is_finished,
+                    finished_retval_has_ok,
+                }
+            }
+        }
+    }
+}
+
+impl TestServer {
+    async fn grpc_submit_paused(
+        &self,
+        execution_id: &str,
+        ffqn: &str,
+        params: Vec<Value>,
+    ) -> grpc::grpc_gen::SubmitResponse {
+        let mut grpc_client =
+            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        grpc_client
+            .submit(SubmitRequest {
+                execution_id: Some(GrpcExecutionId {
+                    id: execution_id.to_string(),
+                }),
+                function_name: Some(ffqn.parse::<FunctionFqn>().unwrap().into()),
+                params: Some(
+                    grpc::grpc_mapping::to_any(params, format!("urn:obelisk:json:params:{ffqn}"))
+                        .unwrap(),
+                ),
+                paused: true,
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    }
+
+    async fn grpc_get_status_summary(
+        &self,
+        execution_id: &str,
+    ) -> grpc::grpc_gen::ExecutionSummary {
+        let mut grpc_client =
+            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        let mut stream = grpc_client
+            .get_status(GetStatusRequest {
+                execution_id: Some(GrpcExecutionId {
+                    id: execution_id.to_string(),
+                }),
+                follow: false,
+                send_finished_status: false,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+
+        let mut summary = None;
+        while let Some(message) = stream.next().await {
+            let message = message.unwrap();
+            match message.message {
+                Some(grpc::grpc_gen::get_status_response::Message::Summary(found)) => {
+                    summary = Some(found);
+                }
+                Some(grpc::grpc_gen::get_status_response::Message::FinishedStatus(_)) => {
+                    panic!("send_finished_status=false should not emit finished_status")
+                }
+                Some(grpc::grpc_gen::get_status_response::Message::CurrentStatus(_)) => {
+                    panic!("follow=false should not emit current_status")
+                }
+                None => panic!("get_status message must be set"),
+            }
+        }
+        summary.expect("summary must be present")
+    }
+
+    async fn grpc_step_execution_until_finished(
+        &self,
+        ffqn: &str,
+        params: Vec<Value>,
+        max_steps: usize,
+    ) -> GrpcAdvanceExecutionSummary {
+        let exec_id = self.generate_execution_id().await;
+        let submit = self.grpc_submit_paused(&exec_id, ffqn, params).await;
+        assert_eq!(
+            submit.outcome(),
+            grpc::grpc_gen::submit_response::Outcome::Created
+        );
+
+        let initial_summary = self.grpc_get_status_summary(&exec_id).await;
+        assert!(matches!(
+            initial_summary
+                .current_status
+                .as_ref()
+                .and_then(|status| status.status.as_ref()),
+            Some(grpc::grpc_gen::execution_status::Status::Paused(_))
+        ));
+
+        let mut grpc_client =
+            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+
+        let mut steps = 0;
+        loop {
+            let replay = grpc_client
+                .replay_execution(ReplayExecutionRequest {
+                    execution_id: Some(GrpcExecutionId {
+                        id: exec_id.clone(),
+                    }),
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(
+                !replay.captured_writes.is_empty(),
+                "captured_writes must not be empty while stepping {ffqn}"
+            );
+
+            steps += 1;
+            let advance = grpc_client
+                .advance_execution(AdvanceExecutionRequest {
+                    execution_id: Some(GrpcExecutionId {
+                        id: exec_id.clone(),
+                    }),
+                    captured_writes: replay.captured_writes,
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            match advance.outcome.expect("advance outcome must be set") {
+                grpc::grpc_gen::advance_execution_response::Outcome::Applied(applied) => {
+                    if let Some(value) = applied.finished_result {
+                        let ok_payload = match value.value {
+                            Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
+                            other => panic!("expected ok finished value, got {other:?}"),
+                        };
+                        let return_value =
+                            ok_payload.return_value.expect("ok return_value must exist");
+                        return GrpcAdvanceExecutionSummary {
+                            steps,
+                            final_value_json: return_value.value,
+                        };
+                    }
+                }
+                grpc::grpc_gen::advance_execution_response::Outcome::VersionMismatch(_) => {
+                    panic!("advance returned version mismatch on step {steps}")
+                }
+                grpc::grpc_gen::advance_execution_response::Outcome::Mismatch(_) => {
+                    panic!("advance returned mismatch on step {steps}")
+                }
+            }
+
+            let summary = self.grpc_get_status_summary(&exec_id).await;
+            assert!(
+                !Self::is_finished(&summary),
+                "finished executions should return finished_result from AdvanceExecution"
+            );
+
+            assert!(
+                steps < max_steps,
+                "execution did not finish after {steps} replay+advance steps"
+            );
+        }
+    }
+
+    fn is_finished(summary: &grpc::grpc_gen::ExecutionSummary) -> bool {
+        matches!(
+            summary
+                .current_status
+                .as_ref()
+                .and_then(|status| status.status.as_ref()),
+            Some(grpc::grpc_gen::execution_status::Status::Finished(_))
+        )
+    }
+}
+
 // ---- Component / function listing ----
 
 #[tokio::test]
@@ -974,109 +1244,61 @@ async fn submit_workflow_and_replay() {
 // ---- Workflow: replay captured_writes (Web API + gRPC) ----
 
 #[tokio::test]
-async fn replay_captured_writes_webapi() {
-    let server = TestServer::start(test_addr!(62)).await;
-    let exec_id = server.generate_execution_id().await;
+async fn replay_captured_writes() {
+    let server = TestServer::start(test_addr!(63)).await;
 
-    // Run a workflow that calls a child activity so the replay produces interesting writes.
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/workflow-add-via-activity.add-via-activity",
-            vec![json!(3), json!(4)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "7" }));
+    for client in [TestExecutionClient::WebApi, TestExecutionClient::Grpc] {
+        let exec_id = server.generate_execution_id().await;
 
-    // Replay via Web API and inspect the response body.
-    let replay_resp = server.replay(&exec_id).await;
-    assert_eq!(replay_resp.status().as_u16(), 200);
-    let replay_body: Value = replay_resp.json().await.unwrap();
+        // Run a workflow that calls a child activity so replay produces interesting writes.
+        let resp = server
+            .submit_follow_with_id(
+                &exec_id,
+                "testing:integration/workflow-add-via-activity.add-via-activity",
+                vec![json!(3), json!(4)],
+            )
+            .await;
+        assert_eq!(resp.status().as_u16(), 201);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body, json!({ "ok": "7" }));
 
-    // The response must have captured_writes.
-    let writes = replay_body["captured_writes"]
-        .as_array()
-        .expect("captured_writes must be an array");
-    assert!(
-        !writes.is_empty(),
-        "captured_writes must not be empty for a finished workflow"
-    );
-
-    // The last captured write must be a Finished event (Append with a "finished" event).
-    let last_write = writes.last().unwrap();
-    assert_eq!(last_write["type"], "append", "last write must be an Append");
-    assert!(
-        last_write["event"]["event"]["finished"].is_object(),
-        "last captured write must be a Finished event, got: {last_write}"
-    );
-
-    // The Finished event must contain the return value.
-    let retval = &last_write["event"]["event"]["finished"]["retval"];
-    assert!(
-        retval["ok"].is_object(),
-        "Finished event must contain an ok return value, got: {retval}"
-    );
+        let replay = client
+            .replay_captured_writes_summary(&server, &exec_id)
+            .await;
+        assert!(
+            replay.captured_writes_len > 0,
+            "captured_writes must not be empty for a finished workflow: {client:?}"
+        );
+        assert!(
+            replay.last_write_is_finished,
+            "last captured write must be a Finished event: {client:?}"
+        );
+        assert!(
+            replay.finished_retval_has_ok,
+            "Finished event must contain an ok return value: {client:?}"
+        );
+    }
 
     server.shutdown().await;
 }
 
 #[tokio::test]
-async fn replay_captured_writes_grpc() {
-    let server = TestServer::start(test_addr!(63)).await;
-    let exec_id = server.generate_execution_id().await;
+async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
+    let server = TestServer::start(test_addr!(64)).await;
 
-    // Run a workflow that calls a child activity.
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/workflow-add-via-activity.add-via-activity",
-            vec![json!(3), json!(4)],
+    let stepped = server
+        .grpc_step_execution_until_finished(
+            "testing:integration/workflow-call-stub.call-stub",
+            vec![json!(123_u64)],
+            16, // max_steps
         )
         .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "7" }));
 
-    // Replay via gRPC.
-    let mut grpc_client =
-        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap();
-    let replay_resp = grpc_client
-        .replay_execution(ReplayExecutionRequest {
-            execution_id: Some(GrpcExecutionId {
-                id: exec_id.clone(),
-            }),
-        })
-        .await
-        .unwrap()
-        .into_inner();
-
-    // The response must have captured_writes.
     assert!(
-        !replay_resp.captured_writes.is_empty(),
-        "captured_writes must not be empty for a finished workflow"
+        stepped.steps > 0,
+        "step-through harness must execute at least one replay+advance round"
     );
-
-    // The last captured write must contain a Finished event.
-    let last_write = replay_resp.captured_writes.last().unwrap();
-    let append = last_write.write.as_ref().expect("write oneof must be set");
-    // The Append variant wraps a single event; check it's Finished.
-    match append {
-        grpc::grpc_gen::captured_write::Write::Append(a) => {
-            let event = a.event.as_ref().expect("event must be present");
-            assert!(
-                event.event.as_ref().is_some_and(|e| matches!(
-                    e,
-                    grpc::grpc_gen::execution_event::Event::Finished(_)
-                )),
-                "last captured write must be a Finished event"
-            );
-        }
-        other => panic!("last captured write must be Append with Finished event, got: {other:?}"),
-    }
+    assert_eq!(stepped.final_value_json, br#"{"ok":"\"stub-ok\""}"#);
 
     server.shutdown().await;
 }
