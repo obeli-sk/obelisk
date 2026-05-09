@@ -14,6 +14,7 @@ use crate::workflow::workflow_worker::ReplayResponse;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::DbPool;
+use concepts::time::ClockFn;
 use concepts::{
     ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionError,
     FunctionFqn, FunctionMetadata, FunctionRegistry, PackageIfcFns, ParameterType, Params,
@@ -373,6 +374,7 @@ impl WorkflowJsWorker {
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
+        clock_fn: Box<dyn ClockFn>,
         js_source: String,
     ) -> Result<ReplayResponse, ReplayError> {
         let db_conn = real_db_pool
@@ -394,6 +396,7 @@ impl WorkflowJsWorker {
             real_db_pool,
             execution_id,
             logs_storage_config,
+            clock_fn,
             log,
             ffqn,
             params,
@@ -414,6 +417,7 @@ impl WorkflowJsWorker {
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
+        clock_fn: Box<dyn ClockFn>,
         js_source: String,
         requested: ReplayResponse,
     ) -> Result<AdvanceResponse, ReplayError> {
@@ -447,6 +451,7 @@ impl WorkflowJsWorker {
             real_db_pool,
             execution_id,
             logs_storage_config,
+            clock_fn,
             log,
             ffqn,
             params,
@@ -467,6 +472,7 @@ mod tests {
     use crate::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
     use crate::workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig};
     use assert_matches::assert_matches;
+    use chrono::DateTime;
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutorId, RunId};
     use concepts::storage::{
@@ -491,7 +497,7 @@ mod tests {
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
     use test_utils::sim_clock::SimClock;
-    use test_utils::{ExecutionLogSanitized, sanitize_json};
+    use test_utils::{ExecutionLogSanitized, redact_component_digest};
     use tokio::sync::mpsc;
     use tracing::{info, info_span};
     use utils::sha256sum::calculate_sha256_file;
@@ -1240,6 +1246,7 @@ mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender,
             }),
+            sim_clock.clone_box(),
             js_source.to_string(),
         )
         .await
@@ -2023,6 +2030,7 @@ mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
+            sim_clock.clone_box(),
             js_source.to_string(),
         )
         .await
@@ -2072,6 +2080,7 @@ mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
+            sim_clock.clone_box(),
             js_source.to_string(),
         )
         .await
@@ -2125,6 +2134,7 @@ mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
+            sim_clock.clone_box(),
             js_source.to_string(),
         )
         .await
@@ -2218,6 +2228,7 @@ mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
+            sim_clock.clone_box(),
             js_source.to_string(),
         )
         .await
@@ -2251,6 +2262,7 @@ mod tests {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
+            sim_clock.clone_box(),
             js_source.to_string(),
         )
         .await
@@ -2352,6 +2364,7 @@ mod tests {
                 execution_id,
                 logs_storage_config,
                 js_source: js_source.to_string(),
+                sim_clock,
             },
             format!("{database:?}_{snapshot_suffix}"),
             16,
@@ -2383,6 +2396,7 @@ mod tests {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         js_source: String,
+        sim_clock: SimClock,
     }
 
     async fn workflow_js_step_execution_until_finished(
@@ -2397,6 +2411,9 @@ mod tests {
         let mut steps = 0;
         let mut saw_trimmed_preview = false;
         loop {
+            harness
+                .sim_clock
+                .move_time_forward(Duration::from_millis(100));
             let replay = WorkflowJsWorker::replay(
                 harness.deployment_id,
                 harness.component_id.clone(),
@@ -2407,6 +2424,7 @@ mod tests {
                 harness.db_pool.clone(),
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
+                harness.sim_clock.clone_box(),
                 harness.js_source.clone(),
             )
             .await
@@ -2419,7 +2437,7 @@ mod tests {
             steps += 1;
             assert_json_snapshot!(
                 format!("{snapshot_prefix}_replay_{steps}"),
-                sanitize_json(&serde_json::to_value(&replay).unwrap())
+                redact_component_digest(serde_json::to_value(&replay).unwrap())
             );
 
             let requested = match trim_to {
@@ -2427,6 +2445,9 @@ mod tests {
                 None => replay.clone(),
             };
             saw_trimmed_preview |= requested.captured_writes.len() < replay.captured_writes.len();
+            harness
+                .sim_clock
+                .move_time_forward(Duration::from_millis(100));
 
             let advance = WorkflowJsWorker::advance(
                 harness.deployment_id,
@@ -2438,6 +2459,7 @@ mod tests {
                 harness.db_pool.clone(),
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
+                harness.sim_clock.clone_box(),
                 harness.js_source.clone(),
                 requested.clone(),
             )
@@ -2447,13 +2469,13 @@ mod tests {
 
             assert_json_snapshot!(
                 format!("{snapshot_prefix}_advance_{steps}"),
-                sanitize_json(&json!({
+                json!({
                     "version": advance.version.0,
                     "outcome": format!("{:?}", advance.outcome),
                     "trim_to": trim_to,
                     "requested_captured_writes_len": requested.captured_writes.len(),
                     "replayed_captured_writes_len": replay.captured_writes.len(),
-                }))
+                })
             );
 
             let log = db_connection.get(&harness.execution_id).await.unwrap();
@@ -2538,6 +2560,7 @@ mod tests {
             .unwrap();
 
         let deployment_id = DeploymentId::from_parts(0, 0);
+        sim_clock.move_time_forward(Duration::from_millis(100));
         let replay = WorkflowJsWorker::replay(
             deployment_id,
             component_id.clone(),
@@ -2548,25 +2571,49 @@ mod tests {
             db_pool.clone(),
             execution_id.clone(),
             None,
+            sim_clock.clone_box(),
             js_source.to_string(),
         )
         .await
         .unwrap();
 
         let mut requested = replay.clone();
+        let replayed_child_created_at = requested
+            .captured_writes
+            .iter()
+            .find_map(|write| match write {
+                CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } => {
+                    child_req.first().map(|child| child.created_at)
+                }
+                _ => None,
+            })
+            .expect("replay should create a child execution");
+        assert_eq!(replayed_child_created_at, sim_clock.now());
         let child_execution_id = requested
             .captured_writes
             .iter_mut()
             .find_map(|write| match write {
-                CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } => {
+                CapturedDbWrite::AppendBatchCreateNewExecution {
+                    current_time,
+                    batch,
+                    child_req,
+                    ..
+                } => {
+                    *current_time = DateTime::UNIX_EPOCH;
+                    for req in batch.iter_mut() {
+                        req.created_at = DateTime::UNIX_EPOCH;
+                    }
                     for child in child_req.iter_mut() {
                         child.paused = true;
+                        child.created_at = DateTime::UNIX_EPOCH;
+                        child.scheduled_at = DateTime::UNIX_EPOCH;
                     }
                     child_req.first().map(|child| child.execution_id.clone())
                 }
                 _ => None,
             })
             .expect("replay should create a child execution");
+        sim_clock.move_time_forward(Duration::from_millis(100));
 
         let advance = WorkflowJsWorker::advance(
             deployment_id,
@@ -2578,6 +2625,7 @@ mod tests {
             db_pool.clone(),
             execution_id,
             None,
+            sim_clock.clone_box(),
             js_source.to_string(),
             requested,
         )
@@ -2596,5 +2644,14 @@ mod tests {
                 .pending_state,
             PendingState::Paused(_)
         );
+        let create_event = db_connection
+            .get_execution_event(&child_execution_id, &Version::new(0))
+            .await
+            .unwrap();
+        assert_eq!(create_event.created_at, sim_clock.now());
+        let ExecutionRequest::Created { scheduled_at, .. } = create_event.event else {
+            panic!("child execution log must start with Created");
+        };
+        assert_eq!(scheduled_at, sim_clock.now());
     }
 }

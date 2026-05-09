@@ -33,7 +33,7 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 1
     },
     {
-      "created_at": "1970-01-01T00:00:00Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
         "history_event": {
           "event": {
@@ -45,7 +45,7 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 2
     },
     {
-      "created_at": "1970-01-01T00:00:00Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
         "history_event": {
           "event": {

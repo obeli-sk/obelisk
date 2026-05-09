@@ -1799,6 +1799,7 @@ async fn execution_replay(
             state.db_pool.clone(),
             execution_id.clone(),
             logs_storage_config,
+            Now.clone_box(),
             js_info.js_source.clone(),
         )
         .await
@@ -1813,6 +1814,7 @@ async fn execution_replay(
             state.db_pool.clone(),
             execution_id.clone(),
             logs_storage_config,
+            Now.clone_box(),
         )
         .await
     };
@@ -1900,6 +1902,7 @@ async fn execution_upgrade(
                 state.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
+                Now.clone_box(),
                 js_info.js_source.clone(),
             )
             .await
@@ -1914,6 +1917,7 @@ async fn execution_upgrade(
                 state.db_pool.clone(),
                 execution_id.clone(),
                 logs_storage_config,
+                Now.clone_box(),
             )
             .await
         };

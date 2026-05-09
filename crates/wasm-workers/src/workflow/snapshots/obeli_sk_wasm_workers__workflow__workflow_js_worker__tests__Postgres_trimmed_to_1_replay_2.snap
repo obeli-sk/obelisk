@@ -1,15 +1,15 @@
 ---
 source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
-expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
+expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
 ---
 {
   "captured_writes": [
     {
       "AppendBatchCreateNewExecution": {
-        "current_time": "<TIMESTAMP>",
+        "current_time": "1970-01-01T00:00:00.300Z",
         "batch": [
           {
-            "created_at": "<TIMESTAMP>",
+            "created_at": "1970-01-01T00:00:00.300Z",
             "event": {
               "history_event": {
                 "event": {
@@ -17,7 +17,7 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
                   "join_set_id": "g:1",
                   "request": {
                     "type": "child_execution_request",
-                    "child_execution_id": "E_<REDACTED>",
+                    "child_execution_id": "E_00000000000000000000000001.g:1_1",
                     "target_ffqn": "testing:stub-activity/activity.foo",
                     "params": [
                       "test-input"
@@ -31,27 +31,27 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
             }
           }
         ],
-        "execution_id": "E_<REDACTED>",
+        "execution_id": "E_00000000000000000000000001",
         "version": 3,
         "child_req": [
           {
-            "created_at": "<TIMESTAMP>",
-            "execution_id": "E_<REDACTED>",
+            "created_at": "1970-01-01T00:00:00.300Z",
+            "execution_id": "E_00000000000000000000000001.g:1_1",
             "ffqn": "testing:stub-activity/activity.foo",
             "params": [
               "test-input"
             ],
             "parent": [
-              "E_<REDACTED>",
+              "E_00000000000000000000000001",
               "g:1"
             ],
-            "scheduled_at": "<TIMESTAMP>",
+            "scheduled_at": "1970-01-01T00:00:00.300Z",
             "component_id": {
               "component_type": "activity_stub",
               "name": "",
               "component_digest": "sha256:<REDACTED>"
             },
-            "deployment_id": "Dep_<REDACTED>",
+            "deployment_id": "Dep_00000000000000000000000000",
             "metadata": {},
             "scheduled_by": null,
             "paused": false
@@ -59,7 +59,7 @@ expression: "sanitize_json(&serde_json::to_value(&replay).unwrap())"
         ],
         "backtraces": [
           {
-            "execution_id": "E_<REDACTED>",
+            "execution_id": "E_00000000000000000000000001",
             "component_id": {
               "component_type": "workflow",
               "name": "test_js_workflow",
