@@ -1,4 +1,3 @@
-#![expect(clippy::needless_for_each)] // for #[openapi] annotation
 use crate::{
     command::server::{self, PreparedDirs, ServerVerified, SubmitError, SubmitOutcome},
     server::web_api_server::{
