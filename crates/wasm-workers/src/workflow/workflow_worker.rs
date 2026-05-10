@@ -3524,6 +3524,134 @@ pub(crate) mod tests {
         execution_log
     }
 
+    async fn execute_paused_workflow_until_finished_without_snapshots(
+        db_connection: &dyn DbConnectionTest,
+        harness: WorkflowAdvanceHarness,
+        sim_clock: &SimClock,
+        max_steps: usize,
+    ) -> ExecutionLog {
+        let mut steps = 0;
+
+        loop {
+            sim_clock.move_time_forward(Duration::from_millis(100));
+            let replay = WorkflowWorker::replay(
+                harness.deployment_id,
+                harness.workflow_component_id.clone(),
+                harness.workflow_runnable.wasmtime_component.clone(),
+                &harness.workflow_runnable.wasm_component.exim,
+                harness.workflow_engine.clone(),
+                harness.fn_registry.clone(),
+                harness.db_pool.clone(),
+                harness.execution_id.clone(),
+                harness.logs_storage_config.clone(),
+                sim_clock.clone_box(),
+            )
+            .await
+            .unwrap();
+
+            if replay.captured_writes.is_empty() {
+                if db_connection
+                    .get_finished_result(&harness.execution_id)
+                    .await
+                    .is_ok()
+                {
+                    return db_connection.get(&harness.execution_id).await.unwrap();
+                }
+                panic!("captured_writes must not be empty while stepping paused workflow");
+            }
+
+            steps += 1;
+            let advance = WorkflowWorker::advance(
+                harness.deployment_id,
+                harness.workflow_component_id.clone(),
+                harness.workflow_runnable.wasmtime_component.clone(),
+                &harness.workflow_runnable.wasm_component.exim,
+                harness.workflow_engine.clone(),
+                harness.fn_registry.clone(),
+                CancelRegistry::new(),
+                harness.db_pool.clone(),
+                harness.execution_id.clone(),
+                harness.logs_storage_config.clone(),
+                sim_clock.clone_box(),
+                replay,
+            )
+            .await
+            .unwrap();
+            assert_eq!(advance.outcome, AdvanceOutcome::Applied);
+
+            if db_connection
+                .get_finished_result(&harness.execution_id)
+                .await
+                .is_ok()
+            {
+                return db_connection.get(&harness.execution_id).await.unwrap();
+            }
+
+            assert!(
+                steps < max_steps,
+                "execution did not finish after {steps} replay+advance steps",
+            );
+        }
+    }
+
+    fn normalize_scoped_id(raw: &str) -> String {
+        raw.split_once('.')
+            .map(|(_, suffix)| suffix)
+            .unwrap_or(raw)
+            .to_string()
+    }
+
+    fn normalized_cancellable_request_order(execution_log: &ExecutionLog) -> Vec<String> {
+        execution_log
+            .events
+            .iter()
+            .filter_map(|event| match &event.event {
+                ExecutionRequest::HistoryEvent {
+                    event:
+                        HistoryEvent::JoinSetRequest {
+                            request:
+                                JoinSetRequest::ChildExecutionRequest {
+                                    child_execution_id, ..
+                                },
+                            ..
+                        },
+                } => Some(format!(
+                    "child:{}",
+                    normalize_scoped_id(&child_execution_id.to_string())
+                )),
+                ExecutionRequest::HistoryEvent {
+                    event:
+                        HistoryEvent::JoinSetRequest {
+                            request: JoinSetRequest::DelayRequest { delay_id, .. },
+                            ..
+                        },
+                } => Some(format!(
+                    "delay:{}",
+                    normalize_scoped_id(&delay_id.to_string())
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn normalized_response_order(execution_log: &ExecutionLog) -> Vec<String> {
+        execution_log
+            .responses
+            .iter()
+            .map(|response| match &response.event.event.event {
+                JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id, ..
+                } => format!(
+                    "child:{}",
+                    normalize_scoped_id(&child_execution_id.to_string())
+                ),
+                JoinSetResponse::DelayFinished { delay_id, .. } => {
+                    format!("delay:{}", normalize_scoped_id(&delay_id.to_string()))
+                }
+            })
+            .collect()
+    }
+
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
@@ -3580,6 +3708,146 @@ pub(crate) mod tests {
             db,
         )
         .await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn stub_join_set_close_cancellation_order_matches_advance(db: db_tests::Database) {
+        const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::JOIN_SET_CLOSE_CANCELLATION_ORDER,
+        );
+
+        test_utils::set_up();
+        let sim_clock = SimClock::epoch();
+        let (_guard, db_pool, db_close) = db.set_up().await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW)
+                .await,
+        ]);
+
+        let direct_worker = compile_workflow_worker(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            CancelRegistry::new(),
+        )
+        .await;
+        let direct_execution_id = ExecutionId::from_parts(0, 100);
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: direct_execution_id.clone(),
+                ffqn: FFQN,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: direct_worker.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        let direct_exec_task = ExecTask::new_test(
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: TICK_SLEEP,
+                component_id: direct_worker.config.component_id.clone(),
+                task_limiter: None,
+                executor_id: ExecutorId::from_parts(0, 1),
+                retry_config: ComponentRetryConfig::WORKFLOW,
+                locking_strategy: LockingStrategy::ByComponentDigest,
+            },
+            direct_worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            Arc::new([FFQN]),
+        );
+
+        loop {
+            let executed = direct_exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await
+                .wait_for_tasks()
+                .await
+                .len();
+            if executed == 0 {
+                break;
+            }
+            assert_eq!(1, executed);
+        }
+        let direct_execution_log = db_connection.get(&direct_execution_id).await.unwrap();
+
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (workflow_runnable, workflow_component_id) = compile_workflow_with_engine(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            &workflow_engine,
+        )
+        .await;
+
+        let advance_execution_id = ExecutionId::from_parts(0, 101);
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: advance_execution_id.clone(),
+                ffqn: FFQN,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: workflow_component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let advance_execution_log = execute_paused_workflow_until_finished_without_snapshots(
+            db_connection.as_ref(),
+            WorkflowAdvanceHarness {
+                deployment_id: DeploymentId::generate(),
+                workflow_component_id,
+                workflow_runnable,
+                workflow_engine,
+                fn_registry,
+                db_pool: db_pool.clone(),
+                execution_id: advance_execution_id,
+                logs_storage_config: None,
+            },
+            &sim_clock,
+            16,
+        )
+        .await;
+
+        let expected_cancellation_order =
+            normalized_cancellable_request_order(&direct_execution_log)
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>();
+        assert_eq!(
+            expected_cancellation_order,
+            normalized_response_order(&direct_execution_log),
+            "direct execution must cancel in reverse creation order",
+        );
+        assert_eq!(
+            expected_cancellation_order,
+            normalized_response_order(&advance_execution_log),
+            "stepped replay+advance must match direct cancellation order",
+        );
+
+        drop(db_connection);
+        db_close.close().await;
     }
 
     #[expand_enum_database]

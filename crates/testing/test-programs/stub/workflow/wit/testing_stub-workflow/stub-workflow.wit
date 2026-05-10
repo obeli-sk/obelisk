@@ -17,6 +17,7 @@ interface workflow {
     await-next-produces-all-processed-error: func() -> result;
 
     join-next-in-scope: func() -> result;
+    join-set-close-cancellation-order: func() -> result;
 
     invoke-expect-execution-error: func() -> result;
 

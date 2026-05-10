@@ -490,6 +490,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         _current_time: DateTime<Utc>,
     ) -> Result<FlushOutcome, DbErrorWrite> {
         if self.collector.writes.is_empty() {
+            // any event here must be non-blocking as flush is called before a blocking event.
             Ok(FlushOutcome::Noop)
         } else {
             Ok(FlushOutcome::FlushedCache)
