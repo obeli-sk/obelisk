@@ -7,5 +7,5 @@ expression: "json!({\n    \"version\": advance.version.0, \"outcome\": format!(\
   "outcome": "Applied",
   "trim_to": 1,
   "requested_captured_writes_len": 1,
-  "replayed_captured_writes_len": 2
+  "replayed_captured_writes_len": 3
 }

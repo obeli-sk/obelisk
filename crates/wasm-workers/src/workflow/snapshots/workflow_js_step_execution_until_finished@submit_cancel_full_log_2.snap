@@ -68,24 +68,41 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 3
     },
     {
-      "created_at": "1970-01-01T00:00:00.400Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
         "history_event": {
           "event": {
             "type": "join_next",
             "join_set_id": "g:1",
-            "run_expires_at": "1970-01-01T00:00:00.400Z",
+            "run_expires_at": "1970-01-01T00:00:00.200Z",
             "requested_ffqn": null,
             "closing": true
           }
         }
       },
       "version": 4
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.400Z",
+      "event": {
+        "finished": {
+          "retval": {
+            "ok": {
+              "type": "result<string, string>",
+              "value": {
+                "ok": "\"done\""
+              }
+            }
+          },
+          "http_client_traces": null
+        }
+      },
+      "version": 5
     }
   ],
   "responses": [
     {
-      "created_at": "1970-01-01T00:00:00.400Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
         "join_set_id": "g:1",
         "event": {
@@ -103,11 +120,10 @@ expression: "ExecutionLogSanitized::from(log)"
   ],
   "next_version": 5,
   "pending_state": {
-    "status": "paused",
-    "PendingAt": {
-      "scheduled_at": "1970-01-01T00:00:00.400Z",
-      "last_lock": null
-    }
+    "status": "finished",
+    "version": 5,
+    "finished_at": "1970-01-01T00:00:00.400Z",
+    "result_kind": "ok"
   },
   "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 }

@@ -9,7 +9,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
         "created": {
-          "ffqn": "testing:stub-workflow/workflow.submit-race-join-next-stub-error",
+          "ffqn": "testing:stub-workflow/workflow.submit-race-join-next-stub",
           "params": [],
           "parent": null,
           "scheduled_at": "1970-01-01T00:00:00Z",
@@ -114,7 +114,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "event": {
             "type": "stub",
             "target_execution_id": "E_00000000000000000000000000.g:1_1",
-            "retval_hash": "01f33bf5f99c8ba5a8fb4e194e272437f7b426414fa5547ccc0c5d7ba27e3e64de",
+            "retval_hash": "014540df4f92201da31691d50e706d804f7735f1e4774247d0232a39b1c2805001",
             "result": {
               "Ok": null
             }
@@ -224,7 +224,10 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "child_execution_id": "E_00000000000000000000000000.g:1_1",
           "finished_version": 1,
           "result": {
-            "err": null
+            "ok": {
+              "type": "string",
+              "value": "ok"
+            }
           }
         }
       }

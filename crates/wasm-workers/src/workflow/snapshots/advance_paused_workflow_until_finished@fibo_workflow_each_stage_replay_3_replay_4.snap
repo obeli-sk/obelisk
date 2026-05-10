@@ -1,23 +1,21 @@
 ---
-source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
 expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
 ---
 {
   "captured_writes": [
     {
       "Append": {
-        "execution_id": "E_0000000000000000000000000A",
-        "version": 5,
+        "execution_id": "E_00000000000000000000000003",
+        "version": 9,
         "req": {
-          "created_at": "1970-01-01T00:00:00.300Z",
+          "created_at": "1970-01-01T00:00:01Z",
           "event": {
             "finished": {
               "retval": {
                 "ok": {
-                  "type": "result<string, string>",
-                  "value": {
-                    "ok": "\"done\""
-                  }
+                  "type": "u64",
+                  "value": 55
                 }
               },
               "http_client_traces": null

@@ -4262,6 +4262,7 @@ pub(crate) mod tests {
         let (_guard, db_pool, db_close) = db.set_up().await;
         Box::pin(fibo_workflow_each_stage_replay_inner(
             activity_iterations,
+            &format!("fibo_workflow_each_stage_replay_{activity_iterations}"),
             db_pool.clone(),
             sim_clock,
         ))
@@ -4271,9 +4272,12 @@ pub(crate) mod tests {
 
     async fn fibo_workflow_each_stage_replay_inner(
         activity_iterations: u32,
+        snapshot_name: &str,
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
     ) {
+        let deployment_id = DeploymentId::from_parts(0, u128::from(activity_iterations));
+        let execution_id = ExecutionId::from_parts(0, u128::from(activity_iterations));
         test_utils::set_up();
 
         let workflow_engine =
@@ -4299,8 +4303,6 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
-        // Create an execution.
-        let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -4319,17 +4321,21 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
-                paused: false,
+                paused: true,
             })
             .await
             .unwrap();
         let activity_iterations = usize::try_from(activity_iterations).unwrap();
 
         let (log_sender, _log_storage_recv) = mpsc::channel(100);
+        let logs_storage_config = Some(LogStrageConfig {
+            min_level: concepts::storage::LogLevel::Debug,
+            log_sender: log_sender.clone(),
+        });
         // Replay just after creating - execution is unfinished with no events,
         // preview should return the first event(s) the workflow would produce.
         let replay = WorkflowWorker::replay(
-            DeploymentId::generate(),
+            deployment_id,
             workflow_exec.config.component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
@@ -4337,10 +4343,7 @@ pub(crate) mod tests {
             fn_registry.clone(),
             db_pool.clone(),
             execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
+            logs_storage_config.clone(),
             sim_clock.clone_box(),
         )
         .await
@@ -4369,45 +4372,6 @@ pub(crate) mod tests {
         }
         assert_matches!(next_events.last().unwrap(), HistoryEvent::JoinNext { .. });
 
-        info!("Should end as BlockedByJoinSet");
-
-        let executed_workflows = workflow_exec
-            .tick_test(sim_clock.now(), RunId::generate())
-            .await;
-
-        assert_eq!(1, executed_workflows.wait_for_tasks().await.len());
-
-        // Replay before activity has finished - workflow is blocked by JoinNext,
-        // no response available, so preview cannot produce new events.
-        let replay = WorkflowWorker::replay(
-            DeploymentId::generate(),
-            workflow_exec.config.component_id.clone(),
-            workflow_runnable.wasmtime_component.clone(),
-            &workflow_runnable.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
-            sim_clock.clone_box(),
-        )
-        .await
-        .unwrap();
-
-        assert!(
-            replay.captured_writes.is_empty(),
-            "unexpected captured_writes: {:?}",
-            replay.captured_writes
-        );
-        assert!(
-            replay.return_value().is_none(),
-            "workflow should not have completed yet"
-        );
-
-        // Run all activities to completion.
         let activity_exec = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
@@ -4415,68 +4379,25 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
-        for _ in 0..activity_iterations {
-            let executed_activities = activity_exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await;
-            assert_eq!(1, executed_activities.len());
-        }
-
-        // Replay after all activities have finished but before the response was processed.
-        // With activity_iterations=1, the workflow completes → return_value is set, no captured_writes.
-        // With activity_iterations>1, the replay is interrupted at FlushedCache after processing
-        // the first response, so return_value is None and captured_writes contains one step.
-        let replay = WorkflowWorker::replay(
-            DeploymentId::generate(),
-            workflow_exec.config.component_id.clone(),
-            workflow_runnable.wasmtime_component.clone(),
-            &workflow_runnable.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
-            sim_clock.clone_box(),
+        let (_steps, _saw_trimmed_preview, res) = advance_paused_workflow_until_finished(
+            &*db_connection,
+            WorkflowAdvanceHarness {
+                deployment_id,
+                workflow_component_id: workflow_exec.config.component_id.clone(),
+                workflow_runnable: workflow_runnable.clone(),
+                workflow_engine: workflow_engine.clone(),
+                fn_registry: fn_registry.clone(),
+                db_pool: db_pool.clone(),
+                execution_id: execution_id.clone(),
+                logs_storage_config: logs_storage_config.clone(),
+            },
+            snapshot_name,
+            None,
+            Some(&activity_exec),
+            &sim_clock,
+            32,
         )
-        .await
-        .unwrap();
-        if activity_iterations == 1 {
-            assert!(
-                replay.return_value().is_some(),
-                "single iteration: workflow completes during replay"
-            );
-        } else {
-            // Replay is interrupted at FlushedCache after processing one response.
-            assert!(
-                !replay.captured_writes.is_empty(),
-                "multi iteration: replay should produce writes for one step"
-            );
-            assert!(
-                replay.return_value().is_none(),
-                "multi iteration: replay interrupted before completion"
-            );
-        }
-
-        sim_clock.move_time_forward(LOCK_EXPIRY_WORKFLOW); // another lock will be appended when the current one expires
-
-        let executed_workflows = workflow_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-
-        assert_eq!(1, executed_workflows.len());
-
-        let res = db_connection
-            .get_finished_result(&execution_id)
-            .await
-            .unwrap();
-        if activity_iterations == 1 {
-            // Compare prediction with reality
-            assert_eq!(replay.return_value().unwrap().clone(), res);
-        }
-
+        .await;
         let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
 
         let fibo = assert_matches!(res,
@@ -4485,7 +4406,7 @@ pub(crate) mod tests {
 
         // Replay after workflow was finished - return_value is present.
         let replay = WorkflowWorker::replay(
-            DeploymentId::generate(),
+            deployment_id,
             workflow_exec.config.component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
@@ -4493,10 +4414,7 @@ pub(crate) mod tests {
             fn_registry.clone(),
             db_pool.clone(),
             execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
+            logs_storage_config,
             sim_clock.clone_box(),
         )
         .await

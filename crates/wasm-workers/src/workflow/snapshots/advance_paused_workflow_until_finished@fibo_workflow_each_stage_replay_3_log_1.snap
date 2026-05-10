@@ -1,23 +1,24 @@
 ---
-source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
 expression: "ExecutionLogSanitized::from(log)"
 ---
 {
-  "execution_id": "E_0000000000000000000000000A",
+  "execution_id": "E_00000000000000000000000003",
   "events": [
     {
       "created_at": "1970-01-01T00:00:00Z",
       "event": {
         "created": {
-          "ffqn": "test:pkg/ifc.submit-and-return",
+          "ffqn": "testing:fibo-workflow/workflow.fiboa-concurrent",
           "params": [
-            []
+            10,
+            3
           ],
           "parent": null,
           "scheduled_at": "1970-01-01T00:00:00Z",
           "component_id": {
             "component_type": "workflow",
-            "name": "test_js_workflow",
+            "name": "",
             "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           },
           "deployment_id": "Dep_00000000000000000000000000",
@@ -53,7 +54,7 @@ expression: "ExecutionLogSanitized::from(log)"
             "join_set_id": "g:1",
             "request": {
               "type": "child_execution_request",
-              "child_execution_id": "E_0000000000000000000000000A.g:1_1",
+              "child_execution_id": "E_00000000000000000000000003.g:1_1",
               "target_ffqn": "testing:fibo/fibo.fibo",
               "params": [
                 10
@@ -68,62 +69,76 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 3
     },
     {
-      "created_at": "1970-01-01T00:00:00.400Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
         "history_event": {
           "event": {
-            "type": "join_next",
+            "type": "join_set_request",
             "join_set_id": "g:1",
-            "run_expires_at": "1970-01-01T00:00:00.400Z",
-            "requested_ffqn": null,
-            "closing": true
+            "request": {
+              "type": "child_execution_request",
+              "child_execution_id": "E_00000000000000000000000003.g:1_2",
+              "target_ffqn": "testing:fibo/fibo.fibo",
+              "params": [
+                10
+              ],
+              "result": {
+                "Ok": null
+              }
+            }
           }
         }
       },
       "version": 4
     },
     {
-      "created_at": "1970-01-01T00:00:00.600Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
-        "finished": {
-          "retval": {
-            "ok": {
-              "type": "result<string, string>",
-              "value": {
-                "ok": "\"done\""
+        "history_event": {
+          "event": {
+            "type": "join_set_request",
+            "join_set_id": "g:1",
+            "request": {
+              "type": "child_execution_request",
+              "child_execution_id": "E_00000000000000000000000003.g:1_3",
+              "target_ffqn": "testing:fibo/fibo.fibo",
+              "params": [
+                10
+              ],
+              "result": {
+                "Ok": null
               }
-            }
-          },
-          "http_client_traces": null
-        }
-      },
-      "version": 5
-    }
-  ],
-  "responses": [
-    {
-      "created_at": "1970-01-01T00:00:00.400Z",
-      "event": {
-        "join_set_id": "g:1",
-        "event": {
-          "type": "child_execution_finished",
-          "child_execution_id": "E_0000000000000000000000000A.g:1_1",
-          "finished_version": 1,
-          "result": {
-            "execution_error": {
-              "kind": "cancelled"
             }
           }
         }
-      }
+      },
+      "version": 5
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.200Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "join_next",
+            "join_set_id": "g:1",
+            "run_expires_at": "1970-01-01T00:00:00.200Z",
+            "requested_ffqn": "testing:fibo/fibo.fibo",
+            "closing": false
+          }
+        }
+      },
+      "version": 6
     }
   ],
-  "next_version": 5,
+  "responses": [],
+  "next_version": 7,
   "pending_state": {
-    "status": "finished",
-    "version": 5,
-    "finished_at": "1970-01-01T00:00:00.600Z",
-    "result_kind": "ok"
+    "status": "paused",
+    "BlockedByJoinSet": {
+      "join_set_id": "g:1",
+      "lock_expires_at": "1970-01-01T00:00:00.200Z",
+      "closing": false
+    }
   },
   "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 }

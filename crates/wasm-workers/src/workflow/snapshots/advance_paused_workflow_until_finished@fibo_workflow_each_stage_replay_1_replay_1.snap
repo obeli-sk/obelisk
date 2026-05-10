@@ -1,12 +1,12 @@
 ---
-source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
+source: crates/wasm-workers/src/workflow/workflow_worker.rs
 expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
 ---
 {
   "captured_writes": [
     {
       "Append": {
-        "execution_id": "E_0000000000000000000000000B",
+        "execution_id": "E_00000000000000000000000001",
         "version": 2,
         "req": {
           "created_at": "1970-01-01T00:00:00.100Z",
@@ -34,7 +34,7 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
                   "join_set_id": "g:1",
                   "request": {
                     "type": "child_execution_request",
-                    "child_execution_id": "E_0000000000000000000000000B.g:1_1",
+                    "child_execution_id": "E_00000000000000000000000001.g:1_1",
                     "target_ffqn": "testing:fibo/fibo.fibo",
                     "params": [
                       10
@@ -48,18 +48,18 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
             }
           }
         ],
-        "execution_id": "E_0000000000000000000000000B",
+        "execution_id": "E_00000000000000000000000001",
         "version": 3,
         "child_req": [
           {
             "created_at": "1970-01-01T00:00:00.100Z",
-            "execution_id": "E_0000000000000000000000000B.g:1_1",
+            "execution_id": "E_00000000000000000000000001.g:1_1",
             "ffqn": "testing:fibo/fibo.fibo",
             "params": [
               10
             ],
             "parent": [
-              "E_0000000000000000000000000B",
+              "E_00000000000000000000000001",
               "g:1"
             ],
             "scheduled_at": "1970-01-01T00:00:00.100Z",
@@ -68,45 +68,18 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
               "name": "",
               "component_digest": "sha256:<REDACTED>"
             },
-            "deployment_id": "Dep_00000000000000000000000000",
+            "deployment_id": "Dep_00000000000000000000000001",
             "metadata": {},
             "scheduled_by": null,
             "paused": false
           }
         ],
-        "backtraces": [
-          {
-            "execution_id": "E_0000000000000000000000000B",
-            "component_id": {
-              "component_type": "workflow",
-              "name": "test_js_workflow",
-              "component_digest": "sha256:<REDACTED>"
-            },
-            "version_min_including": 3,
-            "version_max_excluding": 4,
-            "wasm_backtrace": {
-              "frames": [
-                {
-                  "module": "unknown",
-                  "func_name": "submit_and_return",
-                  "symbols": [
-                    {
-                      "func_name": null,
-                      "file": null,
-                      "line": 4,
-                      "col": 22
-                    }
-                  ]
-                }
-              ]
-            }
-          }
-        ]
+        "backtraces": []
       }
     },
     {
       "Append": {
-        "execution_id": "E_0000000000000000000000000B",
+        "execution_id": "E_00000000000000000000000001",
         "version": 4,
         "req": {
           "created_at": "1970-01-01T00:00:00.100Z",
@@ -116,8 +89,8 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
                 "type": "join_next",
                 "join_set_id": "g:1",
                 "run_expires_at": "1970-01-01T00:00:00.100Z",
-                "requested_ffqn": null,
-                "closing": true
+                "requested_ffqn": "testing:fibo/fibo.fibo",
+                "closing": false
               }
             }
           }
