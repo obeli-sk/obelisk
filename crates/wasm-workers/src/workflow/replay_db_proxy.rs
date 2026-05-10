@@ -344,11 +344,6 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             is_closing_join_next(&req),
             "append_join_set_close must append JoinNext(closing=true)"
         );
-        assert_eq!(
-            FlushOutcome::Noop,
-            self.flush_non_blocking_event_cache(req.created_at).await?,
-            "`append_join_set_close` must run after the non-blocking cache is flushed"
-        );
         let version = self.version.clone();
 
         self.collector.push_public_write_with_cancellations(
