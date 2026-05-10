@@ -523,17 +523,17 @@ impl EventHistory {
                         &ExecutionId::Derived(child_execution_id_derived.clone()),
                         called_at,
                     )
-                    .await
-                    .map(|_| ()); // CancelOutcome is not inspected, this would interfere with replay preview.
+                    .await;
                 if let Err(err) = res {
-                    debug!("Ignoring failure to cancel {child_execution_id_derived} - {err:?}");
+                    debug!(
+                        "Ignoring failure to cancel activity {child_execution_id_derived} - {err:?}"
+                    );
                 }
             } else if let ResponseId::DelayId(delay_id) = response_id {
                 debug!("Cancelling {delay_id}");
                 let res = db_connection
                     .cancel_delay(delay_id.clone(), called_at)
-                    .await
-                    .map(|_| ()); // CancelOutcome is not inspected, this would interfere with replay preview.
+                    .await;
                 if let Err(err) = res {
                     // This means that the watcher expired the delay in the mean time.
                     trace!("Ignoring failure to cancel {delay_id} - {err:?}");

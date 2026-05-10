@@ -10,7 +10,9 @@ use crate::workflow::caching_db_connection::{
     CachingBuffer, CachingDbConnection, WorkflowDbConnection,
 };
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
-use crate::workflow::replay_db_proxy::{ReplayWorkflowDbConnection, apply_writes};
+use crate::workflow::replay_db_proxy::{
+    InternalReplayResponse, ReplayWorkflowDbConnection, apply_writes,
+};
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
@@ -456,7 +458,7 @@ impl WorkflowWorker {
         log: ExecutionLog,
         ffqn: FunctionFqn,
         params: Params,
-    ) -> Result<Vec<CapturedDbWrite>, ReplayError> {
+    ) -> Result<InternalReplayResponse, ReplayError> {
         let replay_kind = if log.is_finished() {
             ReplayKind::Finished
         } else {
@@ -523,31 +525,38 @@ impl WorkflowWorker {
             .await?;
         info!(
             "Execution replay completed, captured writes: {}",
-            captured_writes.len(),
+            captured_writes.captured_writes.len(),
         );
         Ok(captured_writes)
     }
 
     pub(crate) async fn advance_from_log(
         db_conn: &dyn DbConnection,
+        cancel_registry: &CancelRegistry,
         requested: ReplayResponse,
-        fresh_replay: Vec<CapturedDbWrite>,
+        fresh_replay: InternalReplayResponse,
         old_version: Version,
     ) -> Result<AdvanceResponse, ReplayError> {
-        let outcome = if requested.is_prefix_of(&fresh_replay) {
+        let fresh_public_writes: Vec<_> = fresh_replay
+            .captured_writes
+            .iter()
+            .map(|write| write.public.clone())
+            .collect();
+        let outcome = if requested.is_prefix_of(&fresh_public_writes) {
             let writes_to_apply = merge_requested_overrides_into_fresh_prefix(
                 &requested.captured_writes,
-                &fresh_replay,
+                &fresh_replay.captured_writes,
             );
-            let new_version = apply_writes(db_conn, writes_to_apply, old_version).await?;
+            let new_version =
+                apply_writes(db_conn, cancel_registry, writes_to_apply, old_version).await?;
             AdvanceResponse {
                 version: new_version,
                 outcome: AdvanceOutcome::Applied,
             }
         } else {
             debug!(
-                "Mismatch between expected and actual captured writes. Requested: {:?}, fresh replay produced: {fresh_replay:?}",
-                requested.captured_writes
+                "Mismatch between expected and actual captured writes. Requested: {:?}, fresh replay produced: {fresh_public_writes:?}",
+                requested.captured_writes,
             );
             AdvanceResponse {
                 version: old_version,
@@ -974,7 +983,7 @@ impl WorkflowWorker {
         ctx: WorkerContext,
         replay_db_connection: ReplayWorkflowDbConnection,
         is_replay: ReplayKind,
-    ) -> Result<Vec<CapturedDbWrite>, ReplayError> {
+    ) -> Result<InternalReplayResponse, ReplayError> {
         let (return_value, replay_db_connection) = self
             .run_internal(ctx, Box::new(replay_db_connection), Some(is_replay))
             .await
@@ -1100,7 +1109,13 @@ impl WorkflowWorker {
             params,
         )
         .await?;
-        Ok(ReplayResponse { captured_writes })
+        Ok(ReplayResponse {
+            captured_writes: captured_writes
+                .captured_writes
+                .into_iter()
+                .map(|write| write.public)
+                .collect(),
+        })
     }
 
     /// Advance a paused workflow by one interrupt boundary.
@@ -1116,6 +1131,7 @@ impl WorkflowWorker {
         exim: &ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
@@ -1162,7 +1178,14 @@ impl WorkflowWorker {
         )
         .await?;
 
-        Self::advance_from_log(&*db_conn, requested, fresh_replay, old_version).await
+        Self::advance_from_log(
+            &*db_conn,
+            &cancel_registry,
+            requested,
+            fresh_replay,
+            old_version,
+        )
+        .await
     }
 }
 
@@ -4292,6 +4315,7 @@ pub(crate) mod tests {
                 &harness.workflow_runnable.wasm_component.exim,
                 harness.workflow_engine.clone(),
                 harness.fn_registry.clone(),
+                CancelRegistry::new(),
                 harness.db_pool.clone(),
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
@@ -4443,6 +4467,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
+            CancelRegistry::new(),
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
@@ -4461,6 +4486,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
+            CancelRegistry::new(),
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
@@ -4683,6 +4709,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine,
             fn_registry,
+            CancelRegistry::new(),
             db_pool.clone(),
             execution_id,
             None,

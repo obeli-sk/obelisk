@@ -14,34 +14,72 @@ use concepts::{
     prefixed_ulid::DelayId,
     storage::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
-        AppendResponseToExecution, BacktraceInfo, CancelOutcome, CapturedDbWrite, CreateRequest,
-        DbConnection, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
+        AppendResponseToExecution, BacktraceInfo, CapturedDbWrite, CreateRequest, DbConnection,
+        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
         ExecutionEvent, ExecutionRequest, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
         Version,
     },
 };
 use std::pin::Pin;
 use std::{any::Any, future::Future};
+use tracing::{debug, trace};
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ReplayHiddenEffect {
+    CancelActivity {
+        execution_id: ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    },
+    CancelDelay {
+        delay_id: DelayId,
+        cancelled_at: DateTime<Utc>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InternalCapturedWrite {
+    pub(crate) public: CapturedDbWrite,
+    pub(crate) hidden_effects_before_apply: Vec<ReplayHiddenEffect>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InternalReplayResponse {
+    pub(crate) captured_writes: Vec<InternalCapturedWrite>,
+}
 
 #[derive(Debug, Default)]
 struct ReplayEventCollector {
-    writes: Vec<CapturedDbWrite>,
+    writes: Vec<InternalCapturedWrite>,
 }
 
 impl ReplayEventCollector {
-    fn into_writes(self) -> Vec<CapturedDbWrite> {
-        self.writes
+    fn into_writes(self) -> InternalReplayResponse {
+        InternalReplayResponse {
+            captured_writes: self.writes,
+        }
+    }
+
+    fn push_public_write(
+        &mut self,
+        public: CapturedDbWrite,
+        hidden_effects_before_apply: Vec<ReplayHiddenEffect>,
+    ) {
+        self.writes.push(InternalCapturedWrite {
+            public,
+            hidden_effects_before_apply,
+        });
     }
 }
 
 pub(crate) async fn apply_writes(
     conn: &dyn DbConnection,
-    actual: Vec<CapturedDbWrite>,
+    cancel_registry: &CancelRegistry,
+    actual: Vec<InternalCapturedWrite>,
     old_version: Version,
 ) -> Result<Version, DbErrorWrite> {
     let mut version = old_version; // In case `actual` is empty, just return the old version.
     for write in &actual {
-        if let Some(v) = apply_captured_write(write, conn).await? {
+        if let Some(v) = apply_captured_write(write, conn, cancel_registry).await? {
             version = v;
         }
     }
@@ -49,10 +87,37 @@ pub(crate) async fn apply_writes(
 }
 
 async fn apply_captured_write(
-    write: &CapturedDbWrite,
+    write: &InternalCapturedWrite,
     conn: &dyn DbConnection,
+    cancel_registry: &CancelRegistry,
 ) -> Result<Option<Version>, DbErrorWrite> {
-    match write.clone() {
+    for hidden_effect in &write.hidden_effects_before_apply {
+        match hidden_effect {
+            ReplayHiddenEffect::CancelActivity {
+                execution_id,
+                cancelled_at,
+            } => {
+                let res = cancel_registry
+                    .cancel_activity(conn, execution_id, *cancelled_at)
+                    .await;
+                if let Err(err) = res {
+                    debug!("Ignoring failure to cancel activity {execution_id} - {err:?}");
+                }
+            }
+            ReplayHiddenEffect::CancelDelay {
+                delay_id,
+                cancelled_at,
+            } => {
+                let res = storage::cancel_delay(conn, delay_id.clone(), *cancelled_at).await;
+                if let Err(err) = res {
+                    // This means that the watcher expired the delay in the mean time.
+                    trace!("Ignoring failure to cancel {delay_id} - {err:?}");
+                }
+            }
+        }
+    }
+
+    match write.public.clone() {
         CapturedDbWrite::Append {
             execution_id,
             version,
@@ -102,6 +167,7 @@ async fn apply_captured_write(
 pub(crate) struct ReplayWorkflowDbConnection {
     execution_id: ExecutionId,
     collector: ReplayEventCollector,
+    pending_hidden_effects: Vec<ReplayHiddenEffect>,
     version: Version,
     real_connection: Box<dyn DbConnection>,
 }
@@ -115,17 +181,18 @@ impl ReplayWorkflowDbConnection {
         Self {
             execution_id,
             collector: ReplayEventCollector::default(),
+            pending_hidden_effects: Vec::new(),
             version,
             real_connection,
         }
     }
-    pub(crate) fn into_writes(self) -> Vec<CapturedDbWrite> {
+    pub(crate) fn into_writes(self) -> InternalReplayResponse {
         self.collector.into_writes()
     }
 
     /// Push a captured write and advance the version.
     pub(crate) fn push_write(&mut self, write: CapturedDbWrite) {
-        self.collector.writes.push(write);
+        self.collector.push_public_write(write, Vec::new());
     }
 
     pub(crate) fn version(&self) -> &Version {
@@ -141,6 +208,15 @@ fn next_version(curr_version: &Version, batch_size: usize) -> Version {
     Version::new(
         curr_version.0
             + u32::try_from(batch_size).expect("batch size is always just a couple of items"),
+    )
+}
+
+fn is_closing_join_next(req: &AppendRequest) -> bool {
+    matches!(
+        &req.event,
+        ExecutionRequest::HistoryEvent {
+            event: storage::HistoryEvent::JoinNext { closing: true, .. },
+        }
     )
 }
 
@@ -220,23 +296,32 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         _called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
         let (request, version, child_req, backtrace) = cacheable_event_parts(non_blocking_event);
+        assert!(
+            !is_closing_join_next(&request),
+            "closing join next is not appended using `append_non_blocking`"
+        );
+        let hidden_effects_before_apply = Vec::new();
         if let Some(child_req) = child_req {
-            self.collector
-                .writes
-                .push(CapturedDbWrite::AppendBatchCreateNewExecution {
+            self.collector.push_public_write(
+                CapturedDbWrite::AppendBatchCreateNewExecution {
                     current_time: _called_at,
                     batch: vec![request],
                     execution_id: self.execution_id.clone(),
                     version: version.clone(),
                     child_req: vec![child_req],
                     backtraces: backtrace.into_iter().collect(),
-                });
+                },
+                hidden_effects_before_apply,
+            );
         } else {
-            self.collector.writes.push(CapturedDbWrite::Append {
-                execution_id: self.execution_id.clone(),
-                version: version.clone(),
-                req: request,
-            });
+            self.collector.push_public_write(
+                CapturedDbWrite::Append {
+                    execution_id: self.execution_id.clone(),
+                    version: version.clone(),
+                    req: request,
+                },
+                hidden_effects_before_apply,
+            );
         }
         self.version = Version::new(version.0 + 1);
         Ok(())
@@ -251,11 +336,19 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
         let version = self.version.clone();
-        self.collector.writes.push(CapturedDbWrite::Append {
-            execution_id,
-            version: version.clone(),
-            req,
-        });
+        let hidden_effects_before_apply = if is_closing_join_next(&req) {
+            std::mem::take(&mut self.pending_hidden_effects)
+        } else {
+            Vec::new()
+        };
+        self.collector.push_public_write(
+            CapturedDbWrite::Append {
+                execution_id,
+                version: version.clone(),
+                req,
+            },
+            hidden_effects_before_apply,
+        );
         self.version = Version::new(version.0 + 1);
         Ok(())
     }
@@ -271,12 +364,22 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         assert_eq!(self.execution_id, execution_id);
         let version = self.version.clone();
         let next = next_version(&version, batch.len());
-        self.collector.writes.push(CapturedDbWrite::AppendBatch {
-            current_time,
-            batch,
-            execution_id,
-            version,
-        });
+        for request in &batch {
+            assert!(
+                !is_closing_join_next(&request),
+                "closing join next is not appended using `append_batch`"
+            );
+        }
+        let hidden_effects_before_apply = Vec::new();
+        self.collector.push_public_write(
+            CapturedDbWrite::AppendBatch {
+                current_time,
+                batch,
+                execution_id,
+                version,
+            },
+            hidden_effects_before_apply,
+        );
         self.version = next;
         Ok(())
     }
@@ -293,16 +396,24 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         assert_eq!(self.execution_id, execution_id);
         let version = self.version.clone();
         let next = next_version(&version, batch.len());
-        self.collector
-            .writes
-            .push(CapturedDbWrite::AppendBatchCreateNewExecution {
+        for request in &batch {
+            assert!(
+                !is_closing_join_next(&request),
+                "closing join next is not appended using `append_batch_create_new_execution`"
+            );
+        }
+        let hidden_effects_before_apply = Vec::new();
+        self.collector.push_public_write(
+            CapturedDbWrite::AppendBatchCreateNewExecution {
                 current_time,
                 batch,
                 execution_id,
                 version,
                 child_req,
                 backtraces: Vec::new(),
-            });
+            },
+            hidden_effects_before_apply,
+        );
         self.version = next;
         Ok(())
     }
@@ -333,13 +444,14 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             ));
         }
 
-        self.collector
-            .writes
-            .push(CapturedDbWrite::AppendStubResponse {
+        self.collector.push_public_write(
+            CapturedDbWrite::AppendStubResponse {
                 events,
                 response,
                 current_time,
-            });
+            },
+            Vec::new(),
+        );
         // no idea about the response
         Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt)
     }
@@ -385,20 +497,27 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     async fn cancel_activity(
         &mut self,
         _cancel_registry: &CancelRegistry,
-        _execution_id: &ExecutionId,
-        _cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        // During replay, always return Cancelled.
-        // `EventHistory::join_set_close` does not care about the value of `CancelOutcome`.
-        Ok(CancelOutcome::Cancelled)
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        self.pending_hidden_effects
+            .push(ReplayHiddenEffect::CancelActivity {
+                execution_id: execution_id.clone(),
+                cancelled_at,
+            });
+        Ok(())
     }
 
     async fn cancel_delay(
         &mut self,
-        _delay_id: DelayId,
-        _cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        // During replay, always return Cancelled.
-        Ok(CancelOutcome::Cancelled)
+        delay_id: DelayId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        self.pending_hidden_effects
+            .push(ReplayHiddenEffect::CancelDelay {
+                delay_id,
+                cancelled_at,
+            });
+        Ok(())
     }
 }

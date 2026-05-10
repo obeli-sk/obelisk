@@ -10,9 +10,9 @@ use concepts::{
     prefixed_ulid::DelayId,
     storage::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
-        AppendResponseToExecution, BacktraceInfo, CancelOutcome, CreateRequest, DbConnection,
-        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ResponseCursor,
-        ResponseWithCursor, TimeoutOutcome, Version,
+        AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorRead,
+        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ResponseCursor, ResponseWithCursor,
+        TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
@@ -95,13 +95,13 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         cancel_registry: &CancelRegistry,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite>;
+    ) -> Result<(), DbErrorWrite>; // CancelOutcome is not inspected, this would interfere with replay preview.
 
     async fn cancel_delay(
         &mut self,
         delay_id: DelayId,
         cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite>;
+    ) -> Result<(), DbErrorWrite>; // CancelOutcome is not inspected, this would interfere with replay preview.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -531,7 +531,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         cancel_registry: &CancelRegistry,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
+    ) -> Result<(), DbErrorWrite> {
         assert_eq!(
             FlushOutcome::Noop,
             self.flush_non_blocking_event_cache(cancelled_at).await?,
@@ -540,19 +540,22 @@ impl WorkflowDbConnection for CachingDbConnection {
         cancel_registry
             .cancel_activity(self.db_connection.as_ref(), execution_id, cancelled_at)
             .await
+            .map(|_| ())
     }
 
     async fn cancel_delay(
         &mut self,
         delay_id: DelayId,
         cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
+    ) -> Result<(), DbErrorWrite> {
         assert_eq!(
             FlushOutcome::Noop,
             self.flush_non_blocking_event_cache(cancelled_at).await?,
             "`cancel_delay` called only in `join_set_close_inner` after flush"
         );
-        storage::cancel_delay(self.db_connection.as_ref(), delay_id, cancelled_at).await
+        storage::cancel_delay(self.db_connection.as_ref(), delay_id, cancelled_at)
+            .await
+            .map(|_| ())
     }
 }
 

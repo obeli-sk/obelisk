@@ -402,7 +402,13 @@ impl WorkflowJsWorker {
             params,
         )
         .await?;
-        Ok(ReplayResponse { captured_writes })
+        Ok(ReplayResponse {
+            captured_writes: captured_writes
+                .captured_writes
+                .into_iter()
+                .map(|write| write.public)
+                .collect(),
+        })
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
@@ -414,6 +420,7 @@ impl WorkflowJsWorker {
         exim: &utils::wasm_tools::ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
@@ -457,7 +464,14 @@ impl WorkflowJsWorker {
             params,
         )
         .await?;
-        WorkflowWorker::advance_from_log(&*db_conn, requested, fresh_replay, old_version).await
+        WorkflowWorker::advance_from_log(
+            &*db_conn,
+            &cancel_registry,
+            requested,
+            fresh_replay,
+            old_version,
+        )
+        .await
     }
 }
 
@@ -2366,6 +2380,7 @@ mod tests {
                 logs_storage_config,
                 js_source: js_source.to_string(),
                 sim_clock,
+                idle_action: None,
             },
             format!("{database:?}_{snapshot_suffix}"),
             16,
@@ -2386,6 +2401,110 @@ mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database]
+    #[rstest]
+    #[case::full(None, "submit_cancel_full", 10)]
+    #[case::trimmed_to_1(Some(1), "submit_cancel_trimmed_to_1", 11)]
+    #[tokio::test]
+    async fn workflow_js_advance_submit_without_await_cancels_child_activity(
+        database: Database,
+        #[case] trim_to: Option<usize>,
+        #[case] snapshot_suffix: &str,
+        #[case] execution_idx: u16,
+    ) {
+        use concepts::ExecutionFailureKind;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function submit_and_return() {
+            const js = obelisk.createJoinSet();
+            js.submit('testing:fibo/fibo.fibo', [10]);
+            return 'done';
+        }";
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "submit-and-return");
+        let sim_clock = SimClock::epoch();
+
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        let deployment_id = DeploymentId::from_parts(0, 0);
+        let execution_id = ExecutionId::from_parts(0, execution_idx.into());
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let result = workflow_js_step_execution_until_finished(
+            &*db_connection,
+            WorkflowJsAdvanceHarness {
+                deployment_id,
+                component_id,
+                runnable_component,
+                workflow_engine,
+                fn_registry,
+                db_pool: db_pool.clone(),
+                execution_id: execution_id.clone(),
+                logs_storage_config: None,
+                js_source: js_source.to_string(),
+                sim_clock,
+                idle_action: None,
+            },
+            format!("{database:?}_{snapshot_suffix}"),
+            16,
+            trim_to,
+        )
+        .await;
+
+        assert_matches!(
+            result,
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType { value, .. }))
+                if format!("{value:?}") == "Result(Ok(Some(String(\"\\\"done\\\"\"))))"
+        );
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(1, log.responses.len(), "join set should be auto-closed");
+        let result = assert_matches!(
+            &log.responses[0].event.event.event,
+            JoinSetResponse::ChildExecutionFinished { result, .. } => result
+        );
+        let err = assert_matches!(result, SupportedFunctionReturnValue::ExecutionError(err) => err);
+        assert_matches!(err.kind, ExecutionFailureKind::Cancelled);
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
     #[derive(Clone)]
     struct WorkflowJsAdvanceHarness {
         deployment_id: DeploymentId,
@@ -2398,6 +2517,13 @@ mod tests {
         logs_storage_config: Option<LogStrageConfig>,
         js_source: String,
         sim_clock: SimClock,
+        idle_action: Option<WorkflowJsAdvanceIdleAction>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Copy)]
+    enum WorkflowJsAdvanceIdleAction {
+        TickFiboActivity,
     }
 
     async fn workflow_js_step_execution_until_finished(
@@ -2430,10 +2556,42 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(
-                !replay.captured_writes.is_empty(),
-                "captured_writes must not be empty while stepping paused JS workflow",
-            );
+            if replay.captured_writes.is_empty() {
+                if let Ok(finished_result) = db_connection
+                    .get_finished_result(&harness.execution_id)
+                    .await
+                {
+                    assert!(
+                        steps > 0,
+                        "step-through harness must execute at least one replay+advance round",
+                    );
+                    if trim_to.is_some() {
+                        assert!(
+                            saw_trimmed_preview,
+                            "test must exercise trimmed replay writes",
+                        );
+                    }
+                    return finished_result;
+                }
+                match harness.idle_action {
+                    Some(WorkflowJsAdvanceIdleAction::TickFiboActivity) => {
+                        let activity_exec = new_activity_fibo(
+                            harness.db_pool.clone(),
+                            harness.sim_clock.clone_box(),
+                            TokioSleep,
+                            LockingStrategy::ByComponentDigest,
+                        )
+                        .await;
+                        activity_exec
+                            .tick_test_await(harness.sim_clock.now(), RunId::generate())
+                            .await;
+                        continue;
+                    }
+                    None => panic!(
+                        "captured_writes must not be empty while stepping paused JS workflow"
+                    ),
+                }
+            }
 
             steps += 1;
             assert_json_snapshot!(
@@ -2457,6 +2615,7 @@ mod tests {
                 &harness.runnable_component.wasm_component.exim,
                 harness.workflow_engine.clone(),
                 harness.fn_registry.clone(),
+                CancelRegistry::new(),
                 harness.db_pool.clone(),
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
@@ -2623,6 +2782,7 @@ mod tests {
             &runnable_component.wasm_component.exim,
             workflow_engine,
             fn_registry,
+            CancelRegistry::new(),
             db_pool.clone(),
             execution_id,
             None,
@@ -2779,6 +2939,7 @@ mod tests {
             &runnable_component.wasm_component.exim,
             workflow_engine,
             fn_registry,
+            CancelRegistry::new(),
             db_pool.clone(),
             execution_id,
             None,

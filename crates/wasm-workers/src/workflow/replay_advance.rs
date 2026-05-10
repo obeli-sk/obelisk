@@ -1,3 +1,4 @@
+use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use chrono::DateTime;
 use concepts::storage::{
     AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CapturedDbWrite,
@@ -280,8 +281,8 @@ fn normalize_schedule_at_for_matching(
 
 pub(crate) fn merge_requested_overrides_into_fresh_prefix(
     requested: &[CapturedDbWrite],
-    fresh_replay: &[CapturedDbWrite],
-) -> Vec<CapturedDbWrite> {
+    fresh_replay: &[InternalCapturedWrite],
+) -> Vec<InternalCapturedWrite> {
     requested
         .iter()
         .zip(fresh_replay.iter())
@@ -291,9 +292,9 @@ pub(crate) fn merge_requested_overrides_into_fresh_prefix(
 
 pub(crate) fn merge_requested_overrides_into_fresh_write(
     requested: &CapturedDbWrite,
-    fresh: &CapturedDbWrite,
-) -> CapturedDbWrite {
-    match (requested, fresh) {
+    fresh: &InternalCapturedWrite,
+) -> InternalCapturedWrite {
+    match (requested, &fresh.public) {
         (
             CapturedDbWrite::AppendBatchCreateNewExecution {
                 child_req: requested_child_req,
@@ -305,7 +306,7 @@ pub(crate) fn merge_requested_overrides_into_fresh_write(
             let CapturedDbWrite::AppendBatchCreateNewExecution {
                 child_req: merged_child_req,
                 ..
-            } = &mut merged
+            } = &mut merged.public
             else {
                 unreachable!("matched variant must stay matched")
             };
