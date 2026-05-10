@@ -478,7 +478,8 @@ mod tests {
     use concepts::storage::{
         CapturedDbWrite, CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable,
         ExecutionRequest, HistoryEvent, JoinSetRequest, JoinSetResponse, Locked, PendingState,
-        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind, Version,
+        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStatePendingAt, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
@@ -2599,7 +2600,7 @@ mod tests {
                     child_req,
                     ..
                 } => {
-                    *current_time = DateTime::UNIX_EPOCH;
+                    *current_time = DateTime::UNIX_EPOCH; // modifying time in the advance request should have no effect.
                     for req in batch.iter_mut() {
                         req.created_at = DateTime::UNIX_EPOCH;
                     }
@@ -2648,10 +2649,167 @@ mod tests {
             .get_execution_event(&child_execution_id, &Version::new(0))
             .await
             .unwrap();
+        // Check that the current system time is used.
         assert_eq!(create_event.created_at, sim_clock.now());
         let ExecutionRequest::Created { scheduled_at, .. } = create_event.event else {
             panic!("child execution log must start with Created");
         };
         assert_eq!(scheduled_at, sim_clock.now());
+    }
+
+    #[tokio::test]
+    async fn advance_paused_js_workflow_uses_server_time_for_relative_schedule() {
+        test_utils::set_up();
+
+        let js_source = r"
+            export default function (_params) {
+                const execId = obelisk.executionIdGenerate();
+                obelisk.schedule(
+                    execId,
+                    'testing:stub-activity/activity.foo',
+                    ['scheduled-param'],
+                    { minutes: 5 },
+                );
+                return execId;
+            }
+        ";
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "schedule-relative");
+        let sim_clock = SimClock::epoch();
+        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            crate::activity::activity_worker::test::compile_activity_stub(
+                test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,
+            )
+            .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = ExecutionId::from_parts(0, 9003);
+        let created_at = sim_clock.now();
+
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let deployment_id = DeploymentId::from_parts(0, 0);
+        sim_clock.move_time_forward(Duration::from_millis(100));
+        let replay = WorkflowJsWorker::replay(
+            deployment_id,
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            None,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let mut requested = replay.clone();
+        let replayed_child_scheduled_at = requested
+            .captured_writes
+            .iter()
+            .find_map(|write| match write {
+                CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } => {
+                    child_req.first().map(|child| child.scheduled_at)
+                }
+                _ => None,
+            })
+            .expect("replay should create a scheduled execution");
+        assert_eq!(
+            replayed_child_scheduled_at,
+            sim_clock.now() + chrono::TimeDelta::minutes(5)
+        );
+        let child_execution_id = requested
+            .captured_writes
+            .iter_mut()
+            .find_map(|write| match write {
+                CapturedDbWrite::AppendBatchCreateNewExecution {
+                    current_time,
+                    batch,
+                    child_req,
+                    ..
+                } => {
+                    *current_time = DateTime::UNIX_EPOCH; // modifying time in the advance request should have no effect.
+                    for req in batch.iter_mut() {
+                        req.created_at = DateTime::UNIX_EPOCH;
+                    }
+                    for child in child_req.iter_mut() {
+                        child.created_at = DateTime::UNIX_EPOCH;
+                        child.scheduled_at = DateTime::UNIX_EPOCH;
+                    }
+                    child_req.first().map(|child| child.execution_id.clone())
+                }
+                _ => None,
+            })
+            .expect("replay should create a scheduled execution");
+        sim_clock.move_time_forward(Duration::from_millis(100));
+
+        let advance = WorkflowJsWorker::advance(
+            deployment_id,
+            component_id,
+            runnable_component.wasmtime_component,
+            &runnable_component.wasm_component.exim,
+            workflow_engine,
+            fn_registry,
+            db_pool.clone(),
+            execution_id,
+            None,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            requested,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            crate::workflow::workflow_worker::AdvanceOutcome::Applied,
+            advance.outcome
+        );
+        let expected_scheduled_at = sim_clock.now() + chrono::TimeDelta::minutes(5);
+        assert_matches!(
+            db_connection
+                .get_pending_state(&child_execution_id)
+                .await
+                .unwrap()
+                .pending_state,
+            PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) if scheduled_at == expected_scheduled_at
+        );
+        let create_event = db_connection
+            .get_execution_event(&child_execution_id, &Version::new(0))
+            .await
+            .unwrap();
+        assert_eq!(create_event.created_at, sim_clock.now());
+        let ExecutionRequest::Created { scheduled_at, .. } = create_event.event else {
+            panic!("scheduled execution log must start with Created");
+        };
+        assert_eq!(scheduled_at, expected_scheduled_at);
     }
 }
