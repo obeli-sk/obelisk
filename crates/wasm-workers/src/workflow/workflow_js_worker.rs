@@ -2382,7 +2382,7 @@ mod tests {
                 sim_clock,
                 idle_action: None,
             },
-            format!("{database:?}_{snapshot_suffix}"),
+            snapshot_suffix,
             16,
             trim_to,
         )
@@ -2480,7 +2480,7 @@ mod tests {
                 sim_clock,
                 idle_action: None,
             },
-            format!("{database:?}_{snapshot_suffix}"),
+            snapshot_suffix,
             16,
             trim_to,
         )
@@ -2529,7 +2529,7 @@ mod tests {
     async fn workflow_js_step_execution_until_finished(
         db_connection: &dyn DbConnectionTest,
         harness: WorkflowJsAdvanceHarness,
-        snapshot_prefix: String,
+        snapshot_prefix: &str,
         max_steps: usize,
         trim_to: Option<usize>,
     ) -> SupportedFunctionReturnValue {
