@@ -3313,6 +3313,7 @@ pub(crate) mod tests {
             FFQN,
             Some(Duration::from_millis(10)),
             db,
+            "two_delays_in_same_join_set",
         )
         .await;
     }
@@ -3329,6 +3330,7 @@ pub(crate) mod tests {
             FFQN,
             Some(Duration::from_millis(10)),
             db,
+            "join_next_produces_all_processed_error",
         )
         .await;
     }
@@ -3345,6 +3347,7 @@ pub(crate) mod tests {
             FFQN,
             None, // No delay needed - we want to test that join_next_try returns Pending immediately
             db,
+            "join_next_try_pending",
         )
         .await;
     }
@@ -3361,6 +3364,7 @@ pub(crate) mod tests {
             FFQN,
             None, // No delay needed
             db,
+            "join_next_try_all_processed",
         )
         .await;
     }
@@ -3377,6 +3381,7 @@ pub(crate) mod tests {
             FFQN,
             vec![Duration::from_millis(1), Duration::from_millis(9)], // Both delay requests should expire
             db,
+            "join_next_try_found",
         )
         .await;
     }
@@ -3386,9 +3391,16 @@ pub(crate) mod tests {
         ffqn: FunctionFqn,
         delay: Option<Duration>,
         db: db_tests::Database,
+        test_name: &'static str,
     ) -> ExecutionLog {
-        execute_workflow_fn_with_delays(workflow_wasm_path, ffqn, delay.into_iter().collect(), db)
-            .await
+        execute_workflow_fn_with_delays(
+            workflow_wasm_path,
+            ffqn,
+            delay.into_iter().collect(),
+            db,
+            test_name,
+        )
+        .await
     }
 
     async fn execute_workflow_fn_with_delays(
@@ -3396,6 +3408,7 @@ pub(crate) mod tests {
         ffqn: FunctionFqn,
         delays: Vec<Duration>,
         db: db_tests::Database,
+        test_name: &'static str,
     ) -> ExecutionLog {
         const MAX_RUNS: u128 = 100;
 
@@ -3517,8 +3530,13 @@ pub(crate) mod tests {
             .pending_state;
         assert_matches!(pending_state, PendingState::Finished { .. });
         let execution_log = db_connection.get(&execution_id).await.unwrap();
-        insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")},
-            {insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log.clone()))});
+        insta::with_settings!({
+            snapshot_suffix => test_name,
+            prepend_module_to_snapshot => false},
+            {
+                insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log.clone()))
+            }
+        );
         drop(db_connection);
         db_close.close().await;
         execution_log
@@ -3663,6 +3681,7 @@ pub(crate) mod tests {
             ),
             None,
             db,
+            "await_next_produces_all_processed_error"
         )
         .await;
     }
@@ -3680,6 +3699,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(ffqn_tuple),
             None,
             db,
+            "stub_submit_race_join_next_stub",
         )
         .await;
     }
@@ -3693,6 +3713,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_RACE_JOIN_NEXT_DELAY),
             Some(Duration::from_millis(10)),
             db,
+            "stub_submit_race_join_next_delay"
         )
         .await;
     }
@@ -3706,6 +3727,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::JOIN_NEXT_IN_SCOPE),
             None,
             db,
+            "execute_workflow_fn_with_single_delay"
         )
         .await;
     }
@@ -3859,6 +3881,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::STUB_NOT_FOUND),
             None,
             db,
+            "stub_not_found"
         )
         .await;
     }
@@ -4189,6 +4212,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_ACTIVITY_SUBMIT),
             None,
             db,
+            "sleep_activity_submit_should_cancel_the_activity"
         )
         .await;
         // There must be a single activity that is already cancelled
@@ -4212,6 +4236,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_ACTIVITY_SUBMIT_THEN_TRAP),
             None,
             db,
+            "sleep_activity_submit_then_trap_should_cancel_the_activity"
         )
         .await;
         // There must be a single activity that is already cancelled
@@ -4484,13 +4509,13 @@ pub(crate) mod tests {
 
     #[expand_enum_database]
     #[rstest]
-    #[case::full(None, "full", 0)]
-    #[case::trimmed_to_1(Some(1), "trimmed_to_1", 1)]
+    #[case::full(None, "advance_paused_workflow_full", 0)]
+    #[case::trimmed_to_1(Some(1), "advance_paused_workflow_trimmed_to_1", 1)]
     #[tokio::test]
     async fn advance_paused_workflow(
         db: Database,
         #[case] trim_to: Option<usize>,
-        #[case] snapshot_suffix: &str,
+        #[case] snapshot_name: &str,
         #[case] execution_idx: u128,
     ) {
         let sim_clock = SimClock::epoch();
@@ -4499,9 +4524,8 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock,
             trim_to,
-            snapshot_suffix,
+            snapshot_name,
             execution_idx,
-            &format!("{db:?}"),
         ))
         .await;
         db_close.close().await;
@@ -4522,7 +4546,7 @@ pub(crate) mod tests {
     async fn advance_paused_workflow_until_finished(
         db_connection: &dyn DbConnectionTest,
         harness: WorkflowAdvanceHarness,
-        snapshot_prefix: String,
+        test_name: &str,
         trim_to: Option<usize>,
         activity_exec: Option<&ExecTask>,
         sim_clock: &SimClock,
@@ -4564,9 +4588,12 @@ pub(crate) mod tests {
             }
 
             steps += 1;
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_replay_{steps}"),
-                redact_component_digest(serde_json::to_value(&replay).unwrap())
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_replay_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    insta::assert_json_snapshot!(redact_component_digest(serde_json::to_value(&replay).unwrap()))
+                }
             );
 
             let requested = match trim_to {
@@ -4594,21 +4621,28 @@ pub(crate) mod tests {
             .unwrap();
             assert_eq!(advance.outcome, AdvanceOutcome::Applied);
 
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_advance_{steps}"),
-                json!({
-                    "version": advance.version.0,
-                    "outcome": format!("{:?}", advance.outcome),
-                    "trim_to": trim_to,
-                    "requested_captured_writes_len": requested.captured_writes.len(),
-                    "replayed_captured_writes_len": replay.captured_writes.len(),
-                })
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_advance_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    insta::assert_json_snapshot!(json!({
+                        "version": advance.version.0,
+                        "outcome": format!("{:?}", advance.outcome),
+                        "trim_to": trim_to,
+                        "requested_captured_writes_len": requested.captured_writes.len(),
+                        "replayed_captured_writes_len": replay.captured_writes.len(),
+                    }))
+                }
             );
 
             let log = db_connection.get(&harness.execution_id).await.unwrap();
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_log_{steps}"),
-                ExecutionLogSanitized::from(log)
+
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_log_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    assert_json_snapshot!(ExecutionLogSanitized::from(log))
+                }
             );
 
             if let Ok(finished_result) = db_connection
@@ -4629,9 +4663,8 @@ pub(crate) mod tests {
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
         trim_to: Option<usize>,
-        snapshot_suffix: &str,
+        snapshot_name: &str,
         execution_idx: u128,
-        db_name: &str,
     ) {
         test_utils::set_up();
 
@@ -4781,7 +4814,7 @@ pub(crate) mod tests {
                 execution_id: execution_id.clone(),
                 logs_storage_config,
             },
-            format!("{db_name}_{snapshot_suffix}"),
+            snapshot_name,
             trim_to,
             Some(&activity_exec),
             &sim_clock,

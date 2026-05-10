@@ -2169,7 +2169,6 @@ mod tests {
     #[tokio::test]
     async fn workflow_js_replay_call_stub(database: Database) {
         use crate::activity::activity_worker::test::compile_activity_stub;
-        use insta::assert_json_snapshot;
 
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
@@ -2252,7 +2251,12 @@ mod tests {
         // With FlushedCache interruption, replay stops after the first cache flush.
         // The first flush covers JoinSetCreate and child execution submit.
         assert_eq!(2, replay.history_events().len());
-        assert_json_snapshot!(replay.history_events());
+        insta::with_settings!({
+            prepend_module_to_snapshot => false},
+            {
+                assert_json_snapshot!(replay.history_events())
+            }
+        );
 
         // Tick - should end with JoinNext
         // Tick the execution (which already has JoinSetCreate in the log) to completion.
@@ -2409,7 +2413,7 @@ mod tests {
     async fn workflow_js_advance_submit_without_await_cancels_child_activity(
         database: Database,
         #[case] trim_to: Option<usize>,
-        #[case] snapshot_suffix: &str,
+        #[case] test_name: &str,
         #[case] execution_idx: u16,
     ) {
         use concepts::ExecutionFailureKind;
@@ -2480,7 +2484,7 @@ mod tests {
                 sim_clock,
                 idle_action: None,
             },
-            snapshot_suffix,
+            test_name,
             16,
             trim_to,
         )
@@ -2529,7 +2533,7 @@ mod tests {
     async fn workflow_js_step_execution_until_finished(
         db_connection: &dyn DbConnectionTest,
         harness: WorkflowJsAdvanceHarness,
-        snapshot_prefix: &str,
+        test_name: &str,
         max_steps: usize,
         trim_to: Option<usize>,
     ) -> SupportedFunctionReturnValue {
@@ -2594,9 +2598,14 @@ mod tests {
             }
 
             steps += 1;
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_replay_{steps}"),
-                redact_component_digest(serde_json::to_value(&replay).unwrap())
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_replay_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    assert_json_snapshot!(
+                        redact_component_digest(serde_json::to_value(&replay).unwrap())
+                    )
+                }
             );
 
             let requested = match trim_to {
@@ -2627,21 +2636,29 @@ mod tests {
             .unwrap();
             assert_eq!(advance.outcome, AdvanceOutcome::Applied);
 
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_advance_{steps}"),
-                json!({
-                    "version": advance.version.0,
-                    "outcome": format!("{:?}", advance.outcome),
-                    "trim_to": trim_to,
-                    "requested_captured_writes_len": requested.captured_writes.len(),
-                    "replayed_captured_writes_len": replay.captured_writes.len(),
-                })
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_advance_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    assert_json_snapshot!(
+                        json!({
+                            "version": advance.version.0,
+                            "outcome": format!("{:?}", advance.outcome),
+                            "trim_to": trim_to,
+                            "requested_captured_writes_len": requested.captured_writes.len(),
+                            "replayed_captured_writes_len": replay.captured_writes.len(),
+                        })
+                    )
+                }
             );
 
             let log = db_connection.get(&harness.execution_id).await.unwrap();
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_log_{steps}"),
-                ExecutionLogSanitized::from(log)
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_log_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    assert_json_snapshot!(ExecutionLogSanitized::from(log))
+                }
             );
 
             if let Ok(finished_result) = db_connection
