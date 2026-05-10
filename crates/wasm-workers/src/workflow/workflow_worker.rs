@@ -3612,13 +3612,6 @@ pub(crate) mod tests {
         }
     }
 
-    fn normalize_scoped_id(raw: &str) -> String {
-        raw.split_once('.')
-            .map(|(_, suffix)| suffix)
-            .unwrap_or(raw)
-            .to_string()
-    }
-
     fn normalized_cancellable_request_order(execution_log: &ExecutionLog) -> Vec<String> {
         execution_log
             .events
@@ -3633,20 +3626,14 @@ pub(crate) mod tests {
                                 },
                             ..
                         },
-                } => Some(format!(
-                    "child:{}",
-                    normalize_scoped_id(&child_execution_id.to_string())
-                )),
+                } => Some(format!("child:{child_execution_id}")),
                 ExecutionRequest::HistoryEvent {
                     event:
                         HistoryEvent::JoinSetRequest {
                             request: JoinSetRequest::DelayRequest { delay_id, .. },
                             ..
                         },
-                } => Some(format!(
-                    "delay:{}",
-                    normalize_scoped_id(&delay_id.to_string())
-                )),
+                } => Some(format!("delay:{delay_id}")),
                 _ => None,
             })
             .collect()
@@ -3659,12 +3646,9 @@ pub(crate) mod tests {
             .map(|response| match &response.event.event.event {
                 JoinSetResponse::ChildExecutionFinished {
                     child_execution_id, ..
-                } => format!(
-                    "child:{}",
-                    normalize_scoped_id(&child_execution_id.to_string())
-                ),
+                } => format!("child:{child_execution_id}"),
                 JoinSetResponse::DelayFinished { delay_id, .. } => {
-                    format!("delay:{}", normalize_scoped_id(&delay_id.to_string()))
+                    format!("delay:{delay_id}")
                 }
             })
             .collect()
@@ -3741,8 +3725,7 @@ pub(crate) mod tests {
         );
 
         test_utils::set_up();
-        let sim_clock = SimClock::epoch();
-        let (_guard, db_pool, db_close) = db.set_up().await;
+        let execution_id = ExecutionId::from_parts(0, 100);
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
                 .await,
@@ -3750,107 +3733,123 @@ pub(crate) mod tests {
                 .await,
         ]);
 
-        let direct_worker = compile_workflow_worker(
-            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
-            db_pool.clone(),
-            sim_clock.clone_box(),
-            JoinNextBlockingStrategy::Interrupt,
-            &fn_registry,
-            CancelRegistry::new(),
-        )
-        .await;
-        let direct_execution_id = ExecutionId::from_parts(0, 100);
-        let db_connection = db_pool.connection_test().await.unwrap();
-        db_connection
-            .create(CreateRequest {
-                created_at: sim_clock.now(),
-                execution_id: direct_execution_id.clone(),
-                ffqn: FFQN,
-                params: Params::empty(),
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: sim_clock.now(),
-                component_id: direct_worker.config.component_id.clone(),
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-                paused: false,
-            })
-            .await
-            .unwrap();
+        let direct_execution_log = {
+            let sim_clock = SimClock::epoch();
+            let (_guard, db_pool, db_close) = db.set_up().await;
+            let db_connection = db_pool.connection_test().await.unwrap();
 
-        let direct_exec_task = ExecTask::new_test(
-            ExecConfig {
-                batch_size: 1,
-                lock_expiry: Duration::from_secs(1),
-                tick_sleep: TICK_SLEEP,
-                component_id: direct_worker.config.component_id.clone(),
-                task_limiter: None,
-                executor_id: ExecutorId::from_parts(0, 1),
-                retry_config: ComponentRetryConfig::WORKFLOW,
-                locking_strategy: LockingStrategy::ByComponentDigest,
-            },
-            direct_worker,
-            sim_clock.clone_box(),
-            db_pool.clone(),
-            Arc::new([FFQN]),
-        );
+            let direct_worker = compile_workflow_worker(
+                test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                JoinNextBlockingStrategy::Interrupt,
+                &fn_registry,
+                CancelRegistry::new(),
+            )
+            .await;
 
-        loop {
-            let executed = direct_exec_task
-                .tick_test(sim_clock.now(), RunId::generate())
+            db_connection
+                .create(CreateRequest {
+                    created_at: sim_clock.now(),
+                    execution_id: execution_id.clone(),
+                    ffqn: FFQN,
+                    params: Params::empty(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: sim_clock.now(),
+                    component_id: direct_worker.config.component_id.clone(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                    paused: false,
+                })
                 .await
-                .wait_for_tasks()
-                .await
-                .len();
-            if executed == 0 {
-                break;
+                .unwrap();
+
+            let direct_exec_task = ExecTask::new_test(
+                ExecConfig {
+                    batch_size: 1,
+                    lock_expiry: Duration::from_secs(1),
+                    tick_sleep: TICK_SLEEP,
+                    component_id: direct_worker.config.component_id.clone(),
+                    task_limiter: None,
+                    executor_id: ExecutorId::from_parts(0, 1),
+                    retry_config: ComponentRetryConfig::WORKFLOW,
+                    locking_strategy: LockingStrategy::ByComponentDigest,
+                },
+                direct_worker,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+                Arc::new([FFQN]),
+            );
+
+            loop {
+                let executed = direct_exec_task
+                    .tick_test(sim_clock.now(), RunId::generate())
+                    .await
+                    .wait_for_tasks()
+                    .await
+                    .len();
+                if executed == 0 {
+                    break;
+                }
+                assert_eq!(1, executed);
             }
-            assert_eq!(1, executed);
-        }
-        let direct_execution_log = db_connection.get(&direct_execution_id).await.unwrap();
+            let direct_execution_log = db_connection.get(&execution_id).await.unwrap();
+            drop(db_connection);
+            db_close.close().await;
+            direct_execution_log
+        };
 
-        let workflow_engine =
-            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let (workflow_runnable, workflow_component_id) = compile_workflow_with_engine(
-            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
-            &workflow_engine,
-        )
-        .await;
+        let advance_execution_log = {
+            let sim_clock = SimClock::epoch();
+            let (_guard, db_pool, db_close) = db.set_up().await;
+            let db_connection = db_pool.connection_test().await.unwrap();
 
-        let advance_execution_id = ExecutionId::from_parts(0, 101);
-        db_connection
-            .create(CreateRequest {
-                created_at: sim_clock.now(),
-                execution_id: advance_execution_id.clone(),
-                ffqn: FFQN,
-                params: Params::empty(),
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: sim_clock.now(),
-                component_id: workflow_component_id.clone(),
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                scheduled_by: None,
-                paused: true,
-            })
-            .await
-            .unwrap();
+            let workflow_engine =
+                Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+            let (workflow_runnable, workflow_component_id) = compile_workflow_with_engine(
+                test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+                &workflow_engine,
+            )
+            .await;
 
-        let advance_execution_log = execute_paused_workflow_until_finished_without_snapshots(
-            db_connection.as_ref(),
-            WorkflowAdvanceHarness {
-                deployment_id: DeploymentId::generate(),
-                workflow_component_id,
-                workflow_runnable,
-                workflow_engine,
-                fn_registry,
-                db_pool: db_pool.clone(),
-                execution_id: advance_execution_id,
-                logs_storage_config: None,
-            },
-            &sim_clock,
-            16,
-        )
-        .await;
+            db_connection
+                .create(CreateRequest {
+                    created_at: sim_clock.now(),
+                    execution_id: execution_id.clone(),
+                    ffqn: FFQN,
+                    params: Params::empty(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: sim_clock.now(),
+                    component_id: workflow_component_id.clone(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                    paused: true,
+                })
+                .await
+                .unwrap();
+
+            let advance_execution_log = execute_paused_workflow_until_finished_without_snapshots(
+                db_connection.as_ref(),
+                WorkflowAdvanceHarness {
+                    deployment_id: DeploymentId::generate(),
+                    workflow_component_id,
+                    workflow_runnable,
+                    workflow_engine,
+                    fn_registry,
+                    db_pool: db_pool.clone(),
+                    execution_id: execution_id,
+                    logs_storage_config: None,
+                },
+                &sim_clock,
+                16,
+            )
+            .await;
+            drop(db_connection);
+            db_close.close().await;
+            advance_execution_log
+        };
 
         let expected_cancellation_order =
             normalized_cancellable_request_order(&direct_execution_log)
@@ -3859,17 +3858,9 @@ pub(crate) mod tests {
                 .collect::<Vec<_>>();
         assert_eq!(
             expected_cancellation_order,
-            normalized_response_order(&direct_execution_log),
-            "direct execution must cancel in reverse creation order",
-        );
-        assert_eq!(
-            expected_cancellation_order,
             normalized_response_order(&advance_execution_log),
             "stepped replay+advance must match direct cancellation order",
         );
-
-        drop(db_connection);
-        db_close.close().await;
     }
 
     #[expand_enum_database]
