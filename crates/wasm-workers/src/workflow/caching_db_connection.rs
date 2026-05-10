@@ -1,13 +1,16 @@
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::{
     activity::cancel_registry::CancelRegistry,
-    workflow::event_history::DbErrorWriteOrReplayInterrupt,
+    workflow::{
+        event_history::DbErrorWriteOrReplayInterrupt,
+        host_exports::response_id::ResponseId,
+        replay_advance::{JoinSetCloseCancellations, is_closing_join_next},
+    },
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId,
-    prefixed_ulid::DelayId,
     storage::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
         AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorRead,
@@ -33,10 +36,21 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite>;
 
+    // Caller must trigger flushing before this call.
     async fn append_blocking(
         &mut self,
         execution_id: ExecutionId,
         req: AppendRequest,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_join_set_close(
+        &mut self,
+        cancel_registry: &CancelRegistry,
+        execution_id: ExecutionId,
+        req: AppendRequest,
+        cancellations: Option<JoinSetCloseCancellations>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite>;
@@ -89,19 +103,6 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         &mut self,
         current_time: DateTime<Utc>,
     ) -> Result<FlushOutcome, DbErrorWrite>;
-
-    async fn cancel_activity(
-        &mut self,
-        cancel_registry: &CancelRegistry,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<(), DbErrorWrite>; // CancelOutcome is not inspected, this would interfere with replay preview.
-
-    async fn cancel_delay(
-        &mut self,
-        delay_id: DelayId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<(), DbErrorWrite>; // CancelOutcome is not inspected, this would interfere with replay preview.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,6 +312,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         Ok(())
     }
 
+    // Caller must trigger flushing before this call.
     async fn append_blocking(
         &mut self,
         execution_id: ExecutionId,
@@ -318,6 +320,11 @@ impl WorkflowDbConnection for CachingDbConnection {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
+        assert_eq!(
+            FlushOutcome::Noop,
+            self.flush_non_blocking_event_cache(req.created_at).await?,
+            "`append_blocking` must be called on a flushed cache"
+        );
         let next_version = self
             .db_connection
             .append(execution_id, self.version.clone(), req)
@@ -354,6 +361,63 @@ impl WorkflowDbConnection for CachingDbConnection {
         .await;
         self.version = next_version;
         Ok(())
+    }
+
+    async fn append_join_set_close(
+        &mut self,
+        cancel_registry: &CancelRegistry,
+        execution_id: ExecutionId,
+        req: AppendRequest,
+        cancellations: Option<JoinSetCloseCancellations>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite> {
+        assert_eq!(self.execution_id, execution_id);
+        assert!(
+            is_closing_join_next(&req),
+            "append_join_set_close must append JoinNext(closing=true)"
+        );
+        assert_eq!(
+            FlushOutcome::Noop,
+            self.flush_non_blocking_event_cache(req.created_at).await?,
+            "`append_join_set_close` must run after the non-blocking cache is flushed"
+        );
+
+        // Activities and delays are cancelled in reverse order of creation.
+        if let Some(cancellations) = cancellations {
+            for response_id in cancellations.iterate_in_cancellation_order() {
+                match response_id {
+                    ResponseId::ChildExecutionId(child_execution_id_derived) => {
+                        let res = cancel_registry
+                            .cancel_activity(
+                                self.db_connection.as_ref(),
+                                &ExecutionId::Derived(child_execution_id_derived.clone()),
+                                cancellations.cancelled_at,
+                            )
+                            .await;
+                        if let Err(err) = res {
+                            debug!(
+                                "Ignoring failure to cancel activity {child_execution_id_derived} - {err:?}"
+                            );
+                        }
+                    }
+                    ResponseId::DelayId(delay_id) => {
+                        let res = storage::cancel_delay(
+                            self.db_connection.as_ref(),
+                            delay_id.clone(),
+                            cancellations.cancelled_at,
+                        )
+                        .await;
+                        if let Err(err) = res {
+                            debug!("Ignoring failure to cancel delay {delay_id} - {err:?}");
+                        }
+                    }
+                }
+            }
+        }
+
+        self.append_blocking(execution_id, req, wasm_backtrace, component_id)
+            .await
     }
 
     async fn append_batch_create_new_execution(
@@ -524,38 +588,6 @@ impl WorkflowDbConnection for CachingDbConnection {
         } else {
             Ok(FlushOutcome::Noop)
         }
-    }
-
-    async fn cancel_activity(
-        &mut self,
-        cancel_registry: &CancelRegistry,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<(), DbErrorWrite> {
-        assert_eq!(
-            FlushOutcome::Noop,
-            self.flush_non_blocking_event_cache(cancelled_at).await?,
-            "`cancel_activity` called only in `join_set_close_inner` after flush"
-        );
-        cancel_registry
-            .cancel_activity(self.db_connection.as_ref(), execution_id, cancelled_at)
-            .await
-            .map(|_| ())
-    }
-
-    async fn cancel_delay(
-        &mut self,
-        delay_id: DelayId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<(), DbErrorWrite> {
-        assert_eq!(
-            FlushOutcome::Noop,
-            self.flush_non_blocking_event_cache(cancelled_at).await?,
-            "`cancel_delay` called only in `join_set_close_inner` after flush"
-        );
-        storage::cancel_delay(self.db_connection.as_ref(), delay_id, cancelled_at)
-            .await
-            .map(|_| ())
     }
 }
 

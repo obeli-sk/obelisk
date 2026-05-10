@@ -235,7 +235,7 @@ pub(crate) mod response_id {
 
     pub(crate) const INVALID_CHILD_TYPE_FOR_DELAYS: ComponentType = ComponentType::WebhookEndpoint;
 
-    #[derive(Debug, PartialEq, Eq, Hash)]
+    #[derive(Debug, PartialEq, Eq, Hash, Clone)]
     pub(crate) enum ResponseId {
         ChildExecutionId(ExecutionIdDerived),
         DelayId(DelayId),

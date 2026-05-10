@@ -1,9 +1,42 @@
-use crate::workflow::replay_db_proxy::InternalCapturedWrite;
-use chrono::DateTime;
+use crate::workflow::{
+    host_exports::response_id::ResponseId, replay_db_proxy::InternalCapturedWrite,
+};
+use chrono::{DateTime, Utc};
 use concepts::storage::{
     AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CapturedDbWrite,
     CreateRequest, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest,
 };
+
+pub(crate) fn is_closing_join_next(req: &AppendRequest) -> bool {
+    matches!(
+        &req.event,
+        ExecutionRequest::HistoryEvent {
+            event: HistoryEvent::JoinNext { closing: true, .. },
+        }
+    )
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct JoinSetCloseCancellations {
+    /// `response_ids` in order of creation. Must be cancelled in reverse order. Contains only activities and delays.
+    response_ids: Vec<ResponseId>,
+    pub(crate) cancelled_at: DateTime<Utc>,
+}
+impl JoinSetCloseCancellations {
+    pub(crate) fn new(
+        response_ids: Vec<ResponseId>,
+        cancelled_at: DateTime<Utc>,
+    ) -> JoinSetCloseCancellations {
+        JoinSetCloseCancellations {
+            response_ids,
+            cancelled_at,
+        }
+    }
+
+    pub(crate) fn iterate_in_cancellation_order(&self) -> impl Iterator<Item = &ResponseId> {
+        self.response_ids.iter().rev()
+    }
+}
 
 pub(crate) fn requested_write_matches_fresh_replay(
     requested: &CapturedDbWrite,

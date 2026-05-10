@@ -2230,7 +2230,6 @@ pub(crate) mod workflow_support {
         > {
             JoinNext {
                 join_set_id,
-                closing: false,
                 wasm_backtrace,
             }
             .apply(
