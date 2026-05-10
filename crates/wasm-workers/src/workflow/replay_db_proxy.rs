@@ -344,6 +344,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             is_closing_join_next(&req),
             "append_join_set_close must append JoinNext(closing=true)"
         );
+        // only CachingDbConnection can assert the flush outcome as here `flush_non_blocking_event_cache` is stateless.
         let version = self.version.clone();
 
         self.collector.push_public_write_with_cancellations(

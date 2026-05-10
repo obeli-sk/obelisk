@@ -506,15 +506,14 @@ impl EventHistory {
 
         let join_next_count = response_ids.len();
         // Attempt to cancel activities and delays.
-        // Flush the DB cache, -submit requests might not have been written!
-        let flushed = db_connection
+        // Flush the DB cache as we are about to append a `JoinNext` event.
+        // Replay interruption correctness: the upcoming `JoinNext` will interrupt the replay.
+        // `JoinNext` event does not need a db read so it is not dependent on a previous yet unapplied write.
+        let _ = db_connection
             .flush_non_blocking_event_cache(called_at)
             .await?;
-        if self.replaying_unfinished_execution && flushed == FlushOutcome::FlushedCache {
-            return Err(ApplyError::ReplayWaitingForResponse);
-        }
         // Retain order, keep only activities and delays.
-        let response_ids: Vec<_> = response_ids
+        let activity_and_delay_ids: Vec<_> = response_ids
             .into_iter()
             .filter_map(|(response_id, component_type)| {
                 if matches!(response_id, ResponseId::DelayId(_)) || component_type.is_activity() {
@@ -524,10 +523,13 @@ impl EventHistory {
                 }
             })
             .collect();
-        let mut cancellations = if response_ids.is_empty() {
+        let mut cancellations = if activity_and_delay_ids.is_empty() {
             None
         } else {
-            Some(JoinSetCloseCancellations::new(response_ids, called_at))
+            Some(JoinSetCloseCancellations::new(
+                activity_and_delay_ids,
+                called_at,
+            ))
         };
         for _ in 0..join_next_count {
             let event_call = EventCall::Blocking(EventCallBlocking::JoinSetClose(JoinSetClose {
@@ -1648,7 +1650,8 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
-                // Replay interruption correctness: blocking requests will interrupt, no way join next can be dependent on a previous mocked write.
+                // Replay interruption correctness: the upcoming `JoinNext` will interrupt the replay.
+                // `JoinNext` event does not need a db read so it is not dependent on a previous yet unapplied write.
                 let _ = db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await?;
@@ -1691,6 +1694,11 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
+                // Replay interruption correctness: the upcoming `JoinNext` will interrupt the replay.
+                // `JoinNext` event does not need a db read so it is not dependent on a previous yet unapplied write.
+                let _ = db_connection
+                    .flush_non_blocking_event_cache(called_at)
+                    .await?;
                 db_connection
                     .append_join_set_close(
                         &self.cancel_registry,

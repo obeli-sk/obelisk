@@ -109,6 +109,8 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
 #[must_use]
 pub(crate) enum FlushOutcome {
     Noop,
+    // Only important during replay and only when interrupting stub before first db read, which
+    // may be dependent on an unapplied -submit.
     FlushedCache,
 }
 

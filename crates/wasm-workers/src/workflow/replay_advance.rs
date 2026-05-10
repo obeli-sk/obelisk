@@ -18,23 +18,23 @@ pub(crate) fn is_closing_join_next(req: &AppendRequest) -> bool {
 
 #[derive(Debug, Clone)]
 pub(crate) struct JoinSetCloseCancellations {
-    /// `response_ids` in order of creation. Must be cancelled in reverse order. Contains only activities and delays.
-    response_ids: Vec<ResponseId>,
+    /// Order based on creation. Must be cancelled in the reverse order.
+    activity_and_delay_ids: Vec<ResponseId>,
     pub(crate) cancelled_at: DateTime<Utc>,
 }
 impl JoinSetCloseCancellations {
     pub(crate) fn new(
-        response_ids: Vec<ResponseId>,
+        activity_and_delay_ids: Vec<ResponseId>,
         cancelled_at: DateTime<Utc>,
     ) -> JoinSetCloseCancellations {
         JoinSetCloseCancellations {
-            response_ids,
+            activity_and_delay_ids,
             cancelled_at,
         }
     }
 
     pub(crate) fn iterate_in_cancellation_order(&self) -> impl Iterator<Item = &ResponseId> {
-        self.response_ids.iter().rev()
+        self.activity_and_delay_ids.iter().rev()
     }
 }
 
