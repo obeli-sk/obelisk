@@ -3531,7 +3531,7 @@ pub(crate) mod tests {
         assert_matches!(pending_state, PendingState::Finished { .. });
         let execution_log = db_connection.get(&execution_id).await.unwrap();
         insta::with_settings!({
-            snapshot_suffix => test_name,
+            snapshot_suffix => format!("{test_name}-{}", ffqn.to_string().replace(':',"_")),
             prepend_module_to_snapshot => false},
             {
                 insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log.clone()))
