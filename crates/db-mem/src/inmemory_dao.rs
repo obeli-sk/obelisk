@@ -23,7 +23,7 @@ use concepts::storage::{
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use itertools::Either;
 use std::collections::BTreeMap;
 use std::panic::Location;
@@ -465,22 +465,23 @@ impl concepts::storage::DbConnectionTest for InMemoryDbConnection {
 }
 
 mod index {
-    use super::{BTreeMap, DateTime, ExecutionId, HashMap, HashSet, JoinSetId, PendingState, Utc};
+    use super::{BTreeMap, DateTime, ExecutionId, HashMap, JoinSetId, PendingState, Utc};
     use crate::journal::ExecutionJournal;
     use concepts::component_id::ComponentDigest;
     use concepts::prefixed_ulid::DelayId;
     use concepts::storage::{
         HistoryEvent, JoinSetRequest, JoinSetResponse, PendingStateLocked, PendingStatePendingAt,
     };
+    use std::collections::BTreeSet;
     use tracing::trace;
 
     #[derive(Debug, Default)]
     pub(super) struct JournalsIndex {
-        pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ExecutionId>>,
+        pending_scheduled: BTreeMap<DateTime<Utc>, BTreeSet<ExecutionId>>,
         pending_scheduled_rev: HashMap<ExecutionId, DateTime<Utc>>,
         #[expect(clippy::type_complexity)]
         // All open JoinSet Delays and Locks
-        timers: BTreeMap<DateTime<Utc>, HashMap<ExecutionId, Option<(JoinSetId, DelayId)>>>,
+        timers: BTreeMap<DateTime<Utc>, BTreeMap<ExecutionId, Option<(JoinSetId, DelayId)>>>,
         timers_rev: HashMap<ExecutionId, Vec<DateTime<Utc>>>,
     }
 
