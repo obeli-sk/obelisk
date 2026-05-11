@@ -6,8 +6,8 @@ use concepts::storage::{
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest,
     ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, JoinSetRequest,
     JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, Pagination,
-    PendingState, PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt,
-    ResponseCursor, TimeoutOutcome, Version, VersionType, WasmBacktrace,
+    PendingState, PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePaused,
+    PendingStatePendingAt, ResponseCursor, TimeoutOutcome, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
@@ -2006,15 +2006,10 @@ async fn delay_cancellation_should_be_idempotent(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn pause_and_unpause_should_work(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
-    let api_conn = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     let original_scheduled_at = sim_clock.now() + Duration::from_mins(1);
@@ -2037,8 +2032,15 @@ async fn pause_and_unpause_should_work(database: Database) {
         .unwrap();
 
     // Pause the execution
-    let next_version = api_conn
-        .pause_execution(&execution_id, sim_clock.now())
+    let next_version = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(Version(2), next_version);
@@ -2048,16 +2050,30 @@ async fn pause_and_unpause_should_work(database: Database) {
     assert_matches!(log.pending_state, PendingState::Paused(..));
 
     // Pausing again should return an error
-    let err = api_conn
-        .pause_execution(&execution_id, sim_clock.now())
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(2),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
         .await
         .unwrap_err();
     let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
     assert_eq!("cannot pause, execution is already paused", reason.as_ref());
 
     // Unpause the execution
-    let next_version = api_conn
-        .unpause_execution(&execution_id, sim_clock.now())
+    let next_version = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(2),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unpaused,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(Version(3), next_version);
@@ -2071,15 +2087,21 @@ async fn pause_and_unpause_should_work(database: Database) {
     }
 
     // Unpausing again should return an error
-    let err = api_conn
-        .unpause_execution(&execution_id, sim_clock.now())
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(3),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unpaused,
+            },
+        )
         .await
         .unwrap_err();
 
     let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
     assert_eq!("cannot unpause, execution is not paused", reason.as_ref());
 
-    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }
@@ -2088,15 +2110,10 @@ async fn pause_and_unpause_should_work(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn pause_finished_execution_should_fail(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
-    let api_conn = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     // Create
@@ -2134,8 +2151,15 @@ async fn pause_finished_execution_should_fail(database: Database) {
         .unwrap();
 
     // Pausing should return error
-    let err = api_conn
-        .pause_execution(&execution_id, sim_clock.now())
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(2),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
         .await
         .unwrap_err();
     assert_matches!(
@@ -2143,7 +2167,6 @@ async fn pause_finished_execution_should_fail(database: Database) {
         DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)
     );
 
-    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }
@@ -2152,15 +2175,10 @@ async fn pause_finished_execution_should_fail(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
-    let api_conn = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     // Create with current scheduled time (ready to run)
@@ -2200,8 +2218,15 @@ async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Da
         PendingState::Locked(PendingStateLocked{ locked_by, lock_expires_at }) => (locked_by, lock_expires_at));
     assert_eq!(lock_expires_at, found_lock_expires_at);
     // Pause the locked execution
-    api_conn
-        .pause_execution(&execution_id, sim_clock.now())
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(2),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
         .await
         .unwrap();
 
@@ -2210,8 +2235,15 @@ async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Da
     assert_matches!(log.pending_state, PendingState::Paused(..));
 
     // Unpause and verify it returns to the same state as before pausing.
-    api_conn
-        .unpause_execution(&execution_id, sim_clock.now())
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(3),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unpaused,
+            },
+        )
         .await
         .unwrap();
 
@@ -2222,7 +2254,6 @@ async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Da
     assert_eq!(lock_expires_at, found_lock_expires_at_2);
     assert_eq!(found_locked_by, found_locked_by_2);
 
-    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }
@@ -2231,15 +2262,10 @@ async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Da
 #[rstest]
 #[tokio::test]
 async fn cannot_lock_paused_execution(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
-    let api_conn = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     // Create with current scheduled time (ready to run)
@@ -2261,8 +2287,15 @@ async fn cannot_lock_paused_execution(database: Database) {
         .unwrap();
 
     // Pause the execution
-    api_conn
-        .pause_execution(&execution_id, sim_clock.now())
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
         .await
         .unwrap();
 
@@ -2285,24 +2318,19 @@ async fn cannot_lock_paused_execution(database: Database) {
     let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
     assert_eq!("cannot lock, execution is paused", reason.as_ref());
 
-    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }
+
 
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
 async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection_test().await.unwrap();
-    let api_conn = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     // Create execution
@@ -2372,7 +2400,7 @@ async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(d
     version = version.increment();
 
     // Append JoinNext - should make execution BlockedByJoinSet
-    db_connection
+    version = db_connection
         .append(
             execution_id.clone(),
             version,
@@ -2398,8 +2426,15 @@ async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(d
     );
 
     // Pause the execution
-    api_conn
-        .pause_execution(&execution_id, sim_clock.now())
+    version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
         .await
         .unwrap();
 
@@ -2428,8 +2463,15 @@ async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(d
     assert_matches!(log.pending_state, PendingState::Paused(..));
 
     // Unpause - should be pending since response arrived
-    api_conn
-        .unpause_execution(&execution_id, sim_clock.now())
+    db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unpaused,
+            },
+        )
         .await
         .unwrap();
 
@@ -2439,7 +2481,6 @@ async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(d
         PendingState::PendingAt(PendingStatePendingAt { .. })
     );
 
-    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }
@@ -2448,15 +2489,10 @@ async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(d
 #[rstest]
 #[tokio::test]
 async fn pause_with_pending_delay_then_response_then_unpause_should_be_pending(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection_test().await.unwrap();
-    let api_conn = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     // Create execution
@@ -2526,7 +2562,7 @@ async fn pause_with_pending_delay_then_response_then_unpause_should_be_pending(d
     version = version.increment();
 
     // Append JoinNext - should make execution BlockedByJoinSet
-    db_connection
+    version = db_connection
         .append(
             execution_id.clone(),
             version,
@@ -2552,8 +2588,15 @@ async fn pause_with_pending_delay_then_response_then_unpause_should_be_pending(d
     );
 
     // Pause the execution
-    api_conn
-        .pause_execution(&execution_id, sim_clock.now())
+    version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
         .await
         .unwrap();
 
@@ -2581,8 +2624,15 @@ async fn pause_with_pending_delay_then_response_then_unpause_should_be_pending(d
     assert_matches!(log.pending_state, PendingState::Paused(..));
 
     // Unpause - should be pending since response arrived
-    api_conn
-        .unpause_execution(&execution_id, sim_clock.now())
+    db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unpaused,
+            },
+        )
         .await
         .unwrap();
 
@@ -2592,7 +2642,6 @@ async fn pause_with_pending_delay_then_response_then_unpause_should_be_pending(d
         PendingState::PendingAt(PendingStatePendingAt { .. })
     );
 
-    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }
@@ -3785,15 +3834,10 @@ async fn list_logs_with_show_derived(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn create_paused_workflow(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
-    let api_conn = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     let scheduled_at = sim_clock.now();
@@ -3827,7 +3871,7 @@ async fn create_paused_workflow(database: Database) {
             DEPLOYMENT_ID_DUMMY,
             &execution_id,
             RunId::generate(),
-            Version::new(1),
+            Version::new(2),
             ExecutorId::generate(),
             sim_clock.now() + Duration::from_secs(30),
             ComponentRetryConfig::ZERO,
@@ -3838,8 +3882,15 @@ async fn create_paused_workflow(database: Database) {
     assert_eq!("cannot lock, execution is paused", reason.as_ref());
 
     // Unpause the execution
-    api_conn
-        .unpause_execution(&execution_id, sim_clock.now())
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(2),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unpaused,
+            },
+        )
         .await
         .unwrap();
 
@@ -3855,7 +3906,6 @@ async fn create_paused_workflow(database: Database) {
         panic!("Expected PendingAt state, got {:?}", log.pending_state);
     }
 
-    drop(api_conn);
     drop(db_connection);
     db_close.close().await;
 }
