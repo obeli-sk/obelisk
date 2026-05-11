@@ -949,6 +949,25 @@ impl TestServer {
             .into_inner()
     }
 
+    async fn webapi_submit_paused(
+        &self,
+        execution_id: &str,
+        ffqn: &str,
+        params: Vec<Value>,
+    ) -> reqwest::Response {
+        self.client
+            .put(format!("{}/v1/executions/{execution_id}", self.base_url))
+            .header("Accept", "application/json")
+            .json(&json!({
+                "ffqn": ffqn,
+                "params": params,
+                "paused": true,
+            }))
+            .send()
+            .await
+            .expect("submit paused request failed")
+    }
+
     async fn grpc_get_status_summary(
         &self,
         execution_id: &str,
@@ -1069,6 +1088,77 @@ impl TestServer {
             assert!(
                 !Self::is_finished(&summary),
                 "finished executions should return finished_result from AdvanceExecution"
+            );
+
+            assert!(
+                steps < max_steps,
+                "execution did not finish after {steps} replay+advance steps"
+            );
+        }
+    }
+
+    async fn webapi_step_execution_until_finished(
+        &self,
+        ffqn: &str,
+        params: Vec<Value>,
+        max_steps: usize,
+    ) -> GrpcAdvanceExecutionSummary {
+        let exec_id = self.generate_execution_id().await;
+        let submit = self.webapi_submit_paused(&exec_id, ffqn, params).await;
+        assert_eq!(submit.status().as_u16(), 201);
+
+        let mut steps = 0;
+        loop {
+            let replay = self.replay(&exec_id).await;
+            assert_eq!(replay.status().as_u16(), 200);
+            let replay_body: Value = replay.json().await.unwrap();
+            assert!(
+                replay_body["captured_writes"]
+                    .as_array()
+                    .is_some_and(|writes| !writes.is_empty()),
+                "captured_writes must not be empty while stepping {ffqn}"
+            );
+
+            steps += 1;
+            let advance = self
+                .client
+                .put(format!("{}/v1/executions/{exec_id}/advance", self.base_url))
+                .header("Accept", "application/json")
+                .json(&replay_body)
+                .send()
+                .await
+                .expect("advance request failed");
+            assert_eq!(
+                advance.status().as_u16(),
+                200,
+                "advance failed: {}",
+                advance.text().await.unwrap()
+            );
+            let advance_body: Value = advance.json().await.unwrap();
+            match advance_body["outcome"]["type"]
+                .as_str()
+                .expect("advance outcome type must be set")
+            {
+                "applied" => {
+                    if !advance_body["outcome"]["finished_result"].is_null() {
+                        return GrpcAdvanceExecutionSummary {
+                            steps,
+                            final_value_json: serde_json::to_vec(
+                                &advance_body["outcome"]["finished_result"]["ok"]["value"],
+                            )
+                            .unwrap(),
+                        };
+                    }
+                }
+                "version_mismatch" => panic!("advance returned version mismatch on step {steps}"),
+                "mismatch" => panic!("advance returned mismatch on step {steps}"),
+                other => panic!("unexpected advance outcome {other}"),
+            }
+
+            let status = self.get_status(&exec_id).await;
+            assert!(
+                status["current_status"]["status"]["finished"].is_null(),
+                "finished executions should return finished_result from advance"
             );
 
             assert!(
@@ -1288,6 +1378,27 @@ async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
 
     let stepped = server
         .grpc_step_execution_until_finished(
+            "testing:integration/workflow-call-stub.call-stub",
+            vec![json!(123_u64)],
+            16, // max_steps
+        )
+        .await;
+
+    assert!(
+        stepped.steps > 0,
+        "step-through harness must execute at least one replay+advance round"
+    );
+    assert_eq!(stepped.final_value_json, br#"{"ok":"\"stub-ok\""}"#);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn webapi_replay_and_advance_paused_js_workflow_until_finished() {
+    let server = TestServer::start(test_addr!(65)).await;
+
+    let stepped = server
+        .webapi_step_execution_until_finished(
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
             16, // max_steps

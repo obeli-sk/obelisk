@@ -599,6 +599,23 @@ pub(crate) enum Execution {
         api_url: String,
         /// Execution ID to replay.
         execution_id: ExecutionId,
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Advance a paused workflow execution by replaying it and applying the next captured writes.
+    Advance {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Execution ID to advance.
+        execution_id: ExecutionId,
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
+        /// Rewrite replayed submitted executions so they are created paused when advance is applied.
+        #[arg(long)]
+        pause_submitted: bool,
     },
     /// Upgrade a workflow execution to the current component version in the active deployment.
     ///
