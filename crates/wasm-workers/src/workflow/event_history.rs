@@ -35,6 +35,7 @@ use concepts::storage::AppendEventsToExecution;
 use concepts::storage::AppendResponseToExecution;
 use concepts::storage::BacktraceInfo;
 use concepts::storage::ChildExecutionRequestError;
+use concepts::storage::DbErrorRead;
 use concepts::storage::DbErrorReadWithTimeout;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbErrorWriteNonRetriable;
@@ -124,6 +125,14 @@ impl From<DbErrorWriteOrReplayInterrupt> for ApplyError {
             DbErrorWriteOrReplayInterrupt::ReplayInterrupt => ApplyError::ReplayWaitingForResponse,
         }
     }
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub(crate) enum DbErrorReadOrReplayInterrupt {
+    #[error(transparent)]
+    DbError(#[from] DbErrorRead),
+    #[error("replay interrupt")]
+    ReplayInterrupt,
 }
 
 #[expect(clippy::struct_field_names)]

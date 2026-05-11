@@ -3,6 +3,7 @@
 //! that the workflow would produce next.
 
 use super::caching_db_connection::{CacheableDbEvent, WorkflowDbConnection};
+use crate::workflow::event_history::DbErrorReadOrReplayInterrupt;
 use crate::workflow::host_exports::response_id::ResponseId;
 use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use crate::{
@@ -454,11 +455,18 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt)
     }
 
-    async fn get_create_request(
+    async fn get_stub_create_request(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead> {
-        self.real_connection.get_create_request(execution_id).await
+    ) -> Result<CreateRequest, DbErrorReadOrReplayInterrupt> {
+        if !self.collector.writes.is_empty() {
+            // This read may be dependent on an unflushed `-submit` request.
+            return Err(DbErrorReadOrReplayInterrupt::ReplayInterrupt);
+        }
+        self.real_connection
+            .get_create_request(execution_id)
+            .await
+            .map_err(DbErrorReadOrReplayInterrupt::DbError)
     }
 
     async fn get_execution_event(

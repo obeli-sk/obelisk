@@ -17,8 +17,8 @@ use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::workflow::caching_db_connection::FlushOutcome;
 use crate::workflow::deadline_tracker::EpochCallbackError;
 use crate::workflow::event_history::{
-    DbErrorWriteOrReplayInterrupt, JoinSetCreate, ScheduleIntent, StubIntent, StubIntentErr,
-    StubParams, SubmitChildIntent,
+    DbErrorReadOrReplayInterrupt, DbErrorWriteOrReplayInterrupt, JoinSetCreate, ScheduleIntent,
+    StubIntent, StubIntentErr, StubParams, SubmitChildIntent,
 };
 use crate::workflow::host_exports::latest::{self, DelayIdTypes, ExecutionIdTypes};
 use crate::workflow::host_exports::{
@@ -77,15 +77,15 @@ pub(crate) enum WorkflowFunctionError {
     LockExpired,
     #[error("executor closing")]
     ExecutorClosing,
-    #[error("replay waiting for response")]
-    ReplayWaitingForResponse,
+    #[error("replay interrupt")]
+    ReplayInterrupt,
 }
 impl From<DbErrorWriteOrReplayInterrupt> for WorkflowFunctionError {
     fn from(value: DbErrorWriteOrReplayInterrupt) -> Self {
         match value {
             DbErrorWriteOrReplayInterrupt::DbError(err) => WorkflowFunctionError::DbError(err),
             DbErrorWriteOrReplayInterrupt::ReplayInterrupt => {
-                WorkflowFunctionError::ReplayWaitingForResponse
+                WorkflowFunctionError::ReplayInterrupt
             }
         }
     }
@@ -131,9 +131,7 @@ impl WorkflowFunctionError {
             }
             WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
             WorkflowFunctionError::ExecutorClosing => WorkerPartialResult::ExecutorClosing,
-            WorkflowFunctionError::ReplayWaitingForResponse => {
-                WorkerPartialResult::ReplayWaitingForResponse
-            }
+            WorkflowFunctionError::ReplayInterrupt => WorkerPartialResult::ReplayWaitingForResponse,
         }
     }
 }
@@ -150,7 +148,7 @@ impl From<ApplyError> for WorkflowFunctionError {
                 WorkflowFunctionError::ConstraintViolation(reason)
             }
             ApplyError::ExecutorClosing => WorkflowFunctionError::ExecutorClosing,
-            ApplyError::ReplayWaitingForResponse => WorkflowFunctionError::ReplayWaitingForResponse,
+            ApplyError::ReplayWaitingForResponse => WorkflowFunctionError::ReplayInterrupt,
         }
     }
 }
@@ -512,17 +510,15 @@ impl StubFnCall<'_> {
     ) -> Result<StubIntent, WorkflowFunctionError> {
         // Flush the cache before getting the stub's create request, because it might be this execution's child - `-submit` that only lives in cache.
         // TODO(perf): Just search cache + db instead.
-        let flushed = ctx
+        let _ = ctx
             .db_connection
             .flush_non_blocking_event_cache(called_at)
             .await
             .map_err(WorkflowFunctionError::DbError)?;
-        if ctx.is_replay == Some(ReplayKind::Unfinished) && flushed == FlushOutcome::FlushedCache {
-            return Err(WorkflowFunctionError::ReplayWaitingForResponse);
-        }
+
         match ctx
             .db_connection
-            .get_create_request(&ExecutionId::Derived(target_execution_id))
+            .get_stub_create_request(&ExecutionId::Derived(target_execution_id))
             .await
         {
             Ok(create_req) if *target_ffqn == create_req.ffqn => {
@@ -536,8 +532,15 @@ impl StubFnCall<'_> {
                 "ffqn mismatch, code stubs {target_ffqn}, but execution was created with {}",
                 create_req.ffqn
             )))),
-            Err(DbErrorRead::NotFound) => Ok(StubIntent::Err(StubIntentErr::ExecutionNotFound)),
-            Err(err) => Err(WorkflowFunctionError::DbError(DbErrorWrite::from(err))), // intermittent error
+            Err(DbErrorReadOrReplayInterrupt::DbError(DbErrorRead::NotFound)) => {
+                Ok(StubIntent::Err(StubIntentErr::ExecutionNotFound))
+            }
+            Err(DbErrorReadOrReplayInterrupt::DbError(err)) => {
+                Err(WorkflowFunctionError::DbError(DbErrorWrite::from(err))) // intermittent error
+            }
+            Err(DbErrorReadOrReplayInterrupt::ReplayInterrupt) => {
+                Err(WorkflowFunctionError::ReplayInterrupt)
+            }
         }
     }
 
@@ -1941,8 +1944,8 @@ pub(crate) mod workflow_support {
     use crate::component_logger::log_activities::obelisk::log::log::Host as LogHost;
     use crate::workflow::caching_db_connection::FlushOutcome;
     use crate::workflow::event_history::{
-        DbErrorWriteOrReplayInterrupt, JoinNext, JoinNextTry, Persist, ScheduleIntent, StubIntent,
-        StubIntentErr, StubParams, SubmitDelay,
+        DbErrorReadOrReplayInterrupt, DbErrorWriteOrReplayInterrupt, JoinNext, JoinNextTry,
+        Persist, ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitDelay,
     };
     use crate::workflow::host_exports::latest::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
@@ -1951,7 +1954,7 @@ pub(crate) mod workflow_support {
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT, JoinSetCreateError, ReplayKind};
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
-    use concepts::storage::{DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, StubRetVal};
+    use concepts::storage::{DbErrorRead, HistoryEventScheduleAt, StubRetVal};
     use concepts::{CHARSET_ALPHANUMERIC, ComponentType, JoinSetId, JoinSetKind, Params};
     use concepts::{ExecutionId, ReturnType, SupportedFunctionReturnValue};
     use concepts::{FunctionFqn, storage};
@@ -2494,11 +2497,11 @@ pub(crate) mod workflow_support {
             // Look up the target function's FFQN
             let target_ffqn = match self
                 .db_connection
-                .get_create_request(&ExecutionId::Derived(target_execution_id.clone()))
+                .get_stub_create_request(&ExecutionId::Derived(target_execution_id.clone()))
                 .await
             {
                 Ok(create_req) => create_req.ffqn.clone(),
-                Err(DbErrorRead::NotFound) => {
+                Err(DbErrorReadOrReplayInterrupt::DbError(DbErrorRead::NotFound)) => {
                     return Ok((
                         StubIntent::Err(StubIntentErr::ExecutionNotFound),
                         StubParams {
@@ -2507,11 +2510,12 @@ pub(crate) mod workflow_support {
                         },
                     ));
                 }
-                Err(db_err) => {
-                    return Err(DbErrorWriteOrReplayInterrupt::DbError(DbErrorWrite::from(
-                        db_err,
-                    )));
-                } // intermittent error
+                Err(DbErrorReadOrReplayInterrupt::DbError(db_err)) => {
+                    return Err(DbErrorWriteOrReplayInterrupt::DbError(db_err.into())); // intermittent error
+                }
+                Err(DbErrorReadOrReplayInterrupt::ReplayInterrupt) => {
+                    return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
+                }
             };
 
             // Get the function metadata to determine the return type

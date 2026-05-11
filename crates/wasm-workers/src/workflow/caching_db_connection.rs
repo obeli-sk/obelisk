@@ -2,7 +2,7 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::{
     activity::cancel_registry::CancelRegistry,
     workflow::{
-        event_history::DbErrorWriteOrReplayInterrupt,
+        event_history::{DbErrorReadOrReplayInterrupt, DbErrorWriteOrReplayInterrupt},
         host_exports::response_id::ResponseId,
         replay_advance::{JoinSetCloseCancellations, is_closing_join_next},
     },
@@ -81,10 +81,10 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt>;
 
-    async fn get_create_request(
+    async fn get_stub_create_request(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead>;
+    ) -> Result<CreateRequest, DbErrorReadOrReplayInterrupt>;
 
     async fn get_execution_event(
         &self,
@@ -469,11 +469,14 @@ impl WorkflowDbConnection for CachingDbConnection {
             .map_err(DbErrorWriteOrReplayInterrupt::DbError)
     }
 
-    async fn get_create_request(
+    async fn get_stub_create_request(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead> {
-        self.db_connection.get_create_request(execution_id).await
+    ) -> Result<CreateRequest, DbErrorReadOrReplayInterrupt> {
+        self.db_connection
+            .get_create_request(execution_id)
+            .await
+            .map_err(DbErrorReadOrReplayInterrupt::DbError)
     }
 
     async fn get_execution_event(
