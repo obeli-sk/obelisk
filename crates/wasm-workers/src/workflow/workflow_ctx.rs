@@ -16,8 +16,8 @@ use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::workflow::deadline_tracker::EpochCallbackError;
 use crate::workflow::event_history::{
-    DbErrorReadOrReplayInterrupt, DbErrorWriteOrReplayInterrupt, JoinSetCreate, ScheduleIntent,
-    StubIntent, StubIntentErr, StubParams, SubmitChildIntent,
+    DbErrorWriteOrReplayInterrupt, JoinSetCreate, ScheduleIntent, StubIntent, StubIntentErr,
+    StubParams, SubmitChildIntent,
 };
 use crate::workflow::host_exports::latest::{self, DelayIdTypes, ExecutionIdTypes};
 use crate::workflow::host_exports::{
@@ -27,8 +27,8 @@ use crate::workflow::host_exports::{
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutionIdDerived};
 use concepts::storage::{
-    self, DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, Locked, LogLevel, ResponseWithCursor,
-    Version, WasmBacktrace,
+    self, DbErrorWrite, HistoryEventScheduleAt, Locked, LogLevel, ResponseWithCursor, Version,
+    WasmBacktrace,
 };
 use concepts::storage::{HistoryEvent, StubRetVal};
 use concepts::time::ClockFn;
@@ -523,13 +523,13 @@ impl StubFnCall<'_> {
                 "ffqn mismatch, code stubs {target_ffqn}, but execution was created with {}",
                 create_req.ffqn
             )))),
-            Err(DbErrorReadOrReplayInterrupt::DbError(DbErrorRead::NotFound)) => {
+            Err(DbErrorWriteOrReplayInterrupt::DbError(DbErrorWrite::NotFound)) => {
                 Ok(StubIntent::Err(StubIntentErr::ExecutionNotFound))
             }
-            Err(DbErrorReadOrReplayInterrupt::DbError(err)) => {
-                Err(WorkflowFunctionError::DbError(DbErrorWrite::from(err))) // intermittent error
+            Err(DbErrorWriteOrReplayInterrupt::DbError(err)) => {
+                Err(WorkflowFunctionError::DbError(err)) // intermittent error
             }
-            Err(DbErrorReadOrReplayInterrupt::ReplayInterrupt) => {
+            Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt) => {
                 Err(WorkflowFunctionError::ReplayInterrupt)
             }
         }
@@ -1934,8 +1934,8 @@ pub(crate) mod workflow_support {
     };
     use crate::component_logger::log_activities::obelisk::log::log::Host as LogHost;
     use crate::workflow::event_history::{
-        DbErrorReadOrReplayInterrupt, DbErrorWriteOrReplayInterrupt, JoinNext, JoinNextTry,
-        Persist, ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitDelay,
+        DbErrorWriteOrReplayInterrupt, JoinNext, JoinNextTry, Persist, ScheduleIntent, StubIntent,
+        StubIntentErr, StubParams, SubmitDelay,
     };
     use crate::workflow::host_exports::latest::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
@@ -1944,7 +1944,7 @@ pub(crate) mod workflow_support {
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT, JoinSetCreateError};
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
-    use concepts::storage::{DbErrorRead, HistoryEventScheduleAt, StubRetVal};
+    use concepts::storage::{DbErrorWrite, HistoryEventScheduleAt, StubRetVal};
     use concepts::{CHARSET_ALPHANUMERIC, ComponentType, JoinSetId, JoinSetKind, Params};
     use concepts::{ExecutionId, ReturnType, SupportedFunctionReturnValue};
     use concepts::{FunctionFqn, storage};
@@ -2483,7 +2483,7 @@ pub(crate) mod workflow_support {
                 .await
             {
                 Ok(create_req) => create_req.ffqn.clone(),
-                Err(DbErrorReadOrReplayInterrupt::DbError(DbErrorRead::NotFound)) => {
+                Err(DbErrorWriteOrReplayInterrupt::DbError(DbErrorWrite::NotFound)) => {
                     return Ok((
                         StubIntent::Err(StubIntentErr::ExecutionNotFound),
                         StubParams {
@@ -2492,10 +2492,10 @@ pub(crate) mod workflow_support {
                         },
                     ));
                 }
-                Err(DbErrorReadOrReplayInterrupt::DbError(db_err)) => {
-                    return Err(DbErrorWriteOrReplayInterrupt::DbError(db_err.into())); // intermittent error
+                Err(DbErrorWriteOrReplayInterrupt::DbError(db_err)) => {
+                    return Err(DbErrorWriteOrReplayInterrupt::DbError(db_err)); // intermittent error
                 }
-                Err(DbErrorReadOrReplayInterrupt::ReplayInterrupt) => {
+                Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt) => {
                     return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
                 }
             };
