@@ -2322,6 +2322,146 @@ async fn cannot_lock_paused_execution(database: Database) {
     db_close.close().await;
 }
 
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+
+    let lock_expiry = Duration::from_secs(30);
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + lock_expiry,
+        RunId::generate(),
+    )
+    .await;
+
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+
+    let child_execution_id = execution_id.next_level(&join_set_id);
+    version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: join_set_id.clone(),
+                        request: JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id,
+                            target_ffqn: SOME_FFQN,
+                            params: Params::empty(),
+                            result: Ok(()),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(log.pending_state, PendingState::Paused(..));
+
+    version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinNext {
+                        join_set_id: join_set_id.clone(),
+                        run_expires_at: sim_clock.now() + lock_expiry,
+                        closing: false,
+                        requested_ffqn: Some(SOME_FFQN),
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::Paused(PendingStatePaused::BlockedByJoinSet(
+            PendingStateBlockedByJoinSet {
+                join_set_id: actual_join_set_id,
+                ..
+            }
+        )) if actual_join_set_id == join_set_id
+    );
+
+    db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unpaused,
+            },
+        )
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
+            join_set_id: actual_join_set_id,
+            ..
+        }) if actual_join_set_id == join_set_id
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
 
 #[expand_enum_database]
 #[rstest]
