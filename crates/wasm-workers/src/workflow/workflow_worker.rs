@@ -839,23 +839,13 @@ impl WorkflowWorker {
             }
             WorkerResultRefactored::DbError(err) => Err(WorkflowError::DbError(err)),
             WorkerResultRefactored::LockExpired(mut workflow_ctx) => {
-                let called_at = workflow_ctx.clock_fn.now();
-                workflow_ctx
-                    .db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await
-                    .map_err(WorkflowError::DbError)?;
+                workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::LockExpired(
                     workflow_ctx.db_connection.version().clone(),
                 ))
             }
             WorkerResultRefactored::ExecutorClosing(mut workflow_ctx) => {
-                let called_at = workflow_ctx.clock_fn.now();
-                workflow_ctx
-                    .db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await
-                    .map_err(WorkflowError::DbError)?;
+                workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::ExecutorClosing(
                     workflow_ctx.db_connection.version().clone(),
                 ))

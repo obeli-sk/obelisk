@@ -82,8 +82,9 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
     ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt>;
 
     async fn get_stub_create_request(
-        &self,
+        &mut self,
         execution_id: &ExecutionId,
+        current_time: DateTime<Utc>,
     ) -> Result<CreateRequest, DbErrorReadOrReplayInterrupt>;
 
     async fn get_execution_event(
@@ -337,6 +338,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
+        self.flush_non_blocking_event_cache(current_time).await?;
         let next_version = self
             .db_connection
             .append_batch(current_time, batch, execution_id, self.version.clone())
@@ -414,6 +416,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
+        self.flush_non_blocking_event_cache(current_time).await?;
         let expected_next_version =
             Version(self.version.0 + u32::try_from(batch.len()).expect("max 3 won't overflow"));
         let backtrace_info = wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
@@ -453,9 +456,12 @@ impl WorkflowDbConnection for CachingDbConnection {
     }
 
     async fn get_stub_create_request(
-        &self,
+        &mut self,
         execution_id: &ExecutionId,
+        current_time: DateTime<Utc>,
     ) -> Result<CreateRequest, DbErrorReadOrReplayInterrupt> {
+        // Might be dependent on an cached -submit
+        self.flush_non_blocking_event_cache(current_time); // TODO(perf): Just search cache + db instead.
         self.db_connection
             .get_create_request(execution_id)
             .await
@@ -600,9 +606,7 @@ impl CachingDbConnection {
             let too_many = caching_buffer.non_blocking_event_batch.len()
                 >= caching_buffer.non_blocking_event_batch_size;
             if too_many {
-                // Ignore the outcome, this flush has no correctness implications
-                let _ = WorkflowDbConnection::flush_non_blocking_event_cache(self, current_time)
-                    .await?;
+                self.flush_non_blocking_event_cache(current_time).await?;
             }
         }
         Ok(())

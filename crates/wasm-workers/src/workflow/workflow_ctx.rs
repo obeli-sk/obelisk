@@ -507,16 +507,9 @@ impl StubFnCall<'_> {
         retval: SupportedFunctionReturnValue,
         called_at: DateTime<Utc>,
     ) -> Result<StubIntent, WorkflowFunctionError> {
-        // Flush the cache before getting the stub's create request, because it might be this execution's child - `-submit` that only lives in cache.
-        // TODO(perf): Just search cache + db instead.
-        ctx.db_connection
-            .flush_non_blocking_event_cache(called_at)
-            .await
-            .map_err(WorkflowFunctionError::DbError)?;
-
         match ctx
             .db_connection
-            .get_stub_create_request(&ExecutionId::Derived(target_execution_id))
+            .get_stub_create_request(&ExecutionId::Derived(target_execution_id), called_at)
             .await
         {
             Ok(create_req) if *target_ffqn == create_req.ffqn => {
@@ -2480,15 +2473,13 @@ pub(crate) mod workflow_support {
             retval: String,
             called_at: DateTime<Utc>,
         ) -> Result<(StubIntent, StubParams), DbErrorWriteOrReplayInterrupt> {
-            // Flush the cache before getting the stub's create request, because it might be this execution's child.
-            // TODO(perf): Just search cache + db instead.
-            self.db_connection
-                .flush_non_blocking_event_cache(called_at)
-                .await?;
             // Look up the target function's FFQN
             let target_ffqn = match self
                 .db_connection
-                .get_stub_create_request(&ExecutionId::Derived(target_execution_id.clone()))
+                .get_stub_create_request(
+                    &ExecutionId::Derived(target_execution_id.clone()),
+                    called_at,
+                )
                 .await
             {
                 Ok(create_req) => create_req.ffqn.clone(),

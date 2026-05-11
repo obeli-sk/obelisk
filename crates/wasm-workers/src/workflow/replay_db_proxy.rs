@@ -455,8 +455,9 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     }
 
     async fn get_stub_create_request(
-        &self,
+        &mut self,
         execution_id: &ExecutionId,
+        _current_time: DateTime<Utc>,
     ) -> Result<CreateRequest, DbErrorReadOrReplayInterrupt> {
         if !self.collector.writes.is_empty() {
             // This read may be dependent on an unflushed `-submit` request.

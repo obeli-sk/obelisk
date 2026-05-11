@@ -362,9 +362,6 @@ impl EventHistory {
         );
 
         db_connection
-            .flush_non_blocking_event_cache(called_at)
-            .await?;
-        db_connection
             .append_blocking(
                 db_connection.execution_id().clone(),
                 append_req,
@@ -514,10 +511,6 @@ impl EventHistory {
 
         let join_next_count = response_ids.len();
         // Attempt to cancel activities and delays.
-        // Flush the DB cache as we are about to append a `JoinNext` event.
-        db_connection
-            .flush_non_blocking_event_cache(called_at)
-            .await?;
         // Retain order, keep only activities and delays.
         let activity_and_delay_ids: Vec<_> = response_ids
             .into_iter()
@@ -1414,11 +1407,7 @@ impl EventHistory {
                 // Idempotently attempt to write to target_execution_id.
                 // The idempotent write is needed to avoid race with stub requests originating from remote systems.
                 debug!(target_execution_id = %params.target_execution_id, "StubRequest: first write");
-
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
-
+                // Flushed when doing
                 match intent {
                     StubIntent::Err(err) => {
                         let event = HistoryEvent::Stub {
@@ -1546,9 +1535,7 @@ impl EventHistory {
                             created_at: called_at,
                             event: ExecutionRequest::HistoryEvent { event },
                         };
-                        db_connection
-                            .flush_non_blocking_event_cache(called_at)
-                            .await?;
+
                         db_connection
                             .append_batch(
                                 called_at,
@@ -1626,7 +1613,7 @@ impl EventHistory {
                 join_set_id,
                 wasm_backtrace,
             }) => {
-                debug!(%join_set_id, "JoinNext(closing:false): Flushing and appending JoinNext");
+                debug!(%join_set_id, "JoinNext(closing:false): Appending JoinNext");
                 let event =
                     if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
                         HistoryEvent::JoinNext {
@@ -1646,9 +1633,6 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 db_connection
                     .append_blocking(
                         db_connection.execution_id().clone(),
@@ -1689,9 +1673,6 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
                 db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
-                db_connection
                     .append_join_set_close(
                         &self.cancel_registry,
                         db_connection.execution_id().clone(),
@@ -1730,9 +1711,6 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
 
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 db_connection
                     .append_blocking(
                         db_connection.execution_id().clone(),
@@ -1808,9 +1786,6 @@ impl EventHistory {
                 };
 
                 db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
-                db_connection
                     .append_batch_create_new_execution(
                         called_at,
                         vec![join_set, child_exec_req, join_next],
@@ -1869,9 +1844,6 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
 
-                db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 db_connection
                     .append_batch(
                         called_at,
