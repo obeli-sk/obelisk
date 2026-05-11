@@ -102,16 +102,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
     async fn flush_non_blocking_event_cache(
         &mut self,
         current_time: DateTime<Utc>,
-    ) -> Result<FlushOutcome, DbErrorWrite>;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use]
-pub(crate) enum FlushOutcome {
-    Noop,
-    // Only important during replay and only when interrupting stub before first db read, which
-    // may be dependent on an unapplied -submit.
-    FlushedCache,
+    ) -> Result<(), DbErrorWrite>;
 }
 
 pub(crate) struct CachingDbConnection {
@@ -322,11 +313,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
-        assert_eq!(
-            FlushOutcome::Noop,
-            self.flush_non_blocking_event_cache(req.created_at).await?,
-            "`append_blocking` must be called on a flushed cache"
-        );
+        self.flush_non_blocking_event_cache(req.created_at).await?;
         let next_version = self
             .db_connection
             .append(execution_id, self.version.clone(), req)
@@ -379,11 +366,7 @@ impl WorkflowDbConnection for CachingDbConnection {
             is_closing_join_next(&req),
             "append_join_set_close must append JoinNext(closing=true)"
         );
-        assert_eq!(
-            FlushOutcome::Noop,
-            self.flush_non_blocking_event_cache(req.created_at).await?,
-            "`append_join_set_close` must run after the non-blocking cache is flushed"
-        );
+        self.flush_non_blocking_event_cache(req.created_at).await?;
 
         // Activities and delays are cancelled in reverse order of creation.
         if let Some(cancellations) = cancellations {
@@ -504,7 +487,7 @@ impl WorkflowDbConnection for CachingDbConnection {
     async fn flush_non_blocking_event_cache(
         &mut self,
         current_time: DateTime<Utc>,
-    ) -> Result<FlushOutcome, DbErrorWrite> {
+    ) -> Result<(), DbErrorWrite> {
         if let Some(caching_buffer) = &mut self.caching_buffer
             && !caching_buffer.non_blocking_event_batch.is_empty()
         {
@@ -589,10 +572,8 @@ impl WorkflowDbConnection for CachingDbConnection {
                 .await?;
 
             debug!("Flushing the non-blocking event cache finished");
-            Ok(FlushOutcome::FlushedCache)
-        } else {
-            Ok(FlushOutcome::Noop)
         }
+        Ok(())
     }
 }
 

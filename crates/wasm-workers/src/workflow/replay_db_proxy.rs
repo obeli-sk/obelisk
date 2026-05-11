@@ -9,8 +9,7 @@ use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use crate::{
     activity::cancel_registry::CancelRegistry,
     workflow::{
-        caching_db_connection::FlushOutcome, event_history::DbErrorWriteOrReplayInterrupt,
-        replay_advance::is_closing_join_next,
+        event_history::DbErrorWriteOrReplayInterrupt, replay_advance::is_closing_join_next,
     },
 };
 use async_trait::async_trait;
@@ -492,12 +491,8 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     async fn flush_non_blocking_event_cache(
         &mut self,
         _current_time: DateTime<Utc>,
-    ) -> Result<FlushOutcome, DbErrorWrite> {
-        if self.collector.writes.is_empty() {
-            // any event here must be non-blocking as flush is called before a blocking event.
-            Ok(FlushOutcome::Noop)
-        } else {
-            Ok(FlushOutcome::FlushedCache)
-        }
+    ) -> Result<(), DbErrorWrite> {
+        // noop
+        Ok(())
     }
 }

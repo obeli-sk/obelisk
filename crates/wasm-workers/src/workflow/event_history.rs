@@ -8,7 +8,6 @@ use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::workflow::caching_db_connection::FlushOutcome;
 use crate::workflow::deadline_tracker::PreemptRequested;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
@@ -361,8 +360,8 @@ impl EventHistory {
             "Extending the lock at version {version}",
             version = db_connection.version()
         );
-        // Replay interruption correctness: Never extending a lock during replay.
-        let _ = db_connection
+
+        db_connection
             .flush_non_blocking_event_cache(called_at)
             .await?;
         db_connection
@@ -516,9 +515,7 @@ impl EventHistory {
         let join_next_count = response_ids.len();
         // Attempt to cancel activities and delays.
         // Flush the DB cache as we are about to append a `JoinNext` event.
-        // Replay interruption correctness: the upcoming `JoinNext` will interrupt the replay.
-        // `JoinNext` event does not need a db read so it is not dependent on a previous yet unapplied write.
-        let _ = db_connection
+        db_connection
             .flush_non_blocking_event_cache(called_at)
             .await?;
         // Retain order, keep only activities and delays.
@@ -1418,14 +1415,9 @@ impl EventHistory {
                 // The idempotent write is needed to avoid race with stub requests originating from remote systems.
                 debug!(target_execution_id = %params.target_execution_id, "StubRequest: first write");
 
-                let flushed = db_connection
+                db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await?;
-                assert_eq!(
-                    FlushOutcome::Noop,
-                    flushed,
-                    "get_stub_intent and get_stub_intent_and_params flushed before searching for the execution"
-                );
 
                 match intent {
                     StubIntent::Err(err) => {
@@ -1554,14 +1546,9 @@ impl EventHistory {
                             created_at: called_at,
                             event: ExecutionRequest::HistoryEvent { event },
                         };
-                        let flushed = db_connection
+                        db_connection
                             .flush_non_blocking_event_cache(called_at)
                             .await?;
-                        assert_eq!(
-                            FlushOutcome::Noop,
-                            flushed,
-                            "CachingDbConnection must have applied the first write directly to db, replay must have been interrupted unless first write is in db"
-                        );
                         db_connection
                             .append_batch(
                                 called_at,
@@ -1659,9 +1646,7 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
-                // Replay interruption correctness: the upcoming `JoinNext` will interrupt the replay.
-                // `JoinNext` event does not need a db read so it is not dependent on a previous yet unapplied write.
-                let _ = db_connection
+                db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await?;
                 db_connection
@@ -1703,9 +1688,7 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
-                // Replay interruption correctness: the upcoming `JoinNext` will interrupt the replay.
-                // `JoinNext` event does not need a db read so it is not dependent on a previous yet unapplied write.
-                let _ = db_connection
+                db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await?;
                 db_connection
@@ -1746,8 +1729,8 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
-                // Replay interruption correctness: blocking requests will interrupt, no way join next can be dependent on a previous mocked write.
-                let _ = db_connection
+
+                db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await?;
                 db_connection
@@ -1823,8 +1806,8 @@ impl EventHistory {
                     scheduled_by: None,
                     paused: false,
                 };
-                // Replay interruption correctness: blocking requests will interrupt, no way oneoff can be dependent on a previous mocked write.
-                let _ = db_connection
+
+                db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await?;
                 db_connection
@@ -1886,8 +1869,7 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
 
-                // Replay interruption correctness: blocking requests will interrupt, no way sleep can be dependent on a previous mocked write.
-                let _ = db_connection
+                db_connection
                     .flush_non_blocking_event_cache(called_at)
                     .await?;
                 db_connection
