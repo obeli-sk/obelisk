@@ -1914,7 +1914,12 @@ pub(crate) mod tests {
             .await
             .unwrap();
         let record = assert_matches!(res, SupportedFunctionReturnValue::Ok(record) => record);
-        assert_json_snapshot!(record);
+        insta::with_settings!({
+            prepend_module_to_snapshot => false},
+            {
+                assert_json_snapshot!(record);
+            }
+        );
         db_close.close().await;
     }
 
@@ -1983,7 +1988,13 @@ pub(crate) mod tests {
             .await
             .unwrap();
         let variant = assert_matches!(res, SupportedFunctionReturnValue::Ok(variant) => variant);
-        assert_json_snapshot!(variant);
+
+        insta::with_settings!({
+            prepend_module_to_snapshot => false},
+            {
+                assert_json_snapshot!(variant);
+            }
+        );
         db_close.close().await;
     }
 

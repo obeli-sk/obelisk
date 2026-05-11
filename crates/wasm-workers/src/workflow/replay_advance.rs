@@ -1,8 +1,42 @@
-use chrono::DateTime;
+use crate::workflow::{
+    host_exports::response_id::ResponseId, replay_db_proxy::InternalCapturedWrite,
+};
+use chrono::{DateTime, Utc};
 use concepts::storage::{
     AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CapturedDbWrite,
     CreateRequest, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest,
 };
+
+pub(crate) fn is_closing_join_next(req: &AppendRequest) -> bool {
+    matches!(
+        &req.event,
+        ExecutionRequest::HistoryEvent {
+            event: HistoryEvent::JoinNext { closing: true, .. },
+        }
+    )
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct JoinSetCloseCancellations {
+    /// Order based on creation. Must be cancelled in the reverse order.
+    activity_and_delay_ids: Vec<ResponseId>,
+    pub(crate) cancelled_at: DateTime<Utc>,
+}
+impl JoinSetCloseCancellations {
+    pub(crate) fn new(
+        activity_and_delay_ids: Vec<ResponseId>,
+        cancelled_at: DateTime<Utc>,
+    ) -> JoinSetCloseCancellations {
+        JoinSetCloseCancellations {
+            activity_and_delay_ids,
+            cancelled_at,
+        }
+    }
+
+    pub(crate) fn iterate_in_cancellation_order(&self) -> impl Iterator<Item = &ResponseId> {
+        self.activity_and_delay_ids.iter().rev()
+    }
+}
 
 pub(crate) fn requested_write_matches_fresh_replay(
     requested: &CapturedDbWrite,
@@ -280,8 +314,8 @@ fn normalize_schedule_at_for_matching(
 
 pub(crate) fn merge_requested_overrides_into_fresh_prefix(
     requested: &[CapturedDbWrite],
-    fresh_replay: &[CapturedDbWrite],
-) -> Vec<CapturedDbWrite> {
+    fresh_replay: &[InternalCapturedWrite],
+) -> Vec<InternalCapturedWrite> {
     requested
         .iter()
         .zip(fresh_replay.iter())
@@ -291,9 +325,9 @@ pub(crate) fn merge_requested_overrides_into_fresh_prefix(
 
 pub(crate) fn merge_requested_overrides_into_fresh_write(
     requested: &CapturedDbWrite,
-    fresh: &CapturedDbWrite,
-) -> CapturedDbWrite {
-    match (requested, fresh) {
+    fresh: &InternalCapturedWrite,
+) -> InternalCapturedWrite {
+    match (requested, &fresh.public) {
         (
             CapturedDbWrite::AppendBatchCreateNewExecution {
                 child_req: requested_child_req,
@@ -305,7 +339,7 @@ pub(crate) fn merge_requested_overrides_into_fresh_write(
             let CapturedDbWrite::AppendBatchCreateNewExecution {
                 child_req: merged_child_req,
                 ..
-            } = &mut merged
+            } = &mut merged.public
             else {
                 unreachable!("matched variant must stay matched")
             };

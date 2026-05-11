@@ -10,7 +10,9 @@ use crate::workflow::caching_db_connection::{
     CachingBuffer, CachingDbConnection, WorkflowDbConnection,
 };
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
-use crate::workflow::replay_db_proxy::{ReplayWorkflowDbConnection, apply_writes};
+use crate::workflow::replay_db_proxy::{
+    InternalReplayResponse, ReplayWorkflowDbConnection, apply_writes,
+};
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
@@ -456,7 +458,7 @@ impl WorkflowWorker {
         log: ExecutionLog,
         ffqn: FunctionFqn,
         params: Params,
-    ) -> Result<Vec<CapturedDbWrite>, ReplayError> {
+    ) -> Result<InternalReplayResponse, ReplayError> {
         let replay_kind = if log.is_finished() {
             ReplayKind::Finished
         } else {
@@ -523,31 +525,38 @@ impl WorkflowWorker {
             .await?;
         info!(
             "Execution replay completed, captured writes: {}",
-            captured_writes.len(),
+            captured_writes.captured_writes.len(),
         );
         Ok(captured_writes)
     }
 
     pub(crate) async fn advance_from_log(
         db_conn: &dyn DbConnection,
+        cancel_registry: &CancelRegistry,
         requested: ReplayResponse,
-        fresh_replay: Vec<CapturedDbWrite>,
+        fresh_replay: InternalReplayResponse,
         old_version: Version,
     ) -> Result<AdvanceResponse, ReplayError> {
-        let outcome = if requested.is_prefix_of(&fresh_replay) {
+        let fresh_public_writes: Vec<_> = fresh_replay
+            .captured_writes
+            .iter()
+            .map(|write| write.public.clone())
+            .collect();
+        let outcome = if requested.is_prefix_of(&fresh_public_writes) {
             let writes_to_apply = merge_requested_overrides_into_fresh_prefix(
                 &requested.captured_writes,
-                &fresh_replay,
+                &fresh_replay.captured_writes,
             );
-            let new_version = apply_writes(db_conn, writes_to_apply, old_version).await?;
+            let new_version =
+                apply_writes(db_conn, cancel_registry, writes_to_apply, old_version).await?;
             AdvanceResponse {
                 version: new_version,
                 outcome: AdvanceOutcome::Applied,
             }
         } else {
             debug!(
-                "Mismatch between expected and actual captured writes. Requested: {:?}, fresh replay produced: {fresh_replay:?}",
-                requested.captured_writes
+                "Mismatch between expected and actual captured writes. Requested: {:?}, fresh replay produced: {fresh_public_writes:?}",
+                requested.captured_writes,
             );
             AdvanceResponse {
                 version: old_version,
@@ -830,25 +839,13 @@ impl WorkflowWorker {
             }
             WorkerResultRefactored::DbError(err) => Err(WorkflowError::DbError(err)),
             WorkerResultRefactored::LockExpired(mut workflow_ctx) => {
-                let called_at = workflow_ctx.clock_fn.now();
-                // Flushing result has no causality effect during replay - lock does not expire.
-                let _ = workflow_ctx
-                    .db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await
-                    .map_err(WorkflowError::DbError)?;
+                workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::LockExpired(
                     workflow_ctx.db_connection.version().clone(),
                 ))
             }
             WorkerResultRefactored::ExecutorClosing(mut workflow_ctx) => {
-                let called_at = workflow_ctx.clock_fn.now();
-                // Flushing result has no causality effect during replay when executor is closing.
-                let _ = workflow_ctx
-                    .db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await
-                    .map_err(WorkflowError::DbError)?;
+                workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::ExecutorClosing(
                     workflow_ctx.db_connection.version().clone(),
                 ))
@@ -974,7 +971,7 @@ impl WorkflowWorker {
         ctx: WorkerContext,
         replay_db_connection: ReplayWorkflowDbConnection,
         is_replay: ReplayKind,
-    ) -> Result<Vec<CapturedDbWrite>, ReplayError> {
+    ) -> Result<InternalReplayResponse, ReplayError> {
         let (return_value, replay_db_connection) = self
             .run_internal(ctx, Box::new(replay_db_connection), Some(is_replay))
             .await
@@ -1100,7 +1097,13 @@ impl WorkflowWorker {
             params,
         )
         .await?;
-        Ok(ReplayResponse { captured_writes })
+        Ok(ReplayResponse {
+            captured_writes: captured_writes
+                .captured_writes
+                .into_iter()
+                .map(|write| write.public)
+                .collect(),
+        })
     }
 
     /// Advance a paused workflow by one interrupt boundary.
@@ -1116,6 +1119,7 @@ impl WorkflowWorker {
         exim: &ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
@@ -1162,7 +1166,14 @@ impl WorkflowWorker {
         )
         .await?;
 
-        Self::advance_from_log(&*db_conn, requested, fresh_replay, old_version).await
+        Self::advance_from_log(
+            &*db_conn,
+            &cancel_registry,
+            requested,
+            fresh_replay,
+            old_version,
+        )
+        .await
     }
 }
 
@@ -3290,6 +3301,7 @@ pub(crate) mod tests {
             FFQN,
             Some(Duration::from_millis(10)),
             db,
+            "two_delays_in_same_join_set",
         )
         .await;
     }
@@ -3306,6 +3318,7 @@ pub(crate) mod tests {
             FFQN,
             Some(Duration::from_millis(10)),
             db,
+            "join_next_produces_all_processed_error",
         )
         .await;
     }
@@ -3322,6 +3335,7 @@ pub(crate) mod tests {
             FFQN,
             None, // No delay needed - we want to test that join_next_try returns Pending immediately
             db,
+            "join_next_try_pending",
         )
         .await;
     }
@@ -3338,6 +3352,7 @@ pub(crate) mod tests {
             FFQN,
             None, // No delay needed
             db,
+            "join_next_try_all_processed",
         )
         .await;
     }
@@ -3354,6 +3369,7 @@ pub(crate) mod tests {
             FFQN,
             vec![Duration::from_millis(1), Duration::from_millis(9)], // Both delay requests should expire
             db,
+            "join_next_try_found",
         )
         .await;
     }
@@ -3363,9 +3379,16 @@ pub(crate) mod tests {
         ffqn: FunctionFqn,
         delay: Option<Duration>,
         db: db_tests::Database,
+        test_name: &'static str,
     ) -> ExecutionLog {
-        execute_workflow_fn_with_delays(workflow_wasm_path, ffqn, delay.into_iter().collect(), db)
-            .await
+        execute_workflow_fn_with_delays(
+            workflow_wasm_path,
+            ffqn,
+            delay.into_iter().collect(),
+            db,
+            test_name,
+        )
+        .await
     }
 
     async fn execute_workflow_fn_with_delays(
@@ -3373,6 +3396,7 @@ pub(crate) mod tests {
         ffqn: FunctionFqn,
         delays: Vec<Duration>,
         db: db_tests::Database,
+        test_name: &'static str,
     ) -> ExecutionLog {
         const MAX_RUNS: u128 = 100;
 
@@ -3494,11 +3518,128 @@ pub(crate) mod tests {
             .pending_state;
         assert_matches!(pending_state, PendingState::Finished { .. });
         let execution_log = db_connection.get(&execution_id).await.unwrap();
-        insta::with_settings!({snapshot_suffix => ffqn.to_string().replace(':', "_")},
-            {insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log.clone()))});
+        insta::with_settings!({
+            snapshot_suffix => format!("{test_name}-{}", ffqn.to_string().replace(':',"_")),
+            prepend_module_to_snapshot => false},
+            {
+                insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log.clone()));
+            }
+        );
         drop(db_connection);
         db_close.close().await;
         execution_log
+    }
+
+    async fn execute_paused_workflow_until_finished_without_snapshots(
+        db_connection: &dyn DbConnectionTest,
+        harness: WorkflowAdvanceHarness,
+        sim_clock: &SimClock,
+        max_steps: usize,
+    ) -> ExecutionLog {
+        let mut steps = 0;
+
+        loop {
+            sim_clock.move_time_forward(Duration::from_millis(100));
+            let replay = WorkflowWorker::replay(
+                harness.deployment_id,
+                harness.workflow_component_id.clone(),
+                harness.workflow_runnable.wasmtime_component.clone(),
+                &harness.workflow_runnable.wasm_component.exim,
+                harness.workflow_engine.clone(),
+                harness.fn_registry.clone(),
+                harness.db_pool.clone(),
+                harness.execution_id.clone(),
+                harness.logs_storage_config.clone(),
+                sim_clock.clone_box(),
+            )
+            .await
+            .unwrap();
+
+            if replay.captured_writes.is_empty() {
+                if db_connection
+                    .get_finished_result(&harness.execution_id)
+                    .await
+                    .is_ok()
+                {
+                    return db_connection.get(&harness.execution_id).await.unwrap();
+                }
+                panic!("captured_writes must not be empty while stepping paused workflow");
+            }
+
+            steps += 1;
+            let advance = WorkflowWorker::advance(
+                harness.deployment_id,
+                harness.workflow_component_id.clone(),
+                harness.workflow_runnable.wasmtime_component.clone(),
+                &harness.workflow_runnable.wasm_component.exim,
+                harness.workflow_engine.clone(),
+                harness.fn_registry.clone(),
+                CancelRegistry::new(),
+                harness.db_pool.clone(),
+                harness.execution_id.clone(),
+                harness.logs_storage_config.clone(),
+                sim_clock.clone_box(),
+                replay,
+            )
+            .await
+            .unwrap();
+            assert_eq!(advance.outcome, AdvanceOutcome::Applied);
+
+            if db_connection
+                .get_finished_result(&harness.execution_id)
+                .await
+                .is_ok()
+            {
+                return db_connection.get(&harness.execution_id).await.unwrap();
+            }
+
+            assert!(
+                steps < max_steps,
+                "execution did not finish after {steps} replay+advance steps",
+            );
+        }
+    }
+
+    fn normalized_cancellable_request_order(execution_log: &ExecutionLog) -> Vec<String> {
+        execution_log
+            .events
+            .iter()
+            .filter_map(|event| match &event.event {
+                ExecutionRequest::HistoryEvent {
+                    event:
+                        HistoryEvent::JoinSetRequest {
+                            request:
+                                JoinSetRequest::ChildExecutionRequest {
+                                    child_execution_id, ..
+                                },
+                            ..
+                        },
+                } => Some(format!("child:{child_execution_id}")),
+                ExecutionRequest::HistoryEvent {
+                    event:
+                        HistoryEvent::JoinSetRequest {
+                            request: JoinSetRequest::DelayRequest { delay_id, .. },
+                            ..
+                        },
+                } => Some(format!("delay:{delay_id}")),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn normalized_response_order(execution_log: &ExecutionLog) -> Vec<String> {
+        execution_log
+            .responses
+            .iter()
+            .map(|response| match &response.event.event.event {
+                JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id, ..
+                } => format!("child:{child_execution_id}"),
+                JoinSetResponse::DelayFinished { delay_id, .. } => {
+                    format!("delay:{delay_id}")
+                }
+            })
+            .collect()
     }
 
     #[expand_enum_database]
@@ -3512,6 +3653,7 @@ pub(crate) mod tests {
             ),
             None,
             db,
+            "await_next_produces_all_processed_error"
         )
         .await;
     }
@@ -3529,6 +3671,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(ffqn_tuple),
             None,
             db,
+            "stub_submit_race_join_next_stub",
         )
         .await;
     }
@@ -3542,6 +3685,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::SUBMIT_RACE_JOIN_NEXT_DELAY),
             Some(Duration::from_millis(10)),
             db,
+            "stub_submit_race_join_next_delay"
         )
         .await;
     }
@@ -3555,8 +3699,156 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::JOIN_NEXT_IN_SCOPE),
             None,
             db,
+            "execute_workflow_fn_with_single_delay"
         )
         .await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn stub_join_set_close_cancellation_order_matches_advance(db: db_tests::Database) {
+        const FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::JOIN_SET_CLOSE_CANCELLATION_ORDER,
+        );
+
+        test_utils::set_up();
+        let execution_id = ExecutionId::from_parts(0, 100);
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW)
+                .await,
+        ]);
+
+        let direct_execution_log = {
+            let sim_clock = SimClock::epoch();
+            let (_guard, db_pool, db_close) = db.set_up().await;
+            let db_connection = db_pool.connection_test().await.unwrap();
+
+            let direct_worker = compile_workflow_worker(
+                test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                JoinNextBlockingStrategy::Interrupt,
+                &fn_registry,
+                CancelRegistry::new(),
+            )
+            .await;
+
+            db_connection
+                .create(CreateRequest {
+                    created_at: sim_clock.now(),
+                    execution_id: execution_id.clone(),
+                    ffqn: FFQN,
+                    params: Params::empty(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: sim_clock.now(),
+                    component_id: direct_worker.config.component_id.clone(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                    paused: false,
+                })
+                .await
+                .unwrap();
+
+            let direct_exec_task = ExecTask::new_test(
+                ExecConfig {
+                    batch_size: 1,
+                    lock_expiry: Duration::from_secs(1),
+                    tick_sleep: TICK_SLEEP,
+                    component_id: direct_worker.config.component_id.clone(),
+                    task_limiter: None,
+                    executor_id: ExecutorId::from_parts(0, 1),
+                    retry_config: ComponentRetryConfig::WORKFLOW,
+                    locking_strategy: LockingStrategy::ByComponentDigest,
+                },
+                direct_worker,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+                Arc::new([FFQN]),
+            );
+
+            loop {
+                let executed = direct_exec_task
+                    .tick_test(sim_clock.now(), RunId::generate())
+                    .await
+                    .wait_for_tasks()
+                    .await
+                    .len();
+                if executed == 0 {
+                    break;
+                }
+                assert_eq!(1, executed);
+            }
+            let direct_execution_log = db_connection.get(&execution_id).await.unwrap();
+            drop(db_connection);
+            db_close.close().await;
+            direct_execution_log
+        };
+
+        let advance_execution_log = {
+            let sim_clock = SimClock::epoch();
+            let (_guard, db_pool, db_close) = db.set_up().await;
+            let db_connection = db_pool.connection_test().await.unwrap();
+
+            let workflow_engine =
+                Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+            let (workflow_runnable, workflow_component_id) = compile_workflow_with_engine(
+                test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+                &workflow_engine,
+            )
+            .await;
+
+            db_connection
+                .create(CreateRequest {
+                    created_at: sim_clock.now(),
+                    execution_id: execution_id.clone(),
+                    ffqn: FFQN,
+                    params: Params::empty(),
+                    parent: None,
+                    metadata: concepts::ExecutionMetadata::empty(),
+                    scheduled_at: sim_clock.now(),
+                    component_id: workflow_component_id.clone(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    scheduled_by: None,
+                    paused: true,
+                })
+                .await
+                .unwrap();
+
+            let advance_execution_log = execute_paused_workflow_until_finished_without_snapshots(
+                db_connection.as_ref(),
+                WorkflowAdvanceHarness {
+                    deployment_id: DeploymentId::generate(),
+                    workflow_component_id,
+                    workflow_runnable,
+                    workflow_engine,
+                    fn_registry,
+                    db_pool: db_pool.clone(),
+                    execution_id,
+                    logs_storage_config: None,
+                },
+                &sim_clock,
+                16,
+            )
+            .await;
+            drop(db_connection);
+            db_close.close().await;
+            advance_execution_log
+        };
+
+        let expected_cancellation_order =
+            normalized_cancellable_request_order(&direct_execution_log)
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>();
+        assert_eq!(
+            expected_cancellation_order,
+            normalized_response_order(&advance_execution_log),
+            "stepped replay+advance must match direct cancellation order",
+        );
     }
 
     #[expand_enum_database]
@@ -3568,6 +3860,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_stub_workflow_builder::exports::testing::stub_workflow::workflow::STUB_NOT_FOUND),
             None,
             db,
+            "stub_not_found"
         )
         .await;
     }
@@ -3898,6 +4191,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_ACTIVITY_SUBMIT),
             None,
             db,
+            "sleep_activity_submit_should_cancel_the_activity"
         )
         .await;
         // There must be a single activity that is already cancelled
@@ -3921,6 +4215,7 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_ACTIVITY_SUBMIT_THEN_TRAP),
             None,
             db,
+            "sleep_activity_submit_then_trap_should_cancel_the_activity"
         )
         .await;
         // There must be a single activity that is already cancelled
@@ -3946,6 +4241,7 @@ pub(crate) mod tests {
         let (_guard, db_pool, db_close) = db.set_up().await;
         Box::pin(fibo_workflow_each_stage_replay_inner(
             activity_iterations,
+            &format!("fibo_workflow_each_stage_replay_{activity_iterations}"),
             db_pool.clone(),
             sim_clock,
         ))
@@ -3955,9 +4251,12 @@ pub(crate) mod tests {
 
     async fn fibo_workflow_each_stage_replay_inner(
         activity_iterations: u32,
+        snapshot_name: &str,
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
     ) {
+        let deployment_id = DeploymentId::from_parts(0, u128::from(activity_iterations));
+        let execution_id = ExecutionId::from_parts(0, u128::from(activity_iterations));
         test_utils::set_up();
 
         let workflow_engine =
@@ -3983,8 +4282,6 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
-        // Create an execution.
-        let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -4003,17 +4300,21 @@ pub(crate) mod tests {
                 component_id: workflow_exec.config.component_id.clone(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
-                paused: false,
+                paused: true,
             })
             .await
             .unwrap();
         let activity_iterations = usize::try_from(activity_iterations).unwrap();
 
         let (log_sender, _log_storage_recv) = mpsc::channel(100);
+        let logs_storage_config = Some(LogStrageConfig {
+            min_level: concepts::storage::LogLevel::Debug,
+            log_sender: log_sender.clone(),
+        });
         // Replay just after creating - execution is unfinished with no events,
         // preview should return the first event(s) the workflow would produce.
         let replay = WorkflowWorker::replay(
-            DeploymentId::generate(),
+            deployment_id,
             workflow_exec.config.component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
@@ -4021,10 +4322,7 @@ pub(crate) mod tests {
             fn_registry.clone(),
             db_pool.clone(),
             execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
+            logs_storage_config.clone(),
             sim_clock.clone_box(),
         )
         .await
@@ -4053,45 +4351,6 @@ pub(crate) mod tests {
         }
         assert_matches!(next_events.last().unwrap(), HistoryEvent::JoinNext { .. });
 
-        info!("Should end as BlockedByJoinSet");
-
-        let executed_workflows = workflow_exec
-            .tick_test(sim_clock.now(), RunId::generate())
-            .await;
-
-        assert_eq!(1, executed_workflows.wait_for_tasks().await.len());
-
-        // Replay before activity has finished - workflow is blocked by JoinNext,
-        // no response available, so preview cannot produce new events.
-        let replay = WorkflowWorker::replay(
-            DeploymentId::generate(),
-            workflow_exec.config.component_id.clone(),
-            workflow_runnable.wasmtime_component.clone(),
-            &workflow_runnable.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
-            sim_clock.clone_box(),
-        )
-        .await
-        .unwrap();
-
-        assert!(
-            replay.captured_writes.is_empty(),
-            "unexpected captured_writes: {:?}",
-            replay.captured_writes
-        );
-        assert!(
-            replay.return_value().is_none(),
-            "workflow should not have completed yet"
-        );
-
-        // Run all activities to completion.
         let activity_exec = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
@@ -4099,68 +4358,25 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
-        for _ in 0..activity_iterations {
-            let executed_activities = activity_exec
-                .tick_test_await(sim_clock.now(), RunId::generate())
-                .await;
-            assert_eq!(1, executed_activities.len());
-        }
-
-        // Replay after all activities have finished but before the response was processed.
-        // With activity_iterations=1, the workflow completes → return_value is set, no captured_writes.
-        // With activity_iterations>1, the replay is interrupted at FlushedCache after processing
-        // the first response, so return_value is None and captured_writes contains one step.
-        let replay = WorkflowWorker::replay(
-            DeploymentId::generate(),
-            workflow_exec.config.component_id.clone(),
-            workflow_runnable.wasmtime_component.clone(),
-            &workflow_runnable.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
-            sim_clock.clone_box(),
+        let (_steps, _saw_trimmed_preview, res) = advance_paused_workflow_until_finished(
+            &*db_connection,
+            WorkflowAdvanceHarness {
+                deployment_id,
+                workflow_component_id: workflow_exec.config.component_id.clone(),
+                workflow_runnable: workflow_runnable.clone(),
+                workflow_engine: workflow_engine.clone(),
+                fn_registry: fn_registry.clone(),
+                db_pool: db_pool.clone(),
+                execution_id: execution_id.clone(),
+                logs_storage_config: logs_storage_config.clone(),
+            },
+            snapshot_name,
+            None,
+            Some(&activity_exec),
+            &sim_clock,
+            32,
         )
-        .await
-        .unwrap();
-        if activity_iterations == 1 {
-            assert!(
-                replay.return_value().is_some(),
-                "single iteration: workflow completes during replay"
-            );
-        } else {
-            // Replay is interrupted at FlushedCache after processing one response.
-            assert!(
-                !replay.captured_writes.is_empty(),
-                "multi iteration: replay should produce writes for one step"
-            );
-            assert!(
-                replay.return_value().is_none(),
-                "multi iteration: replay interrupted before completion"
-            );
-        }
-
-        sim_clock.move_time_forward(LOCK_EXPIRY_WORKFLOW); // another lock will be appended when the current one expires
-
-        let executed_workflows = workflow_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
-            .await;
-
-        assert_eq!(1, executed_workflows.len());
-
-        let res = db_connection
-            .get_finished_result(&execution_id)
-            .await
-            .unwrap();
-        if activity_iterations == 1 {
-            // Compare prediction with reality
-            assert_eq!(replay.return_value().unwrap().clone(), res);
-        }
-
+        .await;
         let res = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(val)) => val);
 
         let fibo = assert_matches!(res,
@@ -4169,7 +4385,7 @@ pub(crate) mod tests {
 
         // Replay after workflow was finished - return_value is present.
         let replay = WorkflowWorker::replay(
-            DeploymentId::generate(),
+            deployment_id,
             workflow_exec.config.component_id.clone(),
             workflow_runnable.wasmtime_component.clone(),
             &workflow_runnable.wasm_component.exim,
@@ -4177,10 +4393,7 @@ pub(crate) mod tests {
             fn_registry.clone(),
             db_pool.clone(),
             execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
+            logs_storage_config,
             sim_clock.clone_box(),
         )
         .await
@@ -4193,13 +4406,13 @@ pub(crate) mod tests {
 
     #[expand_enum_database]
     #[rstest]
-    #[case::full(None, "full", 0)]
-    #[case::trimmed_to_1(Some(1), "trimmed_to_1", 1)]
+    #[case::full(None, "advance_paused_workflow_full", 0)]
+    #[case::trimmed_to_1(Some(1), "advance_paused_workflow_trimmed_to_1", 1)]
     #[tokio::test]
     async fn advance_paused_workflow(
         db: Database,
         #[case] trim_to: Option<usize>,
-        #[case] snapshot_suffix: &str,
+        #[case] snapshot_name: &str,
         #[case] execution_idx: u128,
     ) {
         let sim_clock = SimClock::epoch();
@@ -4208,9 +4421,8 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock,
             trim_to,
-            snapshot_suffix,
+            snapshot_name,
             execution_idx,
-            &format!("{db:?}"),
         ))
         .await;
         db_close.close().await;
@@ -4231,7 +4443,7 @@ pub(crate) mod tests {
     async fn advance_paused_workflow_until_finished(
         db_connection: &dyn DbConnectionTest,
         harness: WorkflowAdvanceHarness,
-        snapshot_prefix: String,
+        test_name: &str,
         trim_to: Option<usize>,
         activity_exec: Option<&ExecTask>,
         sim_clock: &SimClock,
@@ -4273,9 +4485,12 @@ pub(crate) mod tests {
             }
 
             steps += 1;
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_replay_{steps}"),
-                redact_component_digest(serde_json::to_value(&replay).unwrap())
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_replay_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    insta::assert_json_snapshot!(redact_component_digest(serde_json::to_value(&replay).unwrap()));
+                }
             );
 
             let requested = match trim_to {
@@ -4292,6 +4507,7 @@ pub(crate) mod tests {
                 &harness.workflow_runnable.wasm_component.exim,
                 harness.workflow_engine.clone(),
                 harness.fn_registry.clone(),
+                CancelRegistry::new(),
                 harness.db_pool.clone(),
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
@@ -4302,21 +4518,28 @@ pub(crate) mod tests {
             .unwrap();
             assert_eq!(advance.outcome, AdvanceOutcome::Applied);
 
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_advance_{steps}"),
-                json!({
-                    "version": advance.version.0,
-                    "outcome": format!("{:?}", advance.outcome),
-                    "trim_to": trim_to,
-                    "requested_captured_writes_len": requested.captured_writes.len(),
-                    "replayed_captured_writes_len": replay.captured_writes.len(),
-                })
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_advance_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    insta::assert_json_snapshot!(json!({
+                        "version": advance.version.0,
+                        "outcome": format!("{:?}", advance.outcome),
+                        "trim_to": trim_to,
+                        "requested_captured_writes_len": requested.captured_writes.len(),
+                        "replayed_captured_writes_len": replay.captured_writes.len(),
+                    }));
+                }
             );
 
             let log = db_connection.get(&harness.execution_id).await.unwrap();
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_log_{steps}"),
-                ExecutionLogSanitized::from(log)
+
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_log_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    assert_json_snapshot!(ExecutionLogSanitized::from(log));
+                }
             );
 
             if let Ok(finished_result) = db_connection
@@ -4337,9 +4560,8 @@ pub(crate) mod tests {
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
         trim_to: Option<usize>,
-        snapshot_suffix: &str,
+        snapshot_name: &str,
         execution_idx: u128,
-        db_name: &str,
     ) {
         test_utils::set_up();
 
@@ -4443,6 +4665,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
+            CancelRegistry::new(),
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
@@ -4461,6 +4684,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine.clone(),
             fn_registry.clone(),
+            CancelRegistry::new(),
             db_pool.clone(),
             execution_id.clone(),
             logs_storage_config.clone(),
@@ -4487,7 +4711,7 @@ pub(crate) mod tests {
                 execution_id: execution_id.clone(),
                 logs_storage_config,
             },
-            format!("{db_name}_{snapshot_suffix}"),
+            snapshot_name,
             trim_to,
             Some(&activity_exec),
             &sim_clock,
@@ -4683,6 +4907,7 @@ pub(crate) mod tests {
             &workflow_runnable.wasm_component.exim,
             workflow_engine,
             fn_registry,
+            CancelRegistry::new(),
             db_pool.clone(),
             execution_id,
             None,

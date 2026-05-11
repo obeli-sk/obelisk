@@ -1,18 +1,21 @@
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::{
     activity::cancel_registry::CancelRegistry,
-    workflow::event_history::DbErrorWriteOrReplayInterrupt,
+    workflow::{
+        event_history::DbErrorWriteOrReplayInterrupt,
+        host_exports::response_id::ResponseId,
+        replay_advance::{JoinSetCloseCancellations, is_closing_join_next},
+    },
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId,
-    prefixed_ulid::DelayId,
     storage::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
-        AppendResponseToExecution, BacktraceInfo, CancelOutcome, CreateRequest, DbConnection,
-        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ResponseCursor,
-        ResponseWithCursor, TimeoutOutcome, Version,
+        AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorRead,
+        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ResponseCursor, ResponseWithCursor,
+        TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
@@ -33,10 +36,21 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite>;
 
+    // Caller must trigger flushing before this call.
     async fn append_blocking(
         &mut self,
         execution_id: ExecutionId,
         req: AppendRequest,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn append_join_set_close(
+        &mut self,
+        cancel_registry: &CancelRegistry,
+        execution_id: ExecutionId,
+        req: AppendRequest,
+        cancellations: Option<JoinSetCloseCancellations>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite>;
@@ -67,10 +81,11 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt>;
 
-    async fn get_create_request(
-        &self,
+    async fn get_stub_create_request(
+        &mut self,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead>;
+        current_time: DateTime<Utc>,
+    ) -> Result<CreateRequest, DbErrorWriteOrReplayInterrupt>;
 
     async fn get_execution_event(
         &self,
@@ -88,27 +103,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
     async fn flush_non_blocking_event_cache(
         &mut self,
         current_time: DateTime<Utc>,
-    ) -> Result<FlushOutcome, DbErrorWrite>;
-
-    async fn cancel_activity(
-        &mut self,
-        cancel_registry: &CancelRegistry,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite>;
-
-    async fn cancel_delay(
-        &mut self,
-        delay_id: DelayId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite>;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use]
-pub(crate) enum FlushOutcome {
-    Noop,
-    FlushedCache,
+    ) -> Result<(), DbErrorWrite>;
 }
 
 pub(crate) struct CachingDbConnection {
@@ -311,6 +306,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         Ok(())
     }
 
+    // Caller must trigger flushing before this call.
     async fn append_blocking(
         &mut self,
         execution_id: ExecutionId,
@@ -318,6 +314,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
+        self.flush_non_blocking_event_cache(req.created_at).await?;
         let next_version = self
             .db_connection
             .append(execution_id, self.version.clone(), req)
@@ -341,6 +338,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
+        self.flush_non_blocking_event_cache(current_time).await?;
         let next_version = self
             .db_connection
             .append_batch(current_time, batch, execution_id, self.version.clone())
@@ -356,6 +354,59 @@ impl WorkflowDbConnection for CachingDbConnection {
         Ok(())
     }
 
+    async fn append_join_set_close(
+        &mut self,
+        cancel_registry: &CancelRegistry,
+        execution_id: ExecutionId,
+        req: AppendRequest,
+        cancellations: Option<JoinSetCloseCancellations>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite> {
+        assert_eq!(self.execution_id, execution_id);
+        assert!(
+            is_closing_join_next(&req),
+            "append_join_set_close must append JoinNext(closing=true)"
+        );
+        self.flush_non_blocking_event_cache(req.created_at).await?;
+
+        // Activities and delays are cancelled in reverse order of creation.
+        if let Some(cancellations) = cancellations {
+            for response_id in cancellations.iterate_in_cancellation_order() {
+                match response_id {
+                    ResponseId::ChildExecutionId(child_execution_id_derived) => {
+                        let res = cancel_registry
+                            .cancel_activity(
+                                self.db_connection.as_ref(),
+                                &ExecutionId::Derived(child_execution_id_derived.clone()),
+                                cancellations.cancelled_at,
+                            )
+                            .await;
+                        if let Err(err) = res {
+                            debug!(
+                                "Ignoring failure to cancel activity {child_execution_id_derived} - {err:?}"
+                            );
+                        }
+                    }
+                    ResponseId::DelayId(delay_id) => {
+                        let res = storage::cancel_delay(
+                            self.db_connection.as_ref(),
+                            delay_id.clone(),
+                            cancellations.cancelled_at,
+                        )
+                        .await;
+                        if let Err(err) = res {
+                            debug!("Ignoring failure to cancel delay {delay_id} - {err:?}");
+                        }
+                    }
+                }
+            }
+        }
+
+        self.append_blocking(execution_id, req, wasm_backtrace, component_id)
+            .await
+    }
+
     async fn append_batch_create_new_execution(
         &mut self,
         current_time: DateTime<Utc>,
@@ -365,6 +416,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
+        self.flush_non_blocking_event_cache(current_time).await?;
         let expected_next_version =
             Version(self.version.0 + u32::try_from(batch.len()).expect("max 3 won't overflow"));
         let backtrace_info = wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
@@ -403,11 +455,19 @@ impl WorkflowDbConnection for CachingDbConnection {
             .map_err(DbErrorWriteOrReplayInterrupt::DbError)
     }
 
-    async fn get_create_request(
-        &self,
+    async fn get_stub_create_request(
+        &mut self,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead> {
-        self.db_connection.get_create_request(execution_id).await
+        current_time: DateTime<Utc>,
+    ) -> Result<CreateRequest, DbErrorWriteOrReplayInterrupt> {
+        // Might be dependent on an cached -submit
+        self.flush_non_blocking_event_cache(current_time)
+            .await
+            .map_err(DbErrorWriteOrReplayInterrupt::DbError)?; // TODO(perf): Just search cache + db instead.
+        self.db_connection
+            .get_create_request(execution_id)
+            .await
+            .map_err(|err| DbErrorWriteOrReplayInterrupt::DbError(err.into()))
     }
 
     async fn get_execution_event(
@@ -435,7 +495,7 @@ impl WorkflowDbConnection for CachingDbConnection {
     async fn flush_non_blocking_event_cache(
         &mut self,
         current_time: DateTime<Utc>,
-    ) -> Result<FlushOutcome, DbErrorWrite> {
+    ) -> Result<(), DbErrorWrite> {
         if let Some(caching_buffer) = &mut self.caching_buffer
             && !caching_buffer.non_blocking_event_batch.is_empty()
         {
@@ -520,39 +580,8 @@ impl WorkflowDbConnection for CachingDbConnection {
                 .await?;
 
             debug!("Flushing the non-blocking event cache finished");
-            Ok(FlushOutcome::FlushedCache)
-        } else {
-            Ok(FlushOutcome::Noop)
         }
-    }
-
-    async fn cancel_activity(
-        &mut self,
-        cancel_registry: &CancelRegistry,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        assert_eq!(
-            FlushOutcome::Noop,
-            self.flush_non_blocking_event_cache(cancelled_at).await?,
-            "`cancel_activity` called only in `join_set_close_inner` after flush"
-        );
-        cancel_registry
-            .cancel_activity(self.db_connection.as_ref(), execution_id, cancelled_at)
-            .await
-    }
-
-    async fn cancel_delay(
-        &mut self,
-        delay_id: DelayId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        assert_eq!(
-            FlushOutcome::Noop,
-            self.flush_non_blocking_event_cache(cancelled_at).await?,
-            "`cancel_delay` called only in `join_set_close_inner` after flush"
-        );
-        storage::cancel_delay(self.db_connection.as_ref(), delay_id, cancelled_at).await
+        Ok(())
     }
 }
 
@@ -579,9 +608,7 @@ impl CachingDbConnection {
             let too_many = caching_buffer.non_blocking_event_batch.len()
                 >= caching_buffer.non_blocking_event_batch_size;
             if too_many {
-                // Ignore the outcome, this flush has no correctness implications
-                let _ = WorkflowDbConnection::flush_non_blocking_event_cache(self, current_time)
-                    .await?;
+                self.flush_non_blocking_event_cache(current_time).await?;
             }
         }
         Ok(())

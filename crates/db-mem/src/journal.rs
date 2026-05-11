@@ -138,12 +138,12 @@ impl ExecutionJournal {
         event: ExecutionRequest,
         appending_version: Version,
     ) -> Result<Version, DbErrorWrite> {
-        assert_eq!(self.version(), appending_version);
         if self.pending_state.is_finished() {
             return Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::AlreadyFinished,
             ));
         }
+        assert_eq!(self.version(), appending_version);
 
         if let ExecutionRequest::Locked(Locked {
             executor_id,
@@ -160,6 +160,28 @@ impl ExecutionJournal {
                 *run_id,
                 *lock_expires_at,
             )?;
+        }
+
+        match &event {
+            ExecutionRequest::Paused if self.pending_state.is_paused() => {
+                return Err(DbErrorWriteNonRetriable::IllegalState {
+                    reason: "cannot pause, execution is already paused".into(),
+                    context: tracing_error::SpanTrace::capture(),
+                    source: None,
+                    loc: std::panic::Location::caller(),
+                }
+                .into());
+            }
+            ExecutionRequest::Unpaused if !self.pending_state.is_paused() => {
+                return Err(DbErrorWriteNonRetriable::IllegalState {
+                    reason: "cannot unpause, execution is not paused".into(),
+                    context: tracing_error::SpanTrace::capture(),
+                    source: None,
+                    loc: std::panic::Location::caller(),
+                }
+                .into());
+            }
+            _ => {}
         }
 
         // Make sure delay id is unique
@@ -319,9 +341,6 @@ impl ExecutionJournal {
             });
         }
 
-        let mut unpause_encountered = false;
-        let mut is_paused = false;
-
         // Find the underlying state (ignoring Paused/Unpaused for now), store it in
         // `PendingStatePaused` independent of whether the execution is actually paused.
         let underlying_state: PendingStatePaused = self
@@ -424,24 +443,10 @@ impl ExecutionJournal {
                         ))
                     }
                 }
-                ExecutionRequest::Unpaused => {
-                    assert!(!unpause_encountered);
-                    unpause_encountered = true;
-                    None // Treat the unpause as skipping the corresponding pause
-                }
-                ExecutionRequest::Paused => {
-                    if unpause_encountered {
-                        // This pause was effectively cancelled by a later unpause, keep looking for last event affecting the pending state
-                        unpause_encountered = false;
-                        None
-                    } else {
-                        // No unpauses were found in the later events - execution is paused
-                        is_paused = true;
-                        None // Continue looking for underlying state
-                    }
-                }
                 // No pending state change for following events:
-                ExecutionRequest::HistoryEvent {
+                ExecutionRequest::Paused
+                | ExecutionRequest::Unpaused
+                | ExecutionRequest::HistoryEvent {
                     event:
                         HistoryEvent::JoinSetCreate { .. }
                         | HistoryEvent::JoinSetRequest {
@@ -460,7 +465,38 @@ impl ExecutionJournal {
             })
             .expect("journal must begin with Created event");
 
-        assert!(!unpause_encountered, "unpause must be preceeded with pause");
+        let is_paused = {
+            if let Some(last_paused) =
+                self.execution_events
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find_map(|(idx, event)| match &event.event {
+                        ExecutionRequest::Paused => Some(idx),
+                        _ => None,
+                    })
+            {
+                if let Some(last_unpaused) = self
+                    .execution_events
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find_map(|(idx, event)| match &event.event {
+                        ExecutionRequest::Unpaused => Some(idx),
+                        _ => None,
+                    })
+                {
+                    // Both Paused and Unpaused found
+                    last_paused > last_unpaused
+                } else {
+                    // Unpaused not found
+                    true
+                }
+            } else {
+                // Paused not found
+                false
+            }
+        };
 
         // Check if execution is finished (overrides paused state)
 

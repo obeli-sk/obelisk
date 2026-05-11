@@ -402,7 +402,13 @@ impl WorkflowJsWorker {
             params,
         )
         .await?;
-        Ok(ReplayResponse { captured_writes })
+        Ok(ReplayResponse {
+            captured_writes: captured_writes
+                .captured_writes
+                .into_iter()
+                .map(|write| write.public)
+                .collect(),
+        })
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
@@ -414,6 +420,7 @@ impl WorkflowJsWorker {
         exim: &utils::wasm_tools::ExIm,
         engine: Arc<Engine>,
         fn_registry: Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
         real_db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
@@ -457,7 +464,14 @@ impl WorkflowJsWorker {
             params,
         )
         .await?;
-        WorkflowWorker::advance_from_log(&*db_conn, requested, fresh_replay, old_version).await
+        WorkflowWorker::advance_from_log(
+            &*db_conn,
+            &cancel_registry,
+            requested,
+            fresh_replay,
+            old_version,
+        )
+        .await
     }
 }
 
@@ -478,7 +492,8 @@ mod tests {
     use concepts::storage::{
         CapturedDbWrite, CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable,
         ExecutionRequest, HistoryEvent, JoinSetRequest, JoinSetResponse, Locked, PendingState,
-        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind, Version,
+        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStatePendingAt, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
@@ -2154,7 +2169,6 @@ mod tests {
     #[tokio::test]
     async fn workflow_js_replay_call_stub(database: Database) {
         use crate::activity::activity_worker::test::compile_activity_stub;
-        use insta::assert_json_snapshot;
 
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
@@ -2237,7 +2251,12 @@ mod tests {
         // With FlushedCache interruption, replay stops after the first cache flush.
         // The first flush covers JoinSetCreate and child execution submit.
         assert_eq!(2, replay.history_events().len());
-        assert_json_snapshot!(replay.history_events());
+        insta::with_settings!({
+            prepend_module_to_snapshot => false},
+            {
+                assert_json_snapshot!(replay.history_events());
+            }
+        );
 
         // Tick - should end with JoinNext
         // Tick the execution (which already has JoinSetCreate in the log) to completion.
@@ -2365,8 +2384,9 @@ mod tests {
                 logs_storage_config,
                 js_source: js_source.to_string(),
                 sim_clock,
+                idle_action: None,
             },
-            format!("{database:?}_{snapshot_suffix}"),
+            snapshot_suffix,
             16,
             trim_to,
         )
@@ -2385,6 +2405,110 @@ mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database]
+    #[rstest]
+    #[case::full(None, "submit_cancel_full", 10)]
+    #[case::trimmed_to_1(Some(1), "submit_cancel_trimmed_to_1", 11)]
+    #[tokio::test]
+    async fn workflow_js_advance_submit_without_await_cancels_child_activity(
+        database: Database,
+        #[case] trim_to: Option<usize>,
+        #[case] test_name: &str,
+        #[case] execution_idx: u16,
+    ) {
+        use concepts::ExecutionFailureKind;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function submit_and_return() {
+            const js = obelisk.createJoinSet();
+            js.submit('testing:fibo/fibo.fibo', [10]);
+            return 'done';
+        }";
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "submit-and-return");
+        let sim_clock = SimClock::epoch();
+
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+
+        let db_connection = db_pool.connection_test().await.unwrap();
+
+        let deployment_id = DeploymentId::from_parts(0, 0);
+        let execution_id = ExecutionId::from_parts(0, execution_idx.into());
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let result = workflow_js_step_execution_until_finished(
+            &*db_connection,
+            WorkflowJsAdvanceHarness {
+                deployment_id,
+                component_id,
+                runnable_component,
+                workflow_engine,
+                fn_registry,
+                db_pool: db_pool.clone(),
+                execution_id: execution_id.clone(),
+                logs_storage_config: None,
+                js_source: js_source.to_string(),
+                sim_clock,
+                idle_action: None,
+            },
+            test_name,
+            16,
+            trim_to,
+        )
+        .await;
+
+        assert_matches!(
+            result,
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType { value, .. }))
+                if format!("{value:?}") == "Result(Ok(Some(String(\"\\\"done\\\"\"))))"
+        );
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(1, log.responses.len(), "join set should be auto-closed");
+        let result = assert_matches!(
+            &log.responses[0].event.event.event,
+            JoinSetResponse::ChildExecutionFinished { result, .. } => result
+        );
+        let err = assert_matches!(result, SupportedFunctionReturnValue::ExecutionError(err) => err);
+        assert_matches!(err.kind, ExecutionFailureKind::Cancelled);
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
     #[derive(Clone)]
     struct WorkflowJsAdvanceHarness {
         deployment_id: DeploymentId,
@@ -2397,12 +2521,19 @@ mod tests {
         logs_storage_config: Option<LogStrageConfig>,
         js_source: String,
         sim_clock: SimClock,
+        idle_action: Option<WorkflowJsAdvanceIdleAction>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Copy)]
+    enum WorkflowJsAdvanceIdleAction {
+        TickFiboActivity,
     }
 
     async fn workflow_js_step_execution_until_finished(
         db_connection: &dyn DbConnectionTest,
         harness: WorkflowJsAdvanceHarness,
-        snapshot_prefix: String,
+        test_name: &str,
         max_steps: usize,
         trim_to: Option<usize>,
     ) -> SupportedFunctionReturnValue {
@@ -2429,15 +2560,52 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(
-                !replay.captured_writes.is_empty(),
-                "captured_writes must not be empty while stepping paused JS workflow",
-            );
+            if replay.captured_writes.is_empty() {
+                if let Ok(finished_result) = db_connection
+                    .get_finished_result(&harness.execution_id)
+                    .await
+                {
+                    assert!(
+                        steps > 0,
+                        "step-through harness must execute at least one replay+advance round",
+                    );
+                    if trim_to.is_some() {
+                        assert!(
+                            saw_trimmed_preview,
+                            "test must exercise trimmed replay writes",
+                        );
+                    }
+                    return finished_result;
+                }
+                match harness.idle_action {
+                    Some(WorkflowJsAdvanceIdleAction::TickFiboActivity) => {
+                        let activity_exec = new_activity_fibo(
+                            harness.db_pool.clone(),
+                            harness.sim_clock.clone_box(),
+                            TokioSleep,
+                            LockingStrategy::ByComponentDigest,
+                        )
+                        .await;
+                        activity_exec
+                            .tick_test_await(harness.sim_clock.now(), RunId::generate())
+                            .await;
+                        continue;
+                    }
+                    None => panic!(
+                        "captured_writes must not be empty while stepping paused JS workflow"
+                    ),
+                }
+            }
 
             steps += 1;
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_replay_{steps}"),
-                redact_component_digest(serde_json::to_value(&replay).unwrap())
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_replay_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    assert_json_snapshot!(
+                        redact_component_digest(serde_json::to_value(&replay).unwrap())
+                    );
+                }
             );
 
             let requested = match trim_to {
@@ -2456,6 +2624,7 @@ mod tests {
                 &harness.runnable_component.wasm_component.exim,
                 harness.workflow_engine.clone(),
                 harness.fn_registry.clone(),
+                CancelRegistry::new(),
                 harness.db_pool.clone(),
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
@@ -2467,21 +2636,29 @@ mod tests {
             .unwrap();
             assert_eq!(advance.outcome, AdvanceOutcome::Applied);
 
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_advance_{steps}"),
-                json!({
-                    "version": advance.version.0,
-                    "outcome": format!("{:?}", advance.outcome),
-                    "trim_to": trim_to,
-                    "requested_captured_writes_len": requested.captured_writes.len(),
-                    "replayed_captured_writes_len": replay.captured_writes.len(),
-                })
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_advance_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    assert_json_snapshot!(
+                        json!({
+                            "version": advance.version.0,
+                            "outcome": format!("{:?}", advance.outcome),
+                            "trim_to": trim_to,
+                            "requested_captured_writes_len": requested.captured_writes.len(),
+                            "replayed_captured_writes_len": replay.captured_writes.len(),
+                        })
+                    );
+                }
             );
 
             let log = db_connection.get(&harness.execution_id).await.unwrap();
-            assert_json_snapshot!(
-                format!("{snapshot_prefix}_log_{steps}"),
-                ExecutionLogSanitized::from(log)
+            insta::with_settings!({
+                snapshot_suffix => format!("{test_name}_log_{steps}"),
+                prepend_module_to_snapshot => false},
+                {
+                    assert_json_snapshot!(ExecutionLogSanitized::from(log));
+                }
             );
 
             if let Ok(finished_result) = db_connection
@@ -2599,7 +2776,7 @@ mod tests {
                     child_req,
                     ..
                 } => {
-                    *current_time = DateTime::UNIX_EPOCH;
+                    *current_time = DateTime::UNIX_EPOCH; // modifying time in the advance request should have no effect.
                     for req in batch.iter_mut() {
                         req.created_at = DateTime::UNIX_EPOCH;
                     }
@@ -2622,6 +2799,7 @@ mod tests {
             &runnable_component.wasm_component.exim,
             workflow_engine,
             fn_registry,
+            CancelRegistry::new(),
             db_pool.clone(),
             execution_id,
             None,
@@ -2648,10 +2826,168 @@ mod tests {
             .get_execution_event(&child_execution_id, &Version::new(0))
             .await
             .unwrap();
+        // Check that the current system time is used.
         assert_eq!(create_event.created_at, sim_clock.now());
         let ExecutionRequest::Created { scheduled_at, .. } = create_event.event else {
             panic!("child execution log must start with Created");
         };
         assert_eq!(scheduled_at, sim_clock.now());
+    }
+
+    #[tokio::test]
+    async fn advance_paused_js_workflow_uses_server_time_for_relative_schedule() {
+        test_utils::set_up();
+
+        let js_source = r"
+            export default function (_params) {
+                const execId = obelisk.executionIdGenerate();
+                obelisk.schedule(
+                    execId,
+                    'testing:stub-activity/activity.foo',
+                    ['scheduled-param'],
+                    { minutes: 5 },
+                );
+                return execId;
+            }
+        ";
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "schedule-relative");
+        let sim_clock = SimClock::epoch();
+        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            crate::activity::activity_worker::test::compile_activity_stub(
+                test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,
+            )
+            .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = ExecutionId::from_parts(0, 9003);
+        let created_at = sim_clock.now();
+
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let deployment_id = DeploymentId::from_parts(0, 0);
+        sim_clock.move_time_forward(Duration::from_millis(100));
+        let replay = WorkflowJsWorker::replay(
+            deployment_id,
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            None,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let mut requested = replay.clone();
+        let replayed_child_scheduled_at = requested
+            .captured_writes
+            .iter()
+            .find_map(|write| match write {
+                CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } => {
+                    child_req.first().map(|child| child.scheduled_at)
+                }
+                _ => None,
+            })
+            .expect("replay should create a scheduled execution");
+        assert_eq!(
+            replayed_child_scheduled_at,
+            sim_clock.now() + chrono::TimeDelta::minutes(5)
+        );
+        let child_execution_id = requested
+            .captured_writes
+            .iter_mut()
+            .find_map(|write| match write {
+                CapturedDbWrite::AppendBatchCreateNewExecution {
+                    current_time,
+                    batch,
+                    child_req,
+                    ..
+                } => {
+                    *current_time = DateTime::UNIX_EPOCH; // modifying time in the advance request should have no effect.
+                    for req in batch.iter_mut() {
+                        req.created_at = DateTime::UNIX_EPOCH;
+                    }
+                    for child in child_req.iter_mut() {
+                        child.created_at = DateTime::UNIX_EPOCH;
+                        child.scheduled_at = DateTime::UNIX_EPOCH;
+                    }
+                    child_req.first().map(|child| child.execution_id.clone())
+                }
+                _ => None,
+            })
+            .expect("replay should create a scheduled execution");
+        sim_clock.move_time_forward(Duration::from_millis(100));
+
+        let advance = WorkflowJsWorker::advance(
+            deployment_id,
+            component_id,
+            runnable_component.wasmtime_component,
+            &runnable_component.wasm_component.exim,
+            workflow_engine,
+            fn_registry,
+            CancelRegistry::new(),
+            db_pool.clone(),
+            execution_id,
+            None,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            requested,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            crate::workflow::workflow_worker::AdvanceOutcome::Applied,
+            advance.outcome
+        );
+        let expected_scheduled_at = sim_clock.now() + chrono::TimeDelta::minutes(5);
+        assert_matches!(
+            db_connection
+                .get_pending_state(&child_execution_id)
+                .await
+                .unwrap()
+                .pending_state,
+            PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) if scheduled_at == expected_scheduled_at
+        );
+        let create_event = db_connection
+            .get_execution_event(&child_execution_id, &Version::new(0))
+            .await
+            .unwrap();
+        assert_eq!(create_event.created_at, sim_clock.now());
+        let ExecutionRequest::Created { scheduled_at, .. } = create_event.event else {
+            panic!("scheduled execution log must start with Created");
+        };
+        assert_eq!(scheduled_at, expected_scheduled_at);
     }
 }

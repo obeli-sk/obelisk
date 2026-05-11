@@ -8,7 +8,6 @@ use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::workflow::caching_db_connection::FlushOutcome;
 use crate::workflow::deadline_tracker::PreemptRequested;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
@@ -17,6 +16,7 @@ use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError;
 use crate::workflow::host_exports::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
 use crate::workflow::host_exports::response_id::ResponseId;
+use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ComponentId;
@@ -351,10 +351,7 @@ impl EventHistory {
             "Extending the lock at version {version}",
             version = db_connection.version()
         );
-        // Replay interruption correctness: Never extending a lock during replay.
-        let _ = db_connection
-            .flush_non_blocking_event_cache(called_at)
-            .await?;
+
         db_connection
             .append_blocking(
                 db_connection.execution_id().clone(),
@@ -505,53 +502,33 @@ impl EventHistory {
 
         let join_next_count = response_ids.len();
         // Attempt to cancel activities and delays.
-        // Flush the DB cache, -submit requests might not have been written!
-        let flushed = db_connection
-            .flush_non_blocking_event_cache(called_at)
-            .await?;
-        if self.replaying_unfinished_execution && flushed == FlushOutcome::FlushedCache {
-            return Err(ApplyError::ReplayWaitingForResponse);
-        }
-
-        for (response_id, component_type) in response_ids.iter().rev() {
-            if let ResponseId::ChildExecutionId(child_execution_id_derived) = response_id
-                && component_type.is_activity()
-            {
-                let res = db_connection
-                    .cancel_activity(
-                        &self.cancel_registry,
-                        &ExecutionId::Derived(child_execution_id_derived.clone()),
-                        called_at,
-                    )
-                    .await
-                    .map(|_| ()); // CancelOutcome is not inspected, this would interfere with replay preview.
-                if let Err(err) = res {
-                    debug!("Ignoring failure to cancel {child_execution_id_derived} - {err:?}");
+        // Retain order, keep only activities and delays.
+        let activity_and_delay_ids: Vec<_> = response_ids
+            .into_iter()
+            .filter_map(|(response_id, component_type)| {
+                if matches!(response_id, ResponseId::DelayId(_)) || component_type.is_activity() {
+                    Some(response_id)
+                } else {
+                    None
                 }
-            } else if let ResponseId::DelayId(delay_id) = response_id {
-                debug!("Cancelling {delay_id}");
-                let res = db_connection
-                    .cancel_delay(delay_id.clone(), called_at)
-                    .await
-                    .map(|_| ()); // CancelOutcome is not inspected, this would interfere with replay preview.
-                if let Err(err) = res {
-                    // This means that the watcher expired the delay in the mean time.
-                    trace!("Ignoring failure to cancel {delay_id} - {err:?}");
-                }
-            } // else child workflow, no cancellation
-        }
-
-        for _ in 0..join_next_count {
-            self.apply_inner(
-                EventCall::Blocking(EventCallBlocking::JoinNext(JoinNext {
-                    join_set_id: join_set_id.clone(),
-                    closing: true,
-                    wasm_backtrace: wasm_backtrace.clone(),
-                })),
-                db_connection,
+            })
+            .collect();
+        let mut cancellations = if activity_and_delay_ids.is_empty() {
+            None
+        } else {
+            Some(JoinSetCloseCancellations::new(
+                activity_and_delay_ids,
                 called_at,
-            )
-            .await?;
+            ))
+        };
+        for _ in 0..join_next_count {
+            let event_call = EventCall::Blocking(EventCallBlocking::JoinSetClose(JoinSetClose {
+                join_set_id: join_set_id.clone(),
+                cancellations: std::mem::take(&mut cancellations), // First iterations takes all cancellations, so that the activities get the signal ASAP.
+                wasm_backtrace: wasm_backtrace.clone(),
+            }));
+            self.apply_inner(event_call, db_connection, called_at)
+                .await?;
         }
         Ok(())
     }
@@ -1421,16 +1398,7 @@ impl EventHistory {
                 // Idempotently attempt to write to target_execution_id.
                 // The idempotent write is needed to avoid race with stub requests originating from remote systems.
                 debug!(target_execution_id = %params.target_execution_id, "StubRequest: first write");
-
-                let flushed = db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
-                assert_eq!(
-                    FlushOutcome::Noop,
-                    flushed,
-                    "get_stub_intent and get_stub_intent_and_params flushed before searching for the execution"
-                );
-
+                // Flushed when doing
                 match intent {
                     StubIntent::Err(err) => {
                         let event = HistoryEvent::Stub {
@@ -1558,14 +1526,7 @@ impl EventHistory {
                             created_at: called_at,
                             event: ExecutionRequest::HistoryEvent { event },
                         };
-                        let flushed = db_connection
-                            .flush_non_blocking_event_cache(called_at)
-                            .await?;
-                        assert_eq!(
-                            FlushOutcome::Noop,
-                            flushed,
-                            "CachingDbConnection must have applied the first write directly to db, replay must have been interrupted unless first write is in db"
-                        );
+
                         db_connection
                             .append_batch(
                                 called_at,
@@ -1641,17 +1602,16 @@ impl EventHistory {
         match event_call {
             EventCallBlocking::JoinNext(JoinNext {
                 join_set_id,
-                closing,
                 wasm_backtrace,
             }) => {
-                debug!(%join_set_id, "JoinNext(closing:{closing}): Flushing and appending JoinNext");
+                debug!(%join_set_id, "JoinNext(closing:false): Appending JoinNext");
                 let event =
                     if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
                         HistoryEvent::JoinNext {
                             join_set_id,
                             run_expires_at: lock_expires_at,
                             requested_ffqn: None,
-                            closing,
+                            closing: false,
                         }
                     } else {
                         HistoryEvent::JoinNextTooMany {
@@ -1664,14 +1624,51 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
-                // Replay interruption correctness: blocking requests will interrupt, no way join next can be dependent on a previous mocked write.
-                let _ = db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 db_connection
                     .append_blocking(
                         db_connection.execution_id().clone(),
                         join_next,
+                        wasm_backtrace,
+                        &self.locked_event.component_id,
+                    )
+                    .await?;
+                Ok(history_events)
+            }
+
+            EventCallBlocking::JoinSetClose(JoinSetClose {
+                join_set_id,
+                cancellations,
+                wasm_backtrace,
+            }) => {
+                debug!(
+                    %join_set_id,
+                    "JoinSetClose: appending JoinNext(closing:true) with cancellations: {}", cancellations.is_some()
+                );
+                let event =
+                    if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
+                        HistoryEvent::JoinNext {
+                            join_set_id,
+                            run_expires_at: lock_expires_at,
+                            requested_ffqn: None,
+                            closing: true,
+                        }
+                    } else {
+                        HistoryEvent::JoinNextTooMany {
+                            join_set_id,
+                            requested_ffqn: None,
+                        }
+                    };
+                let history_events = vec![(event.clone(), db_connection.version().clone())];
+                let join_next = AppendRequest {
+                    created_at: called_at,
+                    event: ExecutionRequest::HistoryEvent { event },
+                };
+                db_connection
+                    .append_join_set_close(
+                        &self.cancel_registry,
+                        db_connection.execution_id().clone(),
+                        join_next,
+                        cancellations,
                         wasm_backtrace,
                         &self.locked_event.component_id,
                     )
@@ -1684,7 +1681,7 @@ impl EventHistory {
                 requested_ffqn,
                 wasm_backtrace,
             }) => {
-                debug!(%join_set_id, "BlockingChildAwaitNext: Flushing and appending JoinNext");
+                debug!(%join_set_id, "EventCallBlocking::JoinNextRequestingFfqn: Flushing and appending JoinNext");
                 let event =
                     if self.count_submissions(&join_set_id) > self.count_join_nexts(&join_set_id) {
                         HistoryEvent::JoinNext {
@@ -1704,10 +1701,7 @@ impl EventHistory {
                     created_at: called_at,
                     event: ExecutionRequest::HistoryEvent { event },
                 };
-                // Replay interruption correctness: blocking requests will interrupt, no way join next can be dependent on a previous mocked write.
-                let _ = db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
+
                 db_connection
                     .append_blocking(
                         db_connection.execution_id().clone(),
@@ -1781,10 +1775,7 @@ impl EventHistory {
                     scheduled_by: None,
                     paused: false,
                 };
-                // Replay interruption correctness: blocking requests will interrupt, no way oneoff can be dependent on a previous mocked write.
-                let _ = db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
+
                 db_connection
                     .append_batch_create_new_execution(
                         called_at,
@@ -1844,10 +1835,6 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
 
-                // Replay interruption correctness: blocking requests will interrupt, no way sleep can be dependent on a previous mocked write.
-                let _ = db_connection
-                    .flush_non_blocking_event_cache(called_at)
-                    .await?;
                 db_connection
                     .append_batch(
                         called_at,
@@ -2202,6 +2189,7 @@ pub(crate) enum EventCallBlocking {
     /// foo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, ?>, await-next-extension-error>;
     JoinNextRequestingFfqn(JoinNextRequestingFfqn),
     JoinNext(JoinNext),
+    JoinSetClose(JoinSetClose),
     OneOffChildExecutionRequest(OneOffChildExecutionRequest), // blocking call
     OneOffDelayRequest(OneOffDelayRequest),                   // blocking sleep
 }
@@ -2356,7 +2344,7 @@ impl SubmitDelay {
             })?
             .insert(
                 ResponseId::DelayId(delay_id.clone()),
-                INVALID_CHILD_TYPE_FOR_DELAYS,
+                INVALID_CHILD_TYPE_FOR_DELAYS, // TODO - remove
             );
         Ok(delay_id)
     }
@@ -2546,7 +2534,6 @@ impl JoinNextRequestingFfqn {
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct JoinNext {
     pub(crate) join_set_id: JoinSetId,
-    pub(crate) closing: bool,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
@@ -2589,6 +2576,14 @@ impl JoinNext {
             .map(|(response_id, result)| (types_execution::ResponseId::from(response_id), result));
         Ok(value)
     }
+}
+
+#[derive(derive_more::Debug, Clone)]
+pub(crate) struct JoinSetClose {
+    pub(crate) join_set_id: JoinSetId,
+    pub(crate) cancellations: Option<JoinSetCloseCancellations>,
+    #[debug(skip)]
+    pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -2854,11 +2849,18 @@ impl EventCallBlocking {
             }) => JoinNextVariant::Delay(join_set_id.clone()),
             EventCallBlocking::JoinNext(JoinNext {
                 join_set_id,
-                closing,
                 wasm_backtrace: _,
             }) => JoinNextVariant::JoinNext {
                 join_set_id: join_set_id.clone(),
-                closing: *closing,
+                closing: false,
+            },
+            EventCallBlocking::JoinSetClose(JoinSetClose {
+                join_set_id,
+                cancellations: _,
+                wasm_backtrace: _,
+            }) => JoinNextVariant::JoinNext {
+                join_set_id: join_set_id.clone(),
+                closing: true,
             },
         }
     }
@@ -3002,11 +3004,18 @@ impl EventCallBlocking {
             ],
             EventCallBlocking::JoinNext(JoinNext {
                 join_set_id,
-                closing,
                 wasm_backtrace: _,
             }) => vec![DeterministicKey::JoinNext {
                 join_set_id: join_set_id.clone(),
-                closing: *closing,
+                closing: false,
+            }],
+            EventCallBlocking::JoinSetClose(JoinSetClose {
+                join_set_id,
+                cancellations: _,
+                wasm_backtrace: _,
+            }) => vec![DeterministicKey::JoinNext {
+                join_set_id: join_set_id.clone(),
+                closing: true,
             }],
         }
     }
@@ -4057,7 +4066,7 @@ mod tests {
                 ChildReturnValue::JoinNextRequestingFfqn(res) => res,
                 other => {
                     unreachable!(
-                        "BlockingChildAwaitNext returns JoinNextRequestingFfqn, got {other:?}"
+                        "EventCallBlocking::JoinNextRequestingFfqn returns ChildReturnValue::JoinNextRequestingFfqn, got {other:?}"
                     )
                 }
             })

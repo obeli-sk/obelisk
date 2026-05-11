@@ -98,6 +98,15 @@ impl Guest for Component {
         // f and c are dropped here
     }
 
+    fn join_set_close_cancellation_order() -> Result<(), ()> {
+        let join_set = join_set_create_named("close-order").expect("name is valid");
+        activity_ext::foo_submit(&join_set, "first");
+        workflow_support::submit_delay(&join_set, ScheduleAt::In(Duration::Days(1)));
+        activity_ext::foo_submit(&join_set, "second");
+        workflow_support::submit_delay(&join_set, ScheduleAt::In(Duration::Days(2)));
+        Ok(())
+    }
+
     fn invoke_expect_execution_error() -> Result<(), ()> {
         let res = activity::noret();
         res.unwrap_err();

@@ -288,6 +288,8 @@ package testing:stub-workflow {
 
         join-next-in-scope: func() -> result;
 
+        join-set-close-cancellation-order: func() -> result;
+
         invoke-expect-execution-error: func() -> result;
 
         stub-not-found: func() -> result;
@@ -355,6 +357,12 @@ package testing:stub-workflow-obelisk-ext {
 
         join-next-in-scope-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
+        join-set-close-cancellation-order-submit: func(join-set: borrow<join-set>) -> execution-id;
+
+        join-set-close-cancellation-order-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+
+        join-set-close-cancellation-order-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+
         invoke-expect-execution-error-submit: func(join-set: borrow<join-set>) -> execution-id;
 
         invoke-expect-execution-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
@@ -392,6 +400,8 @@ package testing:stub-workflow-obelisk-schedule {
         await-next-produces-all-processed-error-schedule: func(schedule-at: schedule-at) -> execution-id;
 
         join-next-in-scope-schedule: func(schedule-at: schedule-at) -> execution-id;
+
+        join-set-close-cancellation-order-schedule: func(schedule-at: schedule-at) -> execution-id;
 
         invoke-expect-execution-error-schedule: func(schedule-at: schedule-at) -> execution-id;
 
