@@ -138,12 +138,12 @@ impl ExecutionJournal {
         event: ExecutionRequest,
         appending_version: Version,
     ) -> Result<Version, DbErrorWrite> {
-        assert_eq!(self.version(), appending_version);
         if self.pending_state.is_finished() {
             return Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::AlreadyFinished,
             ));
         }
+        assert_eq!(self.version(), appending_version);
 
         if let ExecutionRequest::Locked(Locked {
             executor_id,
@@ -160,6 +160,32 @@ impl ExecutionJournal {
                 *run_id,
                 *lock_expires_at,
             )?;
+        }
+
+        match &event {
+            ExecutionRequest::Paused => {
+                if self.pending_state.is_paused() {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason: "cannot pause, execution is already paused".into(),
+                        context: tracing_error::SpanTrace::capture(),
+                        source: None,
+                        loc: std::panic::Location::caller(),
+                    }
+                    .into());
+                }
+            }
+            ExecutionRequest::Unpaused => {
+                if !self.pending_state.is_paused() {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason: "cannot unpause, execution is not paused".into(),
+                        context: tracing_error::SpanTrace::capture(),
+                        source: None,
+                        loc: std::panic::Location::caller(),
+                    }
+                    .into());
+                }
+            }
+            _ => {}
         }
 
         // Make sure delay id is unique
@@ -497,7 +523,7 @@ impl ExecutionJournal {
     }
 
     fn update_pending_state(&mut self) {
-        self.pending_state = dbg!(self.find_current_pending_state());
+        self.pending_state = self.find_current_pending_state();
         self.component_id = self
             .find_last_lock()
             .map(|locked| locked.component_id.clone())

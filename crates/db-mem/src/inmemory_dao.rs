@@ -888,6 +888,11 @@ impl DbHolder {
         let Some(journal) = self.journals.get_mut(execution_id) else {
             return Err(DbErrorWrite::NotFound);
         };
+        if journal.pending_state.is_finished() {
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::AlreadyFinished,
+            ));
+        }
         let expected_version = journal.version();
         if appending_version != expected_version {
             return Err(DbErrorWrite::NonRetriable(
