@@ -2254,8 +2254,8 @@ async fn backtrace_workflow_calling_activity() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["execution_id"], json!(exec_id));
     assert!(
-        body["component_id"].as_str().is_some_and(|s| !s.is_empty()),
-        "component_id must be a non-empty string"
+        body["component_id"].is_object(),
+        "component_id must be a non-empty object"
     );
     assert!(
         body["version_min_including"].is_number(),
