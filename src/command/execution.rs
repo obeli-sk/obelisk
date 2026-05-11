@@ -182,8 +182,9 @@ impl args::Execution {
                 api_url,
                 execution_id,
                 json,
+                trim,
                 pause_submitted,
-            } => advance(&api_url, execution_id, json, pause_submitted).await,
+            } => advance(&api_url, execution_id, json, trim, pause_submitted).await,
             args::Execution::Upgrade {
                 api_url,
                 execution_id,
@@ -653,13 +654,26 @@ fn pause_submitted_in_replay(replay: &mut serde_json::Value) -> anyhow::Result<(
     Ok(())
 }
 
+fn trim_replay(replay: &mut serde_json::Value, trim: usize) -> anyhow::Result<()> {
+    let captured_writes = replay
+        .get_mut("captured_writes")
+        .and_then(serde_json::Value::as_array_mut)
+        .context("replay response missing captured_writes array")?;
+    captured_writes.truncate(trim);
+    Ok(())
+}
+
 async fn advance(
     api_url: &str,
     execution_id: ExecutionId,
     json: bool,
+    trim: Option<usize>,
     pause_submitted: bool,
 ) -> anyhow::Result<()> {
     let mut replay = replay_json(api_url, &execution_id).await?;
+    if let Some(trim) = trim {
+        trim_replay(&mut replay, trim)?;
+    }
     if pause_submitted {
         pause_submitted_in_replay(&mut replay)?;
     }

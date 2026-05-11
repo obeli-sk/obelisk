@@ -613,6 +613,9 @@ pub(crate) enum Execution {
         /// Output as JSON instead of human-readable text.
         #[arg(short, long)]
         json: bool,
+        /// Send only the first N captured writes from replay to advance.
+        #[arg(long)]
+        trim: Option<usize>,
         /// Rewrite replayed submitted executions so they are created paused when advance is applied.
         #[arg(long)]
         pause_submitted: bool,
