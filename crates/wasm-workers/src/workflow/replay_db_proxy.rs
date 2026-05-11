@@ -372,7 +372,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         let next = next_version(&version, batch.len());
         for request in &batch {
             assert!(
-                !is_closing_join_next(&request),
+                !is_closing_join_next(request),
                 "closing join next is not appended using `append_batch`"
             );
         }
@@ -401,7 +401,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         let next = next_version(&version, batch.len());
         for request in &batch {
             assert!(
-                !is_closing_join_next(&request),
+                !is_closing_join_next(request),
                 "closing join next is not appended using `append_batch_create_new_execution`"
             );
         }

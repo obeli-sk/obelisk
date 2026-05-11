@@ -3534,7 +3534,7 @@ pub(crate) mod tests {
             snapshot_suffix => format!("{test_name}-{}", ffqn.to_string().replace(':',"_")),
             prepend_module_to_snapshot => false},
             {
-                insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log.clone()))
+                insta::assert_json_snapshot!(ExecutionLogSanitized::from(execution_log.clone()));
             }
         );
         drop(db_connection);
@@ -3839,7 +3839,7 @@ pub(crate) mod tests {
                     workflow_engine,
                     fn_registry,
                     db_pool: db_pool.clone(),
-                    execution_id: execution_id,
+                    execution_id,
                     logs_storage_config: None,
                 },
                 &sim_clock,
@@ -4501,7 +4501,7 @@ pub(crate) mod tests {
                 snapshot_suffix => format!("{test_name}_replay_{steps}"),
                 prepend_module_to_snapshot => false},
                 {
-                    insta::assert_json_snapshot!(redact_component_digest(serde_json::to_value(&replay).unwrap()))
+                    insta::assert_json_snapshot!(redact_component_digest(serde_json::to_value(&replay).unwrap()));
                 }
             );
 
@@ -4540,7 +4540,7 @@ pub(crate) mod tests {
                         "trim_to": trim_to,
                         "requested_captured_writes_len": requested.captured_writes.len(),
                         "replayed_captured_writes_len": replay.captured_writes.len(),
-                    }))
+                    }));
                 }
             );
 
@@ -4550,7 +4550,7 @@ pub(crate) mod tests {
                 snapshot_suffix => format!("{test_name}_log_{steps}"),
                 prepend_module_to_snapshot => false},
                 {
-                    assert_json_snapshot!(ExecutionLogSanitized::from(log))
+                    assert_json_snapshot!(ExecutionLogSanitized::from(log));
                 }
             );
 

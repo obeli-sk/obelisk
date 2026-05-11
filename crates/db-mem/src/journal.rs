@@ -163,27 +163,23 @@ impl ExecutionJournal {
         }
 
         match &event {
-            ExecutionRequest::Paused => {
-                if self.pending_state.is_paused() {
-                    return Err(DbErrorWriteNonRetriable::IllegalState {
-                        reason: "cannot pause, execution is already paused".into(),
-                        context: tracing_error::SpanTrace::capture(),
-                        source: None,
-                        loc: std::panic::Location::caller(),
-                    }
-                    .into());
+            ExecutionRequest::Paused if self.pending_state.is_paused() => {
+                return Err(DbErrorWriteNonRetriable::IllegalState {
+                    reason: "cannot pause, execution is already paused".into(),
+                    context: tracing_error::SpanTrace::capture(),
+                    source: None,
+                    loc: std::panic::Location::caller(),
                 }
+                .into());
             }
-            ExecutionRequest::Unpaused => {
-                if !self.pending_state.is_paused() {
-                    return Err(DbErrorWriteNonRetriable::IllegalState {
-                        reason: "cannot unpause, execution is not paused".into(),
-                        context: tracing_error::SpanTrace::capture(),
-                        source: None,
-                        loc: std::panic::Location::caller(),
-                    }
-                    .into());
+            ExecutionRequest::Unpaused if !self.pending_state.is_paused() => {
+                return Err(DbErrorWriteNonRetriable::IllegalState {
+                    reason: "cannot unpause, execution is not paused".into(),
+                    context: tracing_error::SpanTrace::capture(),
+                    source: None,
+                    loc: std::panic::Location::caller(),
                 }
+                .into());
             }
             _ => {}
         }
@@ -476,7 +472,7 @@ impl ExecutionJournal {
                     .enumerate()
                     .rev()
                     .find_map(|(idx, event)| match &event.event {
-                        ExecutionRequest::Paused { .. } => Some(idx),
+                        ExecutionRequest::Paused => Some(idx),
                         _ => None,
                     })
             {
@@ -486,7 +482,7 @@ impl ExecutionJournal {
                     .enumerate()
                     .rev()
                     .find_map(|(idx, event)| match &event.event {
-                        ExecutionRequest::Unpaused { .. } => Some(idx),
+                        ExecutionRequest::Unpaused => Some(idx),
                         _ => None,
                     })
                 {

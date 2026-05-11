@@ -2254,7 +2254,7 @@ mod tests {
         insta::with_settings!({
             prepend_module_to_snapshot => false},
             {
-                assert_json_snapshot!(replay.history_events())
+                assert_json_snapshot!(replay.history_events());
             }
         );
 
@@ -2604,7 +2604,7 @@ mod tests {
                 {
                     assert_json_snapshot!(
                         redact_component_digest(serde_json::to_value(&replay).unwrap())
-                    )
+                    );
                 }
             );
 
@@ -2648,7 +2648,7 @@ mod tests {
                             "requested_captured_writes_len": requested.captured_writes.len(),
                             "replayed_captured_writes_len": replay.captured_writes.len(),
                         })
-                    )
+                    );
                 }
             );
 
@@ -2657,7 +2657,7 @@ mod tests {
                 snapshot_suffix => format!("{test_name}_log_{steps}"),
                 prepend_module_to_snapshot => false},
                 {
-                    assert_json_snapshot!(ExecutionLogSanitized::from(log))
+                    assert_json_snapshot!(ExecutionLogSanitized::from(log));
                 }
             );
 

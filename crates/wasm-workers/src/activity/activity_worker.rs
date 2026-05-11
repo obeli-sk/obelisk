@@ -1992,7 +1992,7 @@ pub(crate) mod tests {
         insta::with_settings!({
             prepend_module_to_snapshot => false},
             {
-                assert_json_snapshot!(variant)
+                assert_json_snapshot!(variant);
             }
         );
         db_close.close().await;
