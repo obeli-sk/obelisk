@@ -21,7 +21,8 @@ use axum_accept::AcceptExtractor;
 use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn, SupportedFunctionReturnValue,
+    ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn, JoinSetId,
+    SupportedFunctionReturnValue,
     component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
     storage::{
@@ -96,6 +97,7 @@ pub(crate) struct WebApiState {
         execution_submit_put,
         execution_submit_post,
         execution_replay,
+        execution_advance,
         execution_upgrade,
         backtrace::execution_backtrace,
         backtrace::execution_backtrace_source,
@@ -118,6 +120,8 @@ pub(crate) struct WebApiState {
         ExecutionStubPayload,
         RetVal,
         ReplayResponseSer,
+        AdvanceRequestSer,
+        AdvanceResponseSer,
         ExecutionSubmitPayload,
         ExecutionUpgradePayload,
         logs::LogEntryRowSer,
@@ -188,6 +192,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route(
             "/executions/{execution-id}/replay",
             routing::put(execution_replay),
+        )
+        .route(
+            "/executions/{execution-id}/advance",
+            routing::put(execution_advance),
         )
         .route(
             "/executions/{execution-id}/responses",
@@ -1311,43 +1319,117 @@ impl From<SupportedFunctionReturnValue> for RetVal {
 }
 
 /// A serializable mirror of `CreateRequest` from concepts.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct CreateRequestSer {
     created_at: DateTime<Utc>,
     execution_id: String,
     ffqn: String,
     #[schema(value_type = Vec<Object>)]
     params: concepts::Params,
+    parent_execution_id: Option<String>,
+    parent_join_set_id: Option<String>,
     scheduled_at: DateTime<Utc>,
-    component_id: String,
+    #[schema(value_type = Object)]
+    component_id: concepts::ComponentId,
     deployment_id: String,
+    #[schema(value_type = Object)]
+    metadata: concepts::ExecutionMetadata,
+    scheduled_by: Option<String>,
     paused: bool,
 }
 
 impl From<concepts::storage::CreateRequest> for CreateRequestSer {
     fn from(r: concepts::storage::CreateRequest) -> Self {
+        let (parent_execution_id, parent_join_set_id) = r
+            .parent
+            .map(|(execution_id, join_set_id)| {
+                (
+                    Some(execution_id.to_string()),
+                    Some(join_set_id.to_string()),
+                )
+            })
+            .unwrap_or((None, None));
         Self {
             created_at: r.created_at,
             execution_id: r.execution_id.to_string(),
             ffqn: r.ffqn.to_string(),
             params: r.params,
+            parent_execution_id,
+            parent_join_set_id,
             scheduled_at: r.scheduled_at,
-            component_id: r.component_id.to_string(),
+            component_id: r.component_id,
             deployment_id: r.deployment_id.to_string(),
+            metadata: r.metadata,
+            scheduled_by: r.scheduled_by.map(|execution_id| execution_id.to_string()),
             paused: r.paused,
         }
     }
 }
 
+impl TryFrom<CreateRequestSer> for concepts::storage::CreateRequest {
+    type Error = String;
+
+    fn try_from(value: CreateRequestSer) -> Result<Self, Self::Error> {
+        let parent = match (value.parent_execution_id, value.parent_join_set_id) {
+            (Some(execution_id), Some(join_set_id)) => Some((
+                execution_id
+                    .parse()
+                    .map_err(|err| format!("invalid parent_execution_id - {err}"))?,
+                join_set_id
+                    .parse::<JoinSetId>()
+                    .map_err(|err| format!("invalid parent_join_set_id - {err}"))?,
+            )),
+            (None, None) => None,
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(
+                    "parent_execution_id and parent_join_set_id must be both set or both omitted"
+                        .to_string(),
+                );
+            }
+        };
+
+        Ok(Self {
+            created_at: value.created_at,
+            execution_id: value
+                .execution_id
+                .parse()
+                .map_err(|err| format!("invalid execution_id - {err}"))?,
+            ffqn: value
+                .ffqn
+                .parse()
+                .map_err(|err| format!("invalid ffqn - {err}"))?,
+            params: value.params,
+            parent,
+            scheduled_at: value.scheduled_at,
+            component_id: value.component_id,
+            deployment_id: value
+                .deployment_id
+                .parse()
+                .map_err(|err| format!("invalid deployment_id - {err}"))?,
+            metadata: value.metadata,
+            scheduled_by: value
+                .scheduled_by
+                .map(|execution_id| {
+                    execution_id
+                        .parse()
+                        .map_err(|err| format!("invalid scheduled_by - {err}"))
+                })
+                .transpose()?,
+            paused: value.paused,
+        })
+    }
+}
+
 /// A serializable mirror of `AppendResponseToExecution` from concepts.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct StubResponseSer {
     parent_execution_id: String,
     created_at: DateTime<Utc>,
     join_set_id: String,
     child_execution_id: String,
     finished_version: u32,
-    result: RetVal,
+    #[schema(value_type = Object)]
+    result: SupportedFunctionReturnValue,
 }
 
 impl From<concepts::storage::AppendResponseToExecution> for StubResponseSer {
@@ -1358,13 +1440,42 @@ impl From<concepts::storage::AppendResponseToExecution> for StubResponseSer {
             join_set_id: r.join_set_id.to_string(),
             child_execution_id: r.child_execution_id.to_string(),
             finished_version: r.finished_version.0,
-            result: RetVal::from(r.result),
+            result: r.result,
         }
     }
 }
 
+impl TryFrom<StubResponseSer> for concepts::storage::AppendResponseToExecution {
+    type Error = String;
+
+    fn try_from(value: StubResponseSer) -> Result<Self, Self::Error> {
+        let child_execution_id = value
+            .child_execution_id
+            .parse::<ExecutionId>()
+            .map_err(|err| format!("invalid child_execution_id - {err}"))?;
+        let ExecutionId::Derived(child_execution_id) = child_execution_id else {
+            return Err("child_execution_id must be a derived execution id".to_string());
+        };
+
+        Ok(Self {
+            parent_execution_id: value
+                .parent_execution_id
+                .parse()
+                .map_err(|err| format!("invalid parent_execution_id - {err}"))?,
+            created_at: value.created_at,
+            join_set_id: value
+                .join_set_id
+                .parse()
+                .map_err(|err| format!("invalid join_set_id - {err}"))?,
+            child_execution_id,
+            finished_version: Version::new(value.finished_version),
+            result: value.result,
+        })
+    }
+}
+
 /// A serializable captured database write operation.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum CapturedWriteSer {
     Append {
@@ -1387,6 +1498,7 @@ enum CapturedWriteSer {
         execution_id: String,
         version: u32,
         child_requests: Vec<CreateRequestSer>,
+        backtraces: Vec<backtrace::BacktraceInfoSer>,
     },
     AppendBatchRespondToParent {
         execution_id: String,
@@ -1428,13 +1540,17 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                 execution_id,
                 version,
                 child_req,
-                backtraces: _,
+                backtraces,
             } => CapturedWriteSer::AppendBatchCreateNewExecution {
                 current_time,
                 events: batch,
                 execution_id: execution_id.to_string(),
                 version: version.0,
                 child_requests: child_req.into_iter().map(CreateRequestSer::from).collect(),
+                backtraces: backtraces
+                    .into_iter()
+                    .map(backtrace::BacktraceInfoSer::from)
+                    .collect(),
             },
             CapturedDbWrite::AppendStubResponse {
                 events,
@@ -1447,6 +1563,79 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                 response: StubResponseSer::from(response),
                 current_time,
             },
+        }
+    }
+}
+
+impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
+    type Error = String;
+
+    fn try_from(value: CapturedWriteSer) -> Result<Self, Self::Error> {
+        match value {
+            CapturedWriteSer::Append {
+                execution_id,
+                version,
+                event,
+            } => Ok(Self::Append {
+                execution_id: execution_id
+                    .parse()
+                    .map_err(|err| format!("invalid execution_id - {err}"))?,
+                version: Version::new(version),
+                req: event,
+            }),
+            CapturedWriteSer::AppendBatch {
+                current_time,
+                events,
+                execution_id,
+                version,
+            } => Ok(Self::AppendBatch {
+                current_time,
+                batch: events,
+                execution_id: execution_id
+                    .parse()
+                    .map_err(|err| format!("invalid execution_id - {err}"))?,
+                version: Version::new(version),
+            }),
+            CapturedWriteSer::AppendBatchCreateNewExecution {
+                current_time,
+                events,
+                execution_id,
+                version,
+                child_requests,
+                backtraces,
+            } => Ok(Self::AppendBatchCreateNewExecution {
+                current_time,
+                batch: events,
+                execution_id: execution_id
+                    .parse()
+                    .map_err(|err| format!("invalid execution_id - {err}"))?,
+                version: Version::new(version),
+                child_req: child_requests
+                    .into_iter()
+                    .map(concepts::storage::CreateRequest::try_from)
+                    .collect::<Result<Vec<_>, _>>()?,
+                backtraces: backtraces
+                    .into_iter()
+                    .map(concepts::storage::BacktraceInfo::try_from)
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
+            CapturedWriteSer::AppendBatchRespondToParent {
+                execution_id,
+                version,
+                events,
+                response,
+                current_time,
+            } => Ok(Self::AppendStubResponse {
+                events: concepts::storage::AppendEventsToExecution {
+                    execution_id: execution_id
+                        .parse()
+                        .map_err(|err| format!("invalid execution_id - {err}"))?,
+                    version: Version::new(version),
+                    batch: events,
+                },
+                response: response.try_into()?,
+                current_time,
+            }),
         }
     }
 }
@@ -1468,6 +1657,30 @@ impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayRes
                 .collect(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+struct AdvanceRequestSer {
+    captured_writes: Vec<CapturedWriteSer>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct AdvanceResponseSer {
+    outcome: AdvanceOutcomeSer,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AdvanceOutcomeSer {
+    Applied {
+        version: u32,
+        #[schema(value_type = Option<Object>)]
+        finished_result: Option<SupportedFunctionReturnValue>,
+    },
+    VersionMismatch {
+        version: u32,
+    },
+    Mismatch,
 }
 
 /// Get execution return value
@@ -1751,80 +1964,7 @@ async fn execution_replay(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    let (deployment_id, component_registry_ro) = {
-        let ctx = state.deployment_ctx.read().await;
-        (ctx.deployment_id, ctx.component_registry_ro.clone())
-    };
-    let conn = state
-        .db_pool
-        .connection()
-        .await
-        .map_err(|e| ErrorWrapper(e, accept))?;
-    // Find the execution's ffqn.
-    let create_req = conn.get_create_request(&execution_id).await.map_err(|e| {
-        if e == DbErrorRead::NotFound {
-            HttpResponse::not_found(accept, "execution")
-        } else {
-            ErrorWrapper(e, accept).into()
-        }
-    })?;
-    // Check that ffqn exists
-    let Some((component_id, _fn_metadata)) =
-        component_registry_ro.find_by_exported_ffqn_submittable(&create_req.ffqn)
-    else {
-        return Err(HttpResponse::not_found(accept, "component"));
-    };
-    Span::current().record("component_id", tracing::field::display(component_id));
-
-    let (component_id, replay_info) = component_registry_ro
-        .get_workflow_replay_info(&component_id.component_digest)
-        .expect("digest taken from found component id");
-
-    let logs_storage_config = replay_info
-        .logs_store_min_level
-        .map(|min_level| LogStrageConfig {
-            min_level,
-            log_sender: state.log_forwarder_sender.clone(),
-        });
-
-    let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
-        WorkflowJsWorker::replay(
-            deployment_id,
-            component_id.clone(),
-            replay_info.runnable_component.wasmtime_component.clone(),
-            &replay_info.runnable_component.wasm_component.exim,
-            state.engines.workflow_engine.clone(),
-            Arc::new(component_registry_ro.clone()),
-            state.db_pool.clone(),
-            execution_id.clone(),
-            logs_storage_config,
-            Now.clone_box(),
-            js_info.js_source.clone(),
-        )
-        .await
-    } else {
-        WorkflowWorker::replay(
-            deployment_id,
-            component_id.clone(),
-            replay_info.runnable_component.wasmtime_component.clone(),
-            &replay_info.runnable_component.wasm_component.exim,
-            state.engines.workflow_engine.clone(),
-            Arc::new(component_registry_ro.clone()),
-            state.db_pool.clone(),
-            execution_id.clone(),
-            logs_storage_config,
-            Now.clone_box(),
-        )
-        .await
-    };
-    let replay_response = replay_res.map_err(|err| {
-        info!("Replay failed: {err:?}");
-        HttpResponse {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            message: format!("Replay failed: {err}"),
-            accept,
-        }
-    })?;
+    let replay_response = replay_execution_internal(&state, &execution_id, accept).await?;
     let ser = ReplayResponseSer::from(replay_response);
     Ok(match accept {
         AcceptHeader::Json => Json(ser).into_response(),
@@ -1836,6 +1976,263 @@ async fn execution_replay(
             output.into_response()
         }
     })
+}
+
+/// Advance a paused execution using replay-captured writes.
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}/advance",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID to advance")
+    ),
+    request_body = AdvanceRequestSer,
+    responses(
+        (status = 200, description = "Execution advance outcome", body = AdvanceResponseSer),
+        (status = 404, description = "Not found"),
+        (status = 422, description = "Advance failed")
+    )
+)]
+#[instrument(skip_all, fields(execution_id))]
+async fn execution_advance(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+    Json(payload): Json<AdvanceRequestSer>,
+) -> Result<Response, HttpResponse> {
+    let (deployment_id, component_registry_ro, replay_info, component_id) =
+        get_replay_target(&state, &execution_id, accept).await?;
+
+    let logs_storage_config = replay_info
+        .logs_store_min_level
+        .map(|min_level| LogStrageConfig {
+            min_level,
+            log_sender: state.log_forwarder_sender.clone(),
+        });
+
+    let expected = wasm_workers::workflow::workflow_worker::ReplayResponse {
+        captured_writes: payload
+            .captured_writes
+            .into_iter()
+            .map(concepts::storage::CapturedDbWrite::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|message| HttpResponse {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message,
+                accept,
+            })?,
+    };
+
+    let advance_res = if let Some(js_info) = &replay_info.js_workflow_info {
+        WorkflowJsWorker::advance(
+            deployment_id,
+            component_id.clone(),
+            replay_info.runnable_component.wasmtime_component.clone(),
+            &replay_info.runnable_component.wasm_component.exim,
+            state.engines.workflow_engine.clone(),
+            Arc::new(component_registry_ro.clone()),
+            state.cancel_registry.clone(),
+            state.db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config,
+            Now.clone_box(),
+            js_info.js_source.clone(),
+            expected,
+        )
+        .await
+    } else {
+        WorkflowWorker::advance(
+            deployment_id,
+            component_id.clone(),
+            replay_info.runnable_component.wasmtime_component.clone(),
+            &replay_info.runnable_component.wasm_component.exim,
+            state.engines.workflow_engine.clone(),
+            Arc::new(component_registry_ro.clone()),
+            state.cancel_registry.clone(),
+            state.db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config,
+            Now.clone_box(),
+            expected,
+        )
+        .await
+    };
+
+    let advance_response = advance_res.map_err(|err| {
+        info!("Advance failed: {err:?}");
+        HttpResponse {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: format!("advance failed: {err}"),
+            accept,
+        }
+    })?;
+
+    let conn = state
+        .db_pool
+        .connection()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let outcome = match advance_response.outcome {
+        wasm_workers::workflow::workflow_worker::AdvanceOutcome::Applied => {
+            let finished_result = match conn
+                .get_pending_state(&execution_id)
+                .await
+                .map_err(|e| ErrorWrapper(e, accept))?
+                .pending_state
+            {
+                PendingState::Finished(finished) => {
+                    let finished_event = conn
+                        .get_execution_event(&execution_id, &Version(finished.version))
+                        .await
+                        .map_err(|e| ErrorWrapper(e, accept))?;
+                    let ExecutionRequest::Finished { retval, .. } = finished_event.event else {
+                        return Err(HttpResponse {
+                            status: StatusCode::INTERNAL_SERVER_ERROR,
+                            message: "pending state finished implies `Finished` event".to_string(),
+                            accept,
+                        });
+                    };
+                    Some(retval)
+                }
+                _ => None,
+            };
+            AdvanceOutcomeSer::Applied {
+                version: advance_response.version.0,
+                finished_result,
+            }
+        }
+        wasm_workers::workflow::workflow_worker::AdvanceOutcome::VersionMismatch => {
+            AdvanceOutcomeSer::VersionMismatch {
+                version: advance_response.version.0,
+            }
+        }
+        wasm_workers::workflow::workflow_worker::AdvanceOutcome::Mismatch => {
+            AdvanceOutcomeSer::Mismatch
+        }
+    };
+    let response = AdvanceResponseSer { outcome };
+
+    Ok(match accept {
+        AcceptHeader::Json => Json(response).into_response(),
+        AcceptHeader::Text => match response.outcome {
+            AdvanceOutcomeSer::Applied {
+                version,
+                finished_result,
+            } => {
+                let finished_result = finished_result
+                    .map(|result| format!("\nfinished_result: {result:?}"))
+                    .unwrap_or_default();
+                format!("outcome: applied\nversion: {version}{finished_result}").into_response()
+            }
+            AdvanceOutcomeSer::VersionMismatch { version } => {
+                format!("outcome: version_mismatch\nversion: {version}").into_response()
+            }
+            AdvanceOutcomeSer::Mismatch => "outcome: mismatch".into_response(),
+        },
+    })
+}
+
+async fn get_replay_target(
+    state: &Arc<WebApiState>,
+    execution_id: &ExecutionId,
+    accept: AcceptHeader,
+) -> Result<
+    (
+        DeploymentId,
+        wasm_workers::registry::ComponentConfigRegistryRO,
+        wasm_workers::registry::WorkflowReplayInfo,
+        concepts::ComponentId,
+    ),
+    HttpResponse,
+> {
+    let (deployment_id, component_registry_ro) = {
+        let ctx = state.deployment_ctx.read().await;
+        (ctx.deployment_id, ctx.component_registry_ro.clone())
+    };
+    let conn = state
+        .db_pool
+        .connection()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let create_req = conn.get_create_request(execution_id).await.map_err(|e| {
+        if e == DbErrorRead::NotFound {
+            HttpResponse::not_found(accept, "execution")
+        } else {
+            ErrorWrapper(e, accept).into()
+        }
+    })?;
+    let Some((component_id, _fn_metadata)) =
+        component_registry_ro.find_by_exported_ffqn_submittable(&create_req.ffqn)
+    else {
+        return Err(HttpResponse::not_found(accept, "component"));
+    };
+    Span::current().record("component_id", tracing::field::display(&component_id));
+    let replay_info_registry = component_registry_ro.clone();
+    let (component_id, replay_info) = replay_info_registry
+        .get_workflow_replay_info(&component_id.component_digest)
+        .expect("digest taken from found component id");
+    Ok((
+        deployment_id,
+        component_registry_ro,
+        replay_info.clone(),
+        component_id.clone(),
+    ))
+}
+
+async fn replay_execution_internal(
+    state: &Arc<WebApiState>,
+    execution_id: &ExecutionId,
+    accept: AcceptHeader,
+) -> Result<wasm_workers::workflow::workflow_worker::ReplayResponse, HttpResponse> {
+    let (deployment_id, component_registry_ro, replay_info, component_id) =
+        get_replay_target(state, execution_id, accept).await?;
+    let logs_storage_config = replay_info
+        .logs_store_min_level
+        .map(|min_level| LogStrageConfig {
+            min_level,
+            log_sender: state.log_forwarder_sender.clone(),
+        });
+
+    if let Some(js_info) = &replay_info.js_workflow_info {
+        WorkflowJsWorker::replay(
+            deployment_id,
+            component_id,
+            replay_info.runnable_component.wasmtime_component.clone(),
+            &replay_info.runnable_component.wasm_component.exim,
+            state.engines.workflow_engine.clone(),
+            Arc::new(component_registry_ro),
+            state.db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config,
+            Now.clone_box(),
+            js_info.js_source.clone(),
+        )
+        .await
+        .map_err(|err| HttpResponse {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: format!("Replay failed: {err}"),
+            accept,
+        })
+    } else {
+        WorkflowWorker::replay(
+            deployment_id,
+            component_id,
+            replay_info.runnable_component.wasmtime_component.clone(),
+            &replay_info.runnable_component.wasm_component.exim,
+            state.engines.workflow_engine.clone(),
+            Arc::new(component_registry_ro),
+            state.db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config,
+            Now.clone_box(),
+        )
+        .await
+        .map_err(|err| HttpResponse {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: format!("Replay failed: {err}"),
+            accept,
+        })
+    }
 }
 
 /// Payload for upgrading an execution to a new component version
@@ -2766,11 +3163,12 @@ mod backtrace {
     }
 
     /// Serializable version of `BacktraceInfo`
-    #[derive(Serialize, ToSchema)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct BacktraceInfoSer {
         #[schema(value_type = String)]
         pub execution_id: ExecutionId,
-        pub component_id: String,
+        #[schema(value_type = Object)]
+        pub component_id: concepts::ComponentId,
         #[schema(value_type = String)]
         pub version_min_including: VersionType,
         #[schema(value_type = String)]
@@ -2783,11 +3181,25 @@ mod backtrace {
         fn from(value: concepts::storage::BacktraceInfo) -> Self {
             BacktraceInfoSer {
                 execution_id: value.execution_id,
-                component_id: value.component_id.to_string(),
+                component_id: value.component_id,
                 version_min_including: value.version_min_including.0,
                 version_max_excluding: value.version_max_excluding.0,
                 wasm_backtrace: value.wasm_backtrace,
             }
+        }
+    }
+
+    impl TryFrom<BacktraceInfoSer> for concepts::storage::BacktraceInfo {
+        type Error = String;
+
+        fn try_from(value: BacktraceInfoSer) -> Result<Self, Self::Error> {
+            Ok(Self {
+                execution_id: value.execution_id,
+                component_id: value.component_id,
+                version_min_including: Version::new(value.version_min_including),
+                version_max_excluding: Version::new(value.version_max_excluding),
+                wasm_backtrace: value.wasm_backtrace,
+            })
         }
     }
 

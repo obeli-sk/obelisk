@@ -176,11 +176,15 @@ impl args::Execution {
             args::Execution::Replay {
                 api_url,
                 execution_id,
-            } => {
-                let client = reqwest::Client::new();
-                let req = client.put(format!("{api_url}/v1/executions/{execution_id}/replay"));
-                send_and_print(req).await
-            }
+                json,
+            } => replay(&api_url, execution_id, json).await,
+            args::Execution::Advance {
+                api_url,
+                execution_id,
+                json,
+                trim,
+                pause_submitted,
+            } => advance(&api_url, execution_id, json, trim, pause_submitted).await,
             args::Execution::Upgrade {
                 api_url,
                 execution_id,
@@ -580,6 +584,162 @@ async fn send_and_print(req: reqwest::RequestBuilder) -> anyhow::Result<()> {
     } else {
         let body = resp.text().await.unwrap_or_default();
         Err(anyhow::anyhow!("server returned {status}: {body}"))
+    }
+}
+
+async fn replay(api_url: &str, execution_id: ExecutionId, json: bool) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let accept = if json {
+        "application/json"
+    } else {
+        "text/plain"
+    };
+    let req = client
+        .put(format!("{api_url}/v1/executions/{execution_id}/replay"))
+        .header(ACCEPT, accept);
+    send_and_print(req).await
+}
+
+async fn replay_json(
+    api_url: &str,
+    execution_id: &ExecutionId,
+) -> anyhow::Result<serde_json::Value> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .put(format!("{api_url}/v1/executions/{execution_id}/replay"))
+        .header(ACCEPT, "application/json")
+        .send()
+        .await
+        .context("failed to send replay request")?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        bail!("server returned {status}: {body}");
+    }
+    resp.json()
+        .await
+        .context("failed to decode replay response as JSON")
+}
+
+fn pause_submitted_in_replay(replay: &mut serde_json::Value) -> anyhow::Result<()> {
+    let captured_writes = replay
+        .get_mut("captured_writes")
+        .and_then(serde_json::Value::as_array_mut)
+        .context("replay response missing captured_writes array")?;
+
+    for captured_write in captured_writes {
+        let Some(write_type) = captured_write
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        if write_type != "append_batch_create_new_execution" {
+            continue;
+        }
+
+        let child_requests = captured_write
+            .get_mut("child_requests")
+            .and_then(serde_json::Value::as_array_mut)
+            .context("append_batch_create_new_execution missing child_requests array")?;
+
+        for child_request in child_requests {
+            let child_request = child_request
+                .as_object_mut()
+                .context("child request must be a JSON object")?;
+            child_request.insert("paused".to_string(), serde_json::Value::Bool(true));
+        }
+    }
+
+    Ok(())
+}
+
+fn trim_replay(replay: &mut serde_json::Value, trim: usize) -> anyhow::Result<()> {
+    let captured_writes = replay
+        .get_mut("captured_writes")
+        .and_then(serde_json::Value::as_array_mut)
+        .context("replay response missing captured_writes array")?;
+    captured_writes.truncate(trim);
+    Ok(())
+}
+
+async fn advance(
+    api_url: &str,
+    execution_id: ExecutionId,
+    json: bool,
+    trim: Option<usize>,
+    pause_submitted: bool,
+) -> anyhow::Result<()> {
+    let mut replay = replay_json(api_url, &execution_id).await?;
+    if let Some(trim) = trim {
+        trim_replay(&mut replay, trim)?;
+    }
+    if pause_submitted {
+        pause_submitted_in_replay(&mut replay)?;
+    }
+    let client = reqwest::Client::new();
+    let accept = if json {
+        "application/json"
+    } else {
+        "text/plain"
+    };
+    let req = client
+        .put(format!("{api_url}/v1/executions/{execution_id}/advance"))
+        .header(ACCEPT, accept)
+        .json(&replay);
+    send_and_print(req).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pause_submitted_in_replay;
+    use serde_json::json;
+
+    #[test]
+    fn pause_submitted_rewrites_child_requests_only() {
+        let mut replay = json!({
+            "captured_writes": [
+                {
+                    "type": "append",
+                    "execution_id": "Exec_01",
+                    "version": 1,
+                    "event": {}
+                },
+                {
+                    "type": "append_batch_create_new_execution",
+                    "current_time": "2026-01-01T00:00:00Z",
+                    "events": [],
+                    "execution_id": "Exec_01",
+                    "version": 2,
+                    "child_requests": [
+                        {
+                            "execution_id": "Exec_02",
+                            "ffqn": "pkg:ifc/fn",
+                            "params": [],
+                            "scheduled_at": "2026-01-01T00:00:00Z",
+                            "component_id": {
+                                "component_type": "workflow",
+                                "name": "wf",
+                                "component_digest": "sha256:deadbeef"
+                            },
+                            "deployment_id": "Dep_01",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "metadata": {},
+                            "paused": false
+                        }
+                    ],
+                    "backtraces": []
+                }
+            ]
+        });
+
+        pause_submitted_in_replay(&mut replay).unwrap();
+
+        assert_eq!(
+            replay["captured_writes"][1]["child_requests"][0]["paused"],
+            json!(true)
+        );
+        assert!(replay["captured_writes"][0].get("child_requests").is_none());
     }
 }
 

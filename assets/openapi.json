@@ -646,6 +646,54 @@
         }
       }
     },
+    "/v1/executions/{execution_id}/advance": {
+      "put": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Advance a paused execution using replay-captured writes.",
+        "operationId": "execution_advance",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID to advance",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdvanceRequestSer"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Execution advance outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvanceResponseSer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Advance failed"
+          }
+        }
+      }
+    },
     "/v1/executions/{execution_id}/backtrace": {
       "get": {
         "tags": [
@@ -1331,6 +1379,95 @@
   },
   "components": {
     "schemas": {
+      "AdvanceOutcomeSer": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "version",
+              "type"
+            ],
+            "properties": {
+              "finished_result": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "applied"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "version",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "version_mismatch"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "mismatch"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "AdvanceRequestSer": {
+        "type": "object",
+        "required": [
+          "captured_writes"
+        ],
+        "properties": {
+          "captured_writes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapturedWriteSer"
+            }
+          }
+        }
+      },
+      "AdvanceResponseSer": {
+        "type": "object",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/AdvanceOutcomeSer"
+          }
+        }
+      },
       "BacktraceInfoSer": {
         "type": "object",
         "description": "Serializable version of `BacktraceInfo`",
@@ -1343,7 +1480,7 @@
         ],
         "properties": {
           "component_id": {
-            "type": "string"
+            "type": "object"
           },
           "execution_id": {
             "type": "string"
@@ -1433,9 +1570,16 @@
               "execution_id",
               "version",
               "child_requests",
+              "backtraces",
               "type"
             ],
             "properties": {
+              "backtraces": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BacktraceInfoSer"
+                }
+              },
               "child_requests": {
                 "type": "array",
                 "items": {
@@ -1555,11 +1699,12 @@
           "scheduled_at",
           "component_id",
           "deployment_id",
+          "metadata",
           "paused"
         ],
         "properties": {
           "component_id": {
-            "type": "string"
+            "type": "object"
           },
           "created_at": {
             "type": "string",
@@ -1574,11 +1719,26 @@
           "ffqn": {
             "type": "string"
           },
+          "metadata": {
+            "type": "object"
+          },
           "params": {
             "type": "array",
             "items": {
               "type": "object"
             }
+          },
+          "parent_execution_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_join_set_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "paused": {
             "type": "boolean"
@@ -1586,6 +1746,12 @@
           "scheduled_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "scheduled_by": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -2190,7 +2356,7 @@
             "type": "string"
           },
           "result": {
-            "$ref": "#/components/schemas/RetVal"
+            "type": "object"
           }
         }
       }
