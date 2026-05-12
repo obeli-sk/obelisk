@@ -1408,7 +1408,10 @@ async fn replay_and_advance_paused_js_workflow_until_finished_grpc() {
         stepped.steps > 0,
         "step-through harness must execute at least one replay+advance round"
     );
-    assert_eq!(stepped.retval, json!({"ok":"\"stub-ok\""}));
+    assert_eq!(
+        stepped.retval,
+        serde_json::Value::String("stub-ok".to_string())
+    );
     server.shutdown().await;
 }
 
@@ -1427,7 +1430,7 @@ async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
         stepped.steps > 0,
         "step-through harness must execute at least one replay+advance round"
     );
-    assert_eq!(stepped.retval, json!({"ok":{"ok":"\"stub-ok\""}}));
+    assert_eq!(stepped.retval, json!({"ok":"stub-ok"}));
 
     server.shutdown().await;
 }

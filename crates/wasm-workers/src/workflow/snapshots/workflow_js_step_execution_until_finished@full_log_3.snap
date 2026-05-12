@@ -104,10 +104,8 @@ expression: "ExecutionLogSanitized::from(log)"
         "finished": {
           "retval": {
             "ok": {
-              "type": "result<string, string>",
-              "value": {
-                "ok": "\"hello\""
-              }
+              "type": "string",
+              "value": "hello"
             }
           },
           "http_client_traces": null

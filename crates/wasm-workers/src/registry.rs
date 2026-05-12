@@ -8,6 +8,7 @@ use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
+use concepts::ReturnTypeExtendable;
 use concepts::StrVariant;
 use concepts::component_id::ComponentDigest;
 use concepts::storage::LogLevel;
@@ -51,6 +52,7 @@ pub struct WorkflowReplayInfo {
 pub struct JsWorkflowReplayInfo {
     pub js_source: String,
     pub user_params: Vec<concepts::ParameterType>,
+    pub user_return_type: ReturnTypeExtendable,
 }
 
 #[derive(Debug, Clone)]

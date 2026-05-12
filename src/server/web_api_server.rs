@@ -2086,6 +2086,7 @@ async fn execution_advance(
             logs_storage_config,
             Now.clone_box(),
             js_info.js_source.clone(),
+            &js_info.user_return_type,
             expected,
         )
         .await
@@ -2218,11 +2219,17 @@ async fn get_replay_target(
             ErrorWrapper(e, accept).into()
         }
     })?;
-    let Some((component_id, _fn_metadata)) =
+    let Some((component_id, fn_metadata)) =
         component_registry_ro.find_by_exported_ffqn_submittable(&create_req.ffqn)
     else {
         return Err(HttpResponse::not_found(accept, "component"));
     };
+    if fn_metadata.extension.is_some() {
+        return Err(HttpResponse::bad_request(
+            accept,
+            "function must not be an extension".to_string(),
+        ));
+    }
     Span::current().record("component_id", tracing::field::display(&component_id));
     let replay_info_registry = component_registry_ro.clone();
     let (component_id, replay_info) = replay_info_registry
@@ -2263,6 +2270,7 @@ async fn replay_execution_internal(
             logs_storage_config,
             Now.clone_box(),
             js_info.js_source.clone(),
+            &js_info.user_return_type,
         )
         .await
         .map_err(|err| HttpResponse {
@@ -2357,6 +2365,7 @@ async fn execution_upgrade(
                 logs_storage_config,
                 Now.clone_box(),
                 js_info.js_source.clone(),
+                &js_info.user_return_type,
             )
             .await
         } else {
@@ -3433,6 +3442,14 @@ impl HttpResponse {
             } else {
                 "not found".to_string()
             },
+            accept,
+        }
+    }
+
+    fn bad_request(accept: AcceptHeader, message: String) -> Self {
+        HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message,
             accept,
         }
     }

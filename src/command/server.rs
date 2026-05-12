@@ -3104,6 +3104,7 @@ fn prespawn_workflow_js(
         workflow_js.js_source,
         frame_sources,
         workflow_js.params,
+        workflow_js.return_type,
     ))
 }
 
@@ -3271,6 +3272,7 @@ impl WorkerCompiled {
         js_source: String,
         frame_files: FrameFilesToSourceContent, // to be served by GetBacktraceSource
         user_params: Vec<concepts::ParameterType>,
+        user_return_type: ReturnTypeExtendable,
     ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
@@ -3286,6 +3288,7 @@ impl WorkerCompiled {
                 js_workflow_info: Some(JsWorkflowReplayInfo {
                     js_source,
                     user_params,
+                    user_return_type,
                 }),
             }),
             wit_origin: WitOrigin::Synthesized,

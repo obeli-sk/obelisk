@@ -55,10 +55,8 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
         "current_time": "1970-01-01T00:00:00.500Z",
         "retval": {
           "ok": {
-            "type": "result<string, string>",
-            "value": {
-              "ok": "\"hello\""
-            }
+            "type": "string",
+            "value": "hello"
           }
         }
       }
