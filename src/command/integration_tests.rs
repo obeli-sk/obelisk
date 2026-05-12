@@ -839,7 +839,7 @@ struct ReplayCapturedWritesSummary {
 }
 
 #[derive(Debug)]
-struct GrpcAdvanceExecutionSummary {
+struct AdvanceExecutionSummary {
     steps: usize,
     retval: serde_json::Value,
 }
@@ -912,12 +912,12 @@ impl TestExecutionClient {
         match self {
             TestExecutionClient::WebApi => {
                 let submit = server
-                    .webapi_submit_paused(execution_id, ffqn, params)
+                    .submit_paused_webapi(execution_id, ffqn, params)
                     .await;
                 assert_eq!(submit.status().as_u16(), 201);
             }
             TestExecutionClient::Grpc => {
-                let submit = server.grpc_submit_paused(execution_id, ffqn, params).await;
+                let submit = server.submit_paused_grpc(execution_id, ffqn, params).await;
                 assert_eq!(
                     submit.outcome,
                     grpc::grpc_gen::submit_response::Outcome::Created as i32
@@ -928,7 +928,7 @@ impl TestExecutionClient {
 }
 
 impl TestServer {
-    async fn grpc_submit_paused(
+    async fn submit_paused_grpc(
         &self,
         execution_id: &str,
         ffqn: &str,
@@ -955,7 +955,7 @@ impl TestServer {
             .into_inner()
     }
 
-    async fn webapi_submit_paused(
+    async fn submit_paused_webapi(
         &self,
         execution_id: &str,
         ffqn: &str,
@@ -974,7 +974,7 @@ impl TestServer {
             .expect("submit paused request failed")
     }
 
-    async fn grpc_get_status_summary(
+    async fn get_status_summary_grpc(
         &self,
         execution_id: &str,
     ) -> grpc::grpc_gen::ExecutionSummary {
@@ -1013,19 +1013,19 @@ impl TestServer {
         summary.expect("summary must be present")
     }
 
-    async fn grpc_step_execution_until_finished(
+    async fn step_execution_until_finished_grpc(
         &self,
         ffqn: &str,
         params: Vec<Value>,
-    ) -> GrpcAdvanceExecutionSummary {
+    ) -> AdvanceExecutionSummary {
         let exec_id = self.generate_execution_id().await;
-        let submit = self.grpc_submit_paused(&exec_id, ffqn, params).await;
+        let submit = self.submit_paused_grpc(&exec_id, ffqn, params).await;
         assert_eq!(
             submit.outcome(),
             grpc::grpc_gen::submit_response::Outcome::Created
         );
 
-        let initial_summary = self.grpc_get_status_summary(&exec_id).await;
+        let initial_summary = self.get_status_summary_grpc(&exec_id).await;
         assert!(matches!(
             initial_summary
                 .current_status
@@ -1061,7 +1061,7 @@ impl TestServer {
                         other => panic!("expected ok finished value, got {other:?}"),
                     };
                     let return_value = ok_payload.return_value.expect("ok return_value must exist");
-                    return GrpcAdvanceExecutionSummary {
+                    return AdvanceExecutionSummary {
                         steps,
                         retval: serde_json::from_slice(&return_value.value)
                             .expect("server must send `return_value` as a valid JSON"),
@@ -1092,7 +1092,7 @@ impl TestServer {
                         };
                         let return_value =
                             ok_payload.return_value.expect("ok return_value must exist");
-                        return GrpcAdvanceExecutionSummary {
+                        return AdvanceExecutionSummary {
                             steps,
                             retval: serde_json::from_slice(&return_value.value)
                                 .expect("server must send `return_value` as a valid JSON"),
@@ -1117,7 +1117,7 @@ impl TestServer {
                 }
             }
 
-            let summary = self.grpc_get_status_summary(&exec_id).await;
+            let summary = self.get_status_summary_grpc(&exec_id).await;
             assert!(
                 !Self::is_finished(&summary),
                 "finished executions should return finished from AdvanceExecution"
@@ -1125,11 +1125,11 @@ impl TestServer {
         }
     }
 
-    async fn webapi_step_execution_until_finished(
+    async fn step_execution_until_finished_webapi(
         &self,
         ffqn: &str,
         params: Vec<Value>,
-    ) -> GrpcAdvanceExecutionSummary {
+    ) -> AdvanceExecutionSummary {
         #[derive(Debug, Deserialize)]
         #[serde(tag = "type", rename_all = "snake_case")]
         pub(crate) enum AdvanceResponseDeser {
@@ -1140,7 +1140,7 @@ impl TestServer {
         }
 
         let exec_id = self.generate_execution_id().await;
-        let submit = self.webapi_submit_paused(&exec_id, ffqn, params).await;
+        let submit = self.submit_paused_webapi(&exec_id, ffqn, params).await;
         assert_eq!(submit.status().as_u16(), 201);
 
         let mut steps = 0;
@@ -1176,7 +1176,7 @@ impl TestServer {
             let advance_body: AdvanceResponseDeser = advance.json().await.unwrap();
             match advance_body {
                 AdvanceResponseDeser::Finished { value: retval } => {
-                    return GrpcAdvanceExecutionSummary { steps, retval };
+                    return AdvanceExecutionSummary { steps, retval };
                 }
                 AdvanceResponseDeser::InProgress => {
                     // continue the loop
@@ -1397,11 +1397,11 @@ async fn replaying_paused_workflow_should_return_preview_events(
 }
 
 #[tokio::test]
-async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
+async fn replay_and_advance_paused_js_workflow_until_finished_grpc() {
     let server = TestServer::start(test_addr!(64)).await;
 
     let stepped = server
-        .grpc_step_execution_until_finished(
+        .step_execution_until_finished_grpc(
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
         )
@@ -1416,11 +1416,11 @@ async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
 }
 
 #[tokio::test]
-async fn webapi_replay_and_advance_paused_js_workflow_until_finished() {
+async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
     let server = TestServer::start(test_addr!(65)).await;
 
     let stepped = server
-        .webapi_step_execution_until_finished(
+        .step_execution_until_finished_webapi(
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
         )
