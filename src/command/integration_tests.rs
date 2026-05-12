@@ -1090,12 +1090,12 @@ impl TestServer {
                             Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
                             other => panic!("expected ok finished value, got {other:?}"),
                         };
-                        let return_value =
-                            ok_payload.return_value.expect("ok return_value must exist");
+                        let ok = ok_payload.return_value.expect("ok return_value must exist");
+                        let ok = serde_json::from_slice::<serde_json::Value>(&ok.value)
+                            .expect("server must send `return_value` as a valid JSON");
                         return AdvanceExecutionSummary {
                             steps,
-                            retval: serde_json::from_slice(&return_value.value)
-                                .expect("server must send `return_value` as a valid JSON"),
+                            retval: json!({"ok": ok}),
                         };
                     }
                 }
@@ -1408,10 +1408,7 @@ async fn replay_and_advance_paused_js_workflow_until_finished_grpc() {
         stepped.steps > 0,
         "step-through harness must execute at least one replay+advance round"
     );
-    assert_eq!(
-        stepped.retval,
-        serde_json::Value::String("stub-ok".to_string())
-    );
+    assert_eq!(stepped.retval, json!({"ok":"stub-ok"}));
     server.shutdown().await;
 }
 
