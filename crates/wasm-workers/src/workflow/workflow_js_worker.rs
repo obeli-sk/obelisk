@@ -10,10 +10,12 @@ use super::workflow_worker::{
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
+use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use crate::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
-use concepts::storage::DbPool;
+use concepts::storage::http_client_trace::HttpClientTrace;
+use concepts::storage::{CapturedDbWrite, DbPool, Version};
 use concepts::time::ClockFn;
 use concepts::{
     ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionError,
@@ -221,139 +223,149 @@ impl Worker for WorkflowJsWorker {
                 retval,
                 version,
                 http_client_traces,
-            } => {
-                match retval {
-                    SupportedFunctionReturnValue::Ok(Some(WastValWithType {
-                        r#type:
-                            TypeWrapper::Result {
-                                ok: Some(ok_type),
-                                err: Some(err_type),
-                            },
-                        value: WastVal::Result(Ok(Some(ok_val))),
-                    })) => {
-                        assert!(
-                            *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String
-                        );
-                        let WastVal::String(ok_val) = *ok_val else {
-                            unreachable!("ok type is String, so value must be WastVal::String")
-                        };
-                        let Ok(ok_val) = serde_json::from_str(&ok_val) else {
-                            unreachable!("workflow-js-runtime always sends JSON-encoded string")
-                        };
-                        let retval = crate::js_worker_utils::map_ok_variant(
-                            Some(ok_val),
-                            &self.user_return_type,
-                            version.clone(),
-                        )?;
-                        Ok(WorkerResultOk::RunFinished {
-                            retval,
-                            version,
-                            http_client_traces,
-                        })
-                    }
+            } => transform_to_outer_result(
+                retval,
+                version,
+                http_client_traces,
+                &self.user_return_type,
+            ),
+        }
+    }
+}
 
-                    SupportedFunctionReturnValue::Ok(Some(WastValWithType {
-                        r#type:
-                            TypeWrapper::Result {
-                                ok: Some(ok_type),
-                                err: Some(err_type),
-                            },
-                        value: WastVal::Result(Err(Some(err_val))),
-                    })) => {
-                        assert!(
-                            *ok_type == TypeWrapper::String && *err_type == TypeWrapper::String
-                        );
-                        let WastVal::String(err_val) = *err_val else {
-                            unreachable!("err type is String, so value must be WastVal::String")
-                        };
-                        let Ok(err_val) = serde_json::from_str(&err_val) else {
-                            unreachable!("workflow-js-runtime always sends JSON-encoded string")
-                        };
-                        let retval = crate::js_worker_utils::map_err_variant(
-                            Some(err_val),
-                            &self.user_return_type,
-                            version.clone(),
-                        )?;
-                        Ok(WorkerResultOk::RunFinished {
-                            retval,
-                            version,
-                            http_client_traces,
-                        })
-                    }
+/// Transform `result<result<string, string>, js-runtime-error>` returned by `workflow-js-runtime`
+/// to user specified `user_return_type`.
+fn transform_to_outer_result(
+    retval: SupportedFunctionReturnValue,
+    version: Version,
+    http_client_traces: Option<Vec<HttpClientTrace>>,
+    user_return_type: &ReturnTypeExtendable,
+) -> WorkerResult {
+    match retval {
+        SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+            r#type:
+                TypeWrapper::Result {
+                    ok: Some(ok_type),
+                    err: Some(err_type),
+                },
+            value: WastVal::Result(Ok(Some(ok_val))),
+        })) => {
+            assert!(*ok_type == TypeWrapper::String && *err_type == TypeWrapper::String);
+            let WastVal::String(ok_val) = *ok_val else {
+                unreachable!("ok type is String, so value must be WastVal::String")
+            };
+            let Ok(ok_val) = serde_json::from_str(&ok_val) else {
+                unreachable!("workflow-js-runtime always sends JSON-encoded string")
+            };
+            let retval = crate::js_worker_utils::map_ok_variant(
+                Some(ok_val),
+                user_return_type,
+                version.clone(),
+            )?;
+            Ok(WorkerResultOk::RunFinished {
+                retval,
+                version,
+                http_client_traces,
+            })
+        }
 
-                    SupportedFunctionReturnValue::Err(Some(js_runtime_err)) => {
-                        // Map JsRuntimeError variants to appropriate WorkerError
-                        let WastVal::Variant(variant_name, payload) = &js_runtime_err.value else {
-                            unreachable!("expected Variant for js-runtime-error")
-                        };
-                        let name = variant_name.as_snake_str();
-                        match name {
-                            "wrong_return_type" | "wrong_thrown_type" => {
-                                let reason = if let Some(payload) = payload
-                                    && let WastVal::String(s) = payload.as_ref()
-                                {
-                                    s.clone()
-                                } else {
-                                    unreachable!("both variants have string payload")
-                                };
+        SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+            r#type:
+                TypeWrapper::Result {
+                    ok: Some(ok_type),
+                    err: Some(err_type),
+                },
+            value: WastVal::Result(Err(Some(err_val))),
+        })) => {
+            assert!(*ok_type == TypeWrapper::String && *err_type == TypeWrapper::String);
+            let WastVal::String(err_val) = *err_val else {
+                unreachable!("err type is String, so value must be WastVal::String")
+            };
+            let Ok(err_val) = serde_json::from_str(&err_val) else {
+                unreachable!("workflow-js-runtime always sends JSON-encoded string")
+            };
+            let retval = crate::js_worker_utils::map_err_variant(
+                Some(err_val),
+                user_return_type,
+                version.clone(),
+            )?;
+            Ok(WorkerResultOk::RunFinished {
+                retval,
+                version,
+                http_client_traces,
+            })
+        }
 
-                                Err(WorkerError::FatalError(
-                                    FatalError::ResultParsingError(
-                                        ResultParsingError::ResultParsingErrorFromVal(
-                                            ResultParsingErrorFromVal::TypeCheckError(reason),
-                                        ),
-                                    ),
-                                    version,
-                                ))
-                            }
-                            "module_parse_error" | "no_default_export" => {
-                                let detail = payload.as_ref().and_then(|p| {
-                                    if let WastVal::String(s) = p.as_ref() {
-                                        Some(s.clone())
-                                    } else {
-                                        None
-                                    }
-                                });
-                                Err(WorkerError::FatalError(
-                                    FatalError::CannotInstantiate {
-                                        reason: format!("js-runtime-error: {name}"),
-                                        detail,
-                                    },
-                                    version,
-                                ))
-                            }
-                            "execution_failed" => {
-                                // This variant is returned when a workflow function fails,
-                                // e.g., when joinNext returns an error from a child execution.
-                                // We propagate this as an ExecutionError.
-                                Ok(WorkerResultOk::RunFinished {
-                                    retval: SupportedFunctionReturnValue::ExecutionError(
-                                        FinishedExecutionError {
-                                            kind: ExecutionFailureKind::Uncategorized,
-                                            reason: Some("js-runtime execution-failed".to_string()),
-                                            detail: None,
-                                        },
-                                    ),
-                                    version,
-                                    http_client_traces,
-                                })
-                            }
-                            _ => unreachable!("unexpected js-runtime-error variant: {name}"),
-                        }
-                    }
+        SupportedFunctionReturnValue::Err(Some(js_runtime_err)) => {
+            // Map JsRuntimeError variants to appropriate WorkerError
+            let WastVal::Variant(variant_name, payload) = &js_runtime_err.value else {
+                unreachable!("expected Variant for js-runtime-error")
+            };
+            let name = variant_name.as_snake_str();
+            match name {
+                "wrong_return_type" | "wrong_thrown_type" => {
+                    let reason = if let Some(payload) = payload
+                        && let WastVal::String(s) = payload.as_ref()
+                    {
+                        s.clone()
+                    } else {
+                        unreachable!("both variants have string payload")
+                    };
 
-                    retval @ SupportedFunctionReturnValue::ExecutionError(_) => {
-                        Ok(WorkerResultOk::RunFinished {
-                            retval,
-                            version,
-                            http_client_traces,
-                        })
-                    }
-
-                    other => unreachable!("unexpected SupportedFunctionReturnValue: {other:?}"),
+                    Err(WorkerError::FatalError(
+                        FatalError::ResultParsingError(
+                            ResultParsingError::ResultParsingErrorFromVal(
+                                ResultParsingErrorFromVal::TypeCheckError(reason),
+                            ),
+                        ),
+                        version,
+                    ))
                 }
+                "module_parse_error" | "no_default_export" => {
+                    let detail = payload.as_ref().and_then(|p| {
+                        if let WastVal::String(s) = p.as_ref() {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    Err(WorkerError::FatalError(
+                        FatalError::CannotInstantiate {
+                            reason: format!("js-runtime-error: {name}"),
+                            detail,
+                        },
+                        version,
+                    ))
+                }
+                "execution_failed" => {
+                    // This variant is returned when a workflow function fails,
+                    // e.g., when joinNext returns an error from a child execution.
+                    // We propagate this as an ExecutionError.
+                    Ok(WorkerResultOk::RunFinished {
+                        retval: SupportedFunctionReturnValue::ExecutionError(
+                            FinishedExecutionError {
+                                kind: ExecutionFailureKind::Uncategorized,
+                                reason: Some("js-runtime execution-failed".to_string()),
+                                detail: None,
+                            },
+                        ),
+                        version,
+                        http_client_traces,
+                    })
+                }
+                _ => unreachable!("unexpected js-runtime-error variant: {name}"),
             }
         }
+
+        retval @ SupportedFunctionReturnValue::ExecutionError(_) => {
+            Ok(WorkerResultOk::RunFinished {
+                retval,
+                version,
+                http_client_traces,
+            })
+        }
+
+        other => unreachable!("unexpected SupportedFunctionReturnValue: {other:?}"),
     }
 }
 
@@ -376,6 +388,7 @@ impl WorkflowJsWorker {
         logs_storage_config: Option<LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
         js_source: String,
+        user_return_type: &ReturnTypeExtendable,
     ) -> Result<ReplayResponse, ReplayError> {
         let db_conn = real_db_pool
             .connection()
@@ -404,9 +417,32 @@ impl WorkflowJsWorker {
         )
         .await?;
         let captured_writes: Vec<_> = captured_writes
-            .captured_writes
             .into_iter()
-            .map(|write| write.public)
+            .map(|internal_write| {
+                let write = internal_write.write;
+                match write {
+                    CapturedDbWrite::AppendFinished {
+                        execution_id,
+                        version,
+                        current_time,
+                        retval, // workflow-js-runtime WASM result
+                    } => {
+                        let Ok(WorkerResultOk::RunFinished {
+                            retval, version, ..
+                        }) = transform_to_outer_result(retval, version, None, user_return_type)
+                        else {
+                            unimplemented!("FIXME")
+                        };
+                        CapturedDbWrite::AppendFinished {
+                            execution_id,
+                            version,
+                            current_time,
+                            retval,
+                        }
+                    }
+                    _ => write,
+                }
+            })
             .collect();
         if !captured_writes.is_empty() {
             Ok(ReplayResponse::Advanceable(ReplayAdvanceable {
@@ -434,6 +470,7 @@ impl WorkflowJsWorker {
         logs_storage_config: Option<LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
         js_source: String,
+        user_return_type: &ReturnTypeExtendable,
         requested: ReplayAdvanceable,
     ) -> Result<AdvanceResponse, AdvanceError> {
         info!("Advance to requested {requested:?}");
@@ -458,7 +495,7 @@ impl WorkflowJsWorker {
 
         let old_version = log.next_version.clone();
         let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
-        let fresh_replay = WorkflowWorker::capture_replay_writes_from_log(
+        let mut fresh_replay = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
             component_id,
             wasmtime_component,
@@ -474,6 +511,23 @@ impl WorkflowJsWorker {
             params,
         )
         .await?;
+        if let Some(InternalCapturedWrite {
+            write:
+                CapturedDbWrite::AppendFinished {
+                    retval, version, ..
+                },
+            ..
+        }) = fresh_replay.last_mut()
+        {
+            let Ok(WorkerResultOk::RunFinished {
+                retval: retval_transformed,
+                ..
+            }) = transform_to_outer_result(retval.clone(), version.clone(), None, user_return_type)
+            else {
+                unimplemented!("FIXME")
+            };
+            *retval = retval_transformed;
+        }
         WorkflowWorker::advance_from_log(
             &*db_conn,
             &cancel_registry,
@@ -1273,6 +1327,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
         )
         .await
         .unwrap();
@@ -2057,6 +2112,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
         )
         .await
         .unwrap();
@@ -2064,7 +2120,7 @@ mod tests {
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         info!("Stage 1 replay: {replay:?}");
         assert!(
-            replay.return_value().is_some(),
+            replay.get_return_value().is_some(),
             "workflow should complete during preview (non-blocking events only)"
         );
         let next_events = replay.history_events();
@@ -2108,6 +2164,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
         )
         .await
         .unwrap();
@@ -2115,7 +2172,7 @@ mod tests {
         let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
         info!("Stage 2 replay: {replay2:?}");
         assert!(
-            replay2.return_value().is_some(),
+            replay2.get_return_value().is_some(),
             "workflow should complete even with partial event log (JoinSetCreate already present)"
         );
         // The JoinSetCreate is already in the log, so it should not appear as a next_event.
@@ -2163,6 +2220,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
         )
         .await
         .unwrap();
@@ -2253,6 +2311,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
         )
         .await
         .unwrap();
@@ -2293,17 +2352,17 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
         )
         .await
         .unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
-        let retval = replay.return_value().expect("retval should be computed");
+        let retval = replay
+            .get_return_value()
+            .expect("retval should be computed");
         let retval = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(WastValWithType{ r#type: _, value })) => value);
-        assert_eq!(
-            "Result(Ok(Some(String(\"\\\"hello\\\"\"))))",
-            format!("{retval:?}")
-        );
+        assert_eq!(WastVal::String("hello".into()), *retval);
         drop(db_connection);
         db_close.close().await;
     }
@@ -2403,13 +2462,10 @@ mod tests {
         )
         .await;
 
-        let ok_val = assert_matches!(
+        assert_matches!(
             result,
-            SupportedFunctionReturnValue::Ok(Some(WastValWithType { value, .. })) => value
-        );
-        assert_eq!(
-            format!("{ok_val:?}"),
-            "Result(Ok(Some(String(\"\\\"hello\\\"\"))))"
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType { value: WastVal::String(s), .. }))
+                if s == "hello"
         );
 
         drop(db_connection);
@@ -2503,8 +2559,8 @@ mod tests {
 
         assert_matches!(
             result,
-            SupportedFunctionReturnValue::Ok(Some(WastValWithType { value, .. }))
-                if format!("{value:?}") == "Result(Ok(Some(String(\"\\\"done\\\"\"))))"
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType { value: WastVal::String(s), .. }))
+                if s == "done"
         );
 
         let log = db_connection.get(&execution_id).await.unwrap();
@@ -2566,6 +2622,7 @@ mod tests {
                 harness.logs_storage_config.clone(),
                 harness.sim_clock.clone_box(),
                 harness.js_source.clone(),
+                &default_return_type(),
             )
             .await
             .unwrap();
@@ -2639,11 +2696,12 @@ mod tests {
                 harness.logs_storage_config.clone(),
                 harness.sim_clock.clone_box(),
                 harness.js_source.clone(),
+                &default_return_type(),
                 requested.clone(),
             )
             .await
             .unwrap();
-            assert_eq!(advance.finished, requested.return_value().cloned());
+            assert_eq!(advance.finished, requested.get_return_value().cloned());
 
             insta::with_settings!({
                 snapshot_suffix => format!("{test_name}_advance_{steps}"),
@@ -2757,6 +2815,7 @@ mod tests {
             None,
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
         )
         .await
         .unwrap();
@@ -2813,6 +2872,7 @@ mod tests {
             None,
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
             requested,
         )
         .await
@@ -2910,6 +2970,7 @@ mod tests {
             None,
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
         )
         .await
         .unwrap();
@@ -2968,6 +3029,7 @@ mod tests {
             None,
             sim_clock.clone_box(),
             js_source.to_string(),
+            &default_return_type(),
             requested,
         )
         .await

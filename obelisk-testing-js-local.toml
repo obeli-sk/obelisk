@@ -6,6 +6,7 @@ params = [
   { name = "b", type = "u32" },
 ]
 max_retries = 0
+return_type = "result<u32>"
 
 [[workflow_js]]
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/add_via_activity.js"
@@ -14,6 +15,7 @@ params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
 ]
+return_type = "result<u32>"
 
 [[activity_js]]
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/read_env.js"

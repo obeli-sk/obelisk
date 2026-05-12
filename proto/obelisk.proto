@@ -784,11 +784,17 @@ message CapturedWrite {
     google.protobuf.Timestamp created_at = 9;
     uint32 finished_version = 10;
   }
+  message AppendFinished {
+    ExecutionId execution_id = 1;
+    uint32 version = 2;
+    ExecutionEvent.Finished event = 3;
+  }
   oneof write {
     Append append = 1;
     AppendBatch append_batch = 2;
     AppendBatchCreateNewExecution append_batch_create_new_execution = 3;
     AppendBatchRespondToParent append_batch_respond_to_parent = 4;
+    AppendFinished append_finished = 5;
   }
 }
 

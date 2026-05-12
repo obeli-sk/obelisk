@@ -3247,6 +3247,7 @@ dependencies = [
 name = "obeli-sk-grpc"
 version = "0.37.7"
 dependencies = [
+ "chrono",
  "http",
  "obeli-sk-concepts",
  "obeli-sk-val-json",

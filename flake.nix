@@ -180,6 +180,7 @@
                 cargo-expand
                 cargo-insta
                 cargo-nextest
+                grpcurl
                 jq
                 litecli
                 nixd

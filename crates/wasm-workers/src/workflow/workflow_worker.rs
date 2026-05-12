@@ -11,7 +11,7 @@ use crate::workflow::caching_db_connection::{
 };
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
 use crate::workflow::replay_db_proxy::{
-    InternalReplayResponse, ReplayWorkflowDbConnection, apply_writes,
+    InternalCapturedWrite, ReplayWorkflowDbConnection, apply_writes,
 };
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
@@ -19,8 +19,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
-    AppendRequest, CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog,
-    ExecutionRequest, Locked, Version,
+    CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog, Locked, Version,
 };
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
@@ -428,12 +427,6 @@ impl From<WorkflowError> for WorkerError {
     }
 }
 
-enum PrepareFuncOk {
-    LockAlreadyExpired {
-        db_connection: Box<dyn WorkflowDbConnection>,
-    },
-    Finished(PrepareFuncFinished),
-}
 struct PrepareFuncFinished {
     store: Store<WorkflowCtx>,
     func: wasmtime::component::Func,
@@ -459,7 +452,7 @@ impl WorkflowWorker {
         log: ExecutionLog,
         ffqn: FunctionFqn,
         params: Params,
-    ) -> Result<InternalReplayResponse, ReplayError> {
+    ) -> Result<Vec<InternalCapturedWrite>, ReplayError> {
         let replay_kind = if log.is_finished() {
             ReplayKind::Finished
         } else {
@@ -526,7 +519,7 @@ impl WorkflowWorker {
             .await?;
         debug!(
             "Execution replay completed, captured writes: {}",
-            captured_writes.captured_writes.len(),
+            captured_writes.len(),
         );
         Ok(captured_writes)
     }
@@ -535,22 +528,21 @@ impl WorkflowWorker {
         db_conn: &dyn DbConnection,
         cancel_registry: &CancelRegistry,
         requested: ReplayAdvanceable,
-        fresh_replay: InternalReplayResponse,
+        fresh_replay: Vec<InternalCapturedWrite>,
         old_version: Version,
     ) -> Result<AdvanceResponse, AdvanceError> {
         let fresh_public_writes: Vec<_> = fresh_replay
-            .captured_writes
             .iter()
-            .map(|write| write.public.clone())
+            .map(|write| write.write.clone())
             .collect();
         let outcome = if requested.is_prefix_of(&fresh_public_writes) {
             let writes_to_apply = merge_requested_overrides_into_fresh_prefix(
                 &requested.captured_writes,
-                &fresh_replay.captured_writes,
+                &fresh_replay,
             );
             apply_writes(db_conn, cancel_registry, writes_to_apply, old_version).await?;
             AdvanceResponse {
-                finished: requested.return_value().cloned(),
+                finished: requested.get_return_value().cloned(),
             }
         } else {
             debug!(
@@ -569,7 +561,7 @@ impl WorkflowWorker {
         ctx: WorkerContext,
         db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
-    ) -> Result<PrepareFuncOk, WorkflowError> {
+    ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(self.config.component_id, ctx.locked_event.component_id);
 
         let deadline_tracker = match self
@@ -582,7 +574,7 @@ impl WorkflowWorker {
                     info!(execution_deadline = %ctx.locked_event.lock_expires_at, started_at = %lock_already_expired.started_at,
                         "Lock is already expired");
                 });
-                return Ok(PrepareFuncOk::LockAlreadyExpired { db_connection });
+                return Err(WorkflowError::LockExpired(ctx.version));
             }
         };
 
@@ -683,12 +675,12 @@ impl WorkflowWorker {
                 ));
             }
         };
-        Ok(PrepareFuncOk::Finished(PrepareFuncFinished {
+        Ok(PrepareFuncFinished {
             store,
             func,
             component_func,
             params,
-        }))
+        })
     }
 
     async fn call_func(
@@ -967,7 +959,7 @@ impl WorkflowWorker {
         ctx: WorkerContext,
         replay_db_connection: ReplayWorkflowDbConnection,
         replay_kind: ReplayKind,
-    ) -> Result<InternalReplayResponse, ReplayError> {
+    ) -> Result<Vec<InternalCapturedWrite>, ReplayError> {
         let (return_value, replay_db_connection) = self
             .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
             .await
@@ -986,16 +978,16 @@ impl WorkflowWorker {
         if replay_kind == ReplayKind::Unfinished
             && let Either::Left(WorkerResultOk::RunFinished { retval, .. }) = return_value
         {
-            debug!("Replay finished returning a value");
+            debug!("Replay finished returning a value: {retval:?}");
             // Capture the Finished event that the executor would write.
             let version = replay_db_connection.version().clone();
             let execution_id = replay_db_connection.execution_id().clone();
-            replay_db_connection.push_write(ReplayAdvanceable::finish_as_captured_write(
+            replay_db_connection.push_write(CapturedDbWrite::AppendFinished {
                 execution_id,
                 version,
-                self.clock_fn.now(),
+                current_time: self.clock_fn.now(),
                 retval,
-            ));
+            });
         }
 
         Ok(replay_db_connection.into_writes())
@@ -1021,15 +1013,7 @@ impl WorkflowWorker {
         }
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
-        let prepare_finished = match self.prepare_func(ctx, db_connection, is_replay).await? {
-            PrepareFuncOk::Finished(finished) => finished,
-            PrepareFuncOk::LockAlreadyExpired { db_connection } => {
-                return Ok((
-                    Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher),
-                    db_connection,
-                ));
-            }
-        };
+        let prepare_finished = self.prepare_func(ctx, db_connection, is_replay).await?;
         Self::call_func_convert_result(
             prepare_finished.store,
             prepare_finished.func,
@@ -1084,9 +1068,8 @@ impl WorkflowWorker {
         )
         .await?;
         let captured_writes: Vec<_> = captured_writes
-            .captured_writes
             .into_iter()
-            .map(|write| write.public)
+            .map(|write| write.write)
             .collect();
         if !captured_writes.is_empty() {
             Ok(ReplayResponse::Advanceable(ReplayAdvanceable {
@@ -1208,7 +1191,8 @@ impl ReplayAdvanceable {
         self.captured_writes.iter().find_map(|w| match w {
             CapturedDbWrite::Append { version, .. }
             | CapturedDbWrite::AppendBatch { version, .. }
-            | CapturedDbWrite::AppendBatchCreateNewExecution { version, .. } => Some(version),
+            | CapturedDbWrite::AppendBatchCreateNewExecution { version, .. }
+            | CapturedDbWrite::AppendFinished { version, .. } => Some(version),
             CapturedDbWrite::AppendStubResponse { .. } => None,
         })
     }
@@ -1222,29 +1206,8 @@ impl ReplayAdvanceable {
                 .all(|(requested, fresh)| requested_write_matches_fresh_replay(requested, fresh))
     }
 
-    fn finish_as_captured_write(
-        execution_id: ExecutionId,
-        version: Version,
-        created_at: DateTime<Utc>,
-        retval: SupportedFunctionReturnValue,
-    ) -> CapturedDbWrite {
-        CapturedDbWrite::Append {
-            execution_id,
-            version,
-            req: AppendRequest {
-                created_at,
-                event: ExecutionRequest::Finished {
-                    retval,
-                    http_client_traces: None,
-                },
-            },
-        }
-    }
-
-    pub(crate) fn return_value(&self) -> Option<&SupportedFunctionReturnValue> {
-        if let Some(CapturedDbWrite::Append { req, .. }) = self.captured_writes.last()
-            && let ExecutionRequest::Finished { retval, .. } = &req.event
-        {
+    pub(crate) fn get_return_value(&self) -> Option<&SupportedFunctionReturnValue> {
+        if let Some(CapturedDbWrite::AppendFinished { retval, .. }) = self.captured_writes.last() {
             return Some(retval);
         }
         None
@@ -1260,6 +1223,7 @@ impl ReplayAdvanceable {
                     CapturedDbWrite::AppendBatch { batch, .. }
                     | CapturedDbWrite::AppendBatchCreateNewExecution { batch, .. } => batch,
                     CapturedDbWrite::AppendStubResponse { events, .. } => &events.batch,
+                    CapturedDbWrite::AppendFinished { .. } => &[],
                 };
                 requests.iter().filter_map(|req| {
                     if let concepts::storage::ExecutionRequest::HistoryEvent { event } = &req.event
@@ -2377,8 +2341,11 @@ pub(crate) mod tests {
         let worker_result = worker.run(ctx).await;
         assert_matches!(
             worker_result,
-            WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
-        ); // Do not write anything, let the watcher mark execution as timed out.
+            Err(WorkerError::TemporaryTimeout {
+                version: Version(0),
+                http_client_traces: None,
+            })
+        );
         db_close.close().await;
     }
 
@@ -3595,7 +3562,7 @@ pub(crate) mod tests {
             };
 
             steps += 1;
-            let expected_finished = replay.return_value().cloned();
+            let expected_finished = replay.get_return_value().cloned();
             let advance = WorkflowWorker::advance(
                 harness.deployment_id,
                 harness.workflow_component_id.clone(),
@@ -4359,7 +4326,7 @@ pub(crate) mod tests {
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         debug!("Preview after creation: {replay:?}");
         assert!(
-            replay.return_value().is_none(),
+            replay.get_return_value().is_none(),
             "workflow should not have completed yet"
         );
         let next_events = replay.history_events();
@@ -4552,7 +4519,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(advance.finished, requested.return_value().cloned());
+            assert_eq!(advance.finished, requested.get_return_value().cloned());
 
             insta::with_settings!({
                 snapshot_suffix => format!("{test_name}_advance_{steps}"),
@@ -4672,7 +4639,7 @@ pub(crate) mod tests {
             "paused workflow should have captured writes"
         );
         assert!(
-            replay.return_value().is_none(),
+            replay.get_return_value().is_none(),
             "workflow should not have completed yet"
         );
         assert_eq!(

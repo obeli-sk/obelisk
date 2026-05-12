@@ -1290,7 +1290,7 @@ async fn execution_stub(
     .into_response())
 }
 
-/// Return value from a finished execution
+/// Lossy representation of `SupportedFunctionReturnValue`. Does not contain WIT type.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum RetVal {
@@ -1508,6 +1508,12 @@ pub(crate) enum CapturedWriteSer {
         response: StubResponseSer,
         current_time: DateTime<Utc>,
     },
+    AppendFinished {
+        execution_id: String,
+        version: u32,
+        #[schema(value_type = Object)]
+        retval: SupportedFunctionReturnValue,
+    },
 }
 
 impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
@@ -1562,6 +1568,16 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                 events: events.batch,
                 response: StubResponseSer::from(response),
                 current_time,
+            },
+            CapturedDbWrite::AppendFinished {
+                execution_id,
+                version,
+                retval,
+                current_time: _,
+            } => CapturedWriteSer::AppendFinished {
+                execution_id: execution_id.to_string(),
+                version: version.0,
+                retval,
             },
         }
     }
@@ -1636,24 +1652,31 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                 response: response.try_into()?,
                 current_time,
             }),
+            CapturedWriteSer::AppendFinished {
+                execution_id,
+                version,
+                retval,
+            } => Ok(Self::AppendFinished {
+                execution_id: execution_id
+                    .parse()
+                    .map_err(|err| format!("invalid execution_id - {err}"))?,
+                version: Version::new(version),
+                retval,
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+            }),
         }
     }
 }
 
-/// Result of replaying a workflow execution
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ReplayResponseSer {
-    /// Write operations that can be supplied to `advance`.
     Advanceable {
         captured_writes: Vec<CapturedWriteSer>,
     },
-    /// The execution is already finished.
     Finished {
-        #[schema(value_type = Object)]
-        result: SupportedFunctionReturnValue,
+        retval: serde_json::Value, // SupportedFunctionReturnValue -> RetVal
     },
-    /// The execution is waiting on external progress and cannot be advanced yet.
     Blocked,
 }
 
@@ -1670,7 +1693,10 @@ impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayRes
                 }
             }
             wasm_workers::workflow::workflow_worker::ReplayResponse::Finished { result } => {
-                Self::Finished { result }
+                Self::Finished {
+                    retval: serde_json::to_value(RetVal::from(result))
+                        .expect("supported retval must be JSON serializable"),
+                }
             }
             wasm_workers::workflow::workflow_worker::ReplayResponse::Blocked => Self::Blocked,
         }
@@ -1683,9 +1709,15 @@ pub(crate) struct AdvanceRequestSer {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-struct AdvanceResponseSer {
-    #[schema(value_type = Option<Object>)]
-    finished: Option<SupportedFunctionReturnValue>,
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AdvanceResponseSer {
+    Finished {
+        value: RetVal,
+    },
+    InProgress {
+        #[schema(value_type = Object)]
+        pending_state: PendingState,
+    },
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -1728,6 +1760,7 @@ async fn execution_get_retval(
 
     if let ExecutionRequest::Finished { retval, .. } = last_event.event {
         let retval = RetVal::from(retval);
+
         Ok(Json(retval).into_response())
     } else if params.follow {
         Ok(stream_execution_response(
@@ -1984,14 +2017,10 @@ async fn execution_replay(
         AcceptHeader::Json => Json(ser).into_response(),
         AcceptHeader::Text => match ser {
             ReplayResponseSer::Advanceable { captured_writes } => {
-                let mut output = String::new();
-                for write in &captured_writes {
-                    writeln!(&mut output, "{write:?}").expect("writing to string");
-                }
-                output.into_response()
+                format!("outcome: advanceable, {} writes", captured_writes.len()).into_response()
             }
-            ReplayResponseSer::Finished { result } => {
-                format!("outcome: finished\nresult: {result:?}").into_response()
+            ReplayResponseSer::Finished { retval } => {
+                format!("outcome: finished\nresult: {retval}").into_response()
             }
             ReplayResponseSer::Blocked => "outcome: blocked".into_response(),
         },
@@ -2057,6 +2086,7 @@ async fn execution_advance(
             logs_storage_config,
             Now.clone_box(),
             js_info.js_source.clone(),
+            &js_info.user_return_type,
             expected,
         )
         .await
@@ -2124,16 +2154,39 @@ async fn execution_advance(
         }
     };
 
-    let response = AdvanceResponseSer {
-        finished: advance_response.finished,
-    };
-
-    if let Some(retval) = response.finished {
-        // Same shape as `execution_get_retval`
-        let retval = RetVal::from(retval);
-        Ok(Json(retval).into_response())
+    let response = if let Some(finished) = advance_response.finished {
+        AdvanceResponseSer::Finished {
+            value: RetVal::from(finished),
+        }
     } else {
-        execution_status_get(Path(execution_id), state, accept).await
+        let execution_with_state = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?
+            .get_pending_state(&execution_id)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        AdvanceResponseSer::InProgress {
+            pending_state: execution_with_state.pending_state,
+        }
+    };
+    match &response {
+        AdvanceResponseSer::Finished { value } => Ok(match accept {
+            AcceptHeader::Json => Json(response).into_response(),
+            AcceptHeader::Text => format!(
+                "success:\n{}",
+                serde_json::to_string_pretty(&value).expect("retval must be JSON serializable")
+            )
+            .into_response(),
+        }),
+        AdvanceResponseSer::InProgress { pending_state } => Ok(match accept {
+            AcceptHeader::Json => Json(response).into_response(),
+            AcceptHeader::Text => {
+                format!("success, current state: {pending_state}").into_response()
+            }
+        }),
     }
 }
 
@@ -2166,11 +2219,17 @@ async fn get_replay_target(
             ErrorWrapper(e, accept).into()
         }
     })?;
-    let Some((component_id, _fn_metadata)) =
+    let Some((component_id, fn_metadata)) =
         component_registry_ro.find_by_exported_ffqn_submittable(&create_req.ffqn)
     else {
         return Err(HttpResponse::not_found(accept, "component"));
     };
+    if fn_metadata.extension.is_some() {
+        return Err(HttpResponse::bad_request(
+            accept,
+            "function must not be an extension".to_string(),
+        ));
+    }
     Span::current().record("component_id", tracing::field::display(&component_id));
     let replay_info_registry = component_registry_ro.clone();
     let (component_id, replay_info) = replay_info_registry
@@ -2211,6 +2270,7 @@ async fn replay_execution_internal(
             logs_storage_config,
             Now.clone_box(),
             js_info.js_source.clone(),
+            &js_info.user_return_type,
         )
         .await
         .map_err(|err| HttpResponse {
@@ -2305,6 +2365,7 @@ async fn execution_upgrade(
                 logs_storage_config,
                 Now.clone_box(),
                 js_info.js_source.clone(),
+                &js_info.user_return_type,
             )
             .await
         } else {
@@ -3381,6 +3442,14 @@ impl HttpResponse {
             } else {
                 "not found".to_string()
             },
+            accept,
+        }
+    }
+
+    fn bad_request(accept: AcceptHeader, message: String) -> Self {
+        HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message,
             accept,
         }
     }

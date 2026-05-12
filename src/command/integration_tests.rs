@@ -10,6 +10,7 @@
 use crate::config::toml::{
     ActivityStubComponentConfigCanonical, ActivityStubExtInlineConfigCanonical, ConfigName,
 };
+use crate::server::web_api_server::ReplayResponseSer;
 use crate::{
     command::server::{PrepareDirsParams, RunParams, prepare_dirs, run_internal},
     config::{
@@ -33,6 +34,7 @@ use grpc::grpc_gen::{
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
 };
 use hmac::{Hmac, Mac};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
 use std::fmt::Write as _;
@@ -113,12 +115,12 @@ directory = "{db_dir}"
 [[activity_js]]
 name = "test_add_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/add.js"
-ffqn = "testing:integration/activity-add.add"
+ffqn = "testing:integration/activity.add"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
-return_type = "result<string, string>"
+return_type = "result<u32, string>"
 
 [[activity_js]]
 name = "test_greet_activity"
@@ -203,7 +205,7 @@ params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
-return_type = "result<string, string>"
+return_type = "result<u32, string>"
 
 [[workflow_js]]
 name = "test_call_activity_workflow"
@@ -213,7 +215,7 @@ params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
-return_type = "result<string, string>"
+return_type = "result<u32, string>"
 
 [[workflow_js]]
 name = "test_make_record_workflow"
@@ -837,9 +839,9 @@ struct ReplayCapturedWritesSummary {
 }
 
 #[derive(Debug)]
-struct GrpcAdvanceExecutionSummary {
+struct AdvanceExecutionSummary {
     steps: usize,
-    final_value_json: Vec<u8>,
+    retval: serde_json::Value,
 }
 
 impl TestExecutionClient {
@@ -910,12 +912,12 @@ impl TestExecutionClient {
         match self {
             TestExecutionClient::WebApi => {
                 let submit = server
-                    .webapi_submit_paused(execution_id, ffqn, params)
+                    .submit_paused_webapi(execution_id, ffqn, params)
                     .await;
                 assert_eq!(submit.status().as_u16(), 201);
             }
             TestExecutionClient::Grpc => {
-                let submit = server.grpc_submit_paused(execution_id, ffqn, params).await;
+                let submit = server.submit_paused_grpc(execution_id, ffqn, params).await;
                 assert_eq!(
                     submit.outcome,
                     grpc::grpc_gen::submit_response::Outcome::Created as i32
@@ -926,7 +928,7 @@ impl TestExecutionClient {
 }
 
 impl TestServer {
-    async fn grpc_submit_paused(
+    async fn submit_paused_grpc(
         &self,
         execution_id: &str,
         ffqn: &str,
@@ -953,7 +955,7 @@ impl TestServer {
             .into_inner()
     }
 
-    async fn webapi_submit_paused(
+    async fn submit_paused_webapi(
         &self,
         execution_id: &str,
         ffqn: &str,
@@ -972,7 +974,7 @@ impl TestServer {
             .expect("submit paused request failed")
     }
 
-    async fn grpc_get_status_summary(
+    async fn get_status_summary_grpc(
         &self,
         execution_id: &str,
     ) -> grpc::grpc_gen::ExecutionSummary {
@@ -1011,20 +1013,19 @@ impl TestServer {
         summary.expect("summary must be present")
     }
 
-    async fn grpc_step_execution_until_finished(
+    async fn step_execution_until_finished_grpc(
         &self,
         ffqn: &str,
         params: Vec<Value>,
-        max_steps: usize,
-    ) -> GrpcAdvanceExecutionSummary {
+    ) -> AdvanceExecutionSummary {
         let exec_id = self.generate_execution_id().await;
-        let submit = self.grpc_submit_paused(&exec_id, ffqn, params).await;
+        let submit = self.submit_paused_grpc(&exec_id, ffqn, params).await;
         assert_eq!(
             submit.outcome(),
             grpc::grpc_gen::submit_response::Outcome::Created
         );
 
-        let initial_summary = self.grpc_get_status_summary(&exec_id).await;
+        let initial_summary = self.get_status_summary_grpc(&exec_id).await;
         assert!(matches!(
             initial_summary
                 .current_status
@@ -1060,14 +1061,14 @@ impl TestServer {
                         other => panic!("expected ok finished value, got {other:?}"),
                     };
                     let return_value = ok_payload.return_value.expect("ok return_value must exist");
-                    return GrpcAdvanceExecutionSummary {
+                    return AdvanceExecutionSummary {
                         steps,
-                        final_value_json: return_value.value,
+                        retval: serde_json::from_slice(&return_value.value)
+                            .expect("server must send `return_value` as a valid JSON"),
                     };
                 }
                 grpc::grpc_gen::replay_execution_response::Outcome::Blocked(_) => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    continue;
+                    unreachable!("blocked state is not created by any test")
                 }
             };
 
@@ -1089,11 +1090,12 @@ impl TestServer {
                             Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
                             other => panic!("expected ok finished value, got {other:?}"),
                         };
-                        let return_value =
-                            ok_payload.return_value.expect("ok return_value must exist");
-                        return GrpcAdvanceExecutionSummary {
+                        let ok = ok_payload.return_value.expect("ok return_value must exist");
+                        let ok = serde_json::from_slice::<serde_json::Value>(&ok.value)
+                            .expect("server must send `return_value` as a valid JSON");
+                        return AdvanceExecutionSummary {
                             steps,
-                            final_value_json: return_value.value,
+                            retval: json!({"ok": ok}),
                         };
                     }
                 }
@@ -1115,53 +1117,47 @@ impl TestServer {
                 }
             }
 
-            let summary = self.grpc_get_status_summary(&exec_id).await;
+            let summary = self.get_status_summary_grpc(&exec_id).await;
             assert!(
                 !Self::is_finished(&summary),
                 "finished executions should return finished from AdvanceExecution"
             );
-
-            assert!(
-                steps < max_steps,
-                "execution did not finish after {steps} replay+advance steps"
-            );
         }
     }
 
-    async fn webapi_step_execution_until_finished(
+    async fn step_execution_until_finished_webapi(
         &self,
         ffqn: &str,
         params: Vec<Value>,
-        max_steps: usize,
-    ) -> GrpcAdvanceExecutionSummary {
+    ) -> AdvanceExecutionSummary {
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        pub(crate) enum AdvanceResponseDeser {
+            Finished {
+                value: serde_json::Value, // RetVal -> Value for deserialization
+            },
+            InProgress,
+        }
+
         let exec_id = self.generate_execution_id().await;
-        let submit = self.webapi_submit_paused(&exec_id, ffqn, params).await;
+        let submit = self.submit_paused_webapi(&exec_id, ffqn, params).await;
         assert_eq!(submit.status().as_u16(), 201);
 
         let mut steps = 0;
         loop {
             let replay = self.replay(&exec_id).await;
             assert_eq!(replay.status().as_u16(), 200);
-            let replay_body: Value = replay.json().await.unwrap();
-            let captured_writes = match replay_body["type"]
-                .as_str()
-                .expect("replay outcome type must be set")
-            {
-                "advanceable" => replay_body["captured_writes"].clone(),
-                "finished" => {
-                    return GrpcAdvanceExecutionSummary {
-                        steps,
-                        final_value_json: serde_json::to_vec(&replay_body["result"]["ok"]["value"])
-                            .unwrap(),
-                    };
+            let replay_body: ReplayResponseSer = replay.json().await.unwrap();
+            let captured_writes = match replay_body {
+                ReplayResponseSer::Advanceable { captured_writes } => captured_writes,
+                ReplayResponseSer::Finished { retval: _ } => {
+                    panic!("should have been returned as `advance` response first");
                 }
-                "blocked" => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    continue;
+                ReplayResponseSer::Blocked => {
+                    unreachable!("blocked state is not created by any test")
                 }
-                other => panic!("unexpected replay outcome {other}"),
             };
-
+            assert!(!captured_writes.is_empty());
             steps += 1;
             let advance = self
                 .client
@@ -1177,25 +1173,15 @@ impl TestServer {
                 "advance failed: {}",
                 advance.text().await.unwrap()
             );
-            let advance_body: Value = advance.json().await.unwrap();
-            if !advance_body["finished"].is_null() {
-                return GrpcAdvanceExecutionSummary {
-                    steps,
-                    final_value_json: serde_json::to_vec(&advance_body["finished"]["ok"]["value"])
-                        .unwrap(),
-                };
+            let advance_body: AdvanceResponseDeser = advance.json().await.unwrap();
+            match advance_body {
+                AdvanceResponseDeser::Finished { value: retval } => {
+                    return AdvanceExecutionSummary { steps, retval };
+                }
+                AdvanceResponseDeser::InProgress => {
+                    // continue the loop
+                }
             }
-
-            let status = self.get_status(&exec_id).await;
-            assert!(
-                status["current_status"]["status"]["finished"].is_null(),
-                "finished executions should return finished from advance"
-            );
-
-            assert!(
-                steps < max_steps,
-                "execution did not finish after {steps} replay+advance steps"
-            );
         }
     }
 
@@ -1239,14 +1225,11 @@ async fn submit_activity_and_get_result() {
     let server = TestServer::start(test_addr!(4)).await;
 
     let resp = server
-        .submit_follow(
-            "testing:integration/activity-add.add",
-            vec![json!(3), json!(5)],
-        )
+        .submit_follow("testing:integration/activity.add", vec![json!(3), json!(5)])
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "8" }));
+    assert_eq!(body, json!({ "ok": 8 }));
     server.shutdown().await;
 }
 
@@ -1411,14 +1394,13 @@ async fn replaying_paused_workflow_should_return_preview_events(
 }
 
 #[tokio::test]
-async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
+async fn replay_and_advance_paused_js_workflow_until_finished_grpc() {
     let server = TestServer::start(test_addr!(64)).await;
 
     let stepped = server
-        .grpc_step_execution_until_finished(
+        .step_execution_until_finished_grpc(
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
-            16, // max_steps
         )
         .await;
 
@@ -1426,20 +1408,18 @@ async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
         stepped.steps > 0,
         "step-through harness must execute at least one replay+advance round"
     );
-    assert_eq!(stepped.final_value_json, br#"{"ok":"\"stub-ok\""}"#);
-
+    assert_eq!(stepped.retval, json!({"ok":"stub-ok"}));
     server.shutdown().await;
 }
 
 #[tokio::test]
-async fn webapi_replay_and_advance_paused_js_workflow_until_finished() {
+async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
     let server = TestServer::start(test_addr!(65)).await;
 
     let stepped = server
-        .webapi_step_execution_until_finished(
+        .step_execution_until_finished_webapi(
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
-            16, // max_steps
         )
         .await;
 
@@ -1447,7 +1427,7 @@ async fn webapi_replay_and_advance_paused_js_workflow_until_finished() {
         stepped.steps > 0,
         "step-through harness must execute at least one replay+advance round"
     );
-    assert_eq!(stepped.final_value_json, br#"{"ok":"\"stub-ok\""}"#);
+    assert_eq!(stepped.retval, json!({"ok":"stub-ok"}));
 
     server.shutdown().await;
 }
@@ -1468,7 +1448,7 @@ async fn submit_workflow_with_get_result() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "15" }));
+    assert_eq!(body, json!({ "ok": 15 }));
 
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
@@ -1492,7 +1472,7 @@ async fn submit_workflow_with_call() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "7" }));
+    assert_eq!(body, json!({ "ok": 7 }));
 
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
@@ -1507,10 +1487,7 @@ async fn list_executions_after_submit() {
     let server = TestServer::start(test_addr!(11)).await;
 
     let resp = server
-        .submit_follow(
-            "testing:integration/activity-add.add",
-            vec![json!(1), json!(2)],
-        )
+        .submit_follow("testing:integration/activity.add", vec![json!(1), json!(2)])
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let _: Value = resp.json().await.unwrap();
@@ -1520,7 +1497,7 @@ async fn list_executions_after_submit() {
     assert_eq!(arr.len(), 1, "unexpected {arr:?}");
     assert_eq!(
         arr[0]["ffqn"],
-        json!("testing:integration/activity-add.add"),
+        json!("testing:integration/activity.add"),
         "unexpected {arr:?}"
     );
     server.shutdown().await;
@@ -1537,7 +1514,7 @@ async fn submit_with_wrong_params_returns_error() {
         .post(format!("{}/v1/executions", server.base_url))
         .header("Accept", "application/json")
         .json(&json!({
-            "ffqn": "testing:integration/activity-add.add",
+            "ffqn": "testing:integration/activity.add",
             "params": [1]
         }))
         .send()
@@ -1720,7 +1697,7 @@ async fn idempotent_submit_same_execution_id() {
     let resp1 = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/activity-add.add",
+            "testing:integration/activity.add",
             vec![json!(1), json!(2)],
         )
         .await;
@@ -1730,7 +1707,7 @@ async fn idempotent_submit_same_execution_id() {
     let resp2 = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/activity-add.add",
+            "testing:integration/activity.add",
             vec![json!(1), json!(2)],
         )
         .await;
@@ -1835,7 +1812,7 @@ async fn webhook_js_call_activity() {
     assert_eq!(resp.status().as_u16(), 200);
     let body: Value = resp.json().await.unwrap();
     // The add activity returns the sum as a string
-    assert_eq!(body["result"], "12");
+    assert_eq!(body["result"], 12);
     server.shutdown().await;
 }
 

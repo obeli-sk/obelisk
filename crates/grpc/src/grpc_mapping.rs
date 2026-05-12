@@ -1,4 +1,5 @@
 use crate::grpc_gen::{self, execution_event::history_event, result_kind};
+use chrono::DateTime;
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
     ExecutionMetadata, FinishedExecutionError, FunctionFqn, StrVariant,
@@ -2000,6 +2001,23 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                     finished_version: response.finished_version.0,
                 },
             ),
+            CapturedDbWrite::AppendFinished {
+                execution_id,
+                version,
+                retval,
+                current_time: _,
+            } => grpc_gen::captured_write::Write::AppendFinished(
+                grpc_gen::captured_write::AppendFinished {
+                    execution_id: Some(grpc_gen::ExecutionId {
+                        id: execution_id.to_string(),
+                    }),
+                    version: version.0,
+                    event: Some(grpc_gen::execution_event::Finished {
+                        value: Some(grpc_gen::SupportedFunctionResult::from(retval)),
+                        http_client_traces: Vec::new(),
+                    }),
+                },
+            ),
         }),
     }
 }
@@ -2104,6 +2122,18 @@ pub fn captured_write_from_grpc(
                     .current_time
                     .argument_must_exist("current_time")?
                     .into(),
+            })
+        }
+        grpc_gen::captured_write::Write::AppendFinished(append_finished) => {
+            let finished = append_finished.event.argument_must_exist("event")?;
+            Ok(CapturedDbWrite::AppendFinished {
+                execution_id: append_finished
+                    .execution_id
+                    .argument_must_exist("execution_id")?
+                    .try_into()?,
+                version: Version::new(append_finished.version),
+                retval: finished.value.argument_must_exist("value")?.try_into()?,
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
             })
         }
     }

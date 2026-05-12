@@ -1471,15 +1471,44 @@
         }
       },
       "AdvanceResponseSer": {
-        "type": "object",
-        "properties": {
-          "finished": {
-            "type": [
-              "object",
-              "null"
-            ]
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "finished"
+                ]
+              },
+              "value": {
+                "$ref": "#/components/schemas/RetVal"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "pending_state",
+              "type"
+            ],
+            "properties": {
+              "pending_state": {
+                "type": "object"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "in_progress"
+                ]
+              }
+            }
           }
-        }
+        ]
       },
       "BacktraceInfoSer": {
         "type": "object",
@@ -1656,6 +1685,34 @@
                 "type": "string",
                 "enum": [
                   "append_batch_respond_to_parent"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "execution_id",
+              "version",
+              "retval",
+              "type"
+            ],
+            "properties": {
+              "execution_id": {
+                "type": "string"
+              },
+              "retval": {
+                "type": "object"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "append_finished"
                 ]
               },
               "version": {
@@ -2276,7 +2333,6 @@
         "oneOf": [
           {
             "type": "object",
-            "description": "Write operations that can be supplied to `advance`.",
             "required": [
               "captured_writes",
               "type"
@@ -2298,15 +2354,12 @@
           },
           {
             "type": "object",
-            "description": "The execution is already finished.",
             "required": [
-              "result",
+              "retval",
               "type"
             ],
             "properties": {
-              "result": {
-                "type": "object"
-              },
+              "retval": {},
               "type": {
                 "type": "string",
                 "enum": [
@@ -2317,7 +2370,6 @@
           },
           {
             "type": "object",
-            "description": "The execution is waiting on external progress and cannot be advanced yet.",
             "required": [
               "type"
             ],
@@ -2330,8 +2382,7 @@
               }
             }
           }
-        ],
-        "description": "Result of replaying a workflow execution"
+        ]
       },
       "RetVal": {
         "oneOf": [
@@ -2381,7 +2432,7 @@
             }
           }
         ],
-        "description": "Return value from a finished execution"
+        "description": "Lossy representation of `SupportedFunctionReturnValue`. Does not contain WIT type."
       },
       "StubResponseSer": {
         "type": "object",

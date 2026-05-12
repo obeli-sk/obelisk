@@ -804,6 +804,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 logs_storage_config,
                 Now.clone_box(),
                 js_info.js_source.clone(),
+                &js_info.user_return_type,
             )
             .await
         } else {
@@ -914,6 +915,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 logs_storage_config,
                 Now.clone_box(),
                 js_info.js_source.clone(),
+                &js_info.user_return_type,
                 expected,
             )
             .await
@@ -1032,6 +1034,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     logs_storage_config,
                     Now.clone_box(),
                     js_info.js_source.clone(),
+                    &js_info.user_return_type,
                 )
                 .await
             } else {

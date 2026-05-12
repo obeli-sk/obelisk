@@ -13,6 +13,7 @@ version.workspace = true
 concepts.workspace = true
 val-json.workspace = true
 
+chrono.workspace = true
 http.workspace = true
 prost-wkt-types.workspace = true
 prost.workspace = true
