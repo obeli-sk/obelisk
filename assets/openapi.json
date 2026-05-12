@@ -1693,6 +1693,34 @@
                 "minimum": 0
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "execution_id",
+              "version",
+              "retval",
+              "type"
+            ],
+            "properties": {
+              "execution_id": {
+                "type": "string"
+              },
+              "retval": {
+                "type": "object"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "append_finished"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
           }
         ],
         "description": "A serializable captured database write operation."
@@ -2404,7 +2432,7 @@
             }
           }
         ],
-        "description": "Return value from a finished execution"
+        "description": "Lossy representation of `SupportedFunctionReturnValue`. Does not contain WIT type."
       },
       "StubResponseSer": {
         "type": "object",
