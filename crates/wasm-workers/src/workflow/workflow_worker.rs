@@ -526,7 +526,7 @@ impl WorkflowWorker {
             .await?;
         debug!(
             "Execution replay completed, captured writes: {}",
-            captured_writes.captured_writes.len(),
+            captured_writes.preview.len(),
         );
         Ok(captured_writes)
     }
@@ -539,14 +539,14 @@ impl WorkflowWorker {
         old_version: Version,
     ) -> Result<AdvanceResponse, AdvanceError> {
         let fresh_public_writes: Vec<_> = fresh_replay
-            .captured_writes
+            .preview
             .iter()
-            .map(|write| write.public.clone())
+            .map(|write| write.write.clone())
             .collect();
         let outcome = if requested.is_prefix_of(&fresh_public_writes) {
             let writes_to_apply = merge_requested_overrides_into_fresh_prefix(
                 &requested.captured_writes,
-                &fresh_replay.captured_writes,
+                &fresh_replay.preview,
             );
             apply_writes(db_conn, cancel_registry, writes_to_apply, old_version).await?;
             AdvanceResponse {
@@ -986,7 +986,7 @@ impl WorkflowWorker {
         if replay_kind == ReplayKind::Unfinished
             && let Either::Left(WorkerResultOk::RunFinished { retval, .. }) = return_value
         {
-            debug!("Replay finished returning a value");
+            debug!("Replay finished returning a value: {retval:?}");
             // Capture the Finished event that the executor would write.
             let version = replay_db_connection.version().clone();
             let execution_id = replay_db_connection.execution_id().clone();
@@ -1084,9 +1084,9 @@ impl WorkflowWorker {
         )
         .await?;
         let captured_writes: Vec<_> = captured_writes
-            .captured_writes
+            .preview
             .into_iter()
-            .map(|write| write.public)
+            .map(|write| write.write)
             .collect();
         if !captured_writes.is_empty() {
             Ok(ReplayResponse::Advanceable(ReplayAdvanceable {

@@ -327,7 +327,7 @@ pub(crate) fn merge_requested_overrides_into_fresh_write(
     requested: &CapturedDbWrite,
     fresh: &InternalCapturedWrite,
 ) -> InternalCapturedWrite {
-    match (requested, &fresh.public) {
+    match (requested, &fresh.write) {
         (
             CapturedDbWrite::AppendBatchCreateNewExecution {
                 child_req: requested_child_req,
@@ -339,7 +339,7 @@ pub(crate) fn merge_requested_overrides_into_fresh_write(
             let CapturedDbWrite::AppendBatchCreateNewExecution {
                 child_req: merged_child_req,
                 ..
-            } = &mut merged.public
+            } = &mut merged.write
             else {
                 unreachable!("matched variant must stay matched")
             };

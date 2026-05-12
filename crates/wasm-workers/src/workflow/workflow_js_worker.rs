@@ -404,9 +404,9 @@ impl WorkflowJsWorker {
         )
         .await?;
         let captured_writes: Vec<_> = captured_writes
-            .captured_writes
+            .preview
             .into_iter()
-            .map(|write| write.public)
+            .map(|write| write.write)
             .collect();
         if !captured_writes.is_empty() {
             Ok(ReplayResponse::Advanceable(ReplayAdvanceable {

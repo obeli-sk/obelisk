@@ -29,41 +29,41 @@ use tracing::{debug, trace};
 
 #[derive(Debug, Clone)]
 pub(crate) struct InternalCapturedWrite {
-    pub(crate) public: CapturedDbWrite,
-    pub(crate) cancellations: Option<JoinSetCloseCancellations>,
+    pub(crate) write: CapturedDbWrite,
+    cancellations: Option<JoinSetCloseCancellations>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct InternalReplayResponse {
-    pub(crate) captured_writes: Vec<InternalCapturedWrite>,
+    pub(crate) preview: Vec<InternalCapturedWrite>,
 }
 
 #[derive(Debug, Default)]
 struct ReplayEventCollector {
-    writes: Vec<InternalCapturedWrite>,
+    preview: Vec<InternalCapturedWrite>,
 }
 
 impl ReplayEventCollector {
     fn into_writes(self) -> InternalReplayResponse {
         InternalReplayResponse {
-            captured_writes: self.writes,
+            preview: self.preview,
         }
     }
 
-    fn push_public_write(&mut self, public: CapturedDbWrite) {
-        self.writes.push(InternalCapturedWrite {
-            public,
+    fn push_write(&mut self, write: CapturedDbWrite) {
+        self.preview.push(InternalCapturedWrite {
+            write,
             cancellations: None,
         });
     }
 
-    fn push_public_write_with_cancellations(
+    fn push_write_with_cancellations(
         &mut self,
-        public: CapturedDbWrite,
+        write: CapturedDbWrite,
         cancellations: Option<JoinSetCloseCancellations>,
     ) {
-        self.writes.push(InternalCapturedWrite {
-            public,
+        self.preview.push(InternalCapturedWrite {
+            write,
             cancellations,
         });
     }
@@ -117,7 +117,7 @@ async fn apply_captured_write(
         }
     }
 
-    match write.public.clone() {
+    match write.write.clone() {
         CapturedDbWrite::Append {
             execution_id,
             version,
@@ -190,7 +190,7 @@ impl ReplayWorkflowDbConnection {
 
     /// Push a captured write and advance the version.
     pub(crate) fn push_write(&mut self, write: CapturedDbWrite) {
-        self.collector.push_public_write(write);
+        self.collector.push_write(write);
     }
 
     pub(crate) fn version(&self) -> &Version {
@@ -292,7 +292,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
 
         if let Some(child_req) = child_req {
             self.collector
-                .push_public_write(CapturedDbWrite::AppendBatchCreateNewExecution {
+                .push_write(CapturedDbWrite::AppendBatchCreateNewExecution {
                     current_time: _called_at,
                     batch: vec![request],
                     execution_id: self.execution_id.clone(),
@@ -301,7 +301,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                     backtraces: backtrace.into_iter().collect(),
                 });
         } else {
-            self.collector.push_public_write(CapturedDbWrite::Append {
+            self.collector.push_write(CapturedDbWrite::Append {
                 execution_id: self.execution_id.clone(),
                 version: version.clone(),
                 req: request,
@@ -320,7 +320,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
         let version = self.version.clone();
-        self.collector.push_public_write(CapturedDbWrite::Append {
+        self.collector.push_write(CapturedDbWrite::Append {
             execution_id,
             version: version.clone(),
             req,
@@ -346,7 +346,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         // only CachingDbConnection can assert the flush outcome as here `flush_non_blocking_event_cache` is stateless.
         let version = self.version.clone();
 
-        self.collector.push_public_write_with_cancellations(
+        self.collector.push_write_with_cancellations(
             CapturedDbWrite::Append {
                 execution_id,
                 version: version.clone(),
@@ -375,13 +375,12 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 "closing join next is not appended using `append_batch`"
             );
         }
-        self.collector
-            .push_public_write(CapturedDbWrite::AppendBatch {
-                current_time,
-                batch,
-                execution_id,
-                version,
-            });
+        self.collector.push_write(CapturedDbWrite::AppendBatch {
+            current_time,
+            batch,
+            execution_id,
+            version,
+        });
         self.version = next;
         Ok(())
     }
@@ -405,7 +404,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             );
         }
         self.collector
-            .push_public_write(CapturedDbWrite::AppendBatchCreateNewExecution {
+            .push_write(CapturedDbWrite::AppendBatchCreateNewExecution {
                 current_time,
                 batch,
                 execution_id,
@@ -444,7 +443,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         }
 
         self.collector
-            .push_public_write(CapturedDbWrite::AppendStubResponse {
+            .push_write(CapturedDbWrite::AppendStubResponse {
                 events,
                 response,
                 current_time,
@@ -458,7 +457,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         execution_id: &ExecutionId,
         _current_time: DateTime<Utc>,
     ) -> Result<CreateRequest, DbErrorWriteOrReplayInterrupt> {
-        if !self.collector.writes.is_empty() {
+        if !self.collector.preview.is_empty() {
             // This read may be dependent on an unflushed `-submit` request.
             return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
         }
