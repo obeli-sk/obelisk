@@ -464,7 +464,7 @@ impl WorkflowWorker {
         } else {
             ReplayKind::Unfinished
         };
-        info!("Execution replay {replay_kind} started");
+        info!("Execution replay of kind `{replay_kind}` started");
 
         let config = WorkflowConfig {
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
@@ -970,10 +970,10 @@ impl WorkflowWorker {
         &self,
         ctx: WorkerContext,
         replay_db_connection: ReplayWorkflowDbConnection,
-        is_replay: ReplayKind,
+        replay_kind: ReplayKind,
     ) -> Result<InternalReplayResponse, ReplayError> {
         let (return_value, replay_db_connection) = self
-            .run_internal(ctx, Box::new(replay_db_connection), Some(is_replay))
+            .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
             .await
             .map_err(|err| {
                 debug!("Replay failed: {err:?}");
@@ -987,30 +987,24 @@ impl WorkflowWorker {
             unreachable!("`run_internal` returns the same `db_connection` it was supplied")
         };
 
-        match return_value {
-            Either::Left(WorkerResultOk::RunFinished { retval, .. }) => {
-                debug!("Replay finished returning a value");
-                // Capture the Finished event that the executor would write.
-                let version = replay_db_connection.version().clone();
-                let execution_id = replay_db_connection.execution_id().clone();
-                replay_db_connection.push_write(CapturedDbWrite::Append {
-                    execution_id,
-                    version,
-                    req: concepts::storage::AppendRequest {
-                        created_at: self.clock_fn.now(),
-                        event: concepts::storage::ExecutionRequest::Finished {
-                            retval,
-                            http_client_traces: None,
-                        },
+        if replay_kind == ReplayKind::Unfinished
+            && let Either::Left(WorkerResultOk::RunFinished { retval, .. }) = return_value
+        {
+            debug!("Replay finished returning a value");
+            // Capture the Finished event that the executor would write.
+            let version = replay_db_connection.version().clone();
+            let execution_id = replay_db_connection.execution_id().clone();
+            replay_db_connection.push_write(CapturedDbWrite::Append {
+                execution_id,
+                version,
+                req: concepts::storage::AppendRequest {
+                    created_at: self.clock_fn.now(),
+                    event: concepts::storage::ExecutionRequest::Finished {
+                        retval,
+                        http_client_traces: None,
                     },
-                });
-            }
-            Either::Right(ReplayWaitingForResponse) => {
-                debug!("Replay interrupt requested");
-            }
-            Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher) => {
-                debug!("Replay interrupted with a blocking event");
-            }
+                },
+            });
         }
 
         Ok(replay_db_connection.into_writes())
