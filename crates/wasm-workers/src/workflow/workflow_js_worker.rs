@@ -2063,7 +2063,7 @@ mod tests {
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         info!("Stage 1 replay: {replay:?}");
         assert!(
-            replay.return_value().is_some(),
+            replay.get_return_value().is_some(),
             "workflow should complete during preview (non-blocking events only)"
         );
         let next_events = replay.history_events();
@@ -2114,7 +2114,7 @@ mod tests {
         let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
         info!("Stage 2 replay: {replay2:?}");
         assert!(
-            replay2.return_value().is_some(),
+            replay2.get_return_value().is_some(),
             "workflow should complete even with partial event log (JoinSetCreate already present)"
         );
         // The JoinSetCreate is already in the log, so it should not appear as a next_event.
@@ -2297,7 +2297,9 @@ mod tests {
         .unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
-        let retval = replay.return_value().expect("retval should be computed");
+        let retval = replay
+            .get_return_value()
+            .expect("retval should be computed");
         let retval = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(WastValWithType{ r#type: _, value })) => value);
         assert_eq!(
             "Result(Ok(Some(String(\"\\\"hello\\\"\"))))",
@@ -2642,7 +2644,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(advance.finished, requested.return_value().cloned());
+            assert_eq!(advance.finished, requested.get_return_value().cloned());
 
             insta::with_settings!({
                 snapshot_suffix => format!("{test_name}_advance_{steps}"),

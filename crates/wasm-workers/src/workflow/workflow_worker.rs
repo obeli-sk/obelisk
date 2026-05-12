@@ -19,8 +19,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
-    AppendRequest, CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog,
-    ExecutionRequest, Locked, Version,
+    CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog, Locked, Version,
 };
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
@@ -549,7 +548,7 @@ impl WorkflowWorker {
             );
             apply_writes(db_conn, cancel_registry, writes_to_apply, old_version).await?;
             AdvanceResponse {
-                finished: requested.return_value().cloned(),
+                finished: requested.get_return_value().cloned(),
             }
         } else {
             debug!(
@@ -989,12 +988,12 @@ impl WorkflowWorker {
             // Capture the Finished event that the executor would write.
             let version = replay_db_connection.version().clone();
             let execution_id = replay_db_connection.execution_id().clone();
-            replay_db_connection.push_write(ReplayAdvanceable::finish_as_captured_write(
+            replay_db_connection.push_write(CapturedDbWrite::AppendFinished {
                 execution_id,
                 version,
-                self.clock_fn.now(),
+                current_time: self.clock_fn.now(),
                 retval,
-            ));
+            });
         }
 
         Ok(replay_db_connection.into_writes())
@@ -1206,7 +1205,8 @@ impl ReplayAdvanceable {
         self.captured_writes.iter().find_map(|w| match w {
             CapturedDbWrite::Append { version, .. }
             | CapturedDbWrite::AppendBatch { version, .. }
-            | CapturedDbWrite::AppendBatchCreateNewExecution { version, .. } => Some(version),
+            | CapturedDbWrite::AppendBatchCreateNewExecution { version, .. }
+            | CapturedDbWrite::AppendFinished { version, .. } => Some(version),
             CapturedDbWrite::AppendStubResponse { .. } => None,
         })
     }
@@ -1220,29 +1220,8 @@ impl ReplayAdvanceable {
                 .all(|(requested, fresh)| requested_write_matches_fresh_replay(requested, fresh))
     }
 
-    fn finish_as_captured_write(
-        execution_id: ExecutionId,
-        version: Version,
-        created_at: DateTime<Utc>,
-        retval: SupportedFunctionReturnValue,
-    ) -> CapturedDbWrite {
-        CapturedDbWrite::Append {
-            execution_id,
-            version,
-            req: AppendRequest {
-                created_at,
-                event: ExecutionRequest::Finished {
-                    retval,
-                    http_client_traces: None,
-                },
-            },
-        }
-    }
-
-    pub(crate) fn return_value(&self) -> Option<&SupportedFunctionReturnValue> {
-        if let Some(CapturedDbWrite::Append { req, .. }) = self.captured_writes.last()
-            && let ExecutionRequest::Finished { retval, .. } = &req.event
-        {
+    pub(crate) fn get_return_value(&self) -> Option<&SupportedFunctionReturnValue> {
+        if let Some(CapturedDbWrite::AppendFinished { retval, .. }) = self.captured_writes.last() {
             return Some(retval);
         }
         None
@@ -1258,6 +1237,7 @@ impl ReplayAdvanceable {
                     CapturedDbWrite::AppendBatch { batch, .. }
                     | CapturedDbWrite::AppendBatchCreateNewExecution { batch, .. } => batch,
                     CapturedDbWrite::AppendStubResponse { events, .. } => &events.batch,
+                    CapturedDbWrite::AppendFinished { .. } => &[],
                 };
                 requests.iter().filter_map(|req| {
                     if let concepts::storage::ExecutionRequest::HistoryEvent { event } = &req.event
@@ -3593,7 +3573,7 @@ pub(crate) mod tests {
             };
 
             steps += 1;
-            let expected_finished = replay.return_value().cloned();
+            let expected_finished = replay.get_return_value().cloned();
             let advance = WorkflowWorker::advance(
                 harness.deployment_id,
                 harness.workflow_component_id.clone(),
@@ -4357,7 +4337,7 @@ pub(crate) mod tests {
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         debug!("Preview after creation: {replay:?}");
         assert!(
-            replay.return_value().is_none(),
+            replay.get_return_value().is_none(),
             "workflow should not have completed yet"
         );
         let next_events = replay.history_events();
@@ -4550,7 +4530,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(advance.finished, requested.return_value().cloned());
+            assert_eq!(advance.finished, requested.get_return_value().cloned());
 
             insta::with_settings!({
                 snapshot_suffix => format!("{test_name}_advance_{steps}"),
@@ -4670,7 +4650,7 @@ pub(crate) mod tests {
             "paused workflow should have captured writes"
         );
         assert!(
-            replay.return_value().is_none(),
+            replay.get_return_value().is_none(),
             "workflow should not have completed yet"
         );
         assert_eq!(

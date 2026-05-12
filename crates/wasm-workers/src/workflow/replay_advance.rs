@@ -116,6 +116,17 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
             },
             current_time: DateTime::UNIX_EPOCH,
         },
+        CapturedDbWrite::AppendFinished {
+            execution_id,
+            version,
+            current_time: _,
+            retval,
+        } => CapturedDbWrite::AppendFinished {
+            execution_id,
+            version,
+            current_time: DateTime::UNIX_EPOCH,
+            retval,
+        },
     }
 }
 

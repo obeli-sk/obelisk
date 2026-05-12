@@ -152,6 +152,25 @@ async fn apply_captured_write(
                 .await?;
             Ok(None)
         }
+        CapturedDbWrite::AppendFinished {
+            execution_id,
+            version,
+            current_time,
+            retval,
+        } => conn
+            .append(
+                execution_id,
+                version,
+                AppendRequest {
+                    created_at: current_time,
+                    event: ExecutionRequest::Finished {
+                        retval,
+                        http_client_traces: None,
+                    },
+                },
+            )
+            .await
+            .map(Some),
     }
 }
 

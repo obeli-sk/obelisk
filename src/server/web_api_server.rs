@@ -1290,7 +1290,7 @@ async fn execution_stub(
     .into_response())
 }
 
-/// Return value from a finished execution
+/// Lossy representation of `SupportedFunctionReturnValue`. Does not contain WIT type.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum RetVal {
@@ -1508,6 +1508,12 @@ pub(crate) enum CapturedWriteSer {
         response: StubResponseSer,
         current_time: DateTime<Utc>,
     },
+    AppendFinished {
+        execution_id: String,
+        version: u32,
+        #[schema(value_type = Object)]
+        retval: SupportedFunctionReturnValue,
+    },
 }
 
 impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
@@ -1562,6 +1568,16 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                 events: events.batch,
                 response: StubResponseSer::from(response),
                 current_time,
+            },
+            CapturedDbWrite::AppendFinished {
+                execution_id,
+                version,
+                retval,
+                current_time: _,
+            } => CapturedWriteSer::AppendFinished {
+                execution_id: execution_id.to_string(),
+                version: version.0,
+                retval,
             },
         }
     }
@@ -1636,6 +1652,18 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                 response: response.try_into()?,
                 current_time,
             }),
+            CapturedWriteSer::AppendFinished {
+                execution_id,
+                version,
+                retval,
+            } => Ok(Self::AppendFinished {
+                execution_id: execution_id
+                    .parse()
+                    .map_err(|err| format!("invalid execution_id - {err}"))?,
+                version: Version::new(version),
+                retval,
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+            }),
         }
     }
 }
@@ -1647,7 +1675,7 @@ pub(crate) enum ReplayResponseSer {
         captured_writes: Vec<CapturedWriteSer>,
     },
     Finished {
-        retval: serde_json::Value, // SupportedRetVal -> RetVal
+        retval: serde_json::Value, // SupportedFunctionReturnValue -> RetVal
     },
     Blocked,
 }

@@ -995,6 +995,7 @@ pub struct AppendResponseToExecution {
 
 /// A captured database write operation with all arguments needed to replay it
 /// against the real database.
+/// Dates carry meaning only on a fresh replay, ignoring user's input when persisting.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub enum CapturedDbWrite {
@@ -1021,6 +1022,12 @@ pub enum CapturedDbWrite {
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
+    },
+    AppendFinished {
+        execution_id: ExecutionId,
+        version: Version,
+        current_time: DateTime<Utc>,
+        retval: SupportedFunctionReturnValue,
     },
 }
 
