@@ -818,22 +818,36 @@ message AdvanceExecutionRequest {
 }
 
 message AdvanceExecutionResponse {
-  message Applied {
-    uint32 version = 1;
-    optional SupportedFunctionResult finished_result = 2;
+  message Success {
+    optional SupportedFunctionResult finished_result = 1;
   }
 
-  message VersionMismatch {
-    uint32 version = 1;
+  message Error {
+    message NoWrites {
+    }
+
+    message ReplayError {
+      string message = 1;
+    }
+
+    message VersionMismatch {
+      uint32 expected = 1;
+    }
+
+    message ReplayMismatch {
+    }
+
+    oneof error {
+      NoWrites no_writes = 1;
+      ReplayError replay_error = 2;
+      VersionMismatch version_mismatch = 3;
+      ReplayMismatch replay_mismatch = 4;
+    }
   }
 
-  message Mismatch {
-  }
-
-  oneof outcome {
-    Applied applied = 1;
-    VersionMismatch version_mismatch = 2;
-    Mismatch mismatch = 3;
+  oneof result {
+    Success success = 1;
+    Error error = 2;
   }
 }
 

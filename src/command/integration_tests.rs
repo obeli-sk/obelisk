@@ -834,8 +834,6 @@ enum TestExecutionClient {
 #[derive(Debug)]
 struct ReplayCapturedWritesSummary {
     captured_writes_len: usize,
-    last_write_is_finished: bool,
-    finished_retval_has_ok: bool,
 }
 
 #[derive(Debug)]
@@ -859,14 +857,9 @@ impl TestExecutionClient {
                 let writes = replay_body["captured_writes"]
                     .as_array()
                     .expect("captured_writes must be an array");
-                let last_write = writes.last().expect("captured_writes must not be empty");
 
                 ReplayCapturedWritesSummary {
                     captured_writes_len: writes.len(),
-                    last_write_is_finished: last_write["type"] == "append"
-                        && last_write["event"]["event"]["finished"].is_object(),
-                    finished_retval_has_ok:
-                        last_write["event"]["event"]["finished"]["retval"]["ok"].is_object(),
                 }
             }
             TestExecutionClient::Grpc => {
@@ -884,38 +877,33 @@ impl TestExecutionClient {
                     .unwrap()
                     .into_inner();
 
-                let last_write = replay_resp
-                    .captured_writes
-                    .last()
-                    .expect("captured_writes must not be empty");
-
-                let (last_write_is_finished, finished_retval_has_ok) =
-                    match last_write.write.as_ref().expect("write oneof must be set") {
-                        grpc::grpc_gen::captured_write::Write::Append(a) => {
-                            let event = a.event.as_ref().expect("event must be present");
-                            match event.event.as_ref().expect("event variant must be present") {
-                                grpc::grpc_gen::execution_event::Event::Finished(finished) => (
-                                    true,
-                                    finished.value.as_ref().is_some_and(|retval| {
-                                        matches!(
-                                        retval.value,
-                                        Some(grpc::grpc_gen::supported_function_result::Value::Ok(
-                                            _
-                                        ))
-                                    )
-                                    }),
-                                ),
-                                _ => (false, false),
-                            }
-                        }
-                        _ => (false, false),
-                    };
-
                 ReplayCapturedWritesSummary {
                     captured_writes_len: replay_resp.captured_writes.len(),
-                    last_write_is_finished,
-                    finished_retval_has_ok,
                 }
+            }
+        }
+    }
+
+    async fn submit_paused(
+        self,
+        server: &TestServer,
+        execution_id: &str,
+        ffqn: &str,
+        params: Vec<Value>,
+    ) {
+        match self {
+            TestExecutionClient::WebApi => {
+                let submit = server
+                    .webapi_submit_paused(execution_id, ffqn, params)
+                    .await;
+                assert_eq!(submit.status().as_u16(), 201);
+            }
+            TestExecutionClient::Grpc => {
+                let submit = server.grpc_submit_paused(execution_id, ffqn, params).await;
+                assert_eq!(
+                    submit.outcome,
+                    grpc::grpc_gen::submit_response::Outcome::Created as i32
+                );
             }
         }
     }
@@ -1061,9 +1049,9 @@ impl TestServer {
                 .await
                 .unwrap()
                 .into_inner();
-            match advance.outcome.expect("advance outcome must be set") {
-                grpc::grpc_gen::advance_execution_response::Outcome::Applied(applied) => {
-                    if let Some(value) = applied.finished_result {
+            match advance.result.expect("advance result must be set") {
+                grpc::grpc_gen::advance_execution_response::Result::Success(success) => {
+                    if let Some(value) = success.finished_result {
                         let ok_payload = match value.value {
                             Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
                             other => panic!("expected ok finished value, got {other:?}"),
@@ -1076,11 +1064,21 @@ impl TestServer {
                         };
                     }
                 }
-                grpc::grpc_gen::advance_execution_response::Outcome::VersionMismatch(_) => {
-                    panic!("advance returned version mismatch on step {steps}")
-                }
-                grpc::grpc_gen::advance_execution_response::Outcome::Mismatch(_) => {
-                    panic!("advance returned mismatch on step {steps}")
+                grpc::grpc_gen::advance_execution_response::Result::Error(error) => {
+                    match error.error.expect("advance error must be set") {
+                        grpc::grpc_gen::advance_execution_response::error::Error::NoWrites(_) => {
+                            panic!("advance returned no_writes on step {steps}")
+                        }
+                        grpc::grpc_gen::advance_execution_response::error::Error::VersionMismatch(_) => {
+                            panic!("advance returned version mismatch on step {steps}")
+                        }
+                        grpc::grpc_gen::advance_execution_response::error::Error::ReplayMismatch(_) => {
+                            panic!("advance returned replay mismatch on step {steps}")
+                        }
+                        grpc::grpc_gen::advance_execution_response::error::Error::ReplayError(err) => {
+                            panic!("advance returned replay error on step {steps}: {}", err.message)
+                        }
+                    }
                 }
             }
 
@@ -1135,24 +1133,14 @@ impl TestServer {
                 advance.text().await.unwrap()
             );
             let advance_body: Value = advance.json().await.unwrap();
-            match advance_body["outcome"]["type"]
-                .as_str()
-                .expect("advance outcome type must be set")
-            {
-                "applied" => {
-                    if !advance_body["outcome"]["finished_result"].is_null() {
-                        return GrpcAdvanceExecutionSummary {
-                            steps,
-                            final_value_json: serde_json::to_vec(
-                                &advance_body["outcome"]["finished_result"]["ok"]["value"],
-                            )
-                            .unwrap(),
-                        };
-                    }
-                }
-                "version_mismatch" => panic!("advance returned version mismatch on step {steps}"),
-                "mismatch" => panic!("advance returned mismatch on step {steps}"),
-                other => panic!("unexpected advance outcome {other}"),
+            if !advance_body["finished_result"].is_null() {
+                return GrpcAdvanceExecutionSummary {
+                    steps,
+                    final_value_json: serde_json::to_vec(
+                        &advance_body["finished_result"]["ok"]["value"],
+                    )
+                    .unwrap(),
+                };
             }
 
             let status = self.get_status(&exec_id).await;
@@ -1331,43 +1319,50 @@ async fn submit_workflow_and_replay() {
     server.shutdown().await;
 }
 
-// ---- Workflow: replay captured_writes (Web API + gRPC) ----
+// ---- Workflow: replaying a paused workflow should return preview events ----
 
 #[tokio::test]
-async fn replay_captured_writes() {
-    let server = TestServer::start(test_addr!(63)).await;
+async fn replaying_paused_workflow_should_return_preview_events_grpc() {
+    replaying_paused_workflow_should_return_preview_events(
+        TestExecutionClient::Grpc,
+        test_addr!(63),
+    )
+    .await;
+}
 
-    for client in [TestExecutionClient::WebApi, TestExecutionClient::Grpc] {
-        let exec_id = server.generate_execution_id().await;
+#[tokio::test]
+async fn replaying_paused_workflow_should_return_preview_events_webapi() {
+    replaying_paused_workflow_should_return_preview_events(
+        TestExecutionClient::WebApi,
+        test_addr!(66),
+    )
+    .await;
+}
 
-        // Run a workflow that calls a child activity so replay produces interesting writes.
-        let resp = server
-            .submit_follow_with_id(
-                &exec_id,
-                "testing:integration/workflow-add-via-activity.add-via-activity",
-                vec![json!(3), json!(4)],
-            )
-            .await;
-        assert_eq!(resp.status().as_u16(), 201);
-        let body: Value = resp.json().await.unwrap();
-        assert_eq!(body, json!({ "ok": "7" }));
+async fn replaying_paused_workflow_should_return_preview_events(
+    client: TestExecutionClient,
+    addr: String,
+) {
+    let server = TestServer::start(addr).await;
 
-        let replay = client
-            .replay_captured_writes_summary(&server, &exec_id)
-            .await;
-        assert!(
-            replay.captured_writes_len > 0,
-            "captured_writes must not be empty for a finished workflow: {client:?}"
-        );
-        assert!(
-            replay.last_write_is_finished,
-            "last captured write must be a Finished event: {client:?}"
-        );
-        assert!(
-            replay.finished_retval_has_ok,
-            "Finished event must contain an ok return value: {client:?}"
-        );
-    }
+    let exec_id = server.generate_execution_id().await;
+
+    client
+        .submit_paused(
+            &server,
+            &exec_id,
+            "testing:integration/workflow-add-via-activity.add-via-activity",
+            vec![json!(3), json!(4)],
+        )
+        .await;
+
+    let replay = client
+        .replay_captured_writes_summary(&server, &exec_id)
+        .await;
+    assert!(
+        replay.captured_writes_len > 0,
+        "captured_writes must not be empty for a paused workflow: {client:?}"
+    );
 
     server.shutdown().await;
 }

@@ -5,12 +5,12 @@
 //! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
 use super::workflow_worker::{
-    AdvanceOutcome, AdvanceResponse, ReplayError, WorkflowWorker, WorkflowWorkerCompiled,
+    AdvanceResponse, ReplayError, WorkflowWorker, WorkflowWorkerCompiled,
 };
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
-use crate::workflow::workflow_worker::ReplayResponse;
+use crate::workflow::workflow_worker::{AdvanceError, ReplayResponse};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::DbPool;
@@ -427,7 +427,7 @@ impl WorkflowJsWorker {
         clock_fn: Box<dyn ClockFn>,
         js_source: String,
         requested: ReplayResponse,
-    ) -> Result<AdvanceResponse, ReplayError> {
+    ) -> Result<AdvanceResponse, AdvanceError> {
         info!("Advance to requested {requested:?}");
         let db_conn = real_db_pool
             .connection()
@@ -437,12 +437,14 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
+        if requested.captured_writes.is_empty() {
+            return Err(crate::workflow::workflow_worker::AdvanceError::NoWrites);
+        }
         if let Some(expected_version) = requested.starting_version()
             && log.next_version != *expected_version
         {
-            return Ok(AdvanceResponse {
-                version: log.next_version,
-                outcome: AdvanceOutcome::VersionMismatch,
+            return Err(AdvanceError::VersionMismatch {
+                expected: log.next_version,
             });
         }
 
@@ -2157,8 +2159,8 @@ mod tests {
 
         info!("Stage 3 replay: {replay3:?}");
         assert!(
-            replay3.return_value().is_some(),
-            "replay of a finished execution should include the return value"
+            replay3.captured_writes.is_empty(),
+            "replay of a finished execution should return no preview events"
         );
         drop(db_connection);
         db_close.close().await;
@@ -2537,8 +2539,6 @@ mod tests {
         max_steps: usize,
         trim_to: Option<usize>,
     ) -> SupportedFunctionReturnValue {
-        use crate::workflow::workflow_worker::AdvanceOutcome;
-
         let mut steps = 0;
         let mut saw_trimmed_preview = false;
         loop {
@@ -2634,7 +2634,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(advance.outcome, AdvanceOutcome::Applied);
+            assert_eq!(advance.finished, requested.return_value().cloned());
 
             insta::with_settings!({
                 snapshot_suffix => format!("{test_name}_advance_{steps}"),
@@ -2642,9 +2642,7 @@ mod tests {
                 {
                     assert_json_snapshot!(
                         json!({
-                            "version": advance.version.0,
-                            "outcome": format!("{:?}", advance.outcome),
-                            "trim_to": trim_to,
+                            "finished": advance.finished.is_some(),
                             "requested_captured_writes_len": requested.captured_writes.len(),
                             "replayed_captured_writes_len": replay.captured_writes.len(),
                         })
@@ -2810,10 +2808,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            crate::workflow::workflow_worker::AdvanceOutcome::Applied,
-            advance.outcome
-        );
+        assert_eq!(advance.finished, None);
         assert_matches!(
             db_connection
                 .get_pending_state(&child_execution_id)
@@ -2924,7 +2919,7 @@ mod tests {
             replayed_child_scheduled_at,
             sim_clock.now() + chrono::TimeDelta::minutes(5)
         );
-        let child_execution_id = requested
+        let scheduled_execution_id = requested
             .captured_writes
             .iter_mut()
             .find_map(|write| match write {
@@ -2967,21 +2962,20 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            crate::workflow::workflow_worker::AdvanceOutcome::Applied,
-            advance.outcome
-        );
+        advance
+            .finished
+            .expect("main execution should have finished");
         let expected_scheduled_at = sim_clock.now() + chrono::TimeDelta::minutes(5);
         assert_matches!(
             db_connection
-                .get_pending_state(&child_execution_id)
+                .get_pending_state(&scheduled_execution_id)
                 .await
                 .unwrap()
                 .pending_state,
             PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) if scheduled_at == expected_scheduled_at
         );
         let create_event = db_connection
-            .get_execution_event(&child_execution_id, &Version::new(0))
+            .get_execution_event(&scheduled_execution_id, &Version::new(0))
             .await
             .unwrap();
         assert_eq!(create_event.created_at, sim_clock.now());

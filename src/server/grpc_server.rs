@@ -76,7 +76,7 @@ use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
-use wasm_workers::workflow::workflow_worker::{AdvanceOutcome, ReplayResponse, WorkflowWorker};
+use wasm_workers::workflow::workflow_worker::{AdvanceError, ReplayResponse, WorkflowWorker};
 
 pub(crate) struct GrpcServer {
     server_verified: ServerVerified,
@@ -914,54 +914,50 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .await
         };
 
-        let advance_response = advance_res.map_err(|err| {
-            info!("Advance failed: {err:?}");
-            tonic::Status::internal(format!("advance failed: {err}"))
-        })?;
-
-        let outcome = match advance_response.outcome {
-            AdvanceOutcome::Applied => {
-                let finished_result = match conn
-                    .get_pending_state(&execution_id)
-                    .await
-                    .to_status()?
-                    .pending_state
-                {
-                    PendingState::Finished(finished) => {
-                        let finished_event = conn
-                            .get_execution_event(&execution_id, &Version(finished.version))
-                            .await
-                            .to_status()?;
-                        let ExecutionRequest::Finished { retval, .. } = finished_event.event else {
-                            return Err(tonic::Status::internal(
-                                "pending state finished implies `Finished` event",
-                            ));
-                        };
-                        Some(grpc_gen::SupportedFunctionResult::from(retval))
-                    }
-                    _ => None,
-                };
-                grpc_gen::advance_execution_response::Outcome::Applied(
-                    grpc_gen::advance_execution_response::Applied {
-                        version: advance_response.version.0,
-                        finished_result,
-                    },
-                )
-            }
-            AdvanceOutcome::VersionMismatch => {
-                grpc_gen::advance_execution_response::Outcome::VersionMismatch(
-                    grpc_gen::advance_execution_response::VersionMismatch {
-                        version: advance_response.version.0,
-                    },
-                )
-            }
-            AdvanceOutcome::Mismatch => grpc_gen::advance_execution_response::Outcome::Mismatch(
-                grpc_gen::advance_execution_response::Mismatch {},
+        let result = match advance_res {
+            Ok(advance_response) => grpc_gen::advance_execution_response::Result::Success(
+                grpc_gen::advance_execution_response::Success {
+                    finished_result: advance_response
+                        .finished
+                        .map(grpc_gen::SupportedFunctionResult::from),
+                },
             ),
+            Err(err) => {
+                info!("Advance failed: {err:?}");
+                let error = match err {
+                    AdvanceError::NoWrites => {
+                        grpc_gen::advance_execution_response::error::Error::NoWrites(
+                            grpc_gen::advance_execution_response::error::NoWrites {},
+                        )
+                    }
+                    AdvanceError::ReplayError(replay_error) => {
+                        grpc_gen::advance_execution_response::error::Error::ReplayError(
+                            grpc_gen::advance_execution_response::error::ReplayError {
+                                message: replay_error.to_string(),
+                            },
+                        )
+                    }
+                    AdvanceError::VersionMismatch { expected } => {
+                        grpc_gen::advance_execution_response::error::Error::VersionMismatch(
+                            grpc_gen::advance_execution_response::error::VersionMismatch {
+                                expected: expected.0,
+                            },
+                        )
+                    }
+                    AdvanceError::ReplayMismatch => {
+                        grpc_gen::advance_execution_response::error::Error::ReplayMismatch(
+                            grpc_gen::advance_execution_response::error::ReplayMismatch {},
+                        )
+                    }
+                };
+                grpc_gen::advance_execution_response::Result::Error(
+                    grpc_gen::advance_execution_response::Error { error: Some(error) },
+                )
+            }
         };
 
         Ok(tonic::Response::new(grpc_gen::AdvanceExecutionResponse {
-            outcome: Some(outcome),
+            result: Some(result),
         }))
     }
 
