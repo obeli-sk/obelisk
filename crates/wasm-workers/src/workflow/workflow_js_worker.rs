@@ -526,7 +526,7 @@ impl WorkflowJsWorker {
             else {
                 unimplemented!("FIXME")
             };
-            *retval = retval_transformed
+            *retval = retval_transformed;
         }
         WorkflowWorker::advance_from_log(
             &*db_conn,

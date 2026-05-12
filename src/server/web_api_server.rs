@@ -1694,7 +1694,7 @@ impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayRes
             }
             wasm_workers::workflow::workflow_worker::ReplayResponse::Finished { result } => {
                 Self::Finished {
-                    retval: serde_json::to_value(&RetVal::from(result))
+                    retval: serde_json::to_value(RetVal::from(result))
                         .expect("supported retval must be JSON serializable"),
                 }
             }
