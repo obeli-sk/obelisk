@@ -76,7 +76,9 @@ use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
-use wasm_workers::workflow::workflow_worker::{AdvanceError, ReplayResponse, WorkflowWorker};
+use wasm_workers::workflow::workflow_worker::{
+    AdvanceError, ReplayAdvanceable, ReplayResponse, WorkflowWorker,
+};
 
 pub(crate) struct GrpcServer {
     server_verified: ServerVerified,
@@ -823,12 +825,31 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             info!("Replay failed: {err:?}");
             tonic::Status::internal(format!("replay failed: {err}"))
         })?;
+        let outcome = match replay_response {
+            ReplayResponse::Advanceable(replay) => {
+                grpc_gen::replay_execution_response::Outcome::Advanceable(
+                    grpc_gen::replay_execution_response::Advanceable {
+                        captured_writes: replay
+                            .captured_writes
+                            .into_iter()
+                            .map(grpc_mapping::captured_write_to_grpc)
+                            .collect(),
+                    },
+                )
+            }
+            ReplayResponse::Finished { result } => {
+                grpc_gen::replay_execution_response::Outcome::Finished(
+                    grpc_gen::replay_execution_response::Finished {
+                        result: Some(grpc_gen::SupportedFunctionResult::from(result)),
+                    },
+                )
+            }
+            ReplayResponse::Blocked => grpc_gen::replay_execution_response::Outcome::Blocked(
+                grpc_gen::replay_execution_response::Blocked {},
+            ),
+        };
         Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {
-            captured_writes: replay_response
-                .captured_writes
-                .into_iter()
-                .map(grpc_mapping::captured_write_to_grpc)
-                .collect(),
+            outcome: Some(outcome),
         }))
     }
 
@@ -871,7 +892,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     log_sender: self.log_forwarder_sender.clone(),
                 });
 
-        let expected = ReplayResponse {
+        let expected = ReplayAdvanceable {
             captured_writes: request
                 .captured_writes
                 .into_iter()
@@ -917,7 +938,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let result = match advance_res {
             Ok(advance_response) => grpc_gen::advance_execution_response::Result::Success(
                 grpc_gen::advance_execution_response::Success {
-                    finished_result: advance_response
+                    finished: advance_response
                         .finished
                         .map(grpc_gen::SupportedFunctionResult::from),
                 },

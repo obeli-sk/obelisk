@@ -1473,7 +1473,7 @@
       "AdvanceResponseSer": {
         "type": "object",
         "properties": {
-          "finished_result": {
+          "finished": {
             "type": [
               "object",
               "null"
@@ -2273,20 +2273,65 @@
         }
       },
       "ReplayResponseSer": {
-        "type": "object",
-        "description": "Result of replaying a workflow execution",
-        "required": [
-          "captured_writes"
-        ],
-        "properties": {
-          "captured_writes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/CapturedWriteSer"
-            },
-            "description": "Write operations that the workflow would produce next"
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Write operations that can be supplied to `advance`.",
+            "required": [
+              "captured_writes",
+              "type"
+            ],
+            "properties": {
+              "captured_writes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CapturedWriteSer"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "advanceable"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The execution is already finished.",
+            "required": [
+              "result",
+              "type"
+            ],
+            "properties": {
+              "result": {
+                "type": "object"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "finished"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The execution is waiting on external progress and cannot be advanced yet.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "blocked"
+                ]
+              }
+            }
           }
-        }
+        ],
+        "description": "Result of replaying a workflow execution"
       },
       "RetVal": {
         "oneOf": [

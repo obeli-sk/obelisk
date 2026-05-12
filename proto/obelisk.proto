@@ -809,7 +809,22 @@ message CreateExecutionRequest {
 }
 
 message ReplayExecutionResponse {
-  repeated CapturedWrite captured_writes = 1;
+  message Advanceable {
+    repeated CapturedWrite captured_writes = 1;
+  }
+
+  message Finished {
+    SupportedFunctionResult result = 1;
+  }
+
+  message Blocked {
+  }
+
+  oneof outcome {
+    Advanceable advanceable = 1;
+    Finished finished = 2;
+    Blocked blocked = 3;
+  }
 }
 
 message AdvanceExecutionRequest {
@@ -819,7 +834,7 @@ message AdvanceExecutionRequest {
 
 message AdvanceExecutionResponse {
   message Success {
-    optional SupportedFunctionResult finished_result = 1;
+    optional SupportedFunctionResult finished = 1;
   }
 
   message Error {

@@ -10,7 +10,7 @@ use super::workflow_worker::{
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
-use crate::workflow::workflow_worker::{AdvanceError, ReplayResponse};
+use crate::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::DbPool;
@@ -385,6 +385,7 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
+        let finished_result = log.as_finished_result();
         let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
         let captured_writes = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
@@ -402,13 +403,20 @@ impl WorkflowJsWorker {
             params,
         )
         .await?;
-        Ok(ReplayResponse {
-            captured_writes: captured_writes
-                .captured_writes
-                .into_iter()
-                .map(|write| write.public)
-                .collect(),
-        })
+        let captured_writes: Vec<_> = captured_writes
+            .captured_writes
+            .into_iter()
+            .map(|write| write.public)
+            .collect();
+        if !captured_writes.is_empty() {
+            Ok(ReplayResponse::Advanceable(ReplayAdvanceable {
+                captured_writes,
+            }))
+        } else if let Some(result) = finished_result {
+            Ok(ReplayResponse::Finished { result })
+        } else {
+            Ok(ReplayResponse::Blocked)
+        }
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
@@ -426,7 +434,7 @@ impl WorkflowJsWorker {
         logs_storage_config: Option<LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
         js_source: String,
-        requested: ReplayResponse,
+        requested: ReplayAdvanceable,
     ) -> Result<AdvanceResponse, AdvanceError> {
         info!("Advance to requested {requested:?}");
         let db_conn = real_db_pool
@@ -2053,6 +2061,7 @@ mod tests {
         .await
         .unwrap();
 
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         info!("Stage 1 replay: {replay:?}");
         assert!(
             replay.return_value().is_some(),
@@ -2103,6 +2112,7 @@ mod tests {
         .await
         .unwrap();
 
+        let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
         info!("Stage 2 replay: {replay2:?}");
         assert!(
             replay2.return_value().is_some(),
@@ -2157,11 +2167,8 @@ mod tests {
         .await
         .unwrap();
 
-        info!("Stage 3 replay: {replay3:?}");
-        assert!(
-            replay3.captured_writes.is_empty(),
-            "replay of a finished execution should return no preview events"
-        );
+        let result = assert_matches!(replay3, ReplayResponse::Finished { result } => result);
+        info!("Stage 3 replay result: {result:?}");
         drop(db_connection);
         db_close.close().await;
     }
@@ -2250,6 +2257,7 @@ mod tests {
         .await
         .unwrap();
 
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         // With FlushedCache interruption, replay stops after the first cache flush.
         // The first flush covers JoinSetCreate and child execution submit.
         assert_eq!(2, replay.history_events().len());
@@ -2289,6 +2297,7 @@ mod tests {
         .await
         .unwrap();
 
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let retval = replay.return_value().expect("retval should be computed");
         let retval = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(WastValWithType{ r#type: _, value })) => value);
         assert_eq!(
@@ -2560,11 +2569,11 @@ mod tests {
             )
             .await
             .unwrap();
-            if replay.captured_writes.is_empty() {
-                if let Ok(finished_result) = db_connection
-                    .get_finished_result(&harness.execution_id)
-                    .await
-                {
+            let replay = match replay {
+                ReplayResponse::Advanceable(replay) => replay,
+                ReplayResponse::Finished {
+                    result: finished_result,
+                } => {
                     assert!(
                         steps > 0,
                         "step-through harness must execute at least one replay+advance round",
@@ -2572,12 +2581,12 @@ mod tests {
                     if trim_to.is_some() {
                         assert!(
                             saw_trimmed_preview,
-                            "test must exercise trimmed replay writes",
+                            "test must exercise trimmed replay writes"
                         );
                     }
                     return finished_result;
                 }
-                match harness.idle_action {
+                ReplayResponse::Blocked => match harness.idle_action {
                     Some(WorkflowJsAdvanceIdleAction::TickFiboActivity) => {
                         let activity_exec = new_activity_fibo(
                             harness.db_pool.clone(),
@@ -2592,10 +2601,10 @@ mod tests {
                         continue;
                     }
                     None => panic!(
-                        "captured_writes must not be empty while stepping paused JS workflow"
+                        "replay must be advanceable or finished while stepping paused JS workflow"
                     ),
-                }
-            }
+                },
+            };
 
             steps += 1;
             insta::with_settings!({
@@ -2752,6 +2761,7 @@ mod tests {
         .await
         .unwrap();
 
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
         let replayed_child_created_at = requested
             .captured_writes
@@ -2904,6 +2914,7 @@ mod tests {
         .await
         .unwrap();
 
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
         let replayed_child_scheduled_at = requested
             .captured_writes

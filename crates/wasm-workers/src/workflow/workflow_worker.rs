@@ -534,7 +534,7 @@ impl WorkflowWorker {
     pub(crate) async fn advance_from_log(
         db_conn: &dyn DbConnection,
         cancel_registry: &CancelRegistry,
-        requested: ReplayResponse,
+        requested: ReplayAdvanceable,
         fresh_replay: InternalReplayResponse,
         old_version: Version,
     ) -> Result<AdvanceResponse, AdvanceError> {
@@ -990,7 +990,7 @@ impl WorkflowWorker {
             // Capture the Finished event that the executor would write.
             let version = replay_db_connection.version().clone();
             let execution_id = replay_db_connection.execution_id().clone();
-            replay_db_connection.push_write(ReplayResponse::finish_as_captured_write(
+            replay_db_connection.push_write(ReplayAdvanceable::finish_as_captured_write(
                 execution_id,
                 version,
                 self.clock_fn.now(),
@@ -1064,6 +1064,7 @@ impl WorkflowWorker {
             .get(&execution_id)
             .await
             .map_err(DbErrorWrite::from)?;
+        let finished_result = log.as_finished_result();
         let ffqn = log.ffqn().clone();
         let params = log.params().clone();
         let captured_writes = Self::capture_replay_writes_from_log(
@@ -1082,13 +1083,20 @@ impl WorkflowWorker {
             params,
         )
         .await?;
-        Ok(ReplayResponse {
-            captured_writes: captured_writes
-                .captured_writes
-                .into_iter()
-                .map(|write| write.public)
-                .collect(),
-        })
+        let captured_writes: Vec<_> = captured_writes
+            .captured_writes
+            .into_iter()
+            .map(|write| write.public)
+            .collect();
+        if !captured_writes.is_empty() {
+            Ok(ReplayResponse::Advanceable(ReplayAdvanceable {
+                captured_writes,
+            }))
+        } else if let Some(result) = finished_result {
+            Ok(ReplayResponse::Finished { result })
+        } else {
+            Ok(ReplayResponse::Blocked)
+        }
     }
 
     /// Advance a paused workflow by one interrupt boundary.
@@ -1109,7 +1117,7 @@ impl WorkflowWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
-        requested: ReplayResponse,
+        requested: ReplayAdvanceable,
     ) -> Result<AdvanceResponse, AdvanceError> {
         info!("Advance to requested {requested:?}");
         // Check version before replaying.
@@ -1171,18 +1179,28 @@ enum CloseJoinSetOk {
     DbUpdatedByWorkerOrWatcher,
 }
 
-/// Result of replaying a workflow execution.
-/// Contains the write operations that the workflow would produce next.
-/// The starting version is carried by the first `CapturedDbWrite`.
+/// Replay outcome for a workflow execution.
 #[derive(Debug, Clone)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
-pub struct ReplayResponse {
+pub enum ReplayResponse {
+    Advanceable(ReplayAdvanceable),
+    Finished {
+        result: SupportedFunctionReturnValue,
+    },
+    Blocked,
+}
+
+/// Preview writes captured by replay that can be supplied to `advance`.
+#[derive(Debug, Clone)]
+#[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
+pub struct ReplayAdvanceable {
     /// Write operations that the workflow would produce next,
     /// including the Finished event if the workflow completes.
     pub captured_writes: Vec<CapturedDbWrite>,
 }
+
 // TODO: Move to `replay_advance`
-impl ReplayResponse {
+impl ReplayAdvanceable {
     /// Extract the starting version from the first captured write that targets
     /// the current execution. `AppendStubResponse` is skipped because it
     /// targets the child execution, not the parent.
@@ -3566,16 +3584,15 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-            if replay.captured_writes.is_empty() {
-                if db_connection
-                    .get_finished_result(&harness.execution_id)
-                    .await
-                    .is_ok()
-                {
+            let replay = match replay {
+                ReplayResponse::Advanceable(replay) => replay,
+                ReplayResponse::Finished { .. } => {
                     return db_connection.get(&harness.execution_id).await.unwrap();
                 }
-                panic!("captured_writes must not be empty while stepping paused workflow");
-            }
+                ReplayResponse::Blocked => {
+                    panic!("replay must be advanceable or finished while stepping paused workflow");
+                }
+            };
 
             steps += 1;
             let expected_finished = replay.return_value().cloned();
@@ -4339,6 +4356,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         debug!("Preview after creation: {replay:?}");
         assert!(
             replay.return_value().is_none(),
@@ -4410,10 +4428,8 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            replay.captured_writes.is_empty(),
-            "replay of a finished execution should return no preview events"
-        );
+        let result = assert_matches!(replay, ReplayResponse::Finished { result } => result);
+        assert_matches!(result, SupportedFunctionReturnValue::Ok(_));
     }
 
     #[expand_enum_database]
@@ -4481,20 +4497,28 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-            if replay.captured_writes.is_empty() {
-                if let Some(activity_exec) = activity_exec {
-                    let executed_activities = activity_exec
-                        .tick_test_await(sim_clock.now(), RunId::generate())
-                        .await;
-                    assert_eq!(
-                        executed_activities.len(),
-                        1,
-                        "expected one pending child activity when workflow replay is blocked",
-                    );
-                    continue;
+            let replay = match replay {
+                ReplayResponse::Advanceable(replay) => replay,
+                ReplayResponse::Finished {
+                    result: finished_result,
+                } => {
+                    return (steps, saw_trimmed_preview, finished_result);
                 }
-                panic!("captured_writes must not be empty while stepping paused workflow");
-            }
+                ReplayResponse::Blocked => {
+                    if let Some(activity_exec) = activity_exec {
+                        let executed_activities = activity_exec
+                            .tick_test_await(sim_clock.now(), RunId::generate())
+                            .await;
+                        assert_eq!(
+                            executed_activities.len(),
+                            1,
+                            "expected one pending child activity when workflow replay is blocked",
+                        );
+                        continue;
+                    }
+                    panic!("replay must be advanceable or finished while stepping paused workflow");
+                }
+            };
 
             steps += 1;
             insta::with_settings!({
@@ -4642,6 +4666,7 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         assert!(
             !replay.captured_writes.is_empty(),
             "paused workflow should have captured writes"
@@ -4664,7 +4689,7 @@ pub(crate) mod tests {
             if let Some(CapturedDbWrite::Append { version, .. }) = writes.first_mut() {
                 *version = wrong_version;
             }
-            ReplayResponse {
+            ReplayAdvanceable {
                 captured_writes: writes,
             }
         };
@@ -4702,7 +4727,7 @@ pub(crate) mod tests {
             execution_id.clone(),
             logs_storage_config.clone(),
             sim_clock.clone_box(),
-            ReplayResponse {
+            ReplayAdvanceable {
                 captured_writes: vec![], // empty writes
             },
         )
@@ -4770,7 +4795,7 @@ pub(crate) mod tests {
             created_at,
             event: ExecutionRequest::Unpaused,
         }];
-        let fresh = ReplayResponse {
+        let fresh = ReplayAdvanceable {
             captured_writes: vec![CapturedDbWrite::AppendBatchCreateNewExecution {
                 current_time: created_at,
                 batch: batch.clone(),
@@ -4792,7 +4817,7 @@ pub(crate) mod tests {
                 backtraces: vec![],
             }],
         };
-        let requested = ReplayResponse {
+        let requested = ReplayAdvanceable {
             captured_writes: vec![CapturedDbWrite::AppendBatchCreateNewExecution {
                 current_time: created_at,
                 batch,
@@ -4874,6 +4899,7 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
         let replayed_child_created_at = requested
             .captured_writes
