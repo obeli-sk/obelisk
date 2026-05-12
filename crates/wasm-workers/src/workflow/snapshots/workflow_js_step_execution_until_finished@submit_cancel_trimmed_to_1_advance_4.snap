@@ -1,11 +1,9 @@
 ---
 source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
-expression: "json!({\n    \"version\": advance.version.0, \"outcome\": format!(\"{:?}\", advance.outcome),\n    \"trim_to\": trim_to, \"requested_captured_writes_len\":\n    requested.captured_writes.len(), \"replayed_captured_writes_len\":\n    replay.captured_writes.len(),\n})"
+expression: "json!({\n    \"finished\": advance.finished.is_some(), \"requested_captured_writes_len\":\n    requested.captured_writes.len(), \"replayed_captured_writes_len\":\n    replay.captured_writes.len(),\n})"
 ---
 {
-  "version": 5,
-  "outcome": "Applied",
-  "trim_to": 1,
+  "finished": true,
   "requested_captured_writes_len": 1,
   "replayed_captured_writes_len": 1
 }

@@ -19,7 +19,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
-    CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog, Locked, Version,
+    AppendRequest, CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog,
+    ExecutionRequest, Locked, Version,
 };
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
@@ -464,7 +465,7 @@ impl WorkflowWorker {
         } else {
             ReplayKind::Unfinished
         };
-        info!("Execution replay {replay_kind} started");
+        debug!("Execution replay of kind `{replay_kind}` started");
 
         let config = WorkflowConfig {
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
@@ -523,7 +524,7 @@ impl WorkflowWorker {
         let captured_writes = worker
             .replay_internal(ctx, replay_db_connection, replay_kind)
             .await?;
-        info!(
+        debug!(
             "Execution replay completed, captured writes: {}",
             captured_writes.captured_writes.len(),
         );
@@ -536,7 +537,7 @@ impl WorkflowWorker {
         requested: ReplayResponse,
         fresh_replay: InternalReplayResponse,
         old_version: Version,
-    ) -> Result<AdvanceResponse, ReplayError> {
+    ) -> Result<AdvanceResponse, AdvanceError> {
         let fresh_public_writes: Vec<_> = fresh_replay
             .captured_writes
             .iter()
@@ -547,21 +548,16 @@ impl WorkflowWorker {
                 &requested.captured_writes,
                 &fresh_replay.captured_writes,
             );
-            let new_version =
-                apply_writes(db_conn, cancel_registry, writes_to_apply, old_version).await?;
+            apply_writes(db_conn, cancel_registry, writes_to_apply, old_version).await?;
             AdvanceResponse {
-                version: new_version,
-                outcome: AdvanceOutcome::Applied,
+                finished: requested.return_value().cloned(),
             }
         } else {
             debug!(
                 "Mismatch between expected and actual captured writes. Requested: {:?}, fresh replay produced: {fresh_public_writes:?}",
                 requested.captured_writes,
             );
-            AdvanceResponse {
-                version: old_version,
-                outcome: AdvanceOutcome::Mismatch,
-            }
+            return Err(AdvanceError::ReplayMismatch);
         };
 
         info!("Advance finished with {outcome:?}");
@@ -970,10 +966,10 @@ impl WorkflowWorker {
         &self,
         ctx: WorkerContext,
         replay_db_connection: ReplayWorkflowDbConnection,
-        is_replay: ReplayKind,
+        replay_kind: ReplayKind,
     ) -> Result<InternalReplayResponse, ReplayError> {
         let (return_value, replay_db_connection) = self
-            .run_internal(ctx, Box::new(replay_db_connection), Some(is_replay))
+            .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
             .await
             .map_err(|err| {
                 debug!("Replay failed: {err:?}");
@@ -987,30 +983,19 @@ impl WorkflowWorker {
             unreachable!("`run_internal` returns the same `db_connection` it was supplied")
         };
 
-        match return_value {
-            Either::Left(WorkerResultOk::RunFinished { retval, .. }) => {
-                debug!("Replay finished returning a value");
-                // Capture the Finished event that the executor would write.
-                let version = replay_db_connection.version().clone();
-                let execution_id = replay_db_connection.execution_id().clone();
-                replay_db_connection.push_write(CapturedDbWrite::Append {
-                    execution_id,
-                    version,
-                    req: concepts::storage::AppendRequest {
-                        created_at: self.clock_fn.now(),
-                        event: concepts::storage::ExecutionRequest::Finished {
-                            retval,
-                            http_client_traces: None,
-                        },
-                    },
-                });
-            }
-            Either::Right(ReplayWaitingForResponse) => {
-                debug!("Replay interrupt requested");
-            }
-            Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher) => {
-                debug!("Replay interrupted with a blocking event");
-            }
+        if replay_kind == ReplayKind::Unfinished
+            && let Either::Left(WorkerResultOk::RunFinished { retval, .. }) = return_value
+        {
+            debug!("Replay finished returning a value");
+            // Capture the Finished event that the executor would write.
+            let version = replay_db_connection.version().clone();
+            let execution_id = replay_db_connection.execution_id().clone();
+            replay_db_connection.push_write(ReplayResponse::finish_as_captured_write(
+                execution_id,
+                version,
+                self.clock_fn.now(),
+                retval,
+            ));
         }
 
         Ok(replay_db_connection.into_writes())
@@ -1125,7 +1110,7 @@ impl WorkflowWorker {
         logs_storage_config: Option<LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
         requested: ReplayResponse,
-    ) -> Result<AdvanceResponse, ReplayError> {
+    ) -> Result<AdvanceResponse, AdvanceError> {
         info!("Advance to requested {requested:?}");
         // Check version before replaying.
         let db_conn = real_db_pool
@@ -1137,12 +1122,15 @@ impl WorkflowWorker {
             .await
             .map_err(DbErrorWrite::from)?;
 
-        if let Some(expected_version) = requested.starting_version() // None means user sent empty list of events, which should end with `Applied`
+        if requested.captured_writes.is_empty() {
+            return Err(AdvanceError::NoWrites);
+        }
+
+        if let Some(expected_version) = requested.starting_version()
             && log.next_version != *expected_version
         {
-            return Ok(AdvanceResponse {
-                version: log.next_version,
-                outcome: AdvanceOutcome::VersionMismatch,
+            return Err(AdvanceError::VersionMismatch {
+                expected: log.next_version,
             });
         }
 
@@ -1193,7 +1181,7 @@ pub struct ReplayResponse {
     /// including the Finished event if the workflow completes.
     pub captured_writes: Vec<CapturedDbWrite>,
 }
-
+// TODO: Move to `replay_advance`
 impl ReplayResponse {
     /// Extract the starting version from the first captured write that targets
     /// the current execution. `AppendStubResponse` is skipped because it
@@ -1216,10 +1204,28 @@ impl ReplayResponse {
                 .all(|(requested, fresh)| requested_write_matches_fresh_replay(requested, fresh))
     }
 
-    #[cfg(test)]
+    fn finish_as_captured_write(
+        execution_id: ExecutionId,
+        version: Version,
+        created_at: DateTime<Utc>,
+        retval: SupportedFunctionReturnValue,
+    ) -> CapturedDbWrite {
+        CapturedDbWrite::Append {
+            execution_id,
+            version,
+            req: AppendRequest {
+                created_at,
+                event: ExecutionRequest::Finished {
+                    retval,
+                    http_client_traces: None,
+                },
+            },
+        }
+    }
+
     pub(crate) fn return_value(&self) -> Option<&SupportedFunctionReturnValue> {
         if let Some(CapturedDbWrite::Append { req, .. }) = self.captured_writes.last()
-            && let concepts::storage::ExecutionRequest::Finished { retval, .. } = &req.event
+            && let ExecutionRequest::Finished { retval, .. } = &req.event
         {
             return Some(retval);
         }
@@ -1257,23 +1263,28 @@ impl ReplayResponse {
     }
 }
 
-/// Outcome of an advance operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AdvanceOutcome {
-    /// Events matched expectations, written to DB.
-    Applied,
-    /// Execution version differs from the requested version.
-    VersionMismatch,
-    /// Replayed outcome differs from expected events/return value.
-    Mismatch,
-}
-
 /// Result of advancing a paused workflow execution.
 #[derive(Debug, Clone)]
 pub struct AdvanceResponse {
-    // Current version in database after advance call.
-    pub version: Version,
-    pub outcome: AdvanceOutcome,
+    pub finished: Option<SupportedFunctionReturnValue>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AdvanceError {
+    #[error(transparent)]
+    ReplayError(#[from] ReplayError),
+    #[error("no writes supplied")]
+    NoWrites,
+    #[error("version mismatch: expected {expected}")]
+    VersionMismatch { expected: Version },
+    #[error("replay mismatch")]
+    ReplayMismatch,
+}
+
+impl From<DbErrorWrite> for AdvanceError {
+    fn from(value: DbErrorWrite) -> Self {
+        Self::ReplayError(ReplayError::DbError(value))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -3567,6 +3578,7 @@ pub(crate) mod tests {
             }
 
             steps += 1;
+            let expected_finished = replay.return_value().cloned();
             let advance = WorkflowWorker::advance(
                 harness.deployment_id,
                 harness.workflow_component_id.clone(),
@@ -3583,7 +3595,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(advance.outcome, AdvanceOutcome::Applied);
+            assert_eq!(advance.finished, expected_finished);
 
             if db_connection
                 .get_finished_result(&harness.execution_id)
@@ -4371,7 +4383,7 @@ pub(crate) mod tests {
                 logs_storage_config: logs_storage_config.clone(),
             },
             snapshot_name,
-            None,
+            None, // trim_to
             Some(&activity_exec),
             &sim_clock,
             32,
@@ -4399,8 +4411,8 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert!(
-            replay.return_value().is_some(),
-            "replay of a finished execution should include the return value"
+            replay.captured_writes.is_empty(),
+            "replay of a finished execution should return no preview events"
         );
     }
 
@@ -4450,7 +4462,7 @@ pub(crate) mod tests {
         max_steps: usize,
     ) -> (usize, bool, SupportedFunctionReturnValue) {
         let mut steps = 0;
-        let mut saw_trimmed_preview = false;
+        let mut saw_trimmed_preview = false; // at least one replay got trimmed
 
         loop {
             sim_clock.move_time_forward(Duration::from_millis(100));
@@ -4516,16 +4528,14 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(advance.outcome, AdvanceOutcome::Applied);
+            assert_eq!(advance.finished, requested.return_value().cloned());
 
             insta::with_settings!({
                 snapshot_suffix => format!("{test_name}_advance_{steps}"),
                 prepend_module_to_snapshot => false},
                 {
                     insta::assert_json_snapshot!(json!({
-                        "version": advance.version.0,
-                        "outcome": format!("{:?}", advance.outcome),
-                        "trim_to": trim_to,
+                        "finished": advance.finished.is_some(),
                         "requested_captured_writes_len": requested.captured_writes.len(),
                         "replayed_captured_writes_len": replay.captured_writes.len(),
                     }));
@@ -4673,10 +4683,13 @@ pub(crate) mod tests {
             wrong_replay,
         )
         .await
-        .unwrap();
-        assert_eq!(AdvanceOutcome::VersionMismatch, advance_result.outcome);
+        .unwrap_err();
+        assert_matches!(
+            advance_result,
+            AdvanceError::VersionMismatch { expected } if expected == version_created
+        );
 
-        // Step 3: Advancing with zero requested writes should be a no-op.
+        // Step 3: Advancing with zero requested writes should fail.
         let advance_result = WorkflowWorker::advance(
             deployment_id,
             workflow_component_id.clone(),
@@ -4694,9 +4707,8 @@ pub(crate) mod tests {
             },
         )
         .await
-        .unwrap();
-        assert_eq!(advance_result.outcome, AdvanceOutcome::Applied);
-        assert_eq!(advance_result.version, version_created);
+        .unwrap_err();
+        assert_matches!(advance_result, AdvanceError::NoWrites);
 
         // Step 4: Step the paused workflow to completion.
         let (steps, saw_trimmed_preview, finished_result) = advance_paused_workflow_until_finished(
@@ -4917,7 +4929,7 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        assert_eq!(AdvanceOutcome::Applied, advance.outcome);
+        assert_eq!(advance.finished, None);
         assert_matches!(
             db_connection
                 .get_pending_state(&child_execution_id)

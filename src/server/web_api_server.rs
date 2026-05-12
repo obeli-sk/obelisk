@@ -1666,21 +1666,17 @@ struct AdvanceRequestSer {
 
 #[derive(Debug, Serialize, ToSchema)]
 struct AdvanceResponseSer {
-    outcome: AdvanceOutcomeSer,
+    #[schema(value_type = Option<Object>)]
+    finished_result: Option<SupportedFunctionReturnValue>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum AdvanceOutcomeSer {
-    Applied {
-        version: u32,
-        #[schema(value_type = Option<Object>)]
-        finished_result: Option<SupportedFunctionReturnValue>,
-    },
-    VersionMismatch {
-        version: u32,
-    },
-    Mismatch,
+enum AdvanceErrorSer {
+    NoWrites,
+    ReplayError { message: String },
+    VersionMismatch { expected: u32 },
+    ReplayMismatch,
 }
 
 /// Get execution return value
@@ -1990,7 +1986,7 @@ async fn execution_replay(
     responses(
         (status = 200, description = "Execution advance outcome", body = AdvanceResponseSer),
         (status = 404, description = "Not found"),
-        (status = 422, description = "Advance failed")
+        (status = 422, description = "Advance failed", body = AdvanceErrorSer)
     )
 )]
 #[instrument(skip_all, fields(execution_id))]
@@ -2058,77 +2054,63 @@ async fn execution_advance(
         .await
     };
 
-    let advance_response = advance_res.map_err(|err| {
-        info!("Advance failed: {err:?}");
-        HttpResponse {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            message: format!("advance failed: {err}"),
-            accept,
-        }
-    })?;
-
-    let conn = state
-        .db_pool
-        .connection()
-        .await
-        .map_err(|e| ErrorWrapper(e, accept))?;
-    let outcome = match advance_response.outcome {
-        wasm_workers::workflow::workflow_worker::AdvanceOutcome::Applied => {
-            let finished_result = match conn
-                .get_pending_state(&execution_id)
-                .await
-                .map_err(|e| ErrorWrapper(e, accept))?
-                .pending_state
-            {
-                PendingState::Finished(finished) => {
-                    let finished_event = conn
-                        .get_execution_event(&execution_id, &Version(finished.version))
-                        .await
-                        .map_err(|e| ErrorWrapper(e, accept))?;
-                    let ExecutionRequest::Finished { retval, .. } = finished_event.event else {
-                        return Err(HttpResponse {
-                            status: StatusCode::INTERNAL_SERVER_ERROR,
-                            message: "pending state finished implies `Finished` event".to_string(),
-                            accept,
-                        });
-                    };
-                    Some(retval)
+    let advance_response = match advance_res {
+        Ok(ok) => ok,
+        Err(err) => {
+            info!("Advance failed: {err:?}");
+            let error = match err {
+                wasm_workers::workflow::workflow_worker::AdvanceError::ReplayError(
+                    replay_error,
+                ) => AdvanceErrorSer::ReplayError {
+                    message: replay_error.to_string(),
+                },
+                wasm_workers::workflow::workflow_worker::AdvanceError::NoWrites => {
+                    AdvanceErrorSer::NoWrites
                 }
-                _ => None,
+                wasm_workers::workflow::workflow_worker::AdvanceError::VersionMismatch {
+                    expected,
+                } => AdvanceErrorSer::VersionMismatch {
+                    expected: expected.0,
+                },
+                wasm_workers::workflow::workflow_worker::AdvanceError::ReplayMismatch => {
+                    AdvanceErrorSer::ReplayMismatch
+                }
             };
-            AdvanceOutcomeSer::Applied {
-                version: advance_response.version.0,
-                finished_result,
-            }
-        }
-        wasm_workers::workflow::workflow_worker::AdvanceOutcome::VersionMismatch => {
-            AdvanceOutcomeSer::VersionMismatch {
-                version: advance_response.version.0,
-            }
-        }
-        wasm_workers::workflow::workflow_worker::AdvanceOutcome::Mismatch => {
-            AdvanceOutcomeSer::Mismatch
+            let response = match accept {
+                AcceptHeader::Json => {
+                    let mut response = Json(error).into_response();
+                    *response.status_mut() = StatusCode::UNPROCESSABLE_ENTITY;
+                    response
+                }
+                AcceptHeader::Text => {
+                    let text = match error {
+                        AdvanceErrorSer::NoWrites => "error: no_writes".to_string(),
+                        AdvanceErrorSer::ReplayError { message } => {
+                            format!("error: replay_error\nmessage: {message}")
+                        }
+                        AdvanceErrorSer::VersionMismatch { expected } => {
+                            format!("error: version_mismatch\nexpected: {expected}")
+                        }
+                        AdvanceErrorSer::ReplayMismatch => "error: replay_mismatch".to_string(),
+                    };
+                    (StatusCode::UNPROCESSABLE_ENTITY, text).into_response()
+                }
+            };
+            return Ok(response);
         }
     };
-    let response = AdvanceResponseSer { outcome };
+
+    let response = AdvanceResponseSer {
+        finished_result: advance_response.finished,
+    };
 
     Ok(match accept {
         AcceptHeader::Json => Json(response).into_response(),
-        AcceptHeader::Text => match response.outcome {
-            AdvanceOutcomeSer::Applied {
-                version,
-                finished_result,
-            } => {
-                let finished_result = finished_result
-                    .map(|result| format!("\nfinished_result: {result:?}"))
-                    .unwrap_or_default();
-                format!("outcome: applied\nversion: {version}{finished_result}").into_response()
-            }
-            AdvanceOutcomeSer::VersionMismatch { version } => {
-                format!("outcome: version_mismatch\nversion: {version}").into_response()
-            }
-            AdvanceOutcomeSer::Mismatch => "outcome: mismatch".into_response(),
-        },
+        AcceptHeader::Text => response
+            .finished_result
+            .map(|result| format!("finished_result: {result:?}"))
+            .unwrap_or_else(|| "finished_result: null".to_string())
+            .into_response(),
     })
 }
 

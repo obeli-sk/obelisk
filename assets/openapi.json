@@ -689,7 +689,14 @@
             "description": "Not found"
           },
           "422": {
-            "description": "Advance failed"
+            "description": "Advance failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvanceErrorSer"
+                }
+              }
+            }
           }
         }
       }
@@ -1379,51 +1386,57 @@
   },
   "components": {
     "schemas": {
-      "AdvanceOutcomeSer": {
+      "AdvanceErrorSer": {
         "oneOf": [
           {
             "type": "object",
             "required": [
-              "version",
               "type"
             ],
             "properties": {
-              "finished_result": {
-                "type": [
-                  "object",
-                  "null"
-                ]
-              },
               "type": {
                 "type": "string",
                 "enum": [
-                  "applied"
+                  "no_writes"
                 ]
-              },
-              "version": {
-                "type": "integer",
-                "format": "int32",
-                "minimum": 0
               }
             }
           },
           {
             "type": "object",
             "required": [
-              "version",
+              "message",
               "type"
             ],
             "properties": {
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replay_error"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "expected",
+              "type"
+            ],
+            "properties": {
+              "expected": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
               "type": {
                 "type": "string",
                 "enum": [
                   "version_mismatch"
                 ]
-              },
-              "version": {
-                "type": "integer",
-                "format": "int32",
-                "minimum": 0
               }
             }
           },
@@ -1436,7 +1449,7 @@
               "type": {
                 "type": "string",
                 "enum": [
-                  "mismatch"
+                  "replay_mismatch"
                 ]
               }
             }
@@ -1459,12 +1472,12 @@
       },
       "AdvanceResponseSer": {
         "type": "object",
-        "required": [
-          "outcome"
-        ],
         "properties": {
-          "outcome": {
-            "$ref": "#/components/schemas/AdvanceOutcomeSer"
+          "finished_result": {
+            "type": [
+              "object",
+              "null"
+            ]
           }
         }
       },
