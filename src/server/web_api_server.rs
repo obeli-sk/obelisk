@@ -1640,20 +1640,15 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
     }
 }
 
-/// Result of replaying a workflow execution
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ReplayResponseSer {
-    /// Write operations that can be supplied to `advance`.
     Advanceable {
         captured_writes: Vec<CapturedWriteSer>,
     },
-    /// The execution is already finished.
     Finished {
-        #[schema(value_type = Object)]
-        result: SupportedFunctionReturnValue,
+        retval: serde_json::Value, // SupportedRetVal -> RetVal
     },
-    /// The execution is waiting on external progress and cannot be advanced yet.
     Blocked,
 }
 
@@ -1670,7 +1665,10 @@ impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayRes
                 }
             }
             wasm_workers::workflow::workflow_worker::ReplayResponse::Finished { result } => {
-                Self::Finished { result }
+                Self::Finished {
+                    retval: serde_json::to_value(&RetVal::from(result))
+                        .expect("supported retval must be JSON serializable"),
+                }
             }
             wasm_workers::workflow::workflow_worker::ReplayResponse::Blocked => Self::Blocked,
         }
@@ -1683,9 +1681,15 @@ pub(crate) struct AdvanceRequestSer {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-struct AdvanceResponseSer {
-    #[schema(value_type = Option<Object>)]
-    finished: Option<SupportedFunctionReturnValue>,
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AdvanceResponseSer {
+    Finished {
+        value: RetVal,
+    },
+    InProgress {
+        #[schema(value_type = Object)]
+        pending_state: PendingState,
+    },
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -1728,6 +1732,7 @@ async fn execution_get_retval(
 
     if let ExecutionRequest::Finished { retval, .. } = last_event.event {
         let retval = RetVal::from(retval);
+
         Ok(Json(retval).into_response())
     } else if params.follow {
         Ok(stream_execution_response(
@@ -1984,14 +1989,10 @@ async fn execution_replay(
         AcceptHeader::Json => Json(ser).into_response(),
         AcceptHeader::Text => match ser {
             ReplayResponseSer::Advanceable { captured_writes } => {
-                let mut output = String::new();
-                for write in &captured_writes {
-                    writeln!(&mut output, "{write:?}").expect("writing to string");
-                }
-                output.into_response()
+                format!("outcome: advanceable, {} writes", captured_writes.len()).into_response()
             }
-            ReplayResponseSer::Finished { result } => {
-                format!("outcome: finished\nresult: {result:?}").into_response()
+            ReplayResponseSer::Finished { retval } => {
+                format!("outcome: finished\nresult: {retval}").into_response()
             }
             ReplayResponseSer::Blocked => "outcome: blocked".into_response(),
         },
@@ -2124,16 +2125,39 @@ async fn execution_advance(
         }
     };
 
-    let response = AdvanceResponseSer {
-        finished: advance_response.finished,
-    };
-
-    if let Some(retval) = response.finished {
-        // Same shape as `execution_get_retval`
-        let retval = RetVal::from(retval);
-        Ok(Json(retval).into_response())
+    let response = if let Some(finished) = advance_response.finished {
+        AdvanceResponseSer::Finished {
+            value: RetVal::from(finished),
+        }
     } else {
-        execution_status_get(Path(execution_id), state, accept).await
+        let execution_with_state = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?
+            .get_pending_state(&execution_id)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+
+        AdvanceResponseSer::InProgress {
+            pending_state: execution_with_state.pending_state,
+        }
+    };
+    match &response {
+        AdvanceResponseSer::Finished { value } => Ok(match accept {
+            AcceptHeader::Json => Json(response).into_response(),
+            AcceptHeader::Text => format!(
+                "success:\n{}",
+                serde_json::to_string_pretty(&value).expect("retval must be JSON serializable")
+            )
+            .into_response(),
+        }),
+        AdvanceResponseSer::InProgress { pending_state } => Ok(match accept {
+            AcceptHeader::Json => Json(response).into_response(),
+            AcceptHeader::Text => {
+                format!("success, current state: {pending_state}").into_response()
+            }
+        }),
     }
 }
 

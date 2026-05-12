@@ -1471,15 +1471,44 @@
         }
       },
       "AdvanceResponseSer": {
-        "type": "object",
-        "properties": {
-          "finished": {
-            "type": [
-              "object",
-              "null"
-            ]
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "finished"
+                ]
+              },
+              "value": {
+                "$ref": "#/components/schemas/RetVal"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "pending_state",
+              "type"
+            ],
+            "properties": {
+              "pending_state": {
+                "type": "object"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "in_progress"
+                ]
+              }
+            }
           }
-        }
+        ]
       },
       "BacktraceInfoSer": {
         "type": "object",
@@ -2276,7 +2305,6 @@
         "oneOf": [
           {
             "type": "object",
-            "description": "Write operations that can be supplied to `advance`.",
             "required": [
               "captured_writes",
               "type"
@@ -2298,15 +2326,12 @@
           },
           {
             "type": "object",
-            "description": "The execution is already finished.",
             "required": [
-              "result",
+              "retval",
               "type"
             ],
             "properties": {
-              "result": {
-                "type": "object"
-              },
+              "retval": {},
               "type": {
                 "type": "string",
                 "enum": [
@@ -2317,7 +2342,6 @@
           },
           {
             "type": "object",
-            "description": "The execution is waiting on external progress and cannot be advanced yet.",
             "required": [
               "type"
             ],
@@ -2330,8 +2354,7 @@
               }
             }
           }
-        ],
-        "description": "Result of replaying a workflow execution"
+        ]
       },
       "RetVal": {
         "oneOf": [

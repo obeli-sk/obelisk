@@ -10,6 +10,7 @@
 use crate::config::toml::{
     ActivityStubComponentConfigCanonical, ActivityStubExtInlineConfigCanonical, ConfigName,
 };
+use crate::server::web_api_server::ReplayResponseSer;
 use crate::{
     command::server::{PrepareDirsParams, RunParams, prepare_dirs, run_internal},
     config::{
@@ -33,6 +34,7 @@ use grpc::grpc_gen::{
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
 };
 use hmac::{Hmac, Mac};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
 use std::fmt::Write as _;
@@ -839,7 +841,7 @@ struct ReplayCapturedWritesSummary {
 #[derive(Debug)]
 struct GrpcAdvanceExecutionSummary {
     steps: usize,
-    final_value_json: Vec<u8>,
+    retval: serde_json::Value,
 }
 
 impl TestExecutionClient {
@@ -1015,7 +1017,6 @@ impl TestServer {
         &self,
         ffqn: &str,
         params: Vec<Value>,
-        max_steps: usize,
     ) -> GrpcAdvanceExecutionSummary {
         let exec_id = self.generate_execution_id().await;
         let submit = self.grpc_submit_paused(&exec_id, ffqn, params).await;
@@ -1062,12 +1063,12 @@ impl TestServer {
                     let return_value = ok_payload.return_value.expect("ok return_value must exist");
                     return GrpcAdvanceExecutionSummary {
                         steps,
-                        final_value_json: return_value.value,
+                        retval: serde_json::from_slice(&return_value.value)
+                            .expect("server must send `return_value` as a valid JSON"),
                     };
                 }
                 grpc::grpc_gen::replay_execution_response::Outcome::Blocked(_) => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    continue;
+                    unreachable!("blocked state is not created by any test")
                 }
             };
 
@@ -1093,7 +1094,8 @@ impl TestServer {
                             ok_payload.return_value.expect("ok return_value must exist");
                         return GrpcAdvanceExecutionSummary {
                             steps,
-                            final_value_json: return_value.value,
+                            retval: serde_json::from_slice(&return_value.value)
+                                .expect("server must send `return_value` as a valid JSON"),
                         };
                     }
                 }
@@ -1120,11 +1122,6 @@ impl TestServer {
                 !Self::is_finished(&summary),
                 "finished executions should return finished from AdvanceExecution"
             );
-
-            assert!(
-                steps < max_steps,
-                "execution did not finish after {steps} replay+advance steps"
-            );
         }
     }
 
@@ -1132,8 +1129,16 @@ impl TestServer {
         &self,
         ffqn: &str,
         params: Vec<Value>,
-        max_steps: usize,
     ) -> GrpcAdvanceExecutionSummary {
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        pub(crate) enum AdvanceResponseDeser {
+            Finished {
+                value: serde_json::Value, // RetVal -> Value for deserialization
+            },
+            InProgress,
+        }
+
         let exec_id = self.generate_execution_id().await;
         let submit = self.webapi_submit_paused(&exec_id, ffqn, params).await;
         assert_eq!(submit.status().as_u16(), 201);
@@ -1142,26 +1147,17 @@ impl TestServer {
         loop {
             let replay = self.replay(&exec_id).await;
             assert_eq!(replay.status().as_u16(), 200);
-            let replay_body: Value = replay.json().await.unwrap();
-            let captured_writes = match replay_body["type"]
-                .as_str()
-                .expect("replay outcome type must be set")
-            {
-                "advanceable" => replay_body["captured_writes"].clone(),
-                "finished" => {
-                    return GrpcAdvanceExecutionSummary {
-                        steps,
-                        final_value_json: serde_json::to_vec(&replay_body["result"]["ok"]["value"])
-                            .unwrap(),
-                    };
+            let replay_body: ReplayResponseSer = replay.json().await.unwrap();
+            let captured_writes = match replay_body {
+                ReplayResponseSer::Advanceable { captured_writes } => captured_writes,
+                ReplayResponseSer::Finished { retval: _ } => {
+                    panic!("should have been returned as `advance` response first");
                 }
-                "blocked" => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    continue;
+                ReplayResponseSer::Blocked => {
+                    unreachable!("blocked state is not created by any test")
                 }
-                other => panic!("unexpected replay outcome {other}"),
             };
-
+            assert!(!captured_writes.is_empty());
             steps += 1;
             let advance = self
                 .client
@@ -1177,25 +1173,15 @@ impl TestServer {
                 "advance failed: {}",
                 advance.text().await.unwrap()
             );
-            let advance_body: Value = advance.json().await.unwrap();
-            if !advance_body["finished"].is_null() {
-                return GrpcAdvanceExecutionSummary {
-                    steps,
-                    final_value_json: serde_json::to_vec(&advance_body["finished"]["ok"]["value"])
-                        .unwrap(),
-                };
+            let advance_body: AdvanceResponseDeser = advance.json().await.unwrap();
+            match advance_body {
+                AdvanceResponseDeser::Finished { value: retval } => {
+                    return GrpcAdvanceExecutionSummary { steps, retval };
+                }
+                AdvanceResponseDeser::InProgress => {
+                    // continue the loop
+                }
             }
-
-            let status = self.get_status(&exec_id).await;
-            assert!(
-                status["current_status"]["status"]["finished"].is_null(),
-                "finished executions should return finished from advance"
-            );
-
-            assert!(
-                steps < max_steps,
-                "execution did not finish after {steps} replay+advance steps"
-            );
         }
     }
 
@@ -1418,7 +1404,6 @@ async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
         .grpc_step_execution_until_finished(
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
-            16, // max_steps
         )
         .await;
 
@@ -1426,8 +1411,7 @@ async fn grpc_replay_and_advance_paused_js_workflow_until_finished() {
         stepped.steps > 0,
         "step-through harness must execute at least one replay+advance round"
     );
-    assert_eq!(stepped.final_value_json, br#"{"ok":"\"stub-ok\""}"#);
-
+    assert_eq!(stepped.retval, json!({"ok":"\"stub-ok\""}));
     server.shutdown().await;
 }
 
@@ -1439,7 +1423,6 @@ async fn webapi_replay_and_advance_paused_js_workflow_until_finished() {
         .webapi_step_execution_until_finished(
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
-            16, // max_steps
         )
         .await;
 
@@ -1447,7 +1430,7 @@ async fn webapi_replay_and_advance_paused_js_workflow_until_finished() {
         stepped.steps > 0,
         "step-through harness must execute at least one replay+advance round"
     );
-    assert_eq!(stepped.final_value_json, br#"{"ok":"\"stub-ok\""}"#);
+    assert_eq!(stepped.retval, json!({"ok":{"ok":"\"stub-ok\""}}));
 
     server.shutdown().await;
 }

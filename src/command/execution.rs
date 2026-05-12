@@ -647,10 +647,10 @@ fn replay_to_advanceable_request(replay: &serde_json::Value) -> anyhow::Result<A
             Ok(AdvanceRequestSer { captured_writes })
         }
         ReplayResponseSer::Finished { .. } => {
-            bail!("execution is already finished; replay returned finished")
+            bail!("execution is already finished")
         }
         ReplayResponseSer::Blocked => {
-            bail!("execution is blocked; replay returned no advanceable writes")
+            bail!("execution is blocked")
         }
     }
 }
