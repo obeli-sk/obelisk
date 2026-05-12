@@ -427,12 +427,6 @@ impl From<WorkflowError> for WorkerError {
     }
 }
 
-enum PrepareFuncOk {
-    LockAlreadyExpired {
-        db_connection: Box<dyn WorkflowDbConnection>,
-    },
-    Finished(PrepareFuncFinished),
-}
 struct PrepareFuncFinished {
     store: Store<WorkflowCtx>,
     func: wasmtime::component::Func,
@@ -567,7 +561,7 @@ impl WorkflowWorker {
         ctx: WorkerContext,
         db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
-    ) -> Result<PrepareFuncOk, WorkflowError> {
+    ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(self.config.component_id, ctx.locked_event.component_id);
 
         let deadline_tracker = match self
@@ -580,7 +574,7 @@ impl WorkflowWorker {
                     info!(execution_deadline = %ctx.locked_event.lock_expires_at, started_at = %lock_already_expired.started_at,
                         "Lock is already expired");
                 });
-                return Ok(PrepareFuncOk::LockAlreadyExpired { db_connection });
+                return Err(WorkflowError::LockExpired(ctx.version));
             }
         };
 
@@ -681,12 +675,12 @@ impl WorkflowWorker {
                 ));
             }
         };
-        Ok(PrepareFuncOk::Finished(PrepareFuncFinished {
+        Ok(PrepareFuncFinished {
             store,
             func,
             component_func,
             params,
-        }))
+        })
     }
 
     async fn call_func(
@@ -1019,15 +1013,7 @@ impl WorkflowWorker {
         }
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
-        let prepare_finished = match self.prepare_func(ctx, db_connection, is_replay).await? {
-            PrepareFuncOk::Finished(finished) => finished,
-            PrepareFuncOk::LockAlreadyExpired { db_connection } => {
-                return Ok((
-                    Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher),
-                    db_connection,
-                ));
-            }
-        };
+        let prepare_finished = self.prepare_func(ctx, db_connection, is_replay).await?;
         Self::call_func_convert_result(
             prepare_finished.store,
             prepare_finished.func,
@@ -2355,8 +2341,11 @@ pub(crate) mod tests {
         let worker_result = worker.run(ctx).await;
         assert_matches!(
             worker_result,
-            WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
-        ); // Do not write anything, let the watcher mark execution as timed out.
+            Err(WorkerError::TemporaryTimeout {
+                version: Version(0),
+                http_client_traces: None,
+            })
+        );
         db_close.close().await;
     }
 
