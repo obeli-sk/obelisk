@@ -5,7 +5,7 @@ use crate::args::FunctionFqnOrShort;
 use crate::args::params::parse_params;
 use crate::get_execution_repository_client;
 use crate::get_fn_repository_client;
-use crate::server::web_api_server::ExecutionSubmitPayload;
+use crate::server::web_api_server::{AdvanceRequestSer, ExecutionSubmitPayload, ReplayResponseSer};
 use anyhow::Context as _;
 use anyhow::bail;
 use base64::Engine as _;
@@ -621,46 +621,38 @@ async fn replay_json(
         .context("failed to decode replay response as JSON")
 }
 
-fn pause_submitted_in_replay(replay: &mut serde_json::Value) -> anyhow::Result<()> {
-    let captured_writes = replay
-        .get_mut("captured_writes")
-        .and_then(serde_json::Value::as_array_mut)
-        .context("replay response missing captured_writes array")?;
-
-    for captured_write in captured_writes {
-        let Some(write_type) = captured_write
-            .get("type")
-            .and_then(serde_json::Value::as_str)
-        else {
-            continue;
-        };
-        if write_type != "append_batch_create_new_execution" {
-            continue;
-        }
-
-        let child_requests = captured_write
-            .get_mut("child_requests")
-            .and_then(serde_json::Value::as_array_mut)
-            .context("append_batch_create_new_execution missing child_requests array")?;
-
-        for child_request in child_requests {
-            let child_request = child_request
-                .as_object_mut()
-                .context("child request must be a JSON object")?;
-            child_request.insert("paused".to_string(), serde_json::Value::Bool(true));
+fn pause_submitted_in_replay(advance_request: &mut AdvanceRequestSer) {
+    for captured_write in &mut advance_request.captured_writes {
+        if let crate::server::web_api_server::CapturedWriteSer::AppendBatchCreateNewExecution {
+            child_requests,
+            ..
+        } = captured_write
+        {
+            for child_request in child_requests {
+                child_request.paused = true;
+            }
         }
     }
-
-    Ok(())
 }
 
-fn trim_replay(replay: &mut serde_json::Value, trim: usize) -> anyhow::Result<()> {
-    let captured_writes = replay
-        .get_mut("captured_writes")
-        .and_then(serde_json::Value::as_array_mut)
-        .context("replay response missing captured_writes array")?;
-    captured_writes.truncate(trim);
-    Ok(())
+fn trim_replay(advance_request: &mut AdvanceRequestSer, trim: usize) {
+    advance_request.captured_writes.truncate(trim);
+}
+
+fn replay_to_advanceable_request(replay: &serde_json::Value) -> anyhow::Result<AdvanceRequestSer> {
+    let replay: ReplayResponseSer = serde_json::from_value(replay.clone())
+        .context("failed to decode replay response as ReplayResponseSer")?;
+    match replay {
+        ReplayResponseSer::Advanceable { captured_writes } => {
+            Ok(AdvanceRequestSer { captured_writes })
+        }
+        ReplayResponseSer::Finished { .. } => {
+            bail!("execution is already finished; replay returned finished")
+        }
+        ReplayResponseSer::Blocked => {
+            bail!("execution is blocked; replay returned no advanceable writes")
+        }
+    }
 }
 
 async fn advance(
@@ -670,12 +662,13 @@ async fn advance(
     trim: Option<usize>,
     pause_submitted: bool,
 ) -> anyhow::Result<()> {
-    let mut replay = replay_json(api_url, &execution_id).await?;
+    let replay = replay_json(api_url, &execution_id).await?;
+    let mut advance_request = replay_to_advanceable_request(&replay)?;
     if let Some(trim) = trim {
-        trim_replay(&mut replay, trim)?;
+        trim_replay(&mut advance_request, trim);
     }
     if pause_submitted {
-        pause_submitted_in_replay(&mut replay)?;
+        pause_submitted_in_replay(&mut advance_request);
     }
     let client = reqwest::Client::new();
     let accept = if json {
@@ -686,28 +679,33 @@ async fn advance(
     let req = client
         .put(format!("{api_url}/v1/executions/{execution_id}/advance"))
         .header(ACCEPT, accept)
-        .json(&replay);
+        .json(&advance_request);
     send_and_print(req).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::pause_submitted_in_replay;
+    use crate::server::web_api_server::{AdvanceRequestSer, CapturedWriteSer};
+    use chrono::{DateTime, Utc};
     use serde_json::json;
 
     #[test]
-    fn pause_submitted_rewrites_child_requests_only() {
-        let mut replay = json!({
+    fn pause_submitted_marks_only_new_child_requests_as_paused() {
+        let current_time: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+        // TODO: construct `AdvanceRequestSer` directly
+        let mut advance_request = serde_json::from_value::<AdvanceRequestSer>(json!({
             "captured_writes": [
                 {
-                    "type": "append",
+                    "type": "append_batch",
+                    "current_time": current_time,
                     "execution_id": "Exec_01",
                     "version": 1,
-                    "event": {}
+                    "events": []
                 },
                 {
                     "type": "append_batch_create_new_execution",
-                    "current_time": "2026-01-01T00:00:00Z",
+                    "current_time": current_time,
                     "events": [],
                     "execution_id": "Exec_01",
                     "version": 2,
@@ -716,30 +714,42 @@ mod tests {
                             "execution_id": "Exec_02",
                             "ffqn": "pkg:ifc/fn",
                             "params": [],
-                            "scheduled_at": "2026-01-01T00:00:00Z",
+                            "parent_execution_id": null,
+                            "parent_join_set_id": null,
+                            "scheduled_at": current_time,
                             "component_id": {
                                 "component_type": "workflow",
                                 "name": "wf",
-                                "component_digest": "sha256:deadbeef"
+                                "component_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                             },
                             "deployment_id": "Dep_01",
-                            "created_at": "2026-01-01T00:00:00Z",
+                            "created_at": current_time,
                             "metadata": {},
+                            "scheduled_by": null,
                             "paused": false
                         }
                     ],
                     "backtraces": []
                 }
             ]
-        });
+        }))
+        .unwrap();
+        pause_submitted_in_replay(&mut advance_request);
 
-        pause_submitted_in_replay(&mut replay).unwrap();
+        match &advance_request.captured_writes[0] {
+            CapturedWriteSer::AppendBatch { .. } => {}
+            other => panic!("expected first write to remain append_batch, got {other:?}"),
+        }
 
-        assert_eq!(
-            replay["captured_writes"][1]["child_requests"][0]["paused"],
-            json!(true)
-        );
-        assert!(replay["captured_writes"][0].get("child_requests").is_none());
+        match &advance_request.captured_writes[1] {
+            CapturedWriteSer::AppendBatchCreateNewExecution { child_requests, .. } => {
+                assert_eq!(child_requests.len(), 1);
+                assert!(child_requests[0].paused);
+            }
+            other => panic!(
+                "expected second write to remain append_batch_create_new_execution, got {other:?}"
+            ),
+        }
     }
 }
 

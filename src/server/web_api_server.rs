@@ -1320,22 +1320,22 @@ impl From<SupportedFunctionReturnValue> for RetVal {
 
 /// A serializable mirror of `CreateRequest` from concepts.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-struct CreateRequestSer {
-    created_at: DateTime<Utc>,
-    execution_id: String,
-    ffqn: String,
+pub(crate) struct CreateRequestSer {
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) execution_id: String,
+    pub(crate) ffqn: String,
     #[schema(value_type = Vec<Object>)]
-    params: concepts::Params,
-    parent_execution_id: Option<String>,
-    parent_join_set_id: Option<String>,
-    scheduled_at: DateTime<Utc>,
+    pub(crate) params: concepts::Params,
+    pub(crate) parent_execution_id: Option<String>,
+    pub(crate) parent_join_set_id: Option<String>,
+    pub(crate) scheduled_at: DateTime<Utc>,
     #[schema(value_type = Object)]
-    component_id: concepts::ComponentId,
-    deployment_id: String,
+    pub(crate) component_id: concepts::ComponentId,
+    pub(crate) deployment_id: String,
     #[schema(value_type = Object)]
-    metadata: concepts::ExecutionMetadata,
-    scheduled_by: Option<String>,
-    paused: bool,
+    pub(crate) metadata: concepts::ExecutionMetadata,
+    pub(crate) scheduled_by: Option<String>,
+    pub(crate) paused: bool,
 }
 
 impl From<concepts::storage::CreateRequest> for CreateRequestSer {
@@ -1422,14 +1422,14 @@ impl TryFrom<CreateRequestSer> for concepts::storage::CreateRequest {
 
 /// A serializable mirror of `AppendResponseToExecution` from concepts.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-struct StubResponseSer {
-    parent_execution_id: String,
-    created_at: DateTime<Utc>,
-    join_set_id: String,
-    child_execution_id: String,
-    finished_version: u32,
+pub(crate) struct StubResponseSer {
+    pub(crate) parent_execution_id: String,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) join_set_id: String,
+    pub(crate) child_execution_id: String,
+    pub(crate) finished_version: u32,
     #[schema(value_type = Object)]
-    result: SupportedFunctionReturnValue,
+    pub(crate) result: SupportedFunctionReturnValue,
 }
 
 impl From<concepts::storage::AppendResponseToExecution> for StubResponseSer {
@@ -1477,7 +1477,7 @@ impl TryFrom<StubResponseSer> for concepts::storage::AppendResponseToExecution {
 /// A serializable captured database write operation.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum CapturedWriteSer {
+pub(crate) enum CapturedWriteSer {
     Append {
         execution_id: String,
         version: u32,
@@ -1641,33 +1641,51 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
 }
 
 /// Result of replaying a workflow execution
-#[derive(Debug, Serialize, ToSchema)]
-struct ReplayResponseSer {
-    /// Write operations that the workflow would produce next
-    captured_writes: Vec<CapturedWriteSer>,
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum ReplayResponseSer {
+    /// Write operations that can be supplied to `advance`.
+    Advanceable {
+        captured_writes: Vec<CapturedWriteSer>,
+    },
+    /// The execution is already finished.
+    Finished {
+        #[schema(value_type = Object)]
+        result: SupportedFunctionReturnValue,
+    },
+    /// The execution is waiting on external progress and cannot be advanced yet.
+    Blocked,
 }
 
 impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayResponseSer {
     fn from(value: wasm_workers::workflow::workflow_worker::ReplayResponse) -> Self {
-        Self {
-            captured_writes: value
-                .captured_writes
-                .into_iter()
-                .map(CapturedWriteSer::from)
-                .collect(),
+        match value {
+            wasm_workers::workflow::workflow_worker::ReplayResponse::Advanceable(replay) => {
+                Self::Advanceable {
+                    captured_writes: replay
+                        .captured_writes
+                        .into_iter()
+                        .map(CapturedWriteSer::from)
+                        .collect(),
+                }
+            }
+            wasm_workers::workflow::workflow_worker::ReplayResponse::Finished { result } => {
+                Self::Finished { result }
+            }
+            wasm_workers::workflow::workflow_worker::ReplayResponse::Blocked => Self::Blocked,
         }
     }
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-struct AdvanceRequestSer {
-    captured_writes: Vec<CapturedWriteSer>,
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub(crate) struct AdvanceRequestSer {
+    pub(crate) captured_writes: Vec<CapturedWriteSer>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 struct AdvanceResponseSer {
     #[schema(value_type = Option<Object>)]
-    finished_result: Option<SupportedFunctionReturnValue>,
+    finished: Option<SupportedFunctionReturnValue>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -1964,13 +1982,19 @@ async fn execution_replay(
     let ser = ReplayResponseSer::from(replay_response);
     Ok(match accept {
         AcceptHeader::Json => Json(ser).into_response(),
-        AcceptHeader::Text => {
-            let mut output = String::new();
-            for write in &ser.captured_writes {
-                writeln!(&mut output, "{write:?}").expect("writing to string");
+        AcceptHeader::Text => match ser {
+            ReplayResponseSer::Advanceable { captured_writes } => {
+                let mut output = String::new();
+                for write in &captured_writes {
+                    writeln!(&mut output, "{write:?}").expect("writing to string");
+                }
+                output.into_response()
             }
-            output.into_response()
-        }
+            ReplayResponseSer::Finished { result } => {
+                format!("outcome: finished\nresult: {result:?}").into_response()
+            }
+            ReplayResponseSer::Blocked => "outcome: blocked".into_response(),
+        },
     })
 }
 
@@ -2006,7 +2030,7 @@ async fn execution_advance(
             log_sender: state.log_forwarder_sender.clone(),
         });
 
-    let expected = wasm_workers::workflow::workflow_worker::ReplayResponse {
+    let expected = wasm_workers::workflow::workflow_worker::ReplayAdvanceable {
         captured_writes: payload
             .captured_writes
             .into_iter()
@@ -2101,17 +2125,16 @@ async fn execution_advance(
     };
 
     let response = AdvanceResponseSer {
-        finished_result: advance_response.finished,
+        finished: advance_response.finished,
     };
 
-    Ok(match accept {
-        AcceptHeader::Json => Json(response).into_response(),
-        AcceptHeader::Text => response
-            .finished_result
-            .map(|result| format!("finished_result: {result:?}"))
-            .unwrap_or_else(|| "finished_result: null".to_string())
-            .into_response(),
-    })
+    if let Some(retval) = response.finished {
+        // Same shape as `execution_get_retval`
+        let retval = RetVal::from(retval);
+        Ok(Json(retval).into_response())
+    } else {
+        execution_status_get(Path(execution_id), state, accept).await
+    }
 }
 
 async fn get_replay_target(

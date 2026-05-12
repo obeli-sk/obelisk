@@ -853,13 +853,20 @@ impl TestExecutionClient {
                 let replay_resp = server.replay(execution_id).await;
                 assert_eq!(replay_resp.status().as_u16(), 200);
                 let replay_body: Value = replay_resp.json().await.unwrap();
-
-                let writes = replay_body["captured_writes"]
-                    .as_array()
-                    .expect("captured_writes must be an array");
-
-                ReplayCapturedWritesSummary {
-                    captured_writes_len: writes.len(),
+                match replay_body["type"]
+                    .as_str()
+                    .expect("replay response type must be set")
+                {
+                    "advanceable" => ReplayCapturedWritesSummary {
+                        captured_writes_len: replay_body["captured_writes"]
+                            .as_array()
+                            .expect("captured_writes must be an array")
+                            .len(),
+                    },
+                    "finished" | "blocked" => ReplayCapturedWritesSummary {
+                        captured_writes_len: 0,
+                    },
+                    other => panic!("unexpected replay response type {other}"),
                 }
             }
             TestExecutionClient::Grpc => {
@@ -876,9 +883,18 @@ impl TestExecutionClient {
                     .await
                     .unwrap()
                     .into_inner();
-
-                ReplayCapturedWritesSummary {
-                    captured_writes_len: replay_resp.captured_writes.len(),
+                match replay_resp.outcome.expect("replay outcome must be set") {
+                    grpc::grpc_gen::replay_execution_response::Outcome::Advanceable(
+                        advanceable,
+                    ) => ReplayCapturedWritesSummary {
+                        captured_writes_len: advanceable.captured_writes.len(),
+                    },
+                    grpc::grpc_gen::replay_execution_response::Outcome::Finished(_)
+                    | grpc::grpc_gen::replay_execution_response::Outcome::Blocked(_) => {
+                        ReplayCapturedWritesSummary {
+                            captured_writes_len: 0,
+                        }
+                    }
                 }
             }
         }
@@ -1033,10 +1049,27 @@ impl TestServer {
                 .await
                 .unwrap()
                 .into_inner();
-            assert!(
-                !replay.captured_writes.is_empty(),
-                "captured_writes must not be empty while stepping {ffqn}"
-            );
+            let captured_writes = match replay.outcome.expect("replay outcome must be set") {
+                grpc::grpc_gen::replay_execution_response::Outcome::Advanceable(advanceable) => {
+                    advanceable.captured_writes
+                }
+                grpc::grpc_gen::replay_execution_response::Outcome::Finished(finished) => {
+                    let value = finished.result.expect("finished result must be set");
+                    let ok_payload = match value.value {
+                        Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
+                        other => panic!("expected ok finished value, got {other:?}"),
+                    };
+                    let return_value = ok_payload.return_value.expect("ok return_value must exist");
+                    return GrpcAdvanceExecutionSummary {
+                        steps,
+                        final_value_json: return_value.value,
+                    };
+                }
+                grpc::grpc_gen::replay_execution_response::Outcome::Blocked(_) => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+            };
 
             steps += 1;
             let advance = grpc_client
@@ -1044,14 +1077,14 @@ impl TestServer {
                     execution_id: Some(GrpcExecutionId {
                         id: exec_id.clone(),
                     }),
-                    captured_writes: replay.captured_writes,
+                    captured_writes,
                 })
                 .await
                 .unwrap()
                 .into_inner();
             match advance.result.expect("advance result must be set") {
                 grpc::grpc_gen::advance_execution_response::Result::Success(success) => {
-                    if let Some(value) = success.finished_result {
+                    if let Some(value) = success.finished {
                         let ok_payload = match value.value {
                             Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
                             other => panic!("expected ok finished value, got {other:?}"),
@@ -1085,7 +1118,7 @@ impl TestServer {
             let summary = self.grpc_get_status_summary(&exec_id).await;
             assert!(
                 !Self::is_finished(&summary),
-                "finished executions should return finished_result from AdvanceExecution"
+                "finished executions should return finished from AdvanceExecution"
             );
 
             assert!(
@@ -1110,19 +1143,31 @@ impl TestServer {
             let replay = self.replay(&exec_id).await;
             assert_eq!(replay.status().as_u16(), 200);
             let replay_body: Value = replay.json().await.unwrap();
-            assert!(
-                replay_body["captured_writes"]
-                    .as_array()
-                    .is_some_and(|writes| !writes.is_empty()),
-                "captured_writes must not be empty while stepping {ffqn}"
-            );
+            let captured_writes = match replay_body["type"]
+                .as_str()
+                .expect("replay outcome type must be set")
+            {
+                "advanceable" => replay_body["captured_writes"].clone(),
+                "finished" => {
+                    return GrpcAdvanceExecutionSummary {
+                        steps,
+                        final_value_json: serde_json::to_vec(&replay_body["result"]["ok"]["value"])
+                            .unwrap(),
+                    };
+                }
+                "blocked" => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+                other => panic!("unexpected replay outcome {other}"),
+            };
 
             steps += 1;
             let advance = self
                 .client
                 .put(format!("{}/v1/executions/{exec_id}/advance", self.base_url))
                 .header("Accept", "application/json")
-                .json(&replay_body)
+                .json(&json!({ "captured_writes": captured_writes }))
                 .send()
                 .await
                 .expect("advance request failed");
@@ -1133,20 +1178,18 @@ impl TestServer {
                 advance.text().await.unwrap()
             );
             let advance_body: Value = advance.json().await.unwrap();
-            if !advance_body["finished_result"].is_null() {
+            if !advance_body["finished"].is_null() {
                 return GrpcAdvanceExecutionSummary {
                     steps,
-                    final_value_json: serde_json::to_vec(
-                        &advance_body["finished_result"]["ok"]["value"],
-                    )
-                    .unwrap(),
+                    final_value_json: serde_json::to_vec(&advance_body["finished"]["ok"]["value"])
+                        .unwrap(),
                 };
             }
 
             let status = self.get_status(&exec_id).await;
             assert!(
                 status["current_status"]["status"]["finished"].is_null(),
-                "finished executions should return finished_result from advance"
+                "finished executions should return finished from advance"
             );
 
             assert!(
