@@ -17,14 +17,19 @@ for arg in "${args[@]}"; do
   fi
 done
 
-cmd=(
-  cargo insta test
-  --test-runner nextest
-  --check
-  --workspace
-  --profile ci-test
-  --disable-nextest-doctest
-)
+if [ "${CARGO_INSTA_TEST:-}" = "true" ]; then
+  cmd=(
+    cargo insta test --test-runner nextest --check --disable-nextest-doctest
+    --workspace
+    --profile ci-test
+  )
+else
+  cmd=(
+    cargo nextest run
+    --workspace
+    --profile ci-test
+  )
+fi
 
 # Additional features are inserted before `--`
 if [[ -n "${ADDITIONAL_FEATURES:-}" ]]; then
