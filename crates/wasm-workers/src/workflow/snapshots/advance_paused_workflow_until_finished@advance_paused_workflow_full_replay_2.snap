@@ -5,21 +5,14 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
 {
   "captured_writes": [
     {
-      "Append": {
+      "AppendFinished": {
         "execution_id": "E_00000000000000000000000000",
         "version": 5,
-        "req": {
-          "created_at": "1970-01-01T00:00:00.400Z",
-          "event": {
-            "finished": {
-              "retval": {
-                "ok": {
-                  "type": "u64",
-                  "value": 55
-                }
-              },
-              "http_client_traces": null
-            }
+        "current_time": "1970-01-01T00:00:00.400Z",
+        "retval": {
+          "ok": {
+            "type": "u64",
+            "value": 55
           }
         }
       }

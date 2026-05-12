@@ -25,22 +25,15 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
       }
     },
     {
-      "Append": {
+      "AppendFinished": {
         "execution_id": "E_00000000000000000000000001",
         "version": 6,
-        "req": {
-          "created_at": "1970-01-01T00:00:00.900Z",
-          "event": {
-            "finished": {
-              "retval": {
-                "ok": {
-                  "type": "result<string, string>",
-                  "value": {
-                    "ok": "\"hello\""
-                  }
-                }
-              },
-              "http_client_traces": null
+        "current_time": "1970-01-01T00:00:00.900Z",
+        "retval": {
+          "ok": {
+            "type": "result<string, string>",
+            "value": {
+              "ok": "\"hello\""
             }
           }
         }
