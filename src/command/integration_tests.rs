@@ -115,12 +115,12 @@ directory = "{db_dir}"
 [[activity_js]]
 name = "test_add_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/add.js"
-ffqn = "testing:integration/activity-add.add"
+ffqn = "testing:integration/activity.add"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
-return_type = "result<string, string>"
+return_type = "result<u32, string>"
 
 [[activity_js]]
 name = "test_greet_activity"
@@ -205,7 +205,7 @@ params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
-return_type = "result<string, string>"
+return_type = "result<u32, string>"
 
 [[workflow_js]]
 name = "test_call_activity_workflow"
@@ -215,7 +215,7 @@ params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
 ]
-return_type = "result<string, string>"
+return_type = "result<u32, string>"
 
 [[workflow_js]]
 name = "test_make_record_workflow"
@@ -1225,14 +1225,11 @@ async fn submit_activity_and_get_result() {
     let server = TestServer::start(test_addr!(4)).await;
 
     let resp = server
-        .submit_follow(
-            "testing:integration/activity-add.add",
-            vec![json!(3), json!(5)],
-        )
+        .submit_follow("testing:integration/activity.add", vec![json!(3), json!(5)])
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "8" }));
+    assert_eq!(body, json!({ "ok": 8 }));
     server.shutdown().await;
 }
 
@@ -1451,7 +1448,7 @@ async fn submit_workflow_with_get_result() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "15" }));
+    assert_eq!(body, json!({ "ok": 15 }));
 
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
@@ -1475,7 +1472,7 @@ async fn submit_workflow_with_call() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "7" }));
+    assert_eq!(body, json!({ "ok": 7 }));
 
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
@@ -1490,10 +1487,7 @@ async fn list_executions_after_submit() {
     let server = TestServer::start(test_addr!(11)).await;
 
     let resp = server
-        .submit_follow(
-            "testing:integration/activity-add.add",
-            vec![json!(1), json!(2)],
-        )
+        .submit_follow("testing:integration/activity.add", vec![json!(1), json!(2)])
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let _: Value = resp.json().await.unwrap();
@@ -1503,7 +1497,7 @@ async fn list_executions_after_submit() {
     assert_eq!(arr.len(), 1, "unexpected {arr:?}");
     assert_eq!(
         arr[0]["ffqn"],
-        json!("testing:integration/activity-add.add"),
+        json!("testing:integration/activity.add"),
         "unexpected {arr:?}"
     );
     server.shutdown().await;
@@ -1520,7 +1514,7 @@ async fn submit_with_wrong_params_returns_error() {
         .post(format!("{}/v1/executions", server.base_url))
         .header("Accept", "application/json")
         .json(&json!({
-            "ffqn": "testing:integration/activity-add.add",
+            "ffqn": "testing:integration/activity.add",
             "params": [1]
         }))
         .send()
@@ -1703,7 +1697,7 @@ async fn idempotent_submit_same_execution_id() {
     let resp1 = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/activity-add.add",
+            "testing:integration/activity.add",
             vec![json!(1), json!(2)],
         )
         .await;
@@ -1713,7 +1707,7 @@ async fn idempotent_submit_same_execution_id() {
     let resp2 = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/activity-add.add",
+            "testing:integration/activity.add",
             vec![json!(1), json!(2)],
         )
         .await;
@@ -1818,7 +1812,7 @@ async fn webhook_js_call_activity() {
     assert_eq!(resp.status().as_u16(), 200);
     let body: Value = resp.json().await.unwrap();
     // The add activity returns the sum as a string
-    assert_eq!(body["result"], "12");
+    assert_eq!(body["result"], 12);
     server.shutdown().await;
 }
 

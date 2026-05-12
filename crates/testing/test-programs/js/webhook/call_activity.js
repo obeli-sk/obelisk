@@ -1,3 +1,4 @@
+
 // Webhook that calls an activity using obelisk.call
 export default function handle(request) {
     const a = Number(process.env['a']);
@@ -11,6 +12,6 @@ export default function handle(request) {
 
 function call(a, b) {
     return function (a, b) {
-        return obelisk.call("testing:integration/activity-add.add", [a, b]);
+        return obelisk.call("testing:integration/activity.add", [a, b]);
     }(a, b)
 }

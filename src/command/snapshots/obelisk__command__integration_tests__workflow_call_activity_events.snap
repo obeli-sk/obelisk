@@ -50,7 +50,7 @@ expression: events
             "request": {
               "type": "child_execution_request",
               "child_execution_id": "E_<REDACTED>",
-              "target_ffqn": "testing:integration/activity-add.add",
+              "target_ffqn": "testing:integration/activity.add",
               "params": [
                 3,
                 4
@@ -72,7 +72,7 @@ expression: events
             "type": "join_next",
             "join_set_id": "o:1-add",
             "run_expires_at": "<TIMESTAMP>",
-            "requested_ffqn": "testing:integration/activity-add.add",
+            "requested_ffqn": "testing:integration/activity.add",
             "closing": false
           }
         }
@@ -85,8 +85,8 @@ expression: events
         "finished": {
           "retval": {
             "ok": {
-              "type": "string",
-              "value": "7"
+              "type": "u32",
+              "value": 7
             }
           },
           "http_client_traces": null

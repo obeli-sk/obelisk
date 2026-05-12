@@ -4,7 +4,7 @@ expression: functions
 ---
 [
   {
-    "ffqn": "testing:integration/activity-add.add"
+    "ffqn": "testing:integration/activity.add"
   },
   {
     "ffqn": "testing:integration/activity-greet.greet"
