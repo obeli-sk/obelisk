@@ -11,7 +11,7 @@ use crate::workflow::caching_db_connection::{
 };
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
 use crate::workflow::replay_db_proxy::{
-    InternalReplayResponse, ReplayWorkflowDbConnection, apply_writes,
+    InternalCapturedWrite, ReplayWorkflowDbConnection, apply_writes,
 };
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
@@ -459,7 +459,7 @@ impl WorkflowWorker {
         log: ExecutionLog,
         ffqn: FunctionFqn,
         params: Params,
-    ) -> Result<InternalReplayResponse, ReplayError> {
+    ) -> Result<Vec<InternalCapturedWrite>, ReplayError> {
         let replay_kind = if log.is_finished() {
             ReplayKind::Finished
         } else {
@@ -526,7 +526,7 @@ impl WorkflowWorker {
             .await?;
         debug!(
             "Execution replay completed, captured writes: {}",
-            captured_writes.preview.len(),
+            captured_writes.len(),
         );
         Ok(captured_writes)
     }
@@ -535,18 +535,17 @@ impl WorkflowWorker {
         db_conn: &dyn DbConnection,
         cancel_registry: &CancelRegistry,
         requested: ReplayAdvanceable,
-        fresh_replay: InternalReplayResponse,
+        fresh_replay: Vec<InternalCapturedWrite>,
         old_version: Version,
     ) -> Result<AdvanceResponse, AdvanceError> {
         let fresh_public_writes: Vec<_> = fresh_replay
-            .preview
             .iter()
             .map(|write| write.write.clone())
             .collect();
         let outcome = if requested.is_prefix_of(&fresh_public_writes) {
             let writes_to_apply = merge_requested_overrides_into_fresh_prefix(
                 &requested.captured_writes,
-                &fresh_replay.preview,
+                &fresh_replay,
             );
             apply_writes(db_conn, cancel_registry, writes_to_apply, old_version).await?;
             AdvanceResponse {
@@ -967,7 +966,7 @@ impl WorkflowWorker {
         ctx: WorkerContext,
         replay_db_connection: ReplayWorkflowDbConnection,
         replay_kind: ReplayKind,
-    ) -> Result<InternalReplayResponse, ReplayError> {
+    ) -> Result<Vec<InternalCapturedWrite>, ReplayError> {
         let (return_value, replay_db_connection) = self
             .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
             .await
@@ -1084,7 +1083,6 @@ impl WorkflowWorker {
         )
         .await?;
         let captured_writes: Vec<_> = captured_writes
-            .preview
             .into_iter()
             .map(|write| write.write)
             .collect();

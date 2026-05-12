@@ -33,21 +33,14 @@ pub(crate) struct InternalCapturedWrite {
     cancellations: Option<JoinSetCloseCancellations>,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct InternalReplayResponse {
-    pub(crate) preview: Vec<InternalCapturedWrite>,
-}
-
 #[derive(Debug, Default)]
 struct ReplayEventCollector {
     preview: Vec<InternalCapturedWrite>,
 }
 
 impl ReplayEventCollector {
-    fn into_writes(self) -> InternalReplayResponse {
-        InternalReplayResponse {
-            preview: self.preview,
-        }
+    fn into_writes(self) -> Vec<InternalCapturedWrite> {
+        self.preview
     }
 
     fn push_write(&mut self, write: CapturedDbWrite) {
@@ -184,7 +177,7 @@ impl ReplayWorkflowDbConnection {
             real_connection,
         }
     }
-    pub(crate) fn into_writes(self) -> InternalReplayResponse {
+    pub(crate) fn into_writes(self) -> Vec<InternalCapturedWrite> {
         self.collector.into_writes()
     }
 

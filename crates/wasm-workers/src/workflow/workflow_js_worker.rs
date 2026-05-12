@@ -404,7 +404,6 @@ impl WorkflowJsWorker {
         )
         .await?;
         let captured_writes: Vec<_> = captured_writes
-            .preview
             .into_iter()
             .map(|write| write.write)
             .collect();
