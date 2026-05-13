@@ -1024,6 +1024,7 @@ pub enum CapturedDbWrite {
         current_time: DateTime<Utc>,
     },
     AppendFinished {
+        // TODO: Extract struct AppendFinished
         execution_id: ExecutionId,
         version: Version,
         current_time: DateTime<Utc>,

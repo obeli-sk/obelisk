@@ -24,7 +24,7 @@ use concepts::{
     SupportedFunctionReturnValue,
 };
 use executor::worker::{
-    FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
+    FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -228,7 +228,19 @@ impl Worker for WorkflowJsWorker {
                 version,
                 http_client_traces,
                 &self.user_return_type,
-            ),
+            )
+            .map(
+                |RunFinished {
+                     retval,
+                     version,
+                     http_client_traces,
+                 }| WorkerResultOk::RunFinished {
+                    retval,
+                    version,
+                    http_client_traces,
+                },
+            )
+            .map_err(|(err, version)| WorkerError::FatalError(err, version)),
         }
     }
 }
@@ -240,7 +252,7 @@ fn transform_to_outer_result(
     version: Version,
     http_client_traces: Option<Vec<HttpClientTrace>>,
     user_return_type: &ReturnTypeExtendable,
-) -> WorkerResult {
+) -> Result<RunFinished, (FatalError, Version)> {
     match retval {
         SupportedFunctionReturnValue::Ok(Some(WastValWithType {
             r#type:
@@ -257,12 +269,12 @@ fn transform_to_outer_result(
             let Ok(ok_val) = serde_json::from_str(&ok_val) else {
                 unreachable!("workflow-js-runtime always sends JSON-encoded string")
             };
-            let retval = crate::js_worker_utils::map_ok_variant(
+            let retval = crate::js_worker_utils::map_ok_variant_fatal(
                 Some(ok_val),
                 user_return_type,
                 version.clone(),
             )?;
-            Ok(WorkerResultOk::RunFinished {
+            Ok(RunFinished {
                 retval,
                 version,
                 http_client_traces,
@@ -284,12 +296,12 @@ fn transform_to_outer_result(
             let Ok(err_val) = serde_json::from_str(&err_val) else {
                 unreachable!("workflow-js-runtime always sends JSON-encoded string")
             };
-            let retval = crate::js_worker_utils::map_err_variant(
+            let retval = crate::js_worker_utils::map_err_variant_fatal(
                 Some(err_val),
                 user_return_type,
                 version.clone(),
             )?;
-            Ok(WorkerResultOk::RunFinished {
+            Ok(RunFinished {
                 retval,
                 version,
                 http_client_traces,
@@ -312,7 +324,7 @@ fn transform_to_outer_result(
                         unreachable!("both variants have string payload")
                     };
 
-                    Err(WorkerError::FatalError(
+                    Err((
                         FatalError::ResultParsingError(
                             ResultParsingError::ResultParsingErrorFromVal(
                                 ResultParsingErrorFromVal::TypeCheckError(reason),
@@ -329,7 +341,7 @@ fn transform_to_outer_result(
                             None
                         }
                     });
-                    Err(WorkerError::FatalError(
+                    Err((
                         FatalError::CannotInstantiate {
                             reason: format!("js-runtime-error: {name}"),
                             detail,
@@ -341,7 +353,7 @@ fn transform_to_outer_result(
                     // This variant is returned when a workflow function fails,
                     // e.g., when joinNext returns an error from a child execution.
                     // We propagate this as an ExecutionError.
-                    Ok(WorkerResultOk::RunFinished {
+                    Ok(RunFinished {
                         retval: SupportedFunctionReturnValue::ExecutionError(
                             FinishedExecutionError {
                                 kind: ExecutionFailureKind::Uncategorized,
@@ -357,16 +369,35 @@ fn transform_to_outer_result(
             }
         }
 
-        retval @ SupportedFunctionReturnValue::ExecutionError(_) => {
-            Ok(WorkerResultOk::RunFinished {
-                retval,
-                version,
-                http_client_traces,
-            })
-        }
+        retval @ SupportedFunctionReturnValue::ExecutionError(_) => Ok(RunFinished {
+            retval,
+            version,
+            http_client_traces,
+        }),
 
         other => unreachable!("unexpected SupportedFunctionReturnValue: {other:?}"),
     }
+}
+
+fn transform_to_append_finished(
+    retval: SupportedFunctionReturnValue,
+    version: Version,
+    user_return_type: &ReturnTypeExtendable,
+) -> SupportedFunctionReturnValue {
+    let (retval, version_obtained) =
+        match transform_to_outer_result(retval, version.clone(), None, user_return_type) {
+            Ok(RunFinished {
+                retval, version, ..
+            }) => (retval, version),
+            Err((fatal_error, version)) => {
+                let retval = SupportedFunctionReturnValue::ExecutionError(
+                    FinishedExecutionError::from(fatal_error),
+                );
+                (retval, version)
+            }
+        };
+    assert_eq!(version, version_obtained);
+    retval
 }
 
 impl WorkflowJsWorker {
@@ -427,12 +458,8 @@ impl WorkflowJsWorker {
                         current_time,
                         retval, // workflow-js-runtime WASM result
                     } => {
-                        let Ok(WorkerResultOk::RunFinished {
-                            retval, version, ..
-                        }) = transform_to_outer_result(retval, version, None, user_return_type)
-                        else {
-                            unimplemented!("FIXME")
-                        };
+                        let retval =
+                            transform_to_append_finished(retval, version.clone(), user_return_type);
                         CapturedDbWrite::AppendFinished {
                             execution_id,
                             version,
@@ -519,13 +546,8 @@ impl WorkflowJsWorker {
             ..
         }) = fresh_replay.last_mut()
         {
-            let Ok(WorkerResultOk::RunFinished {
-                retval: retval_transformed,
-                ..
-            }) = transform_to_outer_result(retval.clone(), version.clone(), None, user_return_type)
-            else {
-                unimplemented!("FIXME")
-            };
+            let retval_transformed =
+                transform_to_append_finished(retval.clone(), version.clone(), user_return_type);
             *retval = retval_transformed;
         }
         WorkflowWorker::advance_from_log(

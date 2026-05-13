@@ -327,7 +327,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         &mut self,
         execution_id: ExecutionId,
         req: AppendRequest,
-        _wasm_backtrace: Option<storage::WasmBacktrace>,
+        _wasm_backtrace: Option<storage::WasmBacktrace>, // TODO: Add backtrace
         _component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
@@ -347,7 +347,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         execution_id: ExecutionId,
         req: AppendRequest,
         cancellations: Option<JoinSetCloseCancellations>,
-        _wasm_backtrace: Option<storage::WasmBacktrace>,
+        _wasm_backtrace: Option<storage::WasmBacktrace>, // TODO: Add backtrace
         _component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
@@ -375,7 +375,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        _wasm_backtrace: Option<storage::WasmBacktrace>,
+        _wasm_backtrace: Option<storage::WasmBacktrace>, // TODO: Add backtrace
         _component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
@@ -403,7 +403,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         child_req: Vec<CreateRequest>,
-        _wasm_backtrace: Option<storage::WasmBacktrace>,
+        _wasm_backtrace: Option<storage::WasmBacktrace>, // TODO: Add backtrace
         _component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);

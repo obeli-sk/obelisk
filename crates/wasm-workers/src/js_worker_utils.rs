@@ -23,6 +23,20 @@ pub(crate) fn map_ok_variant(
         Ok(()),
     )
 }
+
+pub(crate) fn map_ok_variant_fatal(
+    val: Option<serde_json::Value>,
+    user_return_type: &ReturnTypeExtendable,
+    version: Version,
+) -> Result<SupportedFunctionReturnValue, (FatalError, Version)> {
+    map_variant_fatal(
+        val,
+        version,
+        user_return_type.type_wrapper_tl.ok.as_deref(),
+        Ok(()),
+    )
+}
+
 pub(crate) fn map_err_variant(
     val: Option<serde_json::Value>,
     user_return_type: &ReturnTypeExtendable,
@@ -36,12 +50,35 @@ pub(crate) fn map_err_variant(
     )
 }
 
+pub(crate) fn map_err_variant_fatal(
+    val: Option<serde_json::Value>,
+    user_return_type: &ReturnTypeExtendable,
+    version: Version,
+) -> Result<SupportedFunctionReturnValue, (FatalError, Version)> {
+    map_variant_fatal(
+        val,
+        version,
+        user_return_type.type_wrapper_tl.err.as_deref(),
+        Err(()),
+    )
+}
+
 fn map_variant(
     val: Option<serde_json::Value>,
     version: Version,
     expected_type: Option<&TypeWrapper>,
     variant: Result<(), ()>,
 ) -> Result<SupportedFunctionReturnValue, WorkerError> {
+    map_variant_fatal(val, version, expected_type, variant)
+        .map_err(|(err, version)| WorkerError::FatalError(err, version))
+}
+
+fn map_variant_fatal(
+    val: Option<serde_json::Value>,
+    version: Version,
+    expected_type: Option<&TypeWrapper>,
+    variant: Result<(), ()>,
+) -> Result<SupportedFunctionReturnValue, (FatalError, Version)> {
     let supported_func = if variant.is_ok() {
         SupportedFunctionReturnValue::Ok
     } else {
@@ -53,7 +90,7 @@ fn map_variant(
             let wvt =
                 val_json::wast_val_ser::deserialize_value(&ok_val, ty.clone())
                     .map_err(|err| {
-                        WorkerError::FatalError(
+                        (
                             FatalError::ResultParsingError(
                                 ResultParsingError::ResultParsingErrorFromVal(
                                     ResultParsingErrorFromVal::TypeCheckError(format!(
@@ -68,7 +105,7 @@ fn map_variant(
             Ok(supported_func(Some(wvt)))
         }
         (None, _) => Ok(supported_func(None)), // Convenience: unit type accepts (blocks) any response.
-        (Some(ty), val) => Err(WorkerError::FatalError(
+        (Some(ty), val) => Err((
             FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
                 ResultParsingErrorFromVal::TypeCheckError(format!(
                     "failed to type check the {variant} variant `{val} as type {ty}",
