@@ -381,23 +381,23 @@ fn transform_to_outer_result(
 
 fn transform_to_append_finished(
     retval: SupportedFunctionReturnValue,
-    version: Version,
+    version: &Version,
     user_return_type: &ReturnTypeExtendable,
-) -> SupportedFunctionReturnValue {
-    let (retval, version_obtained) =
+) -> (SupportedFunctionReturnValue, Option<FatalError>) {
+    let (retval, version_obtained, fatal_error) =
         match transform_to_outer_result(retval, version.clone(), None, user_return_type) {
             Ok(RunFinished {
                 retval, version, ..
-            }) => (retval, version),
+            }) => (retval, version, None),
             Err((fatal_error, version)) => {
                 let retval = SupportedFunctionReturnValue::ExecutionError(
-                    FinishedExecutionError::from(fatal_error),
+                    FinishedExecutionError::from(&fatal_error),
                 );
-                (retval, version)
+                (retval, version, Some(fatal_error))
             }
         };
-    assert_eq!(version, version_obtained);
-    retval
+    assert_eq!(*version, version_obtained);
+    (retval, fatal_error)
 }
 
 impl WorkflowJsWorker {
@@ -429,9 +429,10 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
-        let finished_result = log.as_finished_result();
+        let already_finished_result = log.as_finished_result();
         let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
-        let captured_writes = WorkflowWorker::capture_replay_writes_from_log(
+
+        let (captured_writes, mut fatal_error) = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
             component_id,
             wasmtime_component,
@@ -447,6 +448,7 @@ impl WorkflowJsWorker {
             params,
         )
         .await?;
+        // Remove side effects, unwrapping user retval or fatal error.
         let captured_writes: Vec<_> = captured_writes
             .into_iter()
             .map(|internal_write| {
@@ -458,8 +460,12 @@ impl WorkflowJsWorker {
                         current_time,
                         retval, // workflow-js-runtime WASM result
                     } => {
-                        let retval =
-                            transform_to_append_finished(retval, version.clone(), user_return_type);
+                        let (retval, fatal_error_from_wit) =
+                            transform_to_append_finished(retval, &version, user_return_type);
+                        if fatal_error_from_wit.is_some() {
+                            // TODO: can both fatal errors be present?
+                            fatal_error = fatal_error_from_wit;
+                        }
                         CapturedDbWrite::AppendFinished {
                             execution_id,
                             version,
@@ -471,15 +477,8 @@ impl WorkflowJsWorker {
                 }
             })
             .collect();
-        if !captured_writes.is_empty() {
-            Ok(ReplayResponse::Advanceable(ReplayAdvanceable {
-                captured_writes,
-            }))
-        } else if let Some(result) = finished_result {
-            Ok(ReplayResponse::Finished { result })
-        } else {
-            Ok(ReplayResponse::Blocked)
-        }
+
+        WorkflowWorker::replay_response(captured_writes, fatal_error, already_finished_result)
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
@@ -522,7 +521,7 @@ impl WorkflowJsWorker {
 
         let old_version = log.next_version.clone();
         let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
-        let mut fresh_replay = WorkflowWorker::capture_replay_writes_from_log(
+        let (mut fresh_replay, _fatal_error) = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
             component_id,
             wasmtime_component,
@@ -546,8 +545,8 @@ impl WorkflowJsWorker {
             ..
         }) = fresh_replay.last_mut()
         {
-            let retval_transformed =
-                transform_to_append_finished(retval.clone(), version.clone(), user_return_type);
+            let (retval_transformed, _fatal_error_from_wit) =
+                transform_to_append_finished(retval.clone(), version, user_return_type);
             *retval = retval_transformed;
         }
         WorkflowWorker::advance_from_log(

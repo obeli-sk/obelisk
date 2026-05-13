@@ -1088,7 +1088,7 @@ pub enum ParamsParsingError {
         err: TypeConversionError,
     },
     #[error("parameters cannot be deserialized: {0}")]
-    ParamsDeserializationError(serde_json::Error),
+    ParamsDeserializationError(#[source] serde_json::Error),
     #[error("parameter cardinality mismatch, expected: {expected}, specified: {specified}")]
     ParameterCardinalityMismatch { expected: usize, specified: usize },
 }
