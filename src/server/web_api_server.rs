@@ -1487,7 +1487,6 @@ pub(crate) enum CapturedWriteSer {
         backtraces: Vec<backtrace::BacktraceInfoSer>,
     },
     AppendBatch {
-        current_time: DateTime<Utc>,
         #[schema(value_type = Vec<Object>)]
         events: Vec<concepts::storage::AppendRequest>,
         execution_id: String,
@@ -1496,7 +1495,6 @@ pub(crate) enum CapturedWriteSer {
         backtraces: Vec<backtrace::BacktraceInfoSer>,
     },
     AppendBatchCreateNewExecution {
-        current_time: DateTime<Utc>,
         #[schema(value_type = Vec<Object>)]
         events: Vec<concepts::storage::AppendRequest>,
         execution_id: String,
@@ -1504,13 +1502,12 @@ pub(crate) enum CapturedWriteSer {
         child_requests: Vec<CreateRequestSer>,
         backtraces: Vec<backtrace::BacktraceInfoSer>,
     },
-    AppendBatchRespondToParent {
+    AppendStubResponse {
         execution_id: String,
         version: u32,
         #[schema(value_type = Vec<Object>)]
         events: Vec<concepts::storage::AppendRequest>,
         response: StubResponseSer,
-        current_time: DateTime<Utc>,
     },
     AppendFinished {
         execution_id: String,
@@ -1539,13 +1536,12 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                     .collect(),
             },
             CapturedDbWrite::AppendBatch {
-                current_time,
+                current_time: _,
                 batch,
                 execution_id,
                 version,
                 backtraces,
             } => CapturedWriteSer::AppendBatch {
-                current_time,
                 events: batch,
                 execution_id: execution_id.to_string(),
                 version: version.0,
@@ -1555,14 +1551,13 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                     .collect(),
             },
             CapturedDbWrite::AppendBatchCreateNewExecution {
-                current_time,
+                current_time: _,
                 batch,
                 execution_id,
                 version,
                 child_req,
                 backtraces,
             } => CapturedWriteSer::AppendBatchCreateNewExecution {
-                current_time,
                 events: batch,
                 execution_id: execution_id.to_string(),
                 version: version.0,
@@ -1575,13 +1570,12 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
             CapturedDbWrite::AppendStubResponse {
                 events,
                 response,
-                current_time,
-            } => CapturedWriteSer::AppendBatchRespondToParent {
+                current_time: _,
+            } => CapturedWriteSer::AppendStubResponse {
                 execution_id: events.execution_id.to_string(),
                 version: events.version.0,
                 events: events.batch,
                 response: StubResponseSer::from(response),
-                current_time,
             },
             CapturedDbWrite::AppendFinished {
                 execution_id,
@@ -1619,13 +1613,12 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                     .collect::<Result<Vec<_>, _>>()?,
             }),
             CapturedWriteSer::AppendBatch {
-                current_time,
                 events,
                 execution_id,
                 version,
                 backtraces,
             } => Ok(Self::AppendBatch {
-                current_time,
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
                 batch: events,
                 execution_id: execution_id
                     .parse()
@@ -1637,14 +1630,13 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                     .collect::<Result<Vec<_>, _>>()?,
             }),
             CapturedWriteSer::AppendBatchCreateNewExecution {
-                current_time,
                 events,
                 execution_id,
                 version,
                 child_requests,
                 backtraces,
             } => Ok(Self::AppendBatchCreateNewExecution {
-                current_time,
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
                 batch: events,
                 execution_id: execution_id
                     .parse()
@@ -1659,12 +1651,11 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                     .map(concepts::storage::BacktraceInfo::try_from)
                     .collect::<Result<Vec<_>, _>>()?,
             }),
-            CapturedWriteSer::AppendBatchRespondToParent {
+            CapturedWriteSer::AppendStubResponse {
                 execution_id,
                 version,
                 events,
                 response,
-                current_time,
             } => Ok(Self::AppendStubResponse {
                 events: concepts::storage::AppendEventsToExecution {
                     execution_id: execution_id
@@ -1674,7 +1665,7 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                     batch: events,
                 },
                 response: response.try_into()?,
-                current_time,
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
             }),
             CapturedWriteSer::AppendFinished {
                 execution_id,

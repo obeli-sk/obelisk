@@ -1584,7 +1584,6 @@
           {
             "type": "object",
             "required": [
-              "current_time",
               "events",
               "execution_id",
               "version",
@@ -1596,10 +1595,6 @@
                 "items": {
                   "$ref": "#/components/schemas/BacktraceInfoSer"
                 }
-              },
-              "current_time": {
-                "type": "string",
-                "format": "date-time"
               },
               "events": {
                 "type": "array",
@@ -1626,7 +1621,6 @@
           {
             "type": "object",
             "required": [
-              "current_time",
               "events",
               "execution_id",
               "version",
@@ -1646,10 +1640,6 @@
                 "items": {
                   "$ref": "#/components/schemas/CreateRequestSer"
                 }
-              },
-              "current_time": {
-                "type": "string",
-                "format": "date-time"
               },
               "events": {
                 "type": "array",
@@ -1680,14 +1670,9 @@
               "version",
               "events",
               "response",
-              "current_time",
               "type"
             ],
             "properties": {
-              "current_time": {
-                "type": "string",
-                "format": "date-time"
-              },
               "events": {
                 "type": "array",
                 "items": {
@@ -1703,7 +1688,7 @@
               "type": {
                 "type": "string",
                 "enum": [
-                  "append_batch_respond_to_parent"
+                  "append_stub_response"
                 ]
               },
               "version": {

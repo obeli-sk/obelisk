@@ -1944,14 +1944,13 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                 backtraces: backtraces.into_iter().map(Into::into).collect(),
             }),
             CapturedDbWrite::AppendBatch {
-                current_time,
+                current_time: _,
                 batch,
                 execution_id,
                 version,
                 backtraces,
             } => grpc_gen::captured_write::Write::AppendBatch(
                 grpc_gen::captured_write::AppendBatch {
-                    current_time: Some(prost_wkt_types::Timestamp::from(current_time)),
                     events: append_requests_to_grpc_events(batch, version.0),
                     execution_id: Some(grpc_gen::ExecutionId {
                         id: execution_id.to_string(),
@@ -1961,7 +1960,7 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                 },
             ),
             CapturedDbWrite::AppendBatchCreateNewExecution {
-                current_time,
+                current_time: _,
                 batch,
                 execution_id,
                 version,
@@ -1969,7 +1968,6 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                 backtraces,
             } => grpc_gen::captured_write::Write::AppendBatchCreateNewExecution(
                 grpc_gen::captured_write::AppendBatchCreateNewExecution {
-                    current_time: Some(prost_wkt_types::Timestamp::from(current_time)),
                     events: append_requests_to_grpc_events(batch, version.0),
                     execution_id: Some(grpc_gen::ExecutionId {
                         id: execution_id.to_string(),
@@ -1982,9 +1980,9 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
             CapturedDbWrite::AppendStubResponse {
                 events,
                 response,
-                current_time,
-            } => grpc_gen::captured_write::Write::AppendBatchRespondToParent(
-                grpc_gen::captured_write::AppendBatchRespondToParent {
+                current_time: _,
+            } => grpc_gen::captured_write::Write::AppendStubResponse(
+                grpc_gen::captured_write::AppendStubResponse {
                     execution_id: Some(grpc_gen::ExecutionId {
                         id: events.execution_id.to_string(),
                     }),
@@ -2000,8 +1998,6 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                     result: Some(grpc_gen::SupportedFunctionResult::from(
                         response.result.clone(),
                     )),
-                    current_time: Some(prost_wkt_types::Timestamp::from(current_time)),
-                    created_at: Some(prost_wkt_types::Timestamp::from(response.created_at)),
                     finished_version: response.finished_version.0,
                 },
             ),
@@ -2044,10 +2040,7 @@ pub fn captured_write_from_grpc(
                 .collect::<Result<Vec<BacktraceInfo>, _>>()?,
         }),
         grpc_gen::captured_write::Write::AppendBatch(batch) => Ok(CapturedDbWrite::AppendBatch {
-            current_time: batch
-                .current_time
-                .argument_must_exist("current_time")?
-                .into(),
+            current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
             batch: batch
                 .events
                 .into_iter()
@@ -2066,10 +2059,7 @@ pub fn captured_write_from_grpc(
         }),
         grpc_gen::captured_write::Write::AppendBatchCreateNewExecution(batch) => {
             Ok(CapturedDbWrite::AppendBatchCreateNewExecution {
-                current_time: batch
-                    .current_time
-                    .argument_must_exist("current_time")?
-                    .into(),
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
                 batch: batch
                     .events
                     .into_iter()
@@ -2092,7 +2082,7 @@ pub fn captured_write_from_grpc(
                     .collect::<Result<Vec<BacktraceInfo>, _>>()?,
             })
         }
-        grpc_gen::captured_write::Write::AppendBatchRespondToParent(batch) => {
+        grpc_gen::captured_write::Write::AppendStubResponse(batch) => {
             let execution_id = batch
                 .execution_id
                 .argument_must_exist("execution_id")?
@@ -2112,7 +2102,7 @@ pub fn captured_write_from_grpc(
                         .parent_execution_id
                         .argument_must_exist("parent_execution_id")?
                         .try_into()?,
-                    created_at: batch.created_at.argument_must_exist("created_at")?.into(),
+                    created_at: DateTime::UNIX_EPOCH, // will be replaced in `advance`
                     join_set_id: batch
                         .join_set_id
                         .argument_must_exist("join_set_id")?
@@ -2132,10 +2122,7 @@ pub fn captured_write_from_grpc(
                     finished_version: Version::new(batch.finished_version),
                     result: batch.result.argument_must_exist("result")?.try_into()?,
                 },
-                current_time: batch
-                    .current_time
-                    .argument_must_exist("current_time")?
-                    .into(),
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
             })
         }
         grpc_gen::captured_write::Write::AppendFinished(append_finished) => {
