@@ -184,7 +184,8 @@ impl args::Execution {
                 json,
                 trim,
                 pause_submitted,
-            } => advance(&api_url, execution_id, json, trim, pause_submitted).await,
+                force,
+            } => advance(&api_url, execution_id, json, trim, pause_submitted, force).await,
             args::Execution::Upgrade {
                 api_url,
                 execution_id,
@@ -600,6 +601,7 @@ async fn replay(api_url: &str, execution_id: ExecutionId, json: bool) -> anyhow:
     send_and_print(req).await
 }
 
+/// Fetch replay response as JSON. Accepts both 200 (success) and 422 (replay failed with body).
 async fn replay_json(
     api_url: &str,
     execution_id: &ExecutionId,
@@ -612,7 +614,7 @@ async fn replay_json(
         .await
         .context("failed to send replay request")?;
     let status = resp.status();
-    if !status.is_success() {
+    if !status.is_success() && status != reqwest::StatusCode::CONFLICT {
         let body = resp.text().await.unwrap_or_default();
         bail!("server returned {status}: {body}");
     }
@@ -639,7 +641,10 @@ fn trim_replay(advance_request: &mut AdvanceRequestSer, trim: usize) {
     advance_request.captured_writes.truncate(trim);
 }
 
-fn replay_to_advanceable_request(replay: &serde_json::Value) -> anyhow::Result<AdvanceRequestSer> {
+fn replay_to_advanceable_request(
+    replay: &serde_json::Value,
+    force: bool,
+) -> anyhow::Result<AdvanceRequestSer> {
     let replay: ReplayResponseSer = serde_json::from_value(replay.clone())
         .context("failed to decode replay response as ReplayResponseSer")?;
     match replay {
@@ -652,6 +657,22 @@ fn replay_to_advanceable_request(replay: &serde_json::Value) -> anyhow::Result<A
         ReplayResponseSer::Blocked => {
             bail!("execution is blocked")
         }
+        ReplayResponseSer::ReplayFailed {
+            error,
+            captured_writes,
+        } => {
+            if force {
+                eprintln!(
+                    "Replay failed: {error}. Advancing with --force to persist execution error."
+                );
+                Ok(AdvanceRequestSer { captured_writes })
+            } else {
+                bail!(
+                    "replay failed: {error}, {} captured writes available (use --force to advance with execution error)",
+                    captured_writes.len()
+                )
+            }
+        }
     }
 }
 
@@ -661,9 +682,10 @@ async fn advance(
     json: bool,
     trim: Option<usize>,
     pause_submitted: bool,
+    force: bool,
 ) -> anyhow::Result<()> {
     let replay = replay_json(api_url, &execution_id).await?;
-    let mut advance_request = replay_to_advanceable_request(&replay)?;
+    let mut advance_request = replay_to_advanceable_request(&replay, force)?;
     if let Some(trim) = trim {
         trim_replay(&mut advance_request, trim);
     }

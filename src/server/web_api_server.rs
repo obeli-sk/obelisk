@@ -1678,6 +1678,10 @@ pub(crate) enum ReplayResponseSer {
         retval: serde_json::Value, // SupportedFunctionReturnValue -> RetVal
     },
     Blocked,
+    ReplayFailed {
+        error: String,
+        captured_writes: Vec<CapturedWriteSer>,
+    },
 }
 
 impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayResponseSer {
@@ -2002,7 +2006,7 @@ async fn stream_execution_response_task(
     responses(
         (status = 200, description = "Execution replayed", body = ReplayResponseSer),
         (status = 404, description = "Not found"),
-        (status = 422, description = "Replay failed")
+        (status = StatusCode::CONFLICT, description = "Replay failed", body = ReplayResponseSer)
     )
 )]
 #[instrument(skip_all, fields(execution_id))]
@@ -2011,19 +2015,35 @@ async fn execution_replay(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    let replay_response = replay_execution_internal(&state, &execution_id, accept).await?;
-    let ser = ReplayResponseSer::from(replay_response);
+    let ser = replay_execution_internal(&state, &execution_id, accept).await?;
+    let status = if matches!(ser, ReplayResponseSer::ReplayFailed { .. }) {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::OK
+    };
     Ok(match accept {
-        AcceptHeader::Json => Json(ser).into_response(),
-        AcceptHeader::Text => match ser {
-            ReplayResponseSer::Advanceable { captured_writes } => {
-                format!("outcome: advanceable, {} writes", captured_writes.len()).into_response()
-            }
-            ReplayResponseSer::Finished { retval } => {
-                format!("outcome: finished\nresult: {retval}").into_response()
-            }
-            ReplayResponseSer::Blocked => "outcome: blocked".into_response(),
-        },
+        AcceptHeader::Json => (status, Json(ser)).into_response(),
+        AcceptHeader::Text => {
+            let body = match ser {
+                ReplayResponseSer::Advanceable { captured_writes } => {
+                    format!("outcome: advanceable, {} writes", captured_writes.len())
+                }
+                ReplayResponseSer::Finished { retval } => {
+                    format!("outcome: finished\nresult: {retval}")
+                }
+                ReplayResponseSer::Blocked => "outcome: blocked".to_string(),
+                ReplayResponseSer::ReplayFailed {
+                    error,
+                    captured_writes,
+                } => {
+                    format!(
+                        "outcome: replay_failed, error: {error}, {} writes",
+                        captured_writes.len()
+                    )
+                }
+            };
+            (status, body).into_response()
+        }
     })
 }
 
@@ -2247,7 +2267,7 @@ async fn replay_execution_internal(
     state: &Arc<WebApiState>,
     execution_id: &ExecutionId,
     accept: AcceptHeader,
-) -> Result<wasm_workers::workflow::workflow_worker::ReplayResponse, HttpResponse> {
+) -> Result<ReplayResponseSer, HttpResponse> {
     let (deployment_id, component_registry_ro, replay_info, component_id) =
         get_replay_target(state, execution_id, accept).await?;
     let logs_storage_config = replay_info
@@ -2257,7 +2277,29 @@ async fn replay_execution_internal(
             log_sender: state.log_forwarder_sender.clone(),
         });
 
-    if let Some(js_info) = &replay_info.js_workflow_info {
+    let map_replay_err =
+        |err: wasm_workers::workflow::workflow_worker::ReplayError| -> Result<ReplayResponseSer, HttpResponse> {
+            use wasm_workers::workflow::workflow_worker::ReplayError;
+            match err {
+                ReplayError::ReplayFailed {
+                    err,
+                    captured_writes,
+                } => Ok(ReplayResponseSer::ReplayFailed {
+                    error: err.to_string(),
+                    captured_writes: captured_writes
+                        .into_iter()
+                        .map(CapturedWriteSer::from)
+                        .collect(),
+                }),
+                other => Err(HttpResponse {
+                    status: StatusCode::UNPROCESSABLE_ENTITY,
+                    message: format!("Replay error: {other}"),
+                    accept,
+                }),
+            }
+        };
+
+    let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
         WorkflowJsWorker::replay(
             deployment_id,
             component_id,
@@ -2273,11 +2315,6 @@ async fn replay_execution_internal(
             &js_info.user_return_type,
         )
         .await
-        .map_err(|err| HttpResponse {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            message: format!("Replay failed: {err}"),
-            accept,
-        })
     } else {
         WorkflowWorker::replay(
             deployment_id,
@@ -2292,11 +2329,10 @@ async fn replay_execution_internal(
             Now.clone_box(),
         )
         .await
-        .map_err(|err| HttpResponse {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            message: format!("Replay failed: {err}"),
-            accept,
-        })
+    };
+    match replay_res {
+        Ok(response) => Ok(ReplayResponseSer::from(response)),
+        Err(err) => map_replay_err(err),
     }
 }
 

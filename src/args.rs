@@ -619,6 +619,9 @@ pub(crate) enum Execution {
         /// Rewrite replayed submitted executions so they are created paused when advance is applied.
         #[arg(long)]
         pause_submitted: bool,
+        /// Advance even if replay failed with an error, persisting the execution error.
+        #[arg(long)]
+        force: bool,
     },
     /// Upgrade a workflow execution to the current component version in the active deployment.
     ///

@@ -95,5 +95,8 @@ expression: functions
   },
   {
     "ffqn": "testing:integration/workflow-date-now.date-now"
+  },
+  {
+    "ffqn": "testing:integration/workflow-return-wrong-type.return-wrong-type"
   }
 ]

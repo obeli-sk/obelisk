@@ -32,11 +32,20 @@ pub enum WorkerResultOk {
     DbUpdatedByWorkerOrWatcher,
     /// The execution run has returned a valid `retval`. Activity with retry budget returning `err` will be retried by the executor.
     #[display("{retval}")]
+    // TODO: Extract
     RunFinished {
         retval: SupportedFunctionReturnValue,
         version: Version,
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
+}
+
+#[derive(Debug, derive_more::Display)]
+#[display("{retval}")]
+pub struct RunFinished {
+    pub retval: SupportedFunctionReturnValue,
+    pub version: Version,
+    pub http_client_traces: Option<Vec<HttpClientTrace>>,
 }
 
 #[derive(Debug)]
@@ -162,6 +171,52 @@ impl From<FatalError> for FinishedExecutionError {
                 reason: Some(reason_generic),
                 kind: ExecutionFailureKind::Uncategorized,
                 detail,
+            },
+            FatalError::Cancelled => FinishedExecutionError {
+                kind: ExecutionFailureKind::Cancelled,
+                reason: None,
+                detail: None,
+            },
+        }
+    }
+}
+
+impl From<&FatalError> for FinishedExecutionError {
+    fn from(err: &FatalError) -> Self {
+        let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
+        match err {
+            FatalError::NondeterminismDetected { detail } => FinishedExecutionError {
+                reason: None,
+                kind: ExecutionFailureKind::NondeterminismDetected,
+                detail: Some(detail.clone()),
+            },
+            FatalError::OutOfFuel { reason } => FinishedExecutionError {
+                reason: Some(reason.clone()),
+                kind: ExecutionFailureKind::OutOfFuel,
+                detail: None,
+            },
+            FatalError::ParamsParsingError(err) => FinishedExecutionError {
+                reason: Some(reason_generic),
+                kind: ExecutionFailureKind::Uncategorized,
+                detail: err.detail(),
+            },
+            FatalError::CannotInstantiate { reason, detail } => FinishedExecutionError {
+                reason: Some(reason.clone()),
+                kind: ExecutionFailureKind::Uncategorized,
+                detail: detail.clone(),
+            },
+            FatalError::ResultParsingError(_) | FatalError::ConstraintViolation { reason: _ } => {
+                FinishedExecutionError {
+                    reason: Some(reason_generic),
+                    kind: ExecutionFailureKind::Uncategorized,
+                    detail: None,
+                }
+            }
+            FatalError::ImportedFunctionCallError { detail, .. }
+            | FatalError::WorkflowTrap { detail, .. } => FinishedExecutionError {
+                reason: Some(reason_generic),
+                kind: ExecutionFailureKind::Uncategorized,
+                detail: detail.clone(),
             },
             FatalError::Cancelled => FinishedExecutionError {
                 kind: ExecutionFailureKind::Cancelled,
