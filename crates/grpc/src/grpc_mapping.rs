@@ -1934,18 +1934,21 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                 execution_id,
                 version,
                 req,
+                backtraces,
             } => grpc_gen::captured_write::Write::Append(grpc_gen::captured_write::Append {
                 execution_id: Some(grpc_gen::ExecutionId {
                     id: execution_id.to_string(),
                 }),
                 version: version.0,
                 event: Some(append_request_to_grpc_event(req, version.0)),
+                backtraces: backtraces.into_iter().map(Into::into).collect(),
             }),
             CapturedDbWrite::AppendBatch {
                 current_time,
                 batch,
                 execution_id,
                 version,
+                backtraces,
             } => grpc_gen::captured_write::Write::AppendBatch(
                 grpc_gen::captured_write::AppendBatch {
                     current_time: Some(prost_wkt_types::Timestamp::from(current_time)),
@@ -1954,6 +1957,7 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                         id: execution_id.to_string(),
                     }),
                     version: version.0,
+                    backtraces: backtraces.into_iter().map(Into::into).collect(),
                 },
             ),
             CapturedDbWrite::AppendBatchCreateNewExecution {
@@ -2033,6 +2037,11 @@ pub fn captured_write_from_grpc(
                 .try_into()?,
             version: Version::new(append.version),
             req: append_request_from_grpc_event(append.event.argument_must_exist("event")?)?,
+            backtraces: append
+                .backtraces
+                .into_iter()
+                .map(BacktraceInfo::try_from)
+                .collect::<Result<Vec<BacktraceInfo>, _>>()?,
         }),
         grpc_gen::captured_write::Write::AppendBatch(batch) => Ok(CapturedDbWrite::AppendBatch {
             current_time: batch
@@ -2049,6 +2058,11 @@ pub fn captured_write_from_grpc(
                 .argument_must_exist("execution_id")?
                 .try_into()?,
             version: Version::new(batch.version),
+            backtraces: batch
+                .backtraces
+                .into_iter()
+                .map(BacktraceInfo::try_from)
+                .collect::<Result<Vec<BacktraceInfo>, _>>()?,
         }),
         grpc_gen::captured_write::Write::AppendBatchCreateNewExecution(batch) => {
             Ok(CapturedDbWrite::AppendBatchCreateNewExecution {

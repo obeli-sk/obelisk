@@ -115,16 +115,29 @@ async fn apply_captured_write(
             execution_id,
             version,
             req,
-        } => conn.append(execution_id, version, req).await.map(Some),
+            backtraces,
+        } => {
+            let result = conn.append(execution_id, version, req).await?;
+            if !backtraces.is_empty() {
+                conn.append_backtrace_batch(backtraces).await?;
+            }
+            Ok(Some(result))
+        }
         CapturedDbWrite::AppendBatch {
             current_time,
             batch,
             execution_id,
             version,
-        } => conn
-            .append_batch(current_time, batch, execution_id, version)
-            .await
-            .map(Some),
+            backtraces,
+        } => {
+            let result = conn
+                .append_batch(current_time, batch, execution_id, version)
+                .await?;
+            if !backtraces.is_empty() {
+                conn.append_backtrace_batch(backtraces).await?;
+            }
+            Ok(Some(result))
+        }
         CapturedDbWrite::AppendBatchCreateNewExecution {
             current_time,
             batch,
@@ -212,6 +225,25 @@ impl ReplayWorkflowDbConnection {
     pub(crate) fn execution_id(&self) -> &ExecutionId {
         &self.execution_id
     }
+}
+
+fn make_backtrace(
+    execution_id: &ExecutionId,
+    component_id: &ComponentId,
+    version: &Version,
+    next_version: &Version,
+    wasm_backtrace: Option<storage::WasmBacktrace>,
+) -> Vec<BacktraceInfo> {
+    wasm_backtrace
+        .map(|wasm_backtrace| BacktraceInfo {
+            execution_id: execution_id.clone(),
+            component_id: component_id.clone(),
+            version_min_including: version.clone(),
+            version_max_excluding: next_version.clone(),
+            wasm_backtrace,
+        })
+        .into_iter()
+        .collect()
 }
 
 fn next_version(curr_version: &Version, batch_size: usize) -> Version {
@@ -317,6 +349,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 execution_id: self.execution_id.clone(),
                 version: version.clone(),
                 req: request,
+                backtraces: backtrace.into_iter().collect(),
             });
         }
         self.version = Version::new(version.0 + 1);
@@ -327,17 +360,21 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         &mut self,
         execution_id: ExecutionId,
         req: AppendRequest,
-        _wasm_backtrace: Option<storage::WasmBacktrace>, // TODO: Add backtrace
-        _component_id: &ComponentId,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
         let version = self.version.clone();
+        let next_version = Version::new(version.0 + 1);
+        let backtraces =
+            make_backtrace(&execution_id, component_id, &version, &next_version, wasm_backtrace);
         self.collector.push_write(CapturedDbWrite::Append {
             execution_id,
             version: version.clone(),
             req,
+            backtraces,
         });
-        self.version = Version::new(version.0 + 1);
+        self.version = next_version;
         Ok(())
     }
 
@@ -347,8 +384,8 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         execution_id: ExecutionId,
         req: AppendRequest,
         cancellations: Option<JoinSetCloseCancellations>,
-        _wasm_backtrace: Option<storage::WasmBacktrace>, // TODO: Add backtrace
-        _component_id: &ComponentId,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
         assert!(
@@ -357,16 +394,20 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         );
         // only CachingDbConnection can assert the flush outcome as here `flush_non_blocking_event_cache` is stateless.
         let version = self.version.clone();
+        let next_version = Version::new(version.0 + 1);
+        let backtraces =
+            make_backtrace(&execution_id, component_id, &version, &next_version, wasm_backtrace);
 
         self.collector.push_write_with_cancellations(
             CapturedDbWrite::Append {
                 execution_id,
                 version: version.clone(),
                 req,
+                backtraces,
             },
             cancellations,
         );
-        self.version = Version::new(version.0 + 1);
+        self.version = next_version;
         Ok(())
     }
 
@@ -375,8 +416,8 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        _wasm_backtrace: Option<storage::WasmBacktrace>, // TODO: Add backtrace
-        _component_id: &ComponentId,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
         let version = self.version.clone();
@@ -387,11 +428,13 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 "closing join next is not appended using `append_batch`"
             );
         }
+        let backtraces = make_backtrace(&execution_id, component_id, &version, &next, wasm_backtrace);
         self.collector.push_write(CapturedDbWrite::AppendBatch {
             current_time,
             batch,
             execution_id,
             version,
+            backtraces,
         });
         self.version = next;
         Ok(())
@@ -403,8 +446,8 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         child_req: Vec<CreateRequest>,
-        _wasm_backtrace: Option<storage::WasmBacktrace>, // TODO: Add backtrace
-        _component_id: &ComponentId,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
         let version = self.version.clone();
@@ -415,6 +458,8 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 "closing join next is not appended using `append_batch_create_new_execution`"
             );
         }
+        let backtraces =
+            make_backtrace(&execution_id, component_id, &version, &next, wasm_backtrace);
         self.collector
             .push_write(CapturedDbWrite::AppendBatchCreateNewExecution {
                 current_time,
@@ -422,7 +467,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 execution_id,
                 version,
                 child_req,
-                backtraces: Vec::new(),
+                backtraces,
             });
         self.version = next;
         Ok(())

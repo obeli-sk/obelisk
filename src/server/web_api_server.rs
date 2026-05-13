@@ -1483,6 +1483,8 @@ pub(crate) enum CapturedWriteSer {
         version: u32,
         #[schema(value_type = Object)]
         event: concepts::storage::AppendRequest,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        backtraces: Vec<backtrace::BacktraceInfoSer>,
     },
     AppendBatch {
         current_time: DateTime<Utc>,
@@ -1490,6 +1492,8 @@ pub(crate) enum CapturedWriteSer {
         events: Vec<concepts::storage::AppendRequest>,
         execution_id: String,
         version: u32,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        backtraces: Vec<backtrace::BacktraceInfoSer>,
     },
     AppendBatchCreateNewExecution {
         current_time: DateTime<Utc>,
@@ -1524,21 +1528,31 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                 execution_id,
                 version,
                 req,
+                backtraces,
             } => CapturedWriteSer::Append {
                 execution_id: execution_id.to_string(),
                 version: version.0,
                 event: req,
+                backtraces: backtraces
+                    .into_iter()
+                    .map(backtrace::BacktraceInfoSer::from)
+                    .collect(),
             },
             CapturedDbWrite::AppendBatch {
                 current_time,
                 batch,
                 execution_id,
                 version,
+                backtraces,
             } => CapturedWriteSer::AppendBatch {
                 current_time,
                 events: batch,
                 execution_id: execution_id.to_string(),
                 version: version.0,
+                backtraces: backtraces
+                    .into_iter()
+                    .map(backtrace::BacktraceInfoSer::from)
+                    .collect(),
             },
             CapturedDbWrite::AppendBatchCreateNewExecution {
                 current_time,
@@ -1592,18 +1606,24 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                 execution_id,
                 version,
                 event,
+                backtraces,
             } => Ok(Self::Append {
                 execution_id: execution_id
                     .parse()
                     .map_err(|err| format!("invalid execution_id - {err}"))?,
                 version: Version::new(version),
                 req: event,
+                backtraces: backtraces
+                    .into_iter()
+                    .map(concepts::storage::BacktraceInfo::try_from)
+                    .collect::<Result<Vec<_>, _>>()?,
             }),
             CapturedWriteSer::AppendBatch {
                 current_time,
                 events,
                 execution_id,
                 version,
+                backtraces,
             } => Ok(Self::AppendBatch {
                 current_time,
                 batch: events,
@@ -1611,6 +1631,10 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                     .parse()
                     .map_err(|err| format!("invalid execution_id - {err}"))?,
                 version: Version::new(version),
+                backtraces: backtraces
+                    .into_iter()
+                    .map(concepts::storage::BacktraceInfo::try_from)
+                    .collect::<Result<Vec<_>, _>>()?,
             }),
             CapturedWriteSer::AppendBatchCreateNewExecution {
                 current_time,

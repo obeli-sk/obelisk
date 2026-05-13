@@ -757,12 +757,14 @@ message CapturedWrite {
     ExecutionId execution_id = 1;
     uint32 version = 2;
     ExecutionEvent event = 3;
+    repeated CapturedBacktrace backtraces = 4;
   }
   message AppendBatch {
     google.protobuf.Timestamp current_time = 1;
     repeated ExecutionEvent events = 2;
     ExecutionId execution_id = 3;
     uint32 version = 4;
+    repeated CapturedBacktrace backtraces = 5;
   }
   message AppendBatchCreateNewExecution {
     google.protobuf.Timestamp current_time = 1;
