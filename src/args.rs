@@ -560,8 +560,9 @@ pub(crate) enum Execution {
     /// Write a return value or an execution error to an already created stubbed execution,
     /// unblocking any parent workflow that is awaiting it.
     Stub(Stub),
-    /// Get the current state of an execution, optionally following the event stream.
-    Get {
+    /// Get the current state of an execution, optionally following status changes.
+    #[command(alias = "get")]
+    Status {
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
@@ -573,6 +574,26 @@ pub(crate) enum Execution {
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long, requires = "follow")]
         no_reconnect: bool,
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Get the final result of an execution.
+    Result {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Follow until the execution finishes and the final result is available.
+        #[arg(short, long)]
+        follow: bool,
+        /// Execution ID to look up.
+        execution_id: ExecutionId,
+        /// Do not attempt to reconnect on connection error while following the execution.
+        #[arg(long, requires = "follow")]
+        no_reconnect: bool,
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
     },
     /// Request cancellation of a running activity or pending delay.
     Cancel(CancelCommand),

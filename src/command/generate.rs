@@ -533,7 +533,8 @@ starting the server.
 subsequent restarts).
 - `obelisk execution submit <ffqn> '<json-args>'` — submit an execution; prints its ID.
 - `obelisk execution submit --follow <ffqn> '<json-args>'` — submit and block until finished.
-- `obelisk execution get --follow <id>` — follow a previously submitted execution.
+- `obelisk execution status [--follow] <id>` — inspect the current execution state.
+- `obelisk execution result [--follow] <id>` — fetch the final execution result.
 - `obelisk execution list [--ffqn <ffqn>] [-e <id> --show-derived]` — list executions; \
 filter by FFQN prefix or by execution ID (use `--show-derived` to include child executions).
 - `obelisk execution logs <id> --show-derived [--follow]` — fetch structured logs including child executions; \

@@ -130,19 +130,43 @@ impl args::Execution {
                 let client = get_execution_repository_client(channel).await?;
                 stub(client, execution_id, return_value).await
             }
-            args::Execution::Get {
+            args::Execution::Status {
                 api_url,
                 execution_id,
                 follow,
                 no_reconnect,
+                json,
             } => {
-                let channel = to_channel(&api_url).await?;
-                let client = get_execution_repository_client(channel).await?;
-                let opts = GetStatusOptions {
-                    follow,
-                    no_reconnect,
-                };
-                get_status(client, execution_id, opts).await
+                if json {
+                    get_execution_status_json(&api_url, execution_id, follow, no_reconnect).await
+                } else {
+                    let channel = to_channel(&api_url).await?;
+                    let client = get_execution_repository_client(channel).await?;
+                    let opts = GetStatusOptions {
+                        follow,
+                        no_reconnect,
+                    };
+                    get_execution_status(client, execution_id, opts).await
+                }
+            }
+            args::Execution::Result {
+                api_url,
+                execution_id,
+                follow,
+                no_reconnect,
+                json,
+            } => {
+                if json {
+                    get_execution_result_json(&api_url, execution_id, follow, no_reconnect).await
+                } else {
+                    let channel = to_channel(&api_url).await?;
+                    let client = get_execution_repository_client(channel).await?;
+                    let opts = GetStatusOptions {
+                        follow,
+                        no_reconnect,
+                    };
+                    get_execution_result(client, execution_id, opts).await
+                }
             }
             args::Execution::Cancel(cancel_request) => cancel_request.execute().await,
             args::Execution::Pause {
@@ -277,7 +301,7 @@ pub(crate) async fn submit(
                     follow: true,
                     no_reconnect,
                 };
-                get_status(client, execution_id, opts).await?;
+                get_execution_result(client, execution_id, opts).await?;
             }
         }
         SubmitOutputOpts::Json {
@@ -371,24 +395,53 @@ pub(crate) async fn stub(
     Ok(())
 }
 
-/// Return true if the status is Finished.
-fn print_status(response: grpc_gen::GetStatusResponse) -> Result<bool, AlreadyPrintedError> {
+#[derive(Clone, Copy)]
+enum GetMode {
+    Status,
+    Result,
+}
+
+enum PollOutcome {
+    Pending,
+    Finished,
+}
+
+fn print_status(
+    response: grpc_gen::GetStatusResponse,
+    mode: GetMode,
+) -> Result<PollOutcome, AlreadyPrintedError> {
     use grpc_gen::get_status_response::Message;
     let message = response.message.expect("message expected");
 
     let status_or_finished = match message {
         Message::Summary(summary) => Either::Left(summary.current_status.expect("sent by server")),
         Message::CurrentStatus(status) => Either::Left(status),
-        Message::FinishedStatus(finished) => Either::Right(finished),
+        Message::FinishedStatus(finished) => match mode {
+            GetMode::Status => {
+                println!("Finished");
+                return Ok(PollOutcome::Finished);
+            }
+            GetMode::Result => Either::Right(finished),
+        },
     };
     match status_or_finished {
         Either::Left(status) => {
+            let is_finished = matches!(
+                status
+                    .status
+                    .as_ref()
+                    .expect("status is sent by the server"),
+                Status::Finished(_)
+            );
             println!("{}", format_pending_status(status));
-            Ok(false)
+            match mode {
+                GetMode::Status if is_finished => Ok(PollOutcome::Finished),
+                GetMode::Status | GetMode::Result => Ok(PollOutcome::Pending),
+            }
         }
         Either::Right(finished) => {
             print_finished_status(finished)?;
-            Ok(true)
+            Ok(PollOutcome::Finished)
         }
     }
 }
@@ -517,15 +570,16 @@ pub(crate) struct GetStatusOptions {
     pub(crate) no_reconnect: bool,
 }
 
-pub(crate) async fn get_status(
+pub(crate) async fn get_execution_result(
     mut client: ExecutionRepositoryClient,
     execution_id: ExecutionId,
     opts: GetStatusOptions,
 ) -> anyhow::Result<()> {
     let reconnect = !opts.no_reconnect;
     loop {
-        match poll_get_status_stream(&mut client, &execution_id, opts).await {
-            Ok(()) => return Ok(()),
+        match poll_get_status_stream(&mut client, &execution_id, opts, GetMode::Result).await {
+            Ok(PollOutcome::Finished) => return Ok(()),
+            Ok(PollOutcome::Pending) => bail!("execution not finished yet"),
             Err(err) => {
                 if reconnect {
                     if err.downcast_ref::<tonic::Status>().is_some() {
@@ -546,27 +600,180 @@ pub(crate) async fn get_status(
     }
 }
 
+pub(crate) async fn get_execution_status(
+    mut client: ExecutionRepositoryClient,
+    execution_id: ExecutionId,
+    opts: GetStatusOptions,
+) -> anyhow::Result<()> {
+    let reconnect = !opts.no_reconnect;
+    loop {
+        match poll_get_status_stream(&mut client, &execution_id, opts, GetMode::Status).await {
+            Ok(_) => return Ok(()),
+            Err(err) => {
+                if reconnect {
+                    if err.downcast_ref::<tonic::Status>().is_some() {
+                        eprintln!("Got error while polling the status, reconnecting - {err}");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    } else if err.downcast_ref::<AlreadyPrintedError>().is_some() {
+                        return Err(err);
+                    } else {
+                        eprintln!("Encountered unrecoverable error, not reconnecting - {err:?}");
+                        return Err(err);
+                    }
+                } else {
+                    return Err(err);
+                }
+            }
+        }
+    }
+}
+
 async fn poll_get_status_stream(
     client: &mut ExecutionRepositoryClient,
     execution_id: &ExecutionId,
     opts: GetStatusOptions,
-) -> anyhow::Result<()> {
+    mode: GetMode,
+) -> anyhow::Result<PollOutcome> {
     let mut stream = client
         .get_status(tonic::Request::new(grpc_gen::GetStatusRequest {
             execution_id: Some(grpc_gen::ExecutionId::from(execution_id.clone())),
             follow: opts.follow,
-            send_finished_status: true,
+            send_finished_status: matches!(mode, GetMode::Result),
         }))
         .await?
         .into_inner();
     while let Some(status) = stream.message().await? {
-        let finished = print_status(status)?;
-        if finished {
-            // Do not print last backtrace on finished.
-            return Ok(());
+        let outcome = print_status(status, mode)?;
+        if matches!(outcome, PollOutcome::Finished) {
+            return Ok(outcome);
         }
     }
+    Ok(PollOutcome::Pending)
+}
+
+async fn fetch_execution_status_json(
+    client: &reqwest::Client,
+    api_url: &str,
+    execution_id: &ExecutionId,
+) -> anyhow::Result<serde_json::Value> {
+    let response = client
+        .get(format!("{api_url}/v1/executions/{execution_id}/status"))
+        .header(ACCEPT, "application/json")
+        .send()
+        .await
+        .context("failed to get execution status")?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        bail!("server returned {status}: {body}");
+    }
+    let value: serde_json::Value = response
+        .json()
+        .await
+        .context("failed to parse execution status response")?;
+    Ok(value)
+}
+
+fn execution_status_json_is_finished(status: &serde_json::Value) -> bool {
+    status["pending_state"]["status"].as_str() == Some("finished")
+}
+
+fn print_json(value: &serde_json::Value) -> anyhow::Result<()> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).context("failed to format JSON output")?
+    );
     Ok(())
+}
+
+async fn fetch_execution_result_json(
+    client: &reqwest::Client,
+    api_url: &str,
+    execution_id: &ExecutionId,
+    follow: bool,
+) -> anyhow::Result<serde_json::Value> {
+    let response = client
+        .get(format!("{api_url}/v1/executions/{execution_id}"))
+        .query(&[("follow", follow.to_string())])
+        .header(ACCEPT, "application/json")
+        .send()
+        .await
+        .context("failed to get execution result")?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        bail!("server returned {status}: {body}");
+    }
+    response
+        .json()
+        .await
+        .context("failed to parse execution result response")
+}
+
+async fn get_execution_status_json(
+    api_url: &str,
+    execution_id: ExecutionId,
+    follow: bool,
+    no_reconnect: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let reconnect = !no_reconnect;
+    let mut last_status: Option<serde_json::Value> = None;
+
+    loop {
+        let status = match fetch_execution_status_json(&client, api_url, &execution_id).await {
+            Ok(status) => status,
+            Err(err) => {
+                if reconnect {
+                    eprintln!("Got error while polling the status, reconnecting - {err}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+                return Err(err);
+            }
+        };
+        if last_status.as_ref() != Some(&status) {
+            print_json(&status)?;
+        }
+
+        if execution_status_json_is_finished(&status) {
+            return Ok(());
+        }
+
+        if !follow {
+            return Ok(());
+        }
+
+        last_status = Some(status);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+async fn get_execution_result_json(
+    api_url: &str,
+    execution_id: ExecutionId,
+    follow: bool,
+    no_reconnect: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let reconnect = follow && !no_reconnect;
+
+    loop {
+        match fetch_execution_result_json(&client, api_url, &execution_id, follow).await {
+            Ok(result) => {
+                print_json(&result)?;
+                return Ok(());
+            }
+            Err(err) => {
+                if reconnect {
+                    eprintln!("Got error while polling the result, reconnecting - {err}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                } else {
+                    return Err(err);
+                }
+            }
+        }
+    }
 }
 
 /// Send a GET request and forward the response body to stdout.
@@ -707,10 +914,24 @@ async fn advance(
 
 #[cfg(test)]
 mod tests {
-    use super::pause_submitted_in_replay;
+    use super::{execution_status_json_is_finished, pause_submitted_in_replay};
     use crate::server::web_api_server::{AdvanceRequestSer, CapturedWriteSer};
     use chrono::{DateTime, Utc};
     use serde_json::json;
+
+    #[test]
+    fn execution_status_json_finished_detection() {
+        assert!(execution_status_json_is_finished(&json!({
+            "pending_state": {
+                "status": "finished"
+            }
+        })));
+        assert!(!execution_status_json_is_finished(&json!({
+            "pending_state": {
+                "status": "locked"
+            }
+        })));
+    }
 
     #[test]
     fn pause_submitted_marks_only_new_child_requests_as_paused() {
