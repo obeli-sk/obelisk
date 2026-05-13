@@ -1099,8 +1099,15 @@
           "404": {
             "description": "Not found"
           },
-          "422": {
-            "description": "Replay failed"
+          "409": {
+            "description": "Replay failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayResponseSer"
+                }
+              }
+            }
           }
         }
       }
@@ -2378,6 +2385,31 @@
                 "type": "string",
                 "enum": [
                   "blocked"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "error",
+              "captured_writes",
+              "type"
+            ],
+            "properties": {
+              "captured_writes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CapturedWriteSer"
+                }
+              },
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replay_failed"
                 ]
               }
             }
