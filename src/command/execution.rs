@@ -715,19 +715,16 @@ mod tests {
     #[test]
     fn pause_submitted_marks_only_new_child_requests_as_paused() {
         let current_time: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
-        // TODO: construct `AdvanceRequestSer` directly
         let mut advance_request = serde_json::from_value::<AdvanceRequestSer>(json!({
             "captured_writes": [
                 {
                     "type": "append_batch",
-                    "current_time": current_time,
                     "execution_id": "Exec_01",
                     "version": 1,
                     "events": []
                 },
                 {
                     "type": "append_batch_create_new_execution",
-                    "current_time": current_time,
                     "events": [],
                     "execution_id": "Exec_01",
                     "version": 2,

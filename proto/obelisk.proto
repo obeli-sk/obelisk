@@ -760,21 +760,21 @@ message CapturedWrite {
     repeated CapturedBacktrace backtraces = 4;
   }
   message AppendBatch {
-    google.protobuf.Timestamp current_time = 1;
+    reserved 1;
     repeated ExecutionEvent events = 2;
     ExecutionId execution_id = 3;
     uint32 version = 4;
     repeated CapturedBacktrace backtraces = 5;
   }
   message AppendBatchCreateNewExecution {
-    google.protobuf.Timestamp current_time = 1;
+    reserved 1;
     repeated ExecutionEvent events = 2;
     ExecutionId execution_id = 3;
     uint32 version = 4;
     repeated CreateExecutionRequest child_requests = 5;
     repeated CapturedBacktrace backtraces = 6;
   }
-  message AppendBatchRespondToParent {
+  message AppendStubResponse {
     ExecutionId execution_id = 1;
     uint32 version = 2;
     repeated ExecutionEvent events = 3;
@@ -782,8 +782,7 @@ message CapturedWrite {
     JoinSetId join_set_id = 5;
     ExecutionId child_execution_id = 6;
     SupportedFunctionResult result = 7;
-    google.protobuf.Timestamp current_time = 8;
-    google.protobuf.Timestamp created_at = 9;
+    reserved 8, 9;
     uint32 finished_version = 10;
   }
   message AppendFinished {
@@ -795,7 +794,7 @@ message CapturedWrite {
     Append append = 1;
     AppendBatch append_batch = 2;
     AppendBatchCreateNewExecution append_batch_create_new_execution = 3;
-    AppendBatchRespondToParent append_batch_respond_to_parent = 4;
+    AppendStubResponse append_stub_response = 4;
     AppendFinished append_finished = 5;
   }
 }
