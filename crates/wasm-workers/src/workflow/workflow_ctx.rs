@@ -2805,7 +2805,7 @@ pub(crate) mod tests {
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
     use executor::executor::LockingStrategy;
-    use executor::worker::WorkerResultOk;
+    use executor::worker::{RunFinished, WorkerResultOk};
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
@@ -3118,11 +3118,11 @@ pub(crate) mod tests {
             let res = match workflow_ctx.join_sets_close_on_finish().await {
                 Ok(()) => {
                     info!("Finishing");
-                    WorkerResult::Ok(WorkerResultOk::RunFinished {
+                    WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
                         retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         version: workflow_ctx.db_connection.version().clone(),
                         http_client_traces: None,
-                    })
+                    }))
                 }
                 Err(ApplyError::InterruptDbUpdated) => {
                     info!("Interrupting");
@@ -3535,7 +3535,7 @@ pub(crate) mod tests {
             }
             let (finished_value, version) = assert_matches!(
                 worker_result,
-                WorkerResult::Ok(WorkerResultOk::RunFinished { retval, version, http_client_traces:_ }) => (retval, version),
+                WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished { retval, version, http_client_traces:_ })) => (retval, version),
                 "should be finished"
             );
             info!("Appending finished result");

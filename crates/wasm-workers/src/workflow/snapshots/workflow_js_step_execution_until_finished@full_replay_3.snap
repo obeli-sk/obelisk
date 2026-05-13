@@ -25,7 +25,35 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
           }
         ],
         "execution_id": "E_00000000000000000000000000",
-        "version": 4
+        "version": 4,
+        "backtraces": [
+          {
+            "execution_id": "E_00000000000000000000000000",
+            "component_id": {
+              "component_type": "workflow",
+              "name": "test_js_workflow",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "version_min_including": 4,
+            "version_max_excluding": 5,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "module": "unknown",
+                  "func_name": "call_stub",
+                  "symbols": [
+                    {
+                      "func_name": null,
+                      "file": null,
+                      "line": 5,
+                      "col": 25
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -45,7 +73,35 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
               }
             }
           }
-        }
+        },
+        "backtraces": [
+          {
+            "execution_id": "E_00000000000000000000000000",
+            "component_id": {
+              "component_type": "workflow",
+              "name": "test_js_workflow",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "version_min_including": 5,
+            "version_max_excluding": 6,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "module": "unknown",
+                  "func_name": "call_stub",
+                  "symbols": [
+                    {
+                      "func_name": null,
+                      "file": null,
+                      "line": 6,
+                      "col": 41
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     {

@@ -1003,12 +1003,14 @@ pub enum CapturedDbWrite {
         execution_id: ExecutionId,
         version: Version,
         req: AppendRequest,
+        backtraces: Vec<BacktraceInfo>,
     },
     AppendBatch {
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
+        backtraces: Vec<BacktraceInfo>,
     },
     AppendBatchCreateNewExecution {
         current_time: DateTime<Utc>,
@@ -1022,6 +1024,7 @@ pub enum CapturedDbWrite {
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
+        // no backtraces as this is the second write (to the stub execution + current execution response)
     },
     AppendFinished {
         // TODO: Extract struct AppendFinished

@@ -52,16 +52,19 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
             execution_id,
             version,
             req,
+            backtraces,
         } => CapturedDbWrite::Append {
             execution_id,
             version,
             req: normalize_append_request_for_matching(req),
+            backtraces,
         },
         CapturedDbWrite::AppendBatch {
             current_time: _,
             batch,
             execution_id,
             version,
+            backtraces,
         } => CapturedDbWrite::AppendBatch {
             current_time: DateTime::UNIX_EPOCH,
             batch: batch
@@ -70,6 +73,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
                 .collect(),
             execution_id,
             version,
+            backtraces,
         },
         CapturedDbWrite::AppendBatchCreateNewExecution {
             current_time: _,

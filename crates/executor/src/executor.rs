@@ -1,4 +1,6 @@
-use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk};
+use crate::worker::{
+    FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
+};
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, RunId};
@@ -513,11 +515,11 @@ impl ExecTask {
         unlock_expiry_on_limit_reached: Duration,
     ) -> Result<Option<AppendOrCancel>, DbErrorWrite> {
         Ok(match worker_result {
-            WorkerResult::Ok(WorkerResultOk::RunFinished {
+            WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
                 retval: ref retval @ SupportedFunctionReturnValue::Err(ref result_err),
                 version,
                 http_client_traces,
-            }) if component_type == ComponentType::Activity
+            })) if component_type == ComponentType::Activity
                 && can_be_retried.is_some()
                 && !retval.is_permanent_variant() =>
             {
@@ -547,11 +549,11 @@ impl ExecTask {
                 }))
             }
 
-            WorkerResult::Ok(WorkerResultOk::RunFinished {
+            WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
                 retval: result,
                 version,
                 http_client_traces,
-            }) => {
+            })) => {
                 info!("Execution finished: {result}");
                 let child_finished =
                     parent.map(
@@ -1016,11 +1018,11 @@ mod tests {
             db_pool,
             exec_config,
             Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-                WorkerResultOk::RunFinished {
+                WorkerResultOk::RunFinished(RunFinished {
                     retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     version: Version::new(2),
                     http_client_traces: None,
-                },
+                }),
             ))),
             tick_fn,
         )
@@ -1061,11 +1063,11 @@ mod tests {
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-            WorkerResultOk::RunFinished {
+            WorkerResultOk::RunFinished(RunFinished {
                 retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 version: Version::new(2),
                 http_client_traces: None,
-            },
+            }),
         )));
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -1247,11 +1249,11 @@ mod tests {
                 Version::new(4),
                 (
                     vec![],
-                    WorkerResult::Ok(WorkerResultOk::RunFinished {
+                    WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
                         retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                         version: Version::new(4),
                         http_client_traces: None,
-                    }),
+                    })),
                 ),
             )])),
         )));
@@ -1649,11 +1651,11 @@ mod tests {
     impl Worker for SleepyWorker {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             tokio::time::sleep(self.duration).await;
-            WorkerResult::Ok(WorkerResultOk::RunFinished {
+            WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
                 retval: self.result.clone(),
                 version: ctx.version,
                 http_client_traces: None,
-            })
+            }))
         }
 
         fn exported_functions_noext(&self) -> &[FunctionMetadata] {

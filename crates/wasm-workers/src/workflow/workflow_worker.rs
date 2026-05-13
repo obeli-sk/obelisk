@@ -27,7 +27,7 @@ use concepts::{
     FunctionMetadata, PackageIfcFns, Params, ResultParsingError, StrVariant, TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
-use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
+use executor::worker::{FatalError, RunFinished, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Either;
 use std::future;
@@ -815,11 +815,11 @@ impl WorkflowWorker {
             WorkerResultRefactored::Ok(retval, mut workflow_ctx) => {
                 match Self::close_join_sets(&mut workflow_ctx).await {
                     Ok(Either::Left(CloseJoinSetOk::Ok)) => Ok((
-                        Either::Left(WorkerResultOk::RunFinished {
+                        Either::Left(WorkerResultOk::RunFinished(RunFinished {
                             retval,
                             version: workflow_ctx.db_connection.version().clone(),
                             http_client_traces: None,
-                        }),
+                        })),
                         workflow_ctx.db_connection,
                     )),
                     Ok(Either::Left(CloseJoinSetOk::DbUpdatedByWorkerOrWatcher)) => Ok((
@@ -998,7 +998,7 @@ impl WorkflowWorker {
             .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
             .await
         {
-            Ok((Either::Left(WorkerResultOk::RunFinished { retval, .. }), db)) => {
+            Ok((Either::Left(WorkerResultOk::RunFinished(RunFinished { retval, .. })), db)) => {
                 Ok((Some(retval), db, None))
             }
             Ok((_, db)) => Ok((None, db, None)), // replay interrupted or db updated (both have writes) or execution is waiting
