@@ -31,13 +31,8 @@ pub enum WorkerResultOk {
     #[display("db updated by worker or watcher")]
     DbUpdatedByWorkerOrWatcher,
     /// The execution run has returned a valid `retval`. Activity with retry budget returning `err` will be retried by the executor.
-    #[display("{retval}")]
-    // TODO: Extract
-    RunFinished {
-        retval: SupportedFunctionReturnValue,
-        version: Version,
-        http_client_traces: Option<Vec<HttpClientTrace>>,
-    },
+    #[display("{_0}")]
+    RunFinished(RunFinished),
 }
 
 #[derive(Debug, derive_more::Display)]

@@ -14,7 +14,7 @@ use concepts::{
     ComponentId, FunctionFqn, PackageIfcFns, Params, SupportedFunctionReturnValue, TrapKind,
 };
 use concepts::{FunctionMetadata, ResultParsingError};
-use executor::worker::{FatalError, WorkerContext, WorkerResult, WorkerResultOk};
+use executor::worker::{FatalError, RunFinished, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
 use std::sync::Arc;
@@ -437,11 +437,11 @@ impl ActivityWorker {
                 .collect_vec(),
         );
         match res {
-            Ok(Ok(result)) => WorkerResult::Ok(WorkerResultOk::RunFinished {
+            Ok(Ok(result)) => WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
                 retval: result,
                 version: version.clone(),
                 http_client_traces,
-            }),
+            })),
             Ok(Err(result_parsing_err)) => WorkerResult::Err(WorkerError::FatalError(
                 FatalError::ResultParsingError(result_parsing_err),
                 version.clone(),

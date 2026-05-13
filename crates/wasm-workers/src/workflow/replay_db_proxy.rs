@@ -366,8 +366,13 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         assert_eq!(self.execution_id, execution_id);
         let version = self.version.clone();
         let next_version = Version::new(version.0 + 1);
-        let backtraces =
-            make_backtrace(&execution_id, component_id, &version, &next_version, wasm_backtrace);
+        let backtraces = make_backtrace(
+            &execution_id,
+            component_id,
+            &version,
+            &next_version,
+            wasm_backtrace,
+        );
         self.collector.push_write(CapturedDbWrite::Append {
             execution_id,
             version: version.clone(),
@@ -395,8 +400,13 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         // only CachingDbConnection can assert the flush outcome as here `flush_non_blocking_event_cache` is stateless.
         let version = self.version.clone();
         let next_version = Version::new(version.0 + 1);
-        let backtraces =
-            make_backtrace(&execution_id, component_id, &version, &next_version, wasm_backtrace);
+        let backtraces = make_backtrace(
+            &execution_id,
+            component_id,
+            &version,
+            &next_version,
+            wasm_backtrace,
+        );
 
         self.collector.push_write_with_cancellations(
             CapturedDbWrite::Append {
@@ -428,7 +438,8 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 "closing join next is not appended using `append_batch`"
             );
         }
-        let backtraces = make_backtrace(&execution_id, component_id, &version, &next, wasm_backtrace);
+        let backtraces =
+            make_backtrace(&execution_id, component_id, &version, &next, wasm_backtrace);
         self.collector.push_write(CapturedDbWrite::AppendBatch {
             current_time,
             batch,

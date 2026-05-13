@@ -15,7 +15,7 @@ use concepts::{
     ReturnTypeExtendable,
 };
 use executor::worker::{
-    FatalError, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
+    FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
 use secrecy::{ExposeSecret, SecretString};
 use std::sync::Arc;
@@ -436,11 +436,11 @@ impl Worker for ActivityExecWorker {
                 version.clone(),
             )?
         };
-        Ok(WorkerResultOk::RunFinished {
+        Ok(WorkerResultOk::RunFinished(RunFinished {
             retval,
             version,
             http_client_traces: None,
-        })
+        }))
     }
 }
 
