@@ -1556,6 +1556,12 @@
               "type"
             ],
             "properties": {
+              "backtraces": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BacktraceInfoSer"
+                }
+              },
               "event": {
                 "type": "object"
               },
@@ -1585,6 +1591,12 @@
               "type"
             ],
             "properties": {
+              "backtraces": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BacktraceInfoSer"
+                }
+              },
               "current_time": {
                 "type": "string",
                 "format": "date-time"
