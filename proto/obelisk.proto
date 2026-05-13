@@ -826,10 +826,16 @@ message ReplayExecutionResponse {
   message Blocked {
   }
 
+  message ReplayFailed {
+    string error = 1;
+    repeated CapturedWrite captured_writes = 2;
+  }
+
   oneof outcome {
     Advanceable advanceable = 1;
     Finished finished = 2;
     Blocked blocked = 3;
+    ReplayFailed replay_failed = 4;
   }
 }
 

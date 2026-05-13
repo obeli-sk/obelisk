@@ -263,6 +263,13 @@ ffqn = "testing:integration/workflow-date-now.date-now"
 params = []
 return_type = "result<string, string>"
 
+[[workflow_js]]
+name = "test_return_wrong_type_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/return_wrong_type.js"
+ffqn = "testing:integration/workflow-return-wrong-type.return-wrong-type"
+params = []
+return_type = "result<u32>"
+
 [[activity_js]]
 name = "test_hmac_sign_verify_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/hmac_sign_verify.js"
@@ -833,6 +840,31 @@ enum TestExecutionClient {
     WebApi,
 }
 
+fn grpc_result_to_json(value: grpc::grpc_gen::SupportedFunctionResult) -> serde_json::Value {
+    match value.value {
+        Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => {
+            let return_value = ok.return_value.expect("ok return_value must exist");
+            let ok = serde_json::from_slice::<serde_json::Value>(&return_value.value)
+                .expect("server must send `return_value` as a valid JSON");
+            json!({ "ok": ok })
+        }
+        Some(grpc::grpc_gen::supported_function_result::Value::Error(err)) => {
+            let return_value = err.return_value.expect("err return_value must exist");
+            let err = serde_json::from_slice::<serde_json::Value>(&return_value.value)
+                .expect("server must send `return_value` as a valid JSON");
+            json!({ "err": err })
+        }
+        Some(grpc::grpc_gen::supported_function_result::Value::ExecutionFailure(failure)) => {
+            json!({ "execution_error": {
+                "kind": failure.kind,
+                "reason": failure.reason,
+                "detail": failure.detail,
+            }})
+        }
+        None => panic!("SupportedFunctionResult value must be set"),
+    }
+}
+
 #[derive(Debug)]
 struct ReplayCapturedWritesSummary {
     captured_writes_len: usize,
@@ -897,7 +929,30 @@ impl TestExecutionClient {
                             captured_writes_len: 0,
                         }
                     }
+                    grpc::grpc_gen::replay_execution_response::Outcome::ReplayFailed(failed) => {
+                        panic!("unexpected replay failure: {}", failed.error)
+                    }
                 }
+            }
+        }
+    }
+
+    async fn step_execution_until_finished(
+        self,
+        server: &TestServer,
+        ffqn: &str,
+        params: Vec<Value>,
+    ) -> AdvanceExecutionSummary {
+        match self {
+            TestExecutionClient::WebApi => {
+                server
+                    .step_execution_until_finished_webapi(ffqn, params)
+                    .await
+            }
+            TestExecutionClient::Grpc => {
+                server
+                    .step_execution_until_finished_grpc(ffqn, params)
+                    .await
             }
         }
     }
@@ -1056,19 +1111,16 @@ impl TestServer {
                 }
                 grpc::grpc_gen::replay_execution_response::Outcome::Finished(finished) => {
                     let value = finished.result.expect("finished result must be set");
-                    let ok_payload = match value.value {
-                        Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
-                        other => panic!("expected ok finished value, got {other:?}"),
-                    };
-                    let return_value = ok_payload.return_value.expect("ok return_value must exist");
                     return AdvanceExecutionSummary {
                         steps,
-                        retval: serde_json::from_slice(&return_value.value)
-                            .expect("server must send `return_value` as a valid JSON"),
+                        retval: grpc_result_to_json(value),
                     };
                 }
                 grpc::grpc_gen::replay_execution_response::Outcome::Blocked(_) => {
                     unreachable!("blocked state is not created by any test")
+                }
+                grpc::grpc_gen::replay_execution_response::Outcome::ReplayFailed(failed) => {
+                    failed.captured_writes
                 }
             };
 
@@ -1086,16 +1138,9 @@ impl TestServer {
             match advance.result.expect("advance result must be set") {
                 grpc::grpc_gen::advance_execution_response::Result::Success(success) => {
                     if let Some(value) = success.finished {
-                        let ok_payload = match value.value {
-                            Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => ok,
-                            other => panic!("expected ok finished value, got {other:?}"),
-                        };
-                        let ok = ok_payload.return_value.expect("ok return_value must exist");
-                        let ok = serde_json::from_slice::<serde_json::Value>(&ok.value)
-                            .expect("server must send `return_value` as a valid JSON");
                         return AdvanceExecutionSummary {
                             steps,
-                            retval: json!({"ok": ok}),
+                            retval: grpc_result_to_json(value),
                         };
                     }
                 }
@@ -1146,10 +1191,17 @@ impl TestServer {
         let mut steps = 0;
         loop {
             let replay = self.replay(&exec_id).await;
-            assert_eq!(replay.status().as_u16(), 200);
+            let replay_status = replay.status().as_u16();
+            assert!(
+                replay_status == 200 || replay_status == 409,
+                "unexpected replay status: {replay_status}"
+            );
             let replay_body: ReplayResponseSer = replay.json().await.unwrap();
             let captured_writes = match replay_body {
-                ReplayResponseSer::Advanceable { captured_writes } => captured_writes,
+                ReplayResponseSer::Advanceable { captured_writes }
+                | ReplayResponseSer::ReplayFailed {
+                    captured_writes, ..
+                } => captured_writes,
                 ReplayResponseSer::Finished { retval: _ } => {
                     panic!("should have been returned as `advance` response first");
                 }
@@ -1393,17 +1445,18 @@ async fn replaying_paused_workflow_should_return_preview_events(
     server.shutdown().await;
 }
 
-#[tokio::test]
-async fn replay_and_advance_paused_js_workflow_until_finished_grpc() {
-    let server = TestServer::start(test_addr!(64)).await;
-
-    let stepped = server
-        .step_execution_until_finished_grpc(
+async fn replay_and_advance_paused_js_workflow_until_finished(
+    client: TestExecutionClient,
+    addr: String,
+) {
+    let server = TestServer::start(addr).await;
+    let stepped = client
+        .step_execution_until_finished(
+            &server,
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
         )
         .await;
-
     assert!(
         stepped.steps > 0,
         "step-through harness must execute at least one replay+advance round"
@@ -1413,23 +1466,46 @@ async fn replay_and_advance_paused_js_workflow_until_finished_grpc() {
 }
 
 #[tokio::test]
-async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
-    let server = TestServer::start(test_addr!(65)).await;
-
-    let stepped = server
-        .step_execution_until_finished_webapi(
-            "testing:integration/workflow-call-stub.call-stub",
-            vec![json!(123_u64)],
-        )
+async fn replay_and_advance_paused_js_workflow_until_finished_grpc() {
+    replay_and_advance_paused_js_workflow_until_finished(TestExecutionClient::Grpc, test_addr!(64))
         .await;
+}
 
+#[tokio::test]
+async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
+    replay_and_advance_paused_js_workflow_until_finished(
+        TestExecutionClient::WebApi,
+        test_addr!(65),
+    )
+    .await;
+}
+
+// ---- Workflow: replay failed (type mismatch) with advance --force ----
+
+const REPLAY_FAILED_FFQN: &str = "testing:integration/workflow-return-wrong-type.return-wrong-type";
+
+async fn replay_failed_js_workflow_then_advance(client: TestExecutionClient, addr: String) {
+    let server = TestServer::start(addr).await;
+    let stepped = client
+        .step_execution_until_finished(&server, REPLAY_FAILED_FFQN, vec![])
+        .await;
+    assert_eq!(stepped.steps, 1);
     assert!(
-        stepped.steps > 0,
-        "step-through harness must execute at least one replay+advance round"
+        stepped.retval["execution_error"].is_object(),
+        "expected execution_error in retval, got: {}",
+        stepped.retval
     );
-    assert_eq!(stepped.retval, json!({"ok":"stub-ok"}));
-
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn replay_failed_js_workflow_then_advance_webapi() {
+    replay_failed_js_workflow_then_advance(TestExecutionClient::WebApi, test_addr!(67)).await;
+}
+
+#[tokio::test]
+async fn replay_failed_js_workflow_then_advance_grpc() {
+    replay_failed_js_workflow_then_advance(TestExecutionClient::Grpc, test_addr!(68)).await;
 }
 
 // ---- Workflow: submit activity via join set + getResult ----
