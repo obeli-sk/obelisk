@@ -149,7 +149,17 @@ pub(crate) struct ApiDoc;
     )
 )]
 async fn openapi_json() -> impl IntoResponse {
-    Json(ApiDoc::openapi())
+    pretty_json_response(StatusCode::OK, &ApiDoc::openapi())
+}
+
+fn pretty_json_response<T: Serialize>(status: StatusCode, value: &T) -> Response {
+    let body = serde_json::to_vec_pretty(value).expect("JSON response serialization must succeed");
+    let mut response = (status, body).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/json"),
+    );
+    response
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
@@ -251,7 +261,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
 async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
     let id = ExecutionId::generate();
     match accept {
-        AcceptHeader::Json => Json(id).into_response(),
+        AcceptHeader::Json => pretty_json_response(StatusCode::OK, &id),
         AcceptHeader::Text => id.to_string().into_response(),
     }
 }
@@ -513,7 +523,7 @@ async fn executions_list(
                 .into_iter()
                 .map(ExecutionWithStateSer::from)
                 .collect();
-            Json(executions).into_response()
+            pretty_json_response(StatusCode::OK, &executions)
         }
     })
 }
@@ -706,11 +716,13 @@ async fn execution_events(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(match accept {
-        AcceptHeader::Json => Json(ExecutionEventsResponse {
-            events: result.events,
-            max_version: result.max_version,
-        })
-        .into_response(),
+        AcceptHeader::Json => pretty_json_response(
+            StatusCode::OK,
+            &ExecutionEventsResponse {
+                events: result.events,
+                max_version: result.max_version,
+            },
+        ),
         AcceptHeader::Text => {
             let mut output = String::new();
             for event in result.events {
@@ -1014,7 +1026,7 @@ mod logs {
             AcceptHeader::Json => {
                 let items: Vec<LogEntryRowSer> =
                     result.items.into_iter().map(LogEntryRowSer::from).collect();
-                Json(items).into_response()
+                pretty_json_response(StatusCode::OK, &items)
             }
             AcceptHeader::Text => {
                 let mut output = String::new();
@@ -1139,11 +1151,13 @@ async fn execution_responses(
         .map_err(|e| ErrorWrapper(e, accept))?;
 
     Ok(match accept {
-        AcceptHeader::Json => Json(ExecutionResponsesResponse {
-            responses: result.responses,
-            max_cursor: result.max_cursor,
-        })
-        .into_response(),
+        AcceptHeader::Json => pretty_json_response(
+            StatusCode::OK,
+            &ExecutionResponsesResponse {
+                responses: result.responses,
+                max_cursor: result.max_cursor,
+            },
+        ),
         AcceptHeader::Text => {
             let mut output = String::new();
             for response in result.responses {
@@ -1189,9 +1203,10 @@ async fn execution_status_get(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(match accept {
-        AcceptHeader::Json => {
-            Json(ExecutionWithStateSer::from(execution_with_state)).into_response()
-        }
+        AcceptHeader::Json => pretty_json_response(
+            StatusCode::OK,
+            &ExecutionWithStateSer::from(execution_with_state),
+        ),
         AcceptHeader::Text => execution_with_state.to_string().into_response(),
     })
 }
@@ -1780,7 +1795,7 @@ async fn execution_get_retval(
     if let ExecutionRequest::Finished { retval, .. } = last_event.event {
         let retval = RetVal::from(retval);
 
-        Ok(Json(retval).into_response())
+        Ok(pretty_json_response(StatusCode::OK, &retval))
     } else if params.follow {
         Ok(stream_execution_response(
             execution_id,
@@ -1989,7 +2004,7 @@ async fn stream_execution_response_task(
             Ok(result) => {
                 trace!("Finished ok");
                 let result = RetVal::from(result);
-                let result = serde_json::to_vec(&result)
+                let result = serde_json::to_vec_pretty(&result)
                     .expect("serialization of already stored retval cannot fail");
                 let _ = tx.try_send(Ok(Bytes::from(result))); // Ignore if the remote side is closed.
                 debug!("Sent execution result");
@@ -2037,7 +2052,7 @@ async fn execution_replay(
         StatusCode::OK
     };
     Ok(match accept {
-        AcceptHeader::Json => (status, Json(ser)).into_response(),
+        AcceptHeader::Json => pretty_json_response(status, &ser),
         AcceptHeader::Text => {
             let body = match ser {
                 ReplayResponseSer::Advanceable { captured_writes } => {
@@ -2167,9 +2182,7 @@ async fn execution_advance(
             };
             let response = match accept {
                 AcceptHeader::Json => {
-                    let mut response = Json(error).into_response();
-                    *response.status_mut() = StatusCode::UNPROCESSABLE_ENTITY;
-                    response
+                    pretty_json_response(StatusCode::UNPROCESSABLE_ENTITY, &error)
                 }
                 AcceptHeader::Text => {
                     let text = match error {
@@ -2209,7 +2222,7 @@ async fn execution_advance(
     };
     match &response {
         AdvanceResponseSer::Finished { value } => Ok(match accept {
-            AcceptHeader::Json => Json(response).into_response(),
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &response),
             AcceptHeader::Text => format!(
                 "success:\n{}",
                 serde_json::to_string_pretty(&value).expect("retval must be JSON serializable")
@@ -2217,7 +2230,7 @@ async fn execution_advance(
             .into_response(),
         }),
         AdvanceResponseSer::InProgress { pending_state } => Ok(match accept {
-            AcceptHeader::Json => Json(response).into_response(),
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &response),
             AcceptHeader::Text => {
                 format!("success, current state: {pending_state}").into_response()
             }
@@ -2460,11 +2473,11 @@ async fn execution_upgrade(
 }
 
 pub(crate) mod components {
-    use crate::server::web_api_server::HttpResponse;
+    use crate::server::web_api_server::{HttpResponse, pretty_json_response};
 
     use super::{
-        AcceptHeader, Arc, Deserialize, FunctionFqn, IntoParams, IntoResponse, Json, Query,
-        Response, Serialize, State, ToSchema, WebApiState,
+        AcceptHeader, Arc, Deserialize, FunctionFqn, IntoParams, IntoResponse, Query, Response,
+        Serialize, State, StatusCode, ToSchema, WebApiState,
     };
     use axum::extract::Path;
     use concepts::{
@@ -2619,7 +2632,7 @@ pub(crate) mod components {
             .collect();
 
         match accept {
-            AcceptHeader::Json => Json(components).into_response(),
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &components),
             AcceptHeader::Text => {
                 let mut output = String::new();
                 for component in components {
@@ -2718,8 +2731,8 @@ pub(crate) mod components {
 
 mod functions {
     use super::{
-        AcceptHeader, Arc, Deserialize, IntoParams, IntoResponse, Json, Query, Response, State,
-        ToSchema, WebApiState,
+        AcceptHeader, Arc, Deserialize, IntoParams, IntoResponse, Query, Response, State,
+        StatusCode, ToSchema, WebApiState, pretty_json_response,
     };
     use concepts::{FunctionExtension, FunctionFqn, FunctionRegistry};
     use std::fmt::Write as _;
@@ -2766,7 +2779,7 @@ mod functions {
             .collect();
 
         match accept {
-            AcceptHeader::Json => Json(functions).into_response(),
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &functions),
             AcceptHeader::Text => {
                 let mut output = String::new();
                 for func in functions {
@@ -2850,7 +2863,9 @@ mod functions {
 mod deployment {
     use crate::{
         command::server::SwitchDeploymentAction,
-        server::web_api_server::{AcceptHeader, ErrorWrapper, HttpResponse, WebApiState},
+        server::web_api_server::{
+            AcceptHeader, ErrorWrapper, HttpResponse, WebApiState, pretty_json_response,
+        },
     };
     use axum::{
         Json,
@@ -2979,7 +2994,7 @@ mod deployment {
             .collect();
 
         Ok(match accept {
-            AcceptHeader::Json => Json(states).into_response(),
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &states),
             AcceptHeader::Text => {
                 let mut output = String::new();
                 for s in states {
@@ -3010,7 +3025,7 @@ mod deployment {
     ) -> Result<Response, HttpResponse> {
         let deployment_id = state.deployment_ctx.read().await.deployment_id;
         Ok(match accept {
-            AcceptHeader::Json => Json(deployment_id).into_response(),
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &deployment_id),
             AcceptHeader::Text => deployment_id.to_string().into_response(),
         })
     }
@@ -3070,7 +3085,7 @@ mod deployment {
 
         let ser = DeploymentRecordSer::from(&record);
         Ok(match accept {
-            AcceptHeader::Json => Json(ser).into_response(),
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &ser),
             AcceptHeader::Text => {
                 let mut output = String::new();
                 writeln!(
@@ -3356,7 +3371,7 @@ mod backtrace {
 
         let info_ser = BacktraceInfoSer::from(info);
         Ok(match accept {
-            AcceptHeader::Json => Json(info_ser).into_response(),
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &info_ser),
             AcceptHeader::Text => {
                 let mut output = String::new();
                 writeln!(&mut output, "execution_id: {}", info_ser.execution_id)
@@ -3447,7 +3462,7 @@ mod backtrace {
         };
 
         Ok(match accept {
-            AcceptHeader::Json => Json(content).into_response(),
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &content),
             AcceptHeader::Text => content.into_response(),
         })
     }
@@ -3509,15 +3524,14 @@ impl HttpResponse {
 impl IntoResponse for HttpResponse {
     fn into_response(self) -> Response {
         match self.accept {
-            AcceptHeader::Json => (
+            AcceptHeader::Json => pretty_json_response(
                 self.status,
-                Json(if self.status.is_success() {
+                &if self.status.is_success() {
                     json!({ "ok": self.message })
                 } else {
                     json!({ "err": self.message })
-                }),
-            )
-                .into_response(),
+                },
+            ),
             AcceptHeader::Text => (self.status, self.message).into_response(),
         }
     }
