@@ -21,7 +21,8 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
               }
             }
           }
-        }
+        },
+        "backtraces": []
       }
     }
   ]
