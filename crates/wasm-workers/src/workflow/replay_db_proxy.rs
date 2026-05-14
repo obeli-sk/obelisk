@@ -17,8 +17,8 @@ use concepts::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
         AppendResponseToExecution, BacktraceInfo, CapturedDbWrite, CreateRequest, DbConnection,
         DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
-        ExecutionRequest, LogInfoAppendRow, ResponseCursor, ResponseWithCursor,
-        TimeoutOutcome, Version,
+        ExecutionRequest, LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
+        Version,
     },
 };
 use std::pin::Pin;

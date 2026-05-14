@@ -14,8 +14,7 @@ use concepts::{
     storage::{
         self, AppendBatchResponse, AppendRequest, AppendResponseToExecution, BacktraceInfo,
         CreateRequest, DbConnection, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
-        LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
-        Version,
+        LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
