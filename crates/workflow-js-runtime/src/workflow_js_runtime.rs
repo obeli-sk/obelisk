@@ -127,16 +127,23 @@ use crate::generated::obelisk::workflow::workflow_support::{
     schedule_json, sleep_named_bt, stub_json, submit_delay_bt, submit_json_bt,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
-use boa_common::helpers::{new_object, parse_ffqn};
+use boa_common::helpers::{camel_to_kebab, new_object, parse_ffqn};
+use boa_engine::ast::declaration::ImportName;
 use boa_engine::context::time::FixedClock;
+use boa_engine::module::{MapModuleLoader, SyntheticModuleInitializer};
 use boa_engine::{
-    Context, JsArgs, JsError, JsNativeError, JsResult, JsValue, Module, NativeFunction, Source,
+    Context, JsArgs, JsError, JsNativeError, JsResult, JsString, JsValue, Module, NativeFunction,
+    Source,
     builtins::promise::PromiseState,
     js_string,
-    object::builtins::{JsDate, JsFunction},
+    object::{
+        JsObject,
+        builtins::{JsDate, JsFunction},
+    },
     property::Attribute,
 };
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Logger implementation using the generated obelisk:log bindings.
@@ -235,6 +242,137 @@ fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
     WasmBacktrace { frames }
 }
 
+/// Extract import specifiers and their imported names from JS source code.
+///
+/// Returns a map from specifier (e.g., `"testing:integration/activity"`) to a list of
+/// `(js_name, wit_name)` pairs (e.g., `("accountInfo", "account-info")`).
+///
+/// Imports from the `obelisk:` namespace are skipped — those are host-provided.
+fn extract_imports(js_code: &str) -> Result<HashMap<String, Vec<(String, String)>>, String> {
+    let mut interner = boa_engine::interner::Interner::new();
+    let mut parser = boa_engine::parser::Parser::new(Source::from_bytes(js_code));
+    let scope = boa_engine::ast::scope::Scope::new_global();
+    let module = parser
+        .parse_module(&scope, &mut interner)
+        .map_err(|e| format!("import extraction parse error: {e}"))?;
+
+    let mut imports: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+    for entry in module.items().import_entries() {
+        let specifier = interner
+            .resolve_expect(entry.module_request())
+            .utf8()
+            .unwrap_or("")
+            .to_string();
+
+        let js_name = match entry.import_name() {
+            ImportName::Name(sym) => interner
+                .resolve_expect(sym)
+                .utf8()
+                .unwrap_or("")
+                .to_string(),
+            ImportName::Namespace => continue, // skip `import * as ns`
+        };
+
+        let wit_name = camel_to_kebab(&js_name);
+        imports
+            .entry(specifier)
+            .or_default()
+            .push((js_name, wit_name));
+    }
+    Ok(imports)
+}
+
+/// Create a `NativeFunction` that proxies a direct call to `call-json-bt`.
+///
+/// When invoked from JS, the function:
+/// 1. JSON-serializes all arguments into a JSON array string
+/// 2. Calls the host `call_json` with the derived FFQN
+/// 3. Returns the Ok value or throws the Err value
+fn create_direct_call_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    let ifc = js_string!(interface_name);
+    let func = js_string!(function_name);
+
+    let native = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, (ifc, func): &(JsString, JsString), ctx| {
+            let function = Function {
+                interface_name: ifc.to_std_string_escaped(),
+                function_name: func.to_std_string_escaped(),
+            };
+            // Serialize args as JSON array: [arg0, arg1, ...]
+            let array = boa_engine::object::builtins::JsArray::new(ctx)?;
+            for (i, arg) in args.iter().enumerate() {
+                array.set(i as u32, arg.clone(), false, ctx)?;
+            }
+            let params_json = json_stringify(&array.into(), ctx)?;
+
+            let backtrace = capture_backtrace(ctx);
+            match call_json(&function, &params_json, None, Some(&backtrace)) {
+                Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
+                Ok(Ok(None)) => Ok(JsValue::null()),
+                Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
+                Ok(Err(None)) => Err(JsNativeError::error()
+                    .with_message("child execution failed")
+                    .into()),
+                Err(e) => Err(JsNativeError::error()
+                    .with_message(format!("call failed: {:?}", e))
+                    .into()),
+            }
+        },
+        (ifc, func),
+    );
+    native.to_js_function(context.realm()).into()
+}
+
+/// Build a `MapModuleLoader` with `SyntheticModule`s for each imported specifier.
+///
+/// Each imported JS name becomes a `NativeFunction` proxy that calls `call-json-bt`
+/// with the FFQN derived from the specifier and the kebab-case function name.
+fn register_import_modules(
+    imports: &HashMap<String, Vec<(String, String)>>,
+    loader: &MapModuleLoader,
+    context: &mut Context,
+) {
+    for (specifier, funcs) in imports {
+        let mut export_names: Vec<JsString> = Vec::new();
+
+        // Create all proxy functions and store them in a plain JsObject for the
+        // SyntheticModuleInitializer to retrieve during evaluation.
+        let exports_obj = JsObject::with_null_proto();
+        for (js_name, wit_name) in funcs {
+            let proxy = create_direct_call_proxy(specifier, wit_name, context);
+            let js_name_str = js_string!(js_name.as_str());
+            exports_obj
+                .set(js_name_str.clone(), proxy, false, context)
+                .expect("set on plain object must work");
+            export_names.push(js_name_str);
+        }
+
+        let synth = Module::synthetic(
+            &export_names,
+            SyntheticModuleInitializer::from_copy_closure_with_captures(
+                |module, (obj, names): &(JsObject, Vec<JsString>), ctx| {
+                    for name in names {
+                        let val = obj.get(name.clone(), ctx)?;
+                        module.set_export(name, val)?;
+                    }
+                    Ok(())
+                },
+                (exports_obj, export_names.clone()),
+            ),
+            None,
+            None,
+            context,
+        );
+
+        loader.insert(specifier, synth);
+    }
+}
+
 /// Execute JavaScript code with the given parameters.
 ///
 /// `js_file_name` is the source file name used in backtraces (from `__OBELISK_JS_FILE_NAME__`).
@@ -249,10 +387,14 @@ pub fn execute(
         JS_FILE_NAME.with(|s| *s.borrow_mut() = js_file_name);
     }
 
+    // Extract import specifiers from JS source so we can create synthetic modules.
+    let imports = extract_imports(js_code).map_err(JsRuntimeError::ModuleParseError)?;
     let executor = Rc::new(DeterministicJobExecutor::default());
+    let loader = Rc::new(MapModuleLoader::new());
     let mut context = Context::builder()
         .job_executor(executor.clone())
         .clock(Rc::new(FixedClock::from_millis(0)))
+        .module_loader(loader.clone())
         .build()
         .expect("building context must work");
 
@@ -268,6 +410,12 @@ pub fn execute(
 
     // Override Date.now() to use the Obelisk clock via sleep(0)
     setup_date_now(&mut context).expect("Date.now setup must work");
+
+    // Register synthetic modules for WIT-style imports (e.g., 'ns:pkg/ifc').
+    // Each imported function becomes a NativeFunction proxy to call-json-bt.
+    if !imports.is_empty() {
+        register_import_modules(&imports, &loader, &mut context);
+    }
 
     // Get the default export function from the ES module
     let default_fn = match get_default_export_workflow(js_code, &mut context) {

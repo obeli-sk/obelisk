@@ -218,6 +218,16 @@ params = [
 return_type = "result<u32, string>"
 
 [[workflow_js]]
+name = "test_import_call_activity_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/import_call_activity.js"
+ffqn = "testing:integration/workflow-import-call-activity.call-activity"
+params = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+]
+return_type = "result<u32, string>"
+
+[[workflow_js]]
 name = "test_make_record_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/make_record.js"
 ffqn = "testing:integration/workflow-make-record.make-record"
@@ -1553,6 +1563,27 @@ async fn submit_workflow_with_call() {
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
     insta::assert_json_snapshot!("workflow_call_activity_events", events);
+    server.shutdown().await;
+}
+
+// ---- Workflow: ES module import calling activity ----
+
+#[tokio::test]
+async fn submit_workflow_with_import_call() {
+    let server = TestServer::start(test_addr!(69)).await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/workflow-import-call-activity.call-activity",
+            vec![json!(3), json!(4)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": 7 }));
+
     server.shutdown().await;
 }
 
