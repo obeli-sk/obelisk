@@ -880,6 +880,15 @@ pub enum DbErrorWrite {
     Generic(#[from] DbErrorGeneric),
 }
 
+/// Error from idempotent stub response write.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum DbErrorStubResponse {
+    #[error("stub conflict: already finished with a different value")]
+    StubConflict,
+    #[error(transparent)]
+    Write(#[from] DbErrorWrite),
+}
+
 /// Read error tied to an execution
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 pub enum DbErrorRead {
@@ -1551,6 +1560,18 @@ pub trait DbConnection: DbExecutor {
         version: &Version,
     ) -> Result<ExecutionEvent, DbErrorRead>;
 
+    /// Idempotent stub response write. Appends a Finished event to the child execution
+    /// and a response to the parent. If the child is already finished with the same retval,
+    /// succeeds silently. If finished with a different retval, returns [`DbErrorStubResponse::StubConflict`].
+    async fn upsert_stub_response(
+        &self,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
+        response: AppendResponseToExecution,
+        current_time: DateTime<Utc>,
+    ) -> Result<AppendBatchResponse, DbErrorStubResponse>;
+
     #[instrument(skip(self))]
     async fn get_create_request(
         &self,
@@ -1744,64 +1765,36 @@ pub async fn stub_execution(
     return_value: SupportedFunctionReturnValue,
 ) -> Result<(), DbErrorWrite> {
     let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
-    // Attempt to write to `execution_id` and its parent, ignoring the possible conflict error on this tx
-    let write_attempt = {
-        let finished_req = AppendRequest {
-            created_at,
-            event: ExecutionRequest::Finished {
-                retval: return_value.clone(),
-                http_client_traces: None,
-            },
-        };
-        db_connection
-            .append_batch_respond_to_parent(
-                AppendEventsToExecution {
-                    execution_id: ExecutionId::Derived(execution_id.clone()),
-                    version: stub_finished_version.clone(),
-                    batch: vec![finished_req],
-                },
-                AppendResponseToExecution {
-                    parent_execution_id,
-                    created_at,
-                    join_set_id,
-                    child_execution_id: execution_id.clone(),
-                    finished_version: stub_finished_version.clone(),
-                    result: return_value.clone(),
-                },
-                created_at,
-            )
-            .await
+    let finished_req = AppendRequest {
+        created_at,
+        event: ExecutionRequest::Finished {
+            retval: return_value.clone(),
+            http_client_traces: None,
+        },
     };
-    if let Err(write_attempt) = write_attempt {
-        // Check that the expected value is in the database
-        debug!("Stub write attempt failed - {write_attempt:?}");
-
-        let found = db_connection
-            .get_execution_event(&ExecutionId::Derived(execution_id), &stub_finished_version)
-            .await?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
-        match found.event {
-            ExecutionRequest::Finished {
-                retval: found_result,
-                ..
-            } if return_value == found_result => {
-                // Same value has already be written, RPC is successful.
-                Ok(())
+    db_connection
+        .upsert_stub_response(
+            ExecutionId::Derived(execution_id.clone()),
+            stub_finished_version.clone(),
+            finished_req,
+            AppendResponseToExecution {
+                parent_execution_id,
+                created_at,
+                join_set_id,
+                child_execution_id: execution_id,
+                finished_version: stub_finished_version,
+                result: return_value,
+            },
+            created_at,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|err| match err {
+            DbErrorStubResponse::StubConflict => {
+                DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
             }
-            ExecutionRequest::Finished { .. } => Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::Conflict,
-            )),
-            _other => Err(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::IllegalState {
-                    reason: "unexpected execution event at stubbed execution".into(),
-                    context: SpanTrace::capture(),
-                    source: None,
-                    loc: Location::caller(),
-                },
-            )),
-        }
-    } else {
-        Ok(())
-    }
+            DbErrorStubResponse::Write(db_err) => db_err,
+        })
 }
 
 pub async fn cancel_delay(

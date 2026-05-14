@@ -7,9 +7,7 @@ use crate::workflow::host_exports::response_id::ResponseId;
 use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use crate::{
     activity::cancel_registry::CancelRegistry,
-    workflow::{
-        event_history::DbErrorWriteOrReplayInterrupt, replay_advance::is_closing_join_next,
-    },
+    workflow::{event_history::UpsertStubOrReplayInterrupt, replay_advance::is_closing_join_next},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -19,8 +17,8 @@ use concepts::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
         AppendResponseToExecution, BacktraceInfo, CapturedDbWrite, CreateRequest, DbConnection,
         DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
-        ExecutionEvent, ExecutionRequest, LogInfoAppendRow, ResponseCursor, ResponseWithCursor,
-        TimeoutOutcome, Version,
+        ExecutionRequest, LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
+        Version,
     },
 };
 use std::pin::Pin;
@@ -208,8 +206,23 @@ async fn apply_captured_write(
             response,
             current_time,
         } => {
-            conn.append_batch_respond_to_parent(events, response, current_time)
-                .await?;
+            let mut batch = events.batch;
+            let req = batch.pop().expect("stub batch must have exactly one item");
+            debug_assert!(batch.is_empty(), "stub batch must have exactly one item");
+            conn.upsert_stub_response(
+                events.execution_id,
+                events.version,
+                req,
+                response,
+                current_time,
+            )
+            .await
+            .map_err(|err| match err {
+                concepts::storage::DbErrorStubResponse::StubConflict => {
+                    DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
+                }
+                concepts::storage::DbErrorStubResponse::Write(db_err) => db_err,
+            })?;
             Ok(None)
         }
         CapturedDbWrite::AppendFinished {
@@ -540,40 +553,51 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         Ok(())
     }
 
-    async fn append_stub_response(
+    async fn upsert_stub_response(
         &mut self,
-        events: AppendEventsToExecution,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt> {
-        let target_execution_id = &events.execution_id;
+    ) -> Result<AppendBatchResponse, UpsertStubOrReplayInterrupt> {
         // Query the database first.
         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
         if let Ok(found_stub) = self
             .real_connection
-            .get_execution_event(target_execution_id, &stub_finished_version)
+            .get_execution_event(&execution_id, &stub_finished_version)
             .await
         {
-            if matches!(found_stub.event, ExecutionRequest::Finished { .. }) {
-                // First stub write sends AlreadyFinished, caller will do the retval comparison.
-                return Err(DbErrorWriteOrReplayInterrupt::DbError(
-                    DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished),
-                ));
+            match found_stub.event {
+                ExecutionRequest::Finished { retval, .. } if retval == response.result => {
+                    // Same value already written — idempotent success.
+                    return Ok(stub_finished_version.increment());
+                }
+                ExecutionRequest::Finished { .. } => {
+                    // Different value — conflict.
+                    return Err(UpsertStubOrReplayInterrupt::StubConflict);
+                }
+                _ => {
+                    // This must not be a stub execution.
+                    return Err(UpsertStubOrReplayInterrupt::DbError(
+                        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict),
+                    ));
+                }
             }
-            // This must not be a stub execution.
-            return Err(DbErrorWriteOrReplayInterrupt::DbError(
-                DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict),
-            ));
         }
 
         self.collector
             .push_write(CapturedDbWrite::AppendStubResponse {
-                events,
+                events: AppendEventsToExecution {
+                    execution_id,
+                    version,
+                    batch: vec![req],
+                },
                 response,
                 current_time,
             });
         // no idea about the response
-        Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt)
+        Err(UpsertStubOrReplayInterrupt::ReplayInterrupt)
     }
 
     // Replay assumes it is the only writer to its own and its children's exec log so it can read uncomitted `CreateRequest` from memory.
@@ -597,16 +621,6 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             return Ok(create_req);
         }
         self.real_connection.get_create_request(execution_id).await
-    }
-
-    async fn get_execution_event(
-        &self,
-        execution_id: &ExecutionId,
-        version: &Version,
-    ) -> Result<ExecutionEvent, DbErrorRead> {
-        self.real_connection
-            .get_execution_event(execution_id, version)
-            .await
     }
 
     async fn subscribe_to_next_responses(

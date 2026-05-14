@@ -10,11 +10,11 @@ use concepts::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, DeploymentRecord, DeploymentState, DeploymentStatus,
-        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
-        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentRecord, DeploymentState,
+        DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
+        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
@@ -112,7 +112,9 @@ mod conversions {
     use super::RusqliteError;
     use concepts::{
         StrVariant,
-        storage::{DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite},
+        storage::{
+            DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
+        },
     };
     use rusqlite::{
         ToSql,
@@ -185,6 +187,12 @@ mod conversions {
             } else {
                 to_generic_error(err).into()
             }
+        }
+    }
+
+    impl From<RusqliteError> for DbErrorStubResponse {
+        fn from(err: RusqliteError) -> Self {
+            DbErrorStubResponse::Write(DbErrorWrite::from(err))
         }
     }
 
@@ -4609,6 +4617,90 @@ impl DbConnection for SqlitePool {
             "get_execution_event",
         )
         .await
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn upsert_stub_response(
+        &self,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
+        response: AppendResponseToExecution,
+        current_time: DateTime<Utc>,
+    ) -> Result<AppendBatchResponse, DbErrorStubResponse> {
+        debug!("upsert_stub_response");
+        if execution_id == response.parent_execution_id {
+            return Err(DbErrorStubResponse::Write(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::ValidationFailed(
+                    "Parameters `execution_id` and `parent_execution_id` cannot be the same".into(),
+                ),
+            )));
+        }
+        let expected_retval = response.result.clone();
+        let fallback_version = version.increment();
+        let result = {
+            self.transaction(
+                move |tx| {
+                    let version_raw = version.0;
+                    match Self::append(tx, &execution_id, req.clone(), version.clone()) {
+                        Ok((next_version, notifier_of_child)) => {
+                            let pending_at_parent = Self::append_response(
+                                tx,
+                                &response.parent_execution_id,
+                                JoinSetResponseEventOuter {
+                                    created_at: response.created_at,
+                                    event: JoinSetResponseEvent {
+                                        join_set_id: response.join_set_id.clone(),
+                                        event: JoinSetResponse::ChildExecutionFinished {
+                                            child_execution_id: response.child_execution_id.clone(),
+                                            finished_version: response.finished_version.clone(),
+                                            result: response.result.clone(),
+                                        },
+                                    },
+                                },
+                            )
+                            .map_err(DbErrorStubResponse::Write)?;
+                            Ok::<_, DbErrorStubResponse>(Some((
+                                next_version,
+                                vec![notifier_of_child, pending_at_parent],
+                            )))
+                        }
+                        Err(DbErrorWrite::NonRetriable(
+                            DbErrorWriteNonRetriable::AlreadyFinished,
+                        )) => {
+                            // Idempotency check: read the existing event and compare retval.
+                            let found = Self::get_execution_event(tx, &execution_id, version_raw)
+                                .map_err(|_| {
+                                // NotFound should not happen — we just got AlreadyFinished.
+                                DbErrorStubResponse::StubConflict
+                            })?;
+                            match found.event {
+                                ExecutionRequest::Finished { retval, .. }
+                                    if retval == expected_retval =>
+                                {
+                                    Ok(None)
+                                }
+                                _ => Err(DbErrorStubResponse::StubConflict),
+                            }
+                        }
+                        Err(other) => Err(DbErrorStubResponse::Write(other)),
+                    }
+                },
+                TxType::MultipleWrites,
+                "upsert_stub_response",
+            )
+            .await?
+        };
+        match result {
+            Some((version, notifiers)) => {
+                self.notify_all(notifiers, current_time);
+                Ok(version)
+            }
+            None => {
+                // Idempotent success — return the version that was already committed.
+                Ok(fallback_version)
+            }
+        }
     }
 
     async fn get_pending_state(

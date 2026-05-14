@@ -1,7 +1,8 @@
 use crate::{
     component_id::ComponentDigest,
     storage::{
-        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
+        DbErrorWriteNonRetriable,
     },
 };
 use std::{panic::Location, sync::Arc};
@@ -56,6 +57,13 @@ impl From<tokio_postgres::Error> for DbErrorWrite {
         } else {
             DbErrorWrite::from(DbErrorGeneric::from(err))
         }
+    }
+}
+
+impl From<tokio_postgres::Error> for DbErrorStubResponse {
+    #[track_caller]
+    fn from(err: tokio_postgres::Error) -> Self {
+        DbErrorStubResponse::Write(DbErrorWrite::from(err))
     }
 }
 

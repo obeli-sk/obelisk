@@ -13,12 +13,12 @@ use concepts::prefixed_ulid::{DelayId, DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
     AppendResponse, AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection,
-    DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
-    DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, ExecutionEvent, ExecutionLog,
-    ExecutionRequest, ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer, HistoryEvent,
-    JoinSetResponse, JoinSetResponseEventOuter, LockPendingResponse, Locked, LockedBy,
-    LockedExecution, LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version,
-    VersionType,
+    DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
+    DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, ExecutionEvent,
+    ExecutionLog, ExecutionRequest, ExecutionWithState, ExpiredDelay, ExpiredLock, ExpiredTimer,
+    HistoryEvent, JoinSetResponse, JoinSetResponseEventOuter, LockPendingResponse, Locked,
+    LockedBy, LockedExecution, LogInfoAppendRow, ResponseCursor, ResponseWithCursor,
+    TimeoutOutcome, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn};
@@ -273,6 +273,20 @@ impl DbConnection for InMemoryDbConnection {
             .get(usize::from(version))
             .cloned()
             .ok_or(DbErrorRead::NotFound)?)
+    }
+
+    async fn upsert_stub_response(
+        &self,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
+        response: AppendResponseToExecution,
+        _current_time: DateTime<Utc>,
+    ) -> Result<AppendBatchResponse, DbErrorStubResponse> {
+        self.0
+            .lock()
+            .unwrap()
+            .upsert_stub_response(&execution_id, &version, req, &response)
     }
 
     async fn subscribe_to_next_responses(
@@ -1060,6 +1074,54 @@ impl DbHolder {
             },
         )?;
         Ok(child_version)
+    }
+
+    fn upsert_stub_response(
+        &mut self,
+        execution_id: &ExecutionId,
+        version: &Version,
+        req: AppendRequest,
+        response: &AppendResponseToExecution,
+    ) -> Result<Version, DbErrorStubResponse> {
+        let expected_retval = &response.result;
+        match self.append(req.created_at, execution_id, version.clone(), req.event) {
+            Ok(next_version) => {
+                self.append_response(
+                    &response.parent_execution_id,
+                    JoinSetResponseEventOuter {
+                        created_at: response.created_at,
+                        event: JoinSetResponseEvent {
+                            join_set_id: response.join_set_id.clone(),
+                            event: JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id: response.child_execution_id.clone(),
+                                finished_version: response.finished_version.clone(),
+                                result: response.result.clone(),
+                            },
+                        },
+                    },
+                )
+                .map_err(DbErrorStubResponse::Write)?;
+                Ok(next_version)
+            }
+            Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)) => {
+                // Idempotency check: read the existing event and compare retval.
+                let journal = self
+                    .journals
+                    .get(execution_id)
+                    .ok_or(DbErrorStubResponse::StubConflict)?;
+                let found = journal
+                    .execution_events
+                    .get(usize::try_from(version.0).unwrap_or(0))
+                    .ok_or(DbErrorStubResponse::StubConflict)?;
+                match &found.event {
+                    ExecutionRequest::Finished { retval, .. } if retval == expected_retval => {
+                        Ok(version.increment())
+                    }
+                    _ => Err(DbErrorStubResponse::StubConflict),
+                }
+            }
+            Err(other) => Err(DbErrorStubResponse::Write(other)),
+        }
     }
 
     fn append_response(

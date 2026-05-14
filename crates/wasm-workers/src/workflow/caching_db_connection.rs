@@ -2,7 +2,7 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::{
     activity::cancel_registry::CancelRegistry,
     workflow::{
-        event_history::DbErrorWriteOrReplayInterrupt,
+        event_history::UpsertStubOrReplayInterrupt,
         host_exports::response_id::ResponseId,
         replay_advance::{JoinSetCloseCancellations, is_closing_join_next},
     },
@@ -12,10 +12,9 @@ use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId,
     storage::{
-        self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
-        AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, LogInfoAppendRow, ResponseCursor,
-        ResponseWithCursor, TimeoutOutcome, Version,
+        self, AppendBatchResponse, AppendRequest, AppendResponseToExecution, BacktraceInfo,
+        CreateRequest, DbConnection, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
+        LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
@@ -78,24 +77,20 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite>;
 
-    async fn append_stub_response(
+    async fn upsert_stub_response(
         &mut self,
-        events: AppendEventsToExecution,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt>;
+    ) -> Result<AppendBatchResponse, UpsertStubOrReplayInterrupt>;
 
     // Part of writing stub response: start with this read, then attempt to write the response in `EventHistory::append_to_db_non_blocking`.
     async fn get_stub_create_request(
         &self,
         execution_id: &ExecutionId,
     ) -> Result<CreateRequest, DbErrorRead>;
-
-    async fn get_execution_event(
-        &self,
-        execution_id: &ExecutionId,
-        version: &Version,
-    ) -> Result<ExecutionEvent, DbErrorRead>;
 
     async fn subscribe_to_next_responses(
         &self,
@@ -447,16 +442,25 @@ impl WorkflowDbConnection for CachingDbConnection {
         Ok(())
     }
 
-    async fn append_stub_response(
+    async fn upsert_stub_response(
         &mut self,
-        events: AppendEventsToExecution,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt> {
+    ) -> Result<AppendBatchResponse, UpsertStubOrReplayInterrupt> {
         self.db_connection
-            .append_batch_respond_to_parent(events, response, current_time)
+            .upsert_stub_response(execution_id, version, req, response, current_time)
             .await
-            .map_err(DbErrorWriteOrReplayInterrupt::DbError)
+            .map_err(|err| match err {
+                concepts::storage::DbErrorStubResponse::StubConflict => {
+                    UpsertStubOrReplayInterrupt::StubConflict
+                }
+                concepts::storage::DbErrorStubResponse::Write(db_err) => {
+                    UpsertStubOrReplayInterrupt::DbError(db_err)
+                }
+            })
     }
 
     async fn get_stub_create_request(
@@ -481,16 +485,6 @@ impl WorkflowDbConnection for CachingDbConnection {
         }
 
         self.db_connection.get_create_request(execution_id).await
-    }
-
-    async fn get_execution_event(
-        &self,
-        execution_id: &ExecutionId,
-        version: &Version,
-    ) -> Result<ExecutionEvent, DbErrorRead> {
-        self.db_connection
-            .get_execution_event(execution_id, version)
-            .await
     }
 
     async fn subscribe_to_next_responses(
