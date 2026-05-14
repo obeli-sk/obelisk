@@ -91,7 +91,6 @@ jobs:
           TEST_POSTGRES_USER: "postgres"
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
-          CARGO_INSTA_TEST: true
         run: |
           find . -name '*.snap' -delete
           nix develop --command scripts/test.sh
