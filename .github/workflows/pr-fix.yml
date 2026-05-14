@@ -22,7 +22,7 @@ jobs:
   fix-pr:
     if: >
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '@fix') &&
+      contains(format(' {0} ', github.event.comment.body), ' fix ') &&
       contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-24.04
 
@@ -46,7 +46,7 @@ jobs:
       - name: Reject fork PRs
         run: |
           if [ "${{ steps.pr.outputs.head_repo }}" != "${{ steps.pr.outputs.base_repo }}" ]; then
-            echo "::error::@fix only supports pull requests from branches in ${GITHUB_REPOSITORY}."
+            echo "::error::fix only supports pull requests from branches in ${GITHUB_REPOSITORY}."
             exit 1
           fi
 
@@ -62,6 +62,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - name: Free disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          docker system prune -af || true
+          df -h
+
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
@@ -71,6 +81,10 @@ jobs:
 
       - name: Populate the nix store
         run: nix develop --command echo
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-on-failure: true
 
       - name: Update schemas
         run: |
@@ -91,7 +105,6 @@ jobs:
           TEST_POSTGRES_USER: "postgres"
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
-          CARGO_INSTA_TEST: true
         run: |
           find . -name '*.snap' -delete
           nix develop --command scripts/test.sh
