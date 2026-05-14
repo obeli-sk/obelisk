@@ -321,7 +321,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 serde_with = "3.19.0"
 hmac = "0.12.1"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3.27"
