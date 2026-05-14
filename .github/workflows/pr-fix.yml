@@ -19,11 +19,16 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  fix-pr:
+  load-pr:
     if: >
       github.event.issue.pull_request &&
       github.event.comment.body == 'fix' &&
       contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    outputs:
+      head_ref: ${{ steps.pr.outputs.head_ref }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      head_repo: ${{ steps.pr.outputs.head_repo }}
+      base_repo: ${{ steps.pr.outputs.base_repo }}
     runs-on: ubuntu-24.04
 
     steps:
@@ -38,10 +43,12 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "${PR_API_URL}" > /tmp/pr.json
 
-          echo "head_ref=$(jq -r '.head.ref' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$(jq -r '.head.sha' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
-          echo "head_repo=$(jq -r '.head.repo.full_name' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
-          echo "base_repo=$(jq -r '.base.repo.full_name' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
+          {
+            echo "head_ref=$(jq -r '.head.ref' /tmp/pr.json)"
+            echo "head_sha=$(jq -r '.head.sha' /tmp/pr.json)"
+            echo "head_repo=$(jq -r '.head.repo.full_name' /tmp/pr.json)"
+            echo "base_repo=$(jq -r '.base.repo.full_name' /tmp/pr.json)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Reject fork PRs
         run: |
@@ -50,10 +57,34 @@ jobs:
             exit 1
           fi
 
+  fix-part:
+    needs: load-pr
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: schemas
+            artifact: pr-fix-schemas
+            commit_message: "chore: Update schemas"
+            needs_postgres: "false"
+            needs_rust_cache: "false"
+          - part: snapshots
+            artifact: pr-fix-snapshots
+            commit_message: "chore: Update snapshots"
+            needs_postgres: "true"
+            needs_rust_cache: "true"
+          - part: clippy
+            artifact: pr-fix-clippy
+            commit_message: "chore: Run clippy"
+            needs_postgres: "false"
+            needs_rust_cache: "true"
+
+    steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          repository: ${{ steps.pr.outputs.head_repo }}
-          ref: ${{ steps.pr.outputs.head_ref }}
+          repository: ${{ needs.load-pr.outputs.head_repo }}
+          ref: ${{ needs.load-pr.outputs.head_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -77,27 +108,19 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Start postgres
+        if: matrix.needs_postgres == 'true'
         run: docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:18
 
       - name: Populate the nix store
         run: nix develop --command echo
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        if: matrix.needs_rust_cache == 'true'
         with:
           cache-on-failure: true
+          key: pr-fix-${{ matrix.part }}
 
-      - name: Update schemas
-        run: |
-          nix develop --command scripts/update-schemas.sh
-
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No schema changes"
-          else
-            git commit -m "chore: Update schemas"
-          fi
-
-      - name: Refresh snapshots
+      - name: Run fixer
         env:
           CI: true
           INSTA_UPDATE: always
@@ -106,35 +129,83 @@ jobs:
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
         run: |
-          find . -name '*.snap' -delete
-          nix develop --command scripts/test.sh
+          case "${{ matrix.part }}" in
+            schemas)
+              nix develop --command scripts/update-schemas.sh
+              ;;
+            snapshots)
+              find . -name '*.snap' -delete
+              nix develop --command scripts/test.sh
+              ;;
+            clippy)
+              nix develop --command scripts/clippy.sh
+              ;;
+          esac
 
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No snapshot changes"
-          else
-            git commit -m "chore: Update snapshots"
-          fi
-
-      - name: Run clippy fixes
+      - name: Create patch artifact
         run: |
-          nix develop --command scripts/clippy.sh
+          mkdir -p ".pr-fix/${{ matrix.part }}"
+          printf '%s\n' "${{ matrix.part }}" > ".pr-fix/${{ matrix.part }}/part.txt"
 
           git add -A
           if git diff --cached --quiet; then
-            echo "No clippy changes"
+            echo "No changes for ${{ matrix.part }}"
+            printf 'false\n' > ".pr-fix/${{ matrix.part }}/changed.txt"
           else
-            git commit -m "chore: Run clippy"
+            git commit -m "${{ matrix.commit_message }}"
+            git format-patch --stdout HEAD~1 > ".pr-fix/${{ matrix.part }}/update.patch"
+            printf 'true\n' > ".pr-fix/${{ matrix.part }}/changed.txt"
           fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.artifact }}
+          path: .pr-fix/${{ matrix.part }}
+
+  combine-fixes:
+    needs:
+      - load-pr
+      - fix-part
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: ${{ needs.load-pr.outputs.head_repo }}
+          ref: ${{ needs.load-pr.outputs.head_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pr-fix-*
+          path: /tmp/pr-fix-artifacts
+
+      - name: Apply patches
+        run: |
+          for part in schemas snapshots clippy; do
+            patch_file="/tmp/pr-fix-artifacts/pr-fix-${part}/update.patch"
+            if [ ! -f "${patch_file}" ]; then
+              echo "No patch for ${part}"
+              continue
+            fi
+
+            git am --3way "${patch_file}"
+          done
 
       - name: Push changes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if git diff --quiet HEAD origin/"${{ steps.pr.outputs.head_ref }}"; then
+          if git diff --quiet HEAD origin/"${{ needs.load-pr.outputs.head_ref }}"; then
             echo "No commits to push"
             exit 0
           fi
 
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            HEAD:${{ steps.pr.outputs.head_ref }}
+            HEAD:${{ needs.load-pr.outputs.head_ref }}

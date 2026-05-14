@@ -173,6 +173,7 @@
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = with pkgs;
               [
+                actionlint
                 (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 cargo-audit
                 cargo-deny
