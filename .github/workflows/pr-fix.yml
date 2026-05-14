@@ -22,7 +22,7 @@ jobs:
   fix-pr:
     if: >
       github.event.issue.pull_request &&
-      contains(format(' {0} ', github.event.comment.body), ' fix ') &&
+      github.event.comment.body == 'fix' &&
       contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-24.04
 
