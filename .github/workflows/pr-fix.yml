@@ -1,0 +1,127 @@
+name: pr-fix
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: write
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  fix-pr:
+    if: >
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '@fix') &&
+      contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Load PR metadata
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_API_URL: ${{ github.event.issue.pull_request.url }}
+        run: |
+          curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${PR_API_URL}" > /tmp/pr.json
+
+          echo "head_ref=$(jq -r '.head.ref' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$(jq -r '.head.sha' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
+          echo "head_repo=$(jq -r '.head.repo.full_name' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
+          echo "base_repo=$(jq -r '.base.repo.full_name' /tmp/pr.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Reject fork PRs
+        run: |
+          if [ "${{ steps.pr.outputs.head_repo }}" != "${{ steps.pr.outputs.base_repo }}" ]; then
+            echo "::error::@fix only supports pull requests from branches in ${GITHUB_REPOSITORY}."
+            exit 1
+          fi
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: ${{ steps.pr.outputs.head_repo }}
+          ref: ${{ steps.pr.outputs.head_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start postgres
+        run: docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:18
+
+      - name: Populate the nix store
+        run: nix develop --command echo
+
+      - name: Update schemas
+        run: |
+          nix develop --command scripts/update-schemas.sh
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No schema changes"
+          else
+            git commit -m "chore: Update schemas"
+          fi
+
+      - name: Refresh snapshots
+        env:
+          CI: true
+          INSTA_UPDATE: always
+          TEST_POSTGRES_HOST: "localhost"
+          TEST_POSTGRES_USER: "postgres"
+          TEST_POSTGRES_PASSWORD: "postgres"
+          TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
+          CARGO_INSTA_TEST: true
+        run: |
+          find . -name '*.snap' -delete
+          nix develop --command scripts/test.sh
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No snapshot changes"
+          else
+            git commit -m "chore: Update snapshots"
+          fi
+
+      - name: Run clippy fixes
+        run: |
+          nix develop --command scripts/clippy.sh
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No clippy changes"
+          else
+            git commit -m "chore: Run clippy"
+          fi
+
+      - name: Push changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet HEAD origin/"${{ steps.pr.outputs.head_ref }}"; then
+            echo "No commits to push"
+            exit 0
+          fi
+
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            HEAD:${{ steps.pr.outputs.head_ref }}
