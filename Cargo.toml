@@ -402,7 +402,7 @@ opentelemetry-otlp = { version = "0.31.1", default-features = false, features = 
     "logs",
     "metrics",
 ] }
-opentelemetry-semantic-conventions = "0.31.0"
+opentelemetry-semantic-conventions = "0.32.0"
 tracing-opentelemetry = "0.32"
 
 [workspace.lints]
