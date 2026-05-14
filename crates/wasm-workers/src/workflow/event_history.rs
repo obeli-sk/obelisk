@@ -1441,7 +1441,6 @@ impl EventHistory {
                                     http_client_traces: None,
                                 },
                             };
-                            // Replay interruption correctness: asserted that flush is noop.
                             let stub_outcome = db_connection
                                 .append_stub_response(
                                     AppendEventsToExecution {
@@ -1462,7 +1461,6 @@ impl EventHistory {
                                     called_at,
                                 )
                                 .await;
-                            // Replay will always interrupt here as it cannot guess the write result.
                             match stub_outcome {
                                 Ok(ok) => Ok(ok),
                                 Err(DbErrorWriteOrReplayInterrupt::DbError(err)) => Err(err),
