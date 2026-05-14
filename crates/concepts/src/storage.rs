@@ -1565,12 +1565,12 @@ pub trait DbConnection: DbExecutor {
     /// succeeds silently. If finished with a different retval, returns [`DbErrorStubResponse::StubConflict`].
     async fn upsert_stub_response(
         &self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorStubResponse>;
+    ) -> Result<(), DbErrorStubResponse>;
 
     #[instrument(skip(self))]
     async fn get_create_request(
@@ -1774,7 +1774,7 @@ pub async fn stub_execution(
     };
     db_connection
         .upsert_stub_response(
-            ExecutionId::Derived(execution_id.clone()),
+            execution_id.clone(),
             stub_finished_version.clone(),
             finished_req,
             AppendResponseToExecution {
@@ -1788,7 +1788,6 @@ pub async fn stub_execution(
             created_at,
         )
         .await
-        .map(|_| ())
         .map_err(|err| match err {
             DbErrorStubResponse::StubConflict => {
                 DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)

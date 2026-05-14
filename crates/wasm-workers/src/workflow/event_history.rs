@@ -1449,7 +1449,7 @@ impl EventHistory {
                         };
                         let result = match db_connection
                             .upsert_stub_response(
-                                ExecutionId::Derived(params.target_execution_id.clone()),
+                                params.target_execution_id.clone(),
                                 stub_finished_version.clone(),
                                 finished_req,
                                 AppendResponseToExecution {
@@ -1464,7 +1464,7 @@ impl EventHistory {
                             )
                             .await
                         {
-                            Ok(_) => Ok(()),
+                            Ok(()) => Ok(()),
                             Err(UpsertStubOrReplayInterrupt::StubConflict) => {
                                 info!(target_execution_id = %params.target_execution_id,
                                     "Got conflict while upserting stub response"

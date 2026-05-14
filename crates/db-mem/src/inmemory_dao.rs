@@ -9,7 +9,7 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::component_id::ComponentDigest;
-use concepts::prefixed_ulid::{DelayId, DeploymentId, ExecutorId, RunId};
+use concepts::prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
     AppendResponse, AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection,
@@ -277,12 +277,13 @@ impl DbConnection for InMemoryDbConnection {
 
     async fn upsert_stub_response(
         &self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
         _current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorStubResponse> {
+    ) -> Result<(), DbErrorStubResponse> {
+        let execution_id = ExecutionId::Derived(execution_id);
         self.0
             .lock()
             .unwrap()
@@ -1082,10 +1083,17 @@ impl DbHolder {
         version: &Version,
         req: AppendRequest,
         response: &AppendResponseToExecution,
-    ) -> Result<Version, DbErrorStubResponse> {
+    ) -> Result<(), DbErrorStubResponse> {
+        #[cfg(debug_assertions)]
+        if let ExecutionId::Derived(derived) = execution_id {
+            let (expected_parent, expected_join_set) = derived.split_to_parts();
+            debug_assert_eq!(expected_parent, response.parent_execution_id);
+            debug_assert_eq!(expected_join_set, response.join_set_id);
+            debug_assert_eq!(*derived, response.child_execution_id);
+        }
         let expected_retval = &response.result;
         match self.append(req.created_at, execution_id, version.clone(), req.event) {
-            Ok(next_version) => {
+            Ok(_next_version) => {
                 self.append_response(
                     &response.parent_execution_id,
                     JoinSetResponseEventOuter {
@@ -1101,7 +1109,7 @@ impl DbHolder {
                     },
                 )
                 .map_err(DbErrorStubResponse::Write)?;
-                Ok(next_version)
+                Ok(())
             }
             Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)) => {
                 // Idempotency check: read the existing event and compare retval.
@@ -1115,7 +1123,7 @@ impl DbHolder {
                     .ok_or(DbErrorStubResponse::StubConflict)?;
                 match &found.event {
                     ExecutionRequest::Finished { retval, .. } if retval == expected_retval => {
-                        Ok(version.increment())
+                        Ok(())
                     }
                     _ => Err(DbErrorStubResponse::StubConflict),
                 }

@@ -3783,30 +3783,29 @@ impl DbConnection for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn upsert_stub_response(
         &self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorStubResponse> {
+    ) -> Result<(), DbErrorStubResponse> {
         debug!("upsert_stub_response");
-        if execution_id == response.parent_execution_id {
-            return Err(DbErrorStubResponse::Write(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::ValidationFailed(
-                    "Parameters `execution_id` and `parent_execution_id` cannot be the same".into(),
-                ),
-            )));
+        #[cfg(debug_assertions)]
+        {
+            let (expected_parent, expected_join_set) = execution_id.split_to_parts();
+            debug_assert_eq!(expected_parent, response.parent_execution_id);
+            debug_assert_eq!(expected_join_set, response.join_set_id);
+            debug_assert_eq!(execution_id, response.child_execution_id);
         }
-
+        let execution_id = ExecutionId::Derived(execution_id);
         let expected_retval = response.result.clone();
-        let fallback_version = version.increment();
         let version_for_read = version.0;
 
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        match append(&tx, &execution_id, req, version).await {
-            Ok((next_version, notifier_of_child)) => {
+        let notifiers = match append(&tx, &execution_id, req, version).await {
+            Ok((_next_version, notifier_of_child)) => {
                 let pending_at_parent = append_response(
                     &tx,
                     &response.parent_execution_id,
@@ -3824,29 +3823,26 @@ impl DbConnection for PostgresConnection {
                 )
                 .await
                 .map_err(DbErrorStubResponse::Write)?;
-
-                tx.commit().await?;
-                drop(client_guard);
-
-                self.notify_all(vec![notifier_of_child, pending_at_parent], current_time);
-                Ok(next_version)
+                Some(vec![notifier_of_child, pending_at_parent])
             }
             Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)) => {
                 // Idempotency check: read the existing event and compare retval.
                 let found = get_execution_event(&tx, &execution_id, version_for_read)
                     .await
                     .map_err(|_| DbErrorStubResponse::StubConflict)?;
-                tx.commit().await?;
-                drop(client_guard);
                 match found.event {
-                    ExecutionRequest::Finished { retval, .. } if retval == expected_retval => {
-                        Ok(fallback_version)
-                    }
-                    _ => Err(DbErrorStubResponse::StubConflict),
+                    ExecutionRequest::Finished { retval, .. } if retval == expected_retval => None,
+                    _ => return Err(DbErrorStubResponse::StubConflict),
                 }
             }
-            Err(other) => Err(DbErrorStubResponse::Write(other)),
+            Err(other) => return Err(DbErrorStubResponse::Write(other)),
+        };
+        tx.commit().await?;
+        drop(client_guard);
+        if let Some(notifiers) = notifiers {
+            self.notify_all(notifiers, current_time);
         }
+        Ok(())
     }
 
     async fn get_pending_state(

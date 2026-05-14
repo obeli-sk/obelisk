@@ -4622,28 +4622,28 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn upsert_stub_response(
         &self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, DbErrorStubResponse> {
+    ) -> Result<(), DbErrorStubResponse> {
         debug!("upsert_stub_response");
-        if execution_id == response.parent_execution_id {
-            return Err(DbErrorStubResponse::Write(DbErrorWrite::NonRetriable(
-                DbErrorWriteNonRetriable::ValidationFailed(
-                    "Parameters `execution_id` and `parent_execution_id` cannot be the same".into(),
-                ),
-            )));
+        #[cfg(debug_assertions)]
+        {
+            let (expected_parent, expected_join_set) = execution_id.split_to_parts();
+            debug_assert_eq!(expected_parent, response.parent_execution_id);
+            debug_assert_eq!(expected_join_set, response.join_set_id);
+            debug_assert_eq!(execution_id, response.child_execution_id);
         }
+        let execution_id = ExecutionId::Derived(execution_id);
         let expected_retval = response.result.clone();
-        let fallback_version = version.increment();
-        let result = {
-            self.transaction(
+        let notifiers = self
+            .transaction(
                 move |tx| {
                     let version_raw = version.0;
                     match Self::append(tx, &execution_id, req.clone(), version.clone()) {
-                        Ok((next_version, notifier_of_child)) => {
+                        Ok((_next_version, notifier_of_child)) => {
                             let pending_at_parent = Self::append_response(
                                 tx,
                                 &response.parent_execution_id,
@@ -4660,20 +4660,17 @@ impl DbConnection for SqlitePool {
                                 },
                             )
                             .map_err(DbErrorStubResponse::Write)?;
-                            Ok::<_, DbErrorStubResponse>(Some((
-                                next_version,
-                                vec![notifier_of_child, pending_at_parent],
-                            )))
+                            Ok::<_, DbErrorStubResponse>(Some(vec![
+                                notifier_of_child,
+                                pending_at_parent,
+                            ]))
                         }
                         Err(DbErrorWrite::NonRetriable(
                             DbErrorWriteNonRetriable::AlreadyFinished,
                         )) => {
                             // Idempotency check: read the existing event and compare retval.
                             let found = Self::get_execution_event(tx, &execution_id, version_raw)
-                                .map_err(|_| {
-                                // NotFound should not happen — we just got AlreadyFinished.
-                                DbErrorStubResponse::StubConflict
-                            })?;
+                                .map_err(|_| DbErrorStubResponse::StubConflict)?;
                             match found.event {
                                 ExecutionRequest::Finished { retval, .. }
                                     if retval == expected_retval =>
@@ -4689,18 +4686,11 @@ impl DbConnection for SqlitePool {
                 TxType::MultipleWrites,
                 "upsert_stub_response",
             )
-            .await?
-        };
-        match result {
-            Some((version, notifiers)) => {
-                self.notify_all(notifiers, current_time);
-                Ok(version)
-            }
-            None => {
-                // Idempotent success — return the version that was already committed.
-                Ok(fallback_version)
-            }
+            .await?;
+        if let Some(notifiers) = notifiers {
+            self.notify_all(notifiers, current_time);
         }
+        Ok(())
     }
 
     async fn get_pending_state(
