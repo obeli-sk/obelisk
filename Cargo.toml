@@ -391,7 +391,7 @@ wit-bindgen-rust = "0.57.1"
 wstd = "0.6.5"
 
 # otlp
-opentelemetry = "0.31.0"
+opentelemetry = "0.32.0"
 opentelemetry-http = "0.31.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.31.1", default-features = false, features = [
