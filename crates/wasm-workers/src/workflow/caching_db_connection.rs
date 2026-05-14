@@ -30,6 +30,10 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
 
     fn version(&self) -> &Version;
 
+    fn capture_application_log(&mut self, _row: LogInfoAppendRow) -> bool {
+        false
+    }
+
     async fn append_non_blocking(
         &mut self,
         non_blocking_event: CacheableDbEvent,

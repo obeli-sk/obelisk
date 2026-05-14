@@ -550,6 +550,9 @@ impl WorkflowWorker {
     pub(crate) async fn advance_from_log(
         db_conn: &dyn DbConnection,
         cancel_registry: &CancelRegistry,
+        log_forwarder_sender: Option<
+            &tokio::sync::mpsc::Sender<concepts::storage::LogInfoAppendRow>,
+        >,
         requested: ReplayAdvanceable,
         fresh_replay: Vec<InternalCapturedWrite>,
         old_version: Version,
@@ -567,7 +570,14 @@ impl WorkflowWorker {
                 &requested.captured_writes,
                 &fresh_replay,
             );
-            apply_writes(db_conn, cancel_registry, writes_to_apply, old_version).await?;
+            apply_writes(
+                db_conn,
+                cancel_registry,
+                log_forwarder_sender,
+                writes_to_apply,
+                old_version,
+            )
+            .await?;
             AdvanceResponse {
                 finished: requested.get_return_value().cloned(),
             }
@@ -1193,6 +1203,9 @@ impl WorkflowWorker {
         let old_version = log.next_version.clone();
         let ffqn = log.ffqn().clone();
         let params = log.params().clone();
+        let log_forwarder_sender = logs_storage_config
+            .as_ref()
+            .map(|config| &config.log_sender);
         let (fresh_replay, _fatal_error) = Self::capture_replay_writes_from_log(
             deployment_id,
             component_id,
@@ -1202,7 +1215,7 @@ impl WorkflowWorker {
             fn_registry,
             real_db_pool,
             execution_id,
-            logs_storage_config,
+            logs_storage_config.clone(),
             clock_fn,
             log,
             ffqn,
@@ -1213,6 +1226,7 @@ impl WorkflowWorker {
         Self::advance_from_log(
             &*db_conn,
             &cancel_registry,
+            log_forwarder_sender,
             requested,
             fresh_replay,
             old_version,
@@ -1467,18 +1481,20 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use chrono::DateTime;
+    use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived};
     use concepts::storage::{
         AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, HistoryEvent,
-        JoinSetRequest, JoinSetResponse, Locked, LockedBy, PendingStateFinishedError,
+        JoinSetRequest, JoinSetResponse, Locked, LockedBy, LogEntry, LogInfoAppendRow, LogLevel,
+        PendingStateFinishedError, PersistKind,
     };
     use concepts::storage::{
         AppendRequest, DbConnection, DbConnectionTest, DbPool, ExecutionRequest,
     };
     use concepts::time::TokioSleep;
     use concepts::{
-        ComponentRetryConfig, ExecutionFailureKind, ExecutionId, Params,
-        SupportedFunctionReturnValue,
+        ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
+        Params, StrVariant, SupportedFunctionReturnValue,
     };
     use concepts::{
         prefixed_ulid::{ExecutorId, RunId},
@@ -1509,6 +1525,26 @@ pub(crate) mod tests {
     use tokio::sync::mpsc;
     use tracing::debug;
     use tracing::info_span;
+
+    fn drain_forwarded_log_messages(
+        receiver: &mut mpsc::Receiver<LogInfoAppendRow>,
+    ) -> Vec<String> {
+        let mut messages = Vec::new();
+        loop {
+            match receiver.try_recv() {
+                Ok(LogInfoAppendRow {
+                    log_entry: LogEntry::Log { message, .. },
+                    ..
+                }) => messages.push(message),
+                Ok(_) => {}
+                Err(
+                    tokio::sync::mpsc::error::TryRecvError::Empty
+                    | tokio::sync::mpsc::error::TryRecvError::Disconnected,
+                ) => break,
+            }
+        }
+        messages
+    }
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{ValKey, WastVal, WastValWithType},
@@ -4469,6 +4505,228 @@ pub(crate) mod tests {
         .unwrap();
         let result = assert_matches!(replay, ReplayResponse::Finished { result } => result);
         assert_matches!(result, SupportedFunctionReturnValue::Ok(_));
+    }
+
+    #[tokio::test]
+    async fn advance_forwards_captured_application_logs() {
+        test_utils::set_up();
+
+        let sim_clock = SimClock::epoch();
+        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (workflow_runnable, workflow_component_id) = compile_workflow_with_engine(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            &workflow_engine,
+        )
+        .await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY)
+                .await,
+            (workflow_runnable.clone(), workflow_component_id.clone()),
+        ]);
+
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: SLEEP1_HOST_ACTIVITY_FFQN,
+                params: Params::from_json_values_test(vec![json!({"milliseconds": 10_u64})]),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: workflow_component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let (log_sender, mut log_recv) = mpsc::channel(16);
+        let logs_storage_config = Some(LogStrageConfig {
+            min_level: LogLevel::Debug,
+            log_sender,
+        });
+
+        let replay = WorkflowWorker::replay(
+            DeploymentId::generate(),
+            workflow_component_id.clone(),
+            workflow_runnable.wasmtime_component.clone(),
+            &workflow_runnable.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config.clone(),
+            sim_clock.clone_box(),
+        )
+        .await
+        .unwrap();
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        assert_matches!(
+            log_recv.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        );
+
+        WorkflowWorker::advance(
+            DeploymentId::generate(),
+            workflow_component_id,
+            workflow_runnable.wasmtime_component,
+            &workflow_runnable.wasm_component.exim,
+            workflow_engine,
+            fn_registry,
+            CancelRegistry::new(),
+            db_pool,
+            execution_id,
+            logs_storage_config,
+            sim_clock.clone_box(),
+            replay,
+        )
+        .await
+        .unwrap();
+
+        assert_matches!(
+            log_recv.try_recv(),
+            Ok(LogInfoAppendRow {
+                log_entry: LogEntry::Log {
+                    level: LogLevel::Info,
+                    message,
+                    ..
+                },
+                ..
+            }) if message == "changed"
+        );
+        assert_matches!(
+            log_recv.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty
+                | tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        );
+    }
+
+    #[tokio::test]
+    async fn advance_trimmed_writes_forward_only_prefix_logs() {
+        test_utils::set_up();
+
+        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = ExecutionId::generate();
+        let component_id = ComponentId::new(
+            ComponentType::Workflow,
+            StrVariant::Static("test"),
+            COMPONENT_DIGEST_DUMMY,
+        )
+        .unwrap();
+        let ffqn = FunctionFqn::new_static("test:workflow/workflow", "trimmed-logs");
+        let current_time = DateTime::UNIX_EPOCH;
+        let old_version = db_connection
+            .create(CreateRequest {
+                created_at: current_time,
+                execution_id: execution_id.clone(),
+                ffqn,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: current_time,
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+        let run_id = RunId::generate();
+
+        let make_log = |message: &str| LogInfoAppendRow {
+            execution_id: execution_id.clone(),
+            run_id,
+            log_entry: LogEntry::Log {
+                created_at: current_time,
+                level: LogLevel::Info,
+                message: message.to_owned(),
+            },
+        };
+        let make_append = |version: u32, value: u8, message: &str| {
+            InternalCapturedWrite::new_for_test(
+                CapturedDbWrite::Append {
+                    execution_id: execution_id.clone(),
+                    version: Version::new(version),
+                    req: AppendRequest {
+                        created_at: current_time,
+                        event: ExecutionRequest::HistoryEvent {
+                            event: HistoryEvent::Persist {
+                                value: vec![value],
+                                kind: PersistKind::ExecutionId,
+                            },
+                        },
+                    },
+                    backtraces: vec![],
+                },
+                vec![make_log(message)],
+            )
+        };
+
+        let first_version = old_version.0;
+        let second_version = first_version + 1;
+        let third_version = second_version + 1;
+
+        let first = make_append(first_version, 1, "first");
+        let second = make_append(second_version, 2, "second");
+        let third = InternalCapturedWrite::new_for_test(
+            CapturedDbWrite::AppendFinished {
+                execution_id: execution_id.clone(),
+                version: Version::new(third_version),
+                current_time,
+                retval: SupportedFunctionReturnValue::Ok(None),
+            },
+            vec![make_log("third")],
+        );
+
+        let (log_sender, mut log_recv) = mpsc::channel(16);
+
+        WorkflowWorker::advance_from_log(
+            db_connection.as_ref(),
+            &CancelRegistry::new(),
+            Some(&log_sender),
+            ReplayAdvanceable {
+                captured_writes: vec![first.write.clone()],
+            },
+            vec![first.clone(), second.clone(), third.clone()],
+            old_version,
+        )
+        .await
+        .unwrap();
+        assert_eq!(drain_forwarded_log_messages(&mut log_recv), vec!["first"]);
+
+        WorkflowWorker::advance_from_log(
+            db_connection.as_ref(),
+            &CancelRegistry::new(),
+            Some(&log_sender),
+            ReplayAdvanceable {
+                captured_writes: vec![second.write.clone()],
+            },
+            vec![second.clone(), third.clone()],
+            Version::new(second_version),
+        )
+        .await
+        .unwrap();
+        assert_eq!(drain_forwarded_log_messages(&mut log_recv), vec!["second"]);
+
+        WorkflowWorker::advance_from_log(
+            db_connection.as_ref(),
+            &CancelRegistry::new(),
+            Some(&log_sender),
+            ReplayAdvanceable {
+                captured_writes: vec![third.write.clone()],
+            },
+            vec![third],
+            Version::new(third_version),
+        )
+        .await
+        .unwrap();
+        assert_eq!(drain_forwarded_log_messages(&mut log_recv), vec!["third"]);
     }
 
     #[expand_enum_database]

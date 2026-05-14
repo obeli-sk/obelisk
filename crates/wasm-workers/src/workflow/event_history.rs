@@ -207,6 +207,12 @@ impl EventHistory {
         self.first_unprocessed_request().is_some()
     }
 
+    pub(crate) fn has_unprocessed_responses(&self) -> bool {
+        self.responses.iter().any(|(_response, processing_status)| {
+            *processing_status == ProcessingStatus::Unprocessed
+        })
+    }
+
     pub(crate) fn join_set_name_exists(&self, join_set_name: &str, kind: JoinSetKind) -> bool {
         // TODO: optimize
         self.event_history

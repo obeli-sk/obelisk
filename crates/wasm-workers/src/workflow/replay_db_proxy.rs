@@ -32,15 +32,47 @@ use tracing::{debug, trace, warn};
 pub(crate) struct InternalCapturedWrite {
     pub(crate) write: CapturedDbWrite,
     cancellations: Option<JoinSetCloseCancellations>,
+    pub(crate) logs: Vec<LogInfoAppendRow>,
+}
+
+#[cfg(test)]
+impl InternalCapturedWrite {
+    pub(crate) fn new_for_test(write: CapturedDbWrite, logs: Vec<LogInfoAppendRow>) -> Self {
+        Self {
+            write,
+            cancellations: None,
+            logs,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 struct ReplayEventCollector {
     preview: Vec<InternalCapturedWrite>,
+    // Logs emitted during replay belong to the next captured write, which
+    // corresponds to the next user-code step that would be persisted.
+    pending_logs: Vec<LogInfoAppendRow>,
 }
 
 impl ReplayEventCollector {
     fn into_writes(self) -> Vec<InternalCapturedWrite> {
+        if !self.pending_logs.is_empty() {
+            let pending_messages: Vec<_> = self
+                .pending_logs
+                .iter()
+                .map(|row| format!("{:?}", row.log_entry))
+                .collect();
+            warn!(
+                pending_logs = self.pending_logs.len(),
+                ?pending_messages,
+                "Replay finished with pending application logs that were not attached to a captured write"
+            );
+        }
+        debug_assert!(
+            self.pending_logs.is_empty(),
+            "replay must not finish with unattached application logs: {:?}",
+            self.pending_logs
+        );
         self.preview
     }
 
@@ -48,6 +80,7 @@ impl ReplayEventCollector {
         self.preview.push(InternalCapturedWrite {
             write,
             cancellations: None,
+            logs: std::mem::take(&mut self.pending_logs),
         });
     }
 
@@ -59,13 +92,19 @@ impl ReplayEventCollector {
         self.preview.push(InternalCapturedWrite {
             write,
             cancellations,
+            logs: std::mem::take(&mut self.pending_logs),
         });
+    }
+
+    fn push_log(&mut self, row: LogInfoAppendRow) {
+        self.pending_logs.push(row);
     }
 }
 
 pub(crate) async fn apply_writes(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
+    log_forwarder_sender: Option<&mpsc::Sender<LogInfoAppendRow>>,
     actual: Vec<InternalCapturedWrite>,
     old_version: Version,
 ) -> Result<Version, DbErrorWrite> {
@@ -73,6 +112,13 @@ pub(crate) async fn apply_writes(
     for write in &actual {
         if let Some(v) = apply_captured_write(write, conn, cancel_registry).await? {
             version = v;
+        }
+        if let Some(log_forwarder_sender) = log_forwarder_sender {
+            for row in &write.logs {
+                if let Err(err) = log_forwarder_sender.try_send(row.clone()) {
+                    warn!("Dropping captured workflow log message: {err:?}");
+                }
+            }
         }
     }
     Ok(version)
@@ -219,6 +265,10 @@ impl ReplayWorkflowDbConnection {
         self.collector.push_write(write);
     }
 
+    pub(crate) fn push_log(&mut self, row: LogInfoAppendRow) {
+        self.collector.push_log(row);
+    }
+
     pub(crate) fn version(&self) -> &Version {
         &self.version
     }
@@ -322,6 +372,11 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
 
     fn version(&self) -> &Version {
         &self.version
+    }
+
+    fn capture_application_log(&mut self, row: LogInfoAppendRow) -> bool {
+        self.push_log(row);
+        true
     }
 
     async fn append_non_blocking(

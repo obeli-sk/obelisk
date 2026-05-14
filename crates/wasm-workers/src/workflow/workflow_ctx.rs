@@ -2720,25 +2720,81 @@ fn trace_on_replay(ctx: &mut WorkflowCtx, level: LogLevel, message: String) {
     }
 }
 
+fn emit_application_log_to_tracing_only(ctx: &WorkflowCtx, level: LogLevel, message: &str) {
+    const TARGET: &str = "app";
+    ctx.component_logger.span.in_scope(|| match level {
+        LogLevel::Trace => trace!(target: TARGET, "{message}"),
+        LogLevel::Debug => debug!(target: TARGET, "{message}"),
+        LogLevel::Info => info!(target: TARGET, "{message}"),
+        LogLevel::Warn => warn!(target: TARGET, "{message}"),
+        LogLevel::Error => error!(target: TARGET, "{message}"),
+    });
+}
+
+fn capture_replay_application_log(ctx: &mut WorkflowCtx, level: LogLevel, message: &str) -> bool {
+    if ctx.is_replay != Some(ReplayKind::Unfinished) {
+        return false;
+    }
+    let Some(logs_storage_config) = &ctx.component_logger.logs_storage_config else {
+        return false;
+    };
+    if ctx.event_history.has_unprocessed_requests() || ctx.event_history.has_unprocessed_responses()
+    {
+        return false;
+    }
+    if level >= logs_storage_config.min_level {
+        return ctx.db_connection.capture_application_log(LogInfoAppendRow {
+            execution_id: ctx.component_logger.execution_id.clone(),
+            run_id: ctx.component_logger.run_id,
+            log_entry: LogEntry::Log {
+                created_at: ctx.clock_fn.now(),
+                level,
+                message: message.to_owned(),
+            },
+        });
+    }
+    false
+}
+
 impl log_activities::obelisk::log::log::Host for WorkflowCtx {
     fn trace(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Trace, message);
+        if capture_replay_application_log(self, LogLevel::Trace, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Trace, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Trace, message);
+        }
     }
 
     fn debug(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Debug, message);
+        if capture_replay_application_log(self, LogLevel::Debug, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Debug, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Debug, message);
+        }
     }
 
     fn info(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Info, message);
+        if capture_replay_application_log(self, LogLevel::Info, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Info, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Info, message);
+        }
     }
 
     fn warn(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Warn, message);
+        if capture_replay_application_log(self, LogLevel::Warn, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Warn, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Warn, message);
+        }
     }
 
     fn error(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Error, message);
+        if capture_replay_application_log(self, LogLevel::Error, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Error, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Error, message);
+        }
     }
 }
 
