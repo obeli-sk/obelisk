@@ -11,10 +11,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId,
+    prefixed_ulid::ExecutionIdDerived,
     storage::{
-        self, AppendBatchResponse, AppendRequest, AppendResponseToExecution, BacktraceInfo,
-        CreateRequest, DbConnection, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
-        LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version,
+        self, AppendRequest, AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection,
+        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, LogInfoAppendRow, ResponseCursor,
+        ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
@@ -79,12 +80,12 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
 
     async fn upsert_stub_response(
         &mut self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, UpsertStubOrReplayInterrupt>;
+    ) -> Result<(), UpsertStubOrReplayInterrupt>;
 
     // Part of writing stub response: start with this read, then attempt to write the response in `EventHistory::append_to_db_non_blocking`.
     async fn get_stub_create_request(
@@ -444,12 +445,12 @@ impl WorkflowDbConnection for CachingDbConnection {
 
     async fn upsert_stub_response(
         &mut self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, UpsertStubOrReplayInterrupt> {
+    ) -> Result<(), UpsertStubOrReplayInterrupt> {
         self.db_connection
             .upsert_stub_response(execution_id, version, req, response, current_time)
             .await

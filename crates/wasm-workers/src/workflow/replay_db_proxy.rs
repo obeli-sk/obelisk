@@ -11,14 +11,15 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::storage::DbErrorStubResponse;
 use concepts::{
     ComponentId, ExecutionId,
+    prefixed_ulid::ExecutionIdDerived,
     storage::{
-        self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
-        AppendResponseToExecution, BacktraceInfo, CapturedDbWrite, CreateRequest, DbConnection,
-        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
-        ExecutionRequest, LogInfoAppendRow, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
-        Version,
+        self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
+        CapturedDbWrite, CreateRequest, DbConnection, DbErrorRead, DbErrorReadWithTimeout,
+        DbErrorWrite, DbErrorWriteNonRetriable, ExecutionRequest, LogInfoAppendRow, ResponseCursor,
+        ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
@@ -209,20 +210,17 @@ async fn apply_captured_write(
             let mut batch = events.batch;
             let req = batch.pop().expect("stub batch must have exactly one item");
             debug_assert!(batch.is_empty(), "stub batch must have exactly one item");
-            conn.upsert_stub_response(
-                events.execution_id,
-                events.version,
-                req,
-                response,
-                current_time,
-            )
-            .await
-            .map_err(|err| match err {
-                concepts::storage::DbErrorStubResponse::StubConflict => {
-                    DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
-                }
-                concepts::storage::DbErrorStubResponse::Write(db_err) => db_err,
-            })?;
+            let ExecutionId::Derived(derived_id) = events.execution_id else {
+                panic!("stub execution_id must be derived");
+            };
+            conn.upsert_stub_response(derived_id, events.version, req, response, current_time)
+                .await
+                .map_err(|err| match err {
+                    DbErrorStubResponse::StubConflict => {
+                        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
+                    }
+                    DbErrorStubResponse::Write(db_err) => db_err,
+                })?;
             Ok(None)
         }
         CapturedDbWrite::AppendFinished {
@@ -555,12 +553,13 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
 
     async fn upsert_stub_response(
         &mut self,
-        execution_id: ExecutionId,
+        execution_id: ExecutionIdDerived,
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-    ) -> Result<AppendBatchResponse, UpsertStubOrReplayInterrupt> {
+    ) -> Result<(), UpsertStubOrReplayInterrupt> {
+        let execution_id = ExecutionId::Derived(execution_id);
         // Query the database first.
         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
         if let Ok(found_stub) = self
@@ -571,7 +570,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             match found_stub.event {
                 ExecutionRequest::Finished { retval, .. } if retval == response.result => {
                     // Same value already written — idempotent success.
-                    return Ok(stub_finished_version.increment());
+                    return Ok(());
                 }
                 ExecutionRequest::Finished { .. } => {
                     // Different value — conflict.
