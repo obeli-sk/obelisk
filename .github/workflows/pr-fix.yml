@@ -74,15 +74,7 @@ jobs:
 
       - name: Update schemas
         run: |
-          nix develop --command bash -lc '
-            if [ -x scripts/update-schemas.sh ]; then
-              scripts/update-schemas.sh
-            else
-              scripts/update-toml-schema.sh
-              scripts/update-openapi-schema.sh
-              scripts/update-db-schema.sh
-            fi
-          '
+          nix develop --command scripts/update-schemas.sh
 
           git add -A
           if git diff --cached --quiet; then
