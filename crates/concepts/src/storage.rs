@@ -1691,7 +1691,9 @@ impl LogEntry {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom, strum::EnumIter)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::TryFrom, strum::EnumIter,
+)]
 #[try_from(repr)]
 #[repr(u8)]
 pub enum LogLevel {

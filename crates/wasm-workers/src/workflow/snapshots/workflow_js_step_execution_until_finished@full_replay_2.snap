@@ -5,41 +5,116 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
 {
   "captured_writes": [
     {
-      "AppendStubResponse": {
-        "events": {
-          "execution_id": "E_00000000000000000000000000.g:1_1",
-          "version": 1,
-          "batch": [
-            {
-              "created_at": "1970-01-01T00:00:00.300Z",
-              "event": {
-                "finished": {
-                  "retval": {
-                    "ok": {
-                      "type": "string",
-                      "value": "hello"
-                    }
-                  },
-                  "http_client_traces": null
+      "AppendBatch": {
+        "current_time": "1970-01-01T00:00:00.300Z",
+        "batch": [
+          {
+            "created_at": "1970-01-01T00:00:00.300Z",
+            "event": {
+              "history_event": {
+                "event": {
+                  "type": "stub",
+                  "target_execution_id": "E_00000000000000000000000000.g:1_1",
+                  "retval_hash": "011f9f1089426c4e2d1d6c761441181fba8e690f2baeccde7036a92c7d49d6b0e1",
+                  "result": {
+                    "Ok": null
+                  }
                 }
               }
             }
-          ]
-        },
-        "response": {
-          "parent_execution_id": "E_00000000000000000000000000",
+          }
+        ],
+        "execution_id": "E_00000000000000000000000000",
+        "version": 4,
+        "backtraces": [
+          {
+            "execution_id": "E_00000000000000000000000000",
+            "component_id": {
+              "component_type": "workflow",
+              "name": "test_js_workflow",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "version_min_including": 4,
+            "version_max_excluding": 5,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "module": "unknown",
+                  "func_name": "call_stub",
+                  "symbols": [
+                    {
+                      "func_name": null,
+                      "file": null,
+                      "line": 5,
+                      "col": 25
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "Append": {
+        "execution_id": "E_00000000000000000000000000",
+        "version": 5,
+        "req": {
           "created_at": "1970-01-01T00:00:00.300Z",
-          "join_set_id": "g:1",
-          "child_execution_id": "E_00000000000000000000000000.g:1_1",
-          "finished_version": 1,
-          "result": {
-            "ok": {
-              "type": "string",
-              "value": "hello"
+          "event": {
+            "history_event": {
+              "event": {
+                "type": "join_next",
+                "join_set_id": "g:1",
+                "run_expires_at": "1970-01-01T00:00:00.300Z",
+                "requested_ffqn": null,
+                "closing": false
+              }
             }
           }
         },
-        "current_time": "1970-01-01T00:00:00.300Z"
+        "backtraces": [
+          {
+            "execution_id": "E_00000000000000000000000000",
+            "component_id": {
+              "component_type": "workflow",
+              "name": "test_js_workflow",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "version_min_including": 5,
+            "version_max_excluding": 6,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "module": "unknown",
+                  "func_name": "call_stub",
+                  "symbols": [
+                    {
+                      "func_name": null,
+                      "file": null,
+                      "line": 6,
+                      "col": 41
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "AppendFinished": {
+        "execution_id": "E_00000000000000000000000000",
+        "version": 6,
+        "current_time": "1970-01-01T00:00:00.300Z",
+        "retval": {
+          "ok": {
+            "type": "string",
+            "value": "hello"
+          }
+        }
       }
     }
   ]

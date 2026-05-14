@@ -988,6 +988,11 @@ impl WorkflowWorker {
         }
     }
 
+    /// Replay execution from existing execution log, which was loaded into `ctx`.
+    /// Repaly can move past the last `ExecutionRequest` in order to capture writes for the `advance` RPC.
+    /// It can assume it is the only writer to its own and its children's execution log.
+    /// In the worst case, e.g. on a race with an external stub response writer, the advance will
+    /// fail, and the new replay will have to be issued.
     pub(crate) async fn replay_internal(
         &self,
         ctx: WorkerContext,

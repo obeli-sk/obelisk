@@ -14,8 +14,8 @@ use concepts::{
     storage::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
         AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, ResponseCursor, ResponseWithCursor,
-        TimeoutOutcome, Version,
+        DbErrorReadWithTimeout, DbErrorWrite, ExecutionEvent, LogInfoAppendRow, ResponseCursor,
+        ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
@@ -81,11 +81,11 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWriteOrReplayInterrupt>;
 
+    // Part of writing stub response: start with this read, then attempt to write the response in `EventHistory::append_to_db_non_blocking`.
     async fn get_stub_create_request(
-        &mut self,
+        &self,
         execution_id: &ExecutionId,
-        current_time: DateTime<Utc>,
-    ) -> Result<CreateRequest, DbErrorWriteOrReplayInterrupt>;
+    ) -> Result<CreateRequest, DbErrorRead>;
 
     async fn get_execution_event(
         &self,
@@ -456,18 +456,27 @@ impl WorkflowDbConnection for CachingDbConnection {
     }
 
     async fn get_stub_create_request(
-        &mut self,
+        &self,
         execution_id: &ExecutionId,
-        current_time: DateTime<Utc>,
-    ) -> Result<CreateRequest, DbErrorWriteOrReplayInterrupt> {
-        // Might be dependent on an cached -submit
-        self.flush_non_blocking_event_cache(current_time)
-            .await
-            .map_err(DbErrorWriteOrReplayInterrupt::DbError)?; // TODO(perf): Just search cache + db instead.
-        self.db_connection
-            .get_create_request(execution_id)
-            .await
-            .map_err(|err| DbErrorWriteOrReplayInterrupt::DbError(err.into()))
+    ) -> Result<CreateRequest, DbErrorRead> {
+        if let Some(caching_buffer) = &self.caching_buffer
+            && let Some(found) = caching_buffer
+                .non_blocking_event_batch
+                .iter()
+                .find_map(|event| match event {
+                    CacheableDbEvent::SubmitChildExecution {
+                        request,
+                        version,
+                        child_req,
+                        backtrace,
+                    } if child_req.execution_id == *execution_id => Some(child_req.clone()),
+                    _ => None,
+                })
+        {
+            return Ok(found);
+        }
+
+        self.db_connection.get_create_request(execution_id).await
     }
 
     async fn get_execution_event(

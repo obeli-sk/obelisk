@@ -1394,11 +1394,11 @@ impl EventHistory {
                 params,
                 wasm_backtrace,
             }) => {
+                // `WorkflowDbConnection::get_stub_create_request` already called when creating `intent`.
                 // Cannot be cacheable, we need the result of response write imediately.
                 // Idempotently attempt to write to target_execution_id.
                 // The idempotent write is needed to avoid race with stub requests originating from remote systems.
                 debug!(target_execution_id = %params.target_execution_id, "StubRequest: first write");
-                // Flushed when doing
                 match intent {
                     StubIntent::Err(err) => {
                         let event = HistoryEvent::Stub {
