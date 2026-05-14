@@ -207,6 +207,12 @@ impl EventHistory {
         self.first_unprocessed_request().is_some()
     }
 
+    pub(crate) fn has_unprocessed_responses(&self) -> bool {
+        self.responses.iter().any(|(_response, processing_status)| {
+            *processing_status == ProcessingStatus::Unprocessed
+        })
+    }
+
     pub(crate) fn join_set_name_exists(&self, join_set_name: &str, kind: JoinSetKind) -> bool {
         // TODO: optimize
         self.event_history
@@ -1394,11 +1400,11 @@ impl EventHistory {
                 params,
                 wasm_backtrace,
             }) => {
+                // `WorkflowDbConnection::get_stub_create_request` already called when creating `intent`.
                 // Cannot be cacheable, we need the result of response write imediately.
                 // Idempotently attempt to write to target_execution_id.
                 // The idempotent write is needed to avoid race with stub requests originating from remote systems.
                 debug!(target_execution_id = %params.target_execution_id, "StubRequest: first write");
-                // Flushed when doing
                 match intent {
                     StubIntent::Err(err) => {
                         let event = HistoryEvent::Stub {
@@ -1435,7 +1441,6 @@ impl EventHistory {
                                     http_client_traces: None,
                                 },
                             };
-                            // Replay interruption correctness: asserted that flush is noop.
                             let stub_outcome = db_connection
                                 .append_stub_response(
                                     AppendEventsToExecution {
@@ -1456,7 +1461,6 @@ impl EventHistory {
                                     called_at,
                                 )
                                 .await;
-                            // Replay will always interrupt here as it cannot guess the write result.
                             match stub_outcome {
                                 Ok(ok) => Ok(ok),
                                 Err(DbErrorWriteOrReplayInterrupt::DbError(err)) => Err(err),

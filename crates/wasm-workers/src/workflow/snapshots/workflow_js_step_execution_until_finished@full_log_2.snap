@@ -66,11 +66,57 @@ expression: "ExecutionLogSanitized::from(log)"
         }
       },
       "version": 3
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.400Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "stub",
+            "target_execution_id": "E_00000000000000000000000000.g:1_1",
+            "retval_hash": "011f9f1089426c4e2d1d6c761441181fba8e690f2baeccde7036a92c7d49d6b0e1",
+            "result": {
+              "Ok": null
+            }
+          }
+        }
+      },
+      "version": 4
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.400Z",
+      "event": {
+        "history_event": {
+          "event": {
+            "type": "join_next",
+            "join_set_id": "g:1",
+            "run_expires_at": "1970-01-01T00:00:00.400Z",
+            "requested_ffqn": null,
+            "closing": false
+          }
+        }
+      },
+      "version": 5
+    },
+    {
+      "created_at": "1970-01-01T00:00:00.400Z",
+      "event": {
+        "finished": {
+          "retval": {
+            "ok": {
+              "type": "string",
+              "value": "hello"
+            }
+          },
+          "http_client_traces": null
+        }
+      },
+      "version": 6
     }
   ],
   "responses": [
     {
-      "created_at": "1970-01-01T00:00:00.400Z",
+      "created_at": "1970-01-01T00:00:00.200Z",
       "event": {
         "join_set_id": "g:1",
         "event": {
@@ -87,13 +133,12 @@ expression: "ExecutionLogSanitized::from(log)"
       }
     }
   ],
-  "next_version": 4,
+  "next_version": 6,
   "pending_state": {
-    "status": "paused",
-    "PendingAt": {
-      "scheduled_at": "1970-01-01T00:00:00Z",
-      "last_lock": null
-    }
+    "status": "finished",
+    "version": 6,
+    "finished_at": "1970-01-01T00:00:00.400Z",
+    "result_kind": "ok"
   },
   "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 }

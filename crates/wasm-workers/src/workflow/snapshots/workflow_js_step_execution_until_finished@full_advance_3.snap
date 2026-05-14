@@ -1,9 +1,0 @@
----
-source: crates/wasm-workers/src/workflow/workflow_js_worker.rs
-expression: "json!({\n    \"finished\": advance.finished.is_some(), \"requested_captured_writes_len\":\n    requested.captured_writes.len(), \"replayed_captured_writes_len\":\n    replay.captured_writes.len(),\n})"
----
-{
-  "finished": true,
-  "requested_captured_writes_len": 3,
-  "replayed_captured_writes_len": 3
-}

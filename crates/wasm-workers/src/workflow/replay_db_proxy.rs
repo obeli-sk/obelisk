@@ -19,27 +19,60 @@ use concepts::{
         self, AppendBatchResponse, AppendEventsToExecution, AppendRequest,
         AppendResponseToExecution, BacktraceInfo, CapturedDbWrite, CreateRequest, DbConnection,
         DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
-        ExecutionEvent, ExecutionRequest, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
-        Version,
+        ExecutionEvent, ExecutionRequest, LogInfoAppendRow, ResponseCursor, ResponseWithCursor,
+        TimeoutOutcome, Version,
     },
 };
 use std::pin::Pin;
 use std::{any::Any, future::Future};
-use tracing::{debug, trace};
+use tokio::sync::mpsc;
+use tracing::{debug, trace, warn};
 
 #[derive(Debug, Clone)]
 pub(crate) struct InternalCapturedWrite {
     pub(crate) write: CapturedDbWrite,
     cancellations: Option<JoinSetCloseCancellations>,
+    pub(crate) logs: Vec<LogInfoAppendRow>,
+}
+
+#[cfg(test)]
+impl InternalCapturedWrite {
+    pub(crate) fn new_for_test(write: CapturedDbWrite, logs: Vec<LogInfoAppendRow>) -> Self {
+        Self {
+            write,
+            cancellations: None,
+            logs,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 struct ReplayEventCollector {
     preview: Vec<InternalCapturedWrite>,
+    // Logs emitted during replay belong to the next captured write, which
+    // corresponds to the next user-code step that would be persisted.
+    pending_logs: Vec<LogInfoAppendRow>,
 }
 
 impl ReplayEventCollector {
     fn into_writes(self) -> Vec<InternalCapturedWrite> {
+        if !self.pending_logs.is_empty() {
+            let pending_messages: Vec<_> = self
+                .pending_logs
+                .iter()
+                .map(|row| format!("{:?}", row.log_entry))
+                .collect();
+            warn!(
+                pending_logs = self.pending_logs.len(),
+                ?pending_messages,
+                "Replay finished with pending application logs that were not attached to a captured write"
+            );
+        }
+        debug_assert!(
+            self.pending_logs.is_empty(),
+            "replay must not finish with unattached application logs: {:?}",
+            self.pending_logs
+        );
         self.preview
     }
 
@@ -47,6 +80,7 @@ impl ReplayEventCollector {
         self.preview.push(InternalCapturedWrite {
             write,
             cancellations: None,
+            logs: std::mem::take(&mut self.pending_logs),
         });
     }
 
@@ -58,13 +92,19 @@ impl ReplayEventCollector {
         self.preview.push(InternalCapturedWrite {
             write,
             cancellations,
+            logs: std::mem::take(&mut self.pending_logs),
         });
+    }
+
+    fn push_log(&mut self, row: LogInfoAppendRow) {
+        self.pending_logs.push(row);
     }
 }
 
 pub(crate) async fn apply_writes(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
+    log_forwarder_sender: Option<&mpsc::Sender<LogInfoAppendRow>>,
     actual: Vec<InternalCapturedWrite>,
     old_version: Version,
 ) -> Result<Version, DbErrorWrite> {
@@ -72,6 +112,13 @@ pub(crate) async fn apply_writes(
     for write in &actual {
         if let Some(v) = apply_captured_write(write, conn, cancel_registry).await? {
             version = v;
+        }
+        if let Some(log_forwarder_sender) = log_forwarder_sender {
+            for row in &write.logs {
+                if let Err(err) = log_forwarder_sender.try_send(row.clone()) {
+                    warn!("Dropping captured workflow log message: {err:?}");
+                }
+            }
         }
     }
     Ok(version)
@@ -218,6 +265,10 @@ impl ReplayWorkflowDbConnection {
         self.collector.push_write(write);
     }
 
+    pub(crate) fn push_log(&mut self, row: LogInfoAppendRow) {
+        self.collector.push_log(row);
+    }
+
     pub(crate) fn version(&self) -> &Version {
         &self.version
     }
@@ -321,6 +372,11 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
 
     fn version(&self) -> &Version {
         &self.version
+    }
+
+    fn capture_application_log(&mut self, row: LogInfoAppendRow) -> bool {
+        self.push_log(row);
+        true
     }
 
     async fn append_non_blocking(
@@ -520,19 +576,27 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt)
     }
 
+    // Replay assumes it is the only writer to its own and its children's exec log so it can read uncomitted `CreateRequest` from memory.
     async fn get_stub_create_request(
-        &mut self,
+        &self,
         execution_id: &ExecutionId,
-        _current_time: DateTime<Utc>,
-    ) -> Result<CreateRequest, DbErrorWriteOrReplayInterrupt> {
-        if !self.collector.preview.is_empty() {
-            // This read may be dependent on an unflushed `-submit` request.
-            return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
+    ) -> Result<CreateRequest, DbErrorRead> {
+        if let Some(create_req) =
+            self.collector
+                .preview
+                .iter()
+                .rev()
+                .find_map(|captured| match &captured.write {
+                    CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } => child_req
+                        .iter()
+                        .find(|create_req| &create_req.execution_id == execution_id)
+                        .cloned(),
+                    _ => None,
+                })
+        {
+            return Ok(create_req);
         }
-        self.real_connection
-            .get_create_request(execution_id)
-            .await
-            .map_err(|err| DbErrorWriteOrReplayInterrupt::DbError(err.into()))
+        self.real_connection.get_create_request(execution_id).await
     }
 
     async fn get_execution_event(
@@ -561,5 +625,115 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     ) -> Result<(), DbErrorWrite> {
         // noop
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
+    use crate::workflow::workflow_worker::JoinNextBlockingStrategy;
+    use chrono::Utc;
+    use concepts::storage::DbPool;
+    use concepts::{FunctionFqn, Params};
+    use db_mem::inmemory_dao::InMemoryPool;
+    use rstest::rstest;
+    use std::sync::Arc;
+
+    enum ConnectionMode {
+        Caching,
+        Replay,
+    }
+
+    #[rstest]
+    #[case::caching(ConnectionMode::Caching)]
+    #[case::replay(ConnectionMode::Replay)]
+    #[tokio::test]
+    async fn get_stub_create_request_reads_from_captured_writes(#[case] mode: ConnectionMode) {
+        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let real_connection = db_pool.connection().await.unwrap();
+        let parent_execution_id = ExecutionId::from_parts(0, 0);
+        let child_execution_id = ExecutionId::from_parts(0, 1);
+        let created_at = Utc::now();
+        let parent_version = real_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: parent_execution_id.clone(),
+                ffqn: FunctionFqn::new_static(
+                    "testing:integration/workflow-call-stub",
+                    "call-stub",
+                ),
+                params: Params::from_json_values_test(vec![serde_json::json!(123_u64)]),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_workflow(),
+                deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+        let create_request = CreateRequest {
+            created_at,
+            execution_id: child_execution_id.clone(),
+            ffqn: FunctionFqn::new_static("testing:integration/stubs", "my-stub"),
+            params: Params::from_json_values_test(vec![serde_json::json!(123_u64)]),
+            parent: Some((
+                parent_execution_id.clone(),
+                concepts::JoinSetId::new(
+                    concepts::JoinSetKind::Generated,
+                    concepts::StrVariant::Static("1"),
+                )
+                .unwrap(),
+            )),
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: created_at,
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
+            scheduled_by: None,
+            paused: false,
+        };
+        let mut connection: Box<dyn WorkflowDbConnection> = match mode {
+            ConnectionMode::Caching => Box::new(CachingDbConnection::new(
+                real_connection,
+                parent_execution_id.clone(),
+                CachingBuffer::new(JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: 100,
+                }),
+                parent_version,
+            )),
+            ConnectionMode::Replay => Box::new(ReplayWorkflowDbConnection::new(
+                parent_execution_id.clone(),
+                parent_version,
+                real_connection,
+            )),
+        };
+        connection
+            .append_batch_create_new_execution(
+                created_at,
+                vec![AppendRequest {
+                    created_at,
+                    event: concepts::storage::ExecutionRequest::HistoryEvent {
+                        event: concepts::storage::HistoryEvent::Persist {
+                            value: vec![1],
+                            kind: concepts::storage::PersistKind::ExecutionId,
+                        },
+                    },
+                }],
+                parent_execution_id,
+                vec![create_request.clone()],
+                None,
+                &ComponentId::dummy_activity(),
+            )
+            .await
+            .unwrap();
+
+        let found = connection
+            .get_stub_create_request(&child_execution_id)
+            .await
+            .unwrap();
+
+        assert_eq!(found, create_request);
     }
 }

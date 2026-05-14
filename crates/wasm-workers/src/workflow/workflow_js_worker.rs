@@ -511,6 +511,9 @@ impl WorkflowJsWorker {
 
         let old_version = log.next_version.clone();
         let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
+        let log_forwarder_sender = logs_storage_config
+            .as_ref()
+            .map(|config| &config.log_sender);
         let (mut fresh_replay, _fatal_error) = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
             component_id,
@@ -520,7 +523,7 @@ impl WorkflowJsWorker {
             fn_registry,
             real_db_pool,
             execution_id,
-            logs_storage_config,
+            logs_storage_config.clone(),
             clock_fn,
             log,
             ffqn,
@@ -542,6 +545,7 @@ impl WorkflowJsWorker {
         WorkflowWorker::advance_from_log(
             &*db_conn,
             &cancel_registry,
+            log_forwarder_sender,
             requested,
             fresh_replay,
             old_version,
@@ -566,9 +570,9 @@ mod tests {
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutorId, RunId};
     use concepts::storage::{
         CapturedDbWrite, CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable,
-        ExecutionRequest, HistoryEvent, JoinSetRequest, JoinSetResponse, Locked, PendingState,
-        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStatePendingAt, Version,
+        ExecutionRequest, HistoryEvent, JoinSetRequest, JoinSetResponse, Locked, LogEntry,
+        LogInfoAppendRow, LogLevel, PendingState, PendingStateFinished, PendingStateFinishedError,
+        PendingStateFinishedResultKind, PendingStatePendingAt, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
@@ -595,6 +599,26 @@ mod tests {
     use wasmtime::Engine;
 
     const FIBO_10_OUTPUT: u64 = 55;
+
+    fn drain_forwarded_log_messages(
+        receiver: &mut mpsc::Receiver<LogInfoAppendRow>,
+    ) -> Vec<String> {
+        let mut messages = Vec::new();
+        loop {
+            match receiver.try_recv() {
+                Ok(LogInfoAppendRow {
+                    log_entry: LogEntry::Log { message, .. },
+                    ..
+                }) => messages.push(message),
+                Ok(_) => {}
+                Err(
+                    tokio::sync::mpsc::error::TryRecvError::Empty
+                    | tokio::sync::mpsc::error::TryRecvError::Disconnected,
+                ) => break,
+            }
+        }
+        messages
+    }
 
     fn default_return_type() -> ReturnTypeExtendable {
         ReturnTypeExtendable {
@@ -2585,6 +2609,237 @@ mod tests {
 
         drop(db_connection);
         db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn advance_forwards_captured_application_logs() {
+        test_utils::set_up();
+
+        let js_source = r"
+        export default function () {
+            console.info('before sleep');
+            obelisk.sleep({ milliseconds: 10 });
+            return 'done';
+        }";
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "log-then-sleep");
+        let sim_clock = SimClock::epoch();
+        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let (log_sender, mut log_recv) = mpsc::channel(16);
+        let logs_storage_config = Some(LogStrageConfig {
+            min_level: LogLevel::Debug,
+            log_sender,
+        });
+
+        let replay = WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            component_id.clone(),
+            runnable_component.wasmtime_component.clone(),
+            &runnable_component.wasm_component.exim,
+            workflow_engine.clone(),
+            fn_registry.clone(),
+            db_pool.clone(),
+            execution_id.clone(),
+            logs_storage_config.clone(),
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            &default_return_type(),
+        )
+        .await
+        .unwrap();
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        assert_matches!(
+            log_recv.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        );
+
+        WorkflowJsWorker::advance(
+            DeploymentId::generate(),
+            component_id,
+            runnable_component.wasmtime_component,
+            &runnable_component.wasm_component.exim,
+            workflow_engine,
+            fn_registry,
+            CancelRegistry::new(),
+            db_pool,
+            execution_id,
+            logs_storage_config,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            &default_return_type(),
+            replay,
+        )
+        .await
+        .unwrap();
+
+        assert_matches!(
+            log_recv.try_recv(),
+            Ok(LogInfoAppendRow {
+                log_entry: LogEntry::Log {
+                    level: LogLevel::Info,
+                    message,
+                    ..
+                },
+                ..
+            }) if message == "before sleep"
+        );
+        assert_matches!(
+            log_recv.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty
+                | tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        );
+    }
+
+    #[tokio::test]
+    async fn advance_trimmed_writes_forward_only_prefix_logs() {
+        test_utils::set_up();
+
+        let js_source = r"
+        export default function () {
+            console.info('before create');
+            const js = obelisk.createJoinSet();
+            console.info('before delay');
+            js.submitDelay({ milliseconds: 10 });
+            console.info('before join');
+            js.joinNext();
+            return 'done';
+        }";
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "trimmed-log-prefix");
+        let sim_clock = SimClock::epoch();
+        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        )
+        .await;
+
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let (log_sender, mut log_recv) = mpsc::channel(16);
+        let logs_storage_config = Some(LogStrageConfig {
+            min_level: LogLevel::Debug,
+            log_sender,
+        });
+
+        let mut forwarded = Vec::new();
+        for expected_len in [3_usize, 2, 1] {
+            let replay = WorkflowJsWorker::replay(
+                DeploymentId::generate(),
+                component_id.clone(),
+                runnable_component.wasmtime_component.clone(),
+                &runnable_component.wasm_component.exim,
+                workflow_engine.clone(),
+                fn_registry.clone(),
+                db_pool.clone(),
+                execution_id.clone(),
+                logs_storage_config.clone(),
+                sim_clock.clone_box(),
+                js_source.to_string(),
+                &default_return_type(),
+            )
+            .await
+            .unwrap();
+            let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+            assert_eq!(replay.captured_writes.len(), expected_len);
+
+            WorkflowJsWorker::advance(
+                DeploymentId::generate(),
+                component_id.clone(),
+                runnable_component.wasmtime_component.clone(),
+                &runnable_component.wasm_component.exim,
+                workflow_engine.clone(),
+                fn_registry.clone(),
+                CancelRegistry::new(),
+                db_pool.clone(),
+                execution_id.clone(),
+                logs_storage_config.clone(),
+                sim_clock.clone_box(),
+                js_source.to_string(),
+                &default_return_type(),
+                replay.truncate_to(1),
+            )
+            .await
+            .unwrap();
+
+            forwarded.extend(drain_forwarded_log_messages(&mut log_recv));
+        }
+
+        assert_eq!(
+            forwarded,
+            vec!["before create", "before delay", "before join"]
+        );
+        let replay = WorkflowJsWorker::replay(
+            DeploymentId::generate(),
+            component_id,
+            runnable_component.wasmtime_component,
+            &runnable_component.wasm_component.exim,
+            workflow_engine,
+            fn_registry,
+            db_pool,
+            execution_id,
+            logs_storage_config,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            &default_return_type(),
+        )
+        .await
+        .unwrap();
+        assert_matches!(replay, ReplayResponse::Blocked);
     }
 
     #[derive(Clone)]

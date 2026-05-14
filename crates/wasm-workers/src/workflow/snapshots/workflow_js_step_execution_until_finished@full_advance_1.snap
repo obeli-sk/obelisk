@@ -4,6 +4,6 @@ expression: "json!({\n    \"finished\": advance.finished.is_some(), \"requested_
 ---
 {
   "finished": false,
-  "requested_captured_writes_len": 2,
-  "replayed_captured_writes_len": 2
+  "requested_captured_writes_len": 3,
+  "replayed_captured_writes_len": 3
 }

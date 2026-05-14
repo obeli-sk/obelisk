@@ -16,8 +16,7 @@ use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::workflow::deadline_tracker::EpochCallbackError;
 use crate::workflow::event_history::{
-    DbErrorWriteOrReplayInterrupt, JoinSetCreate, ScheduleIntent, StubIntent, StubIntentErr,
-    StubParams, SubmitChildIntent,
+    JoinSetCreate, ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitChildIntent,
 };
 use crate::workflow::host_exports::latest::{self, DelayIdTypes, ExecutionIdTypes};
 use crate::workflow::host_exports::{
@@ -27,8 +26,8 @@ use crate::workflow::host_exports::{
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutionIdDerived};
 use concepts::storage::{
-    self, DbErrorWrite, HistoryEventScheduleAt, Locked, LogLevel, ResponseWithCursor, Version,
-    WasmBacktrace,
+    self, DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, Locked, LogEntry, LogInfoAppendRow,
+    LogLevel, ResponseWithCursor, Version, WasmBacktrace,
 };
 use concepts::storage::{HistoryEvent, StubRetVal};
 use concepts::time::ClockFn;
@@ -45,7 +44,7 @@ use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{Span, debug, error, instrument};
+use tracing::{Span, debug, error, info, instrument, trace, warn};
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Resource, ResourceType, Val};
 use wasmtime_wasi::{
@@ -78,16 +77,6 @@ pub(crate) enum WorkflowFunctionError {
     ExecutorClosing,
     #[error("replay interrupt")]
     ReplayInterrupt,
-}
-impl From<DbErrorWriteOrReplayInterrupt> for WorkflowFunctionError {
-    fn from(value: DbErrorWriteOrReplayInterrupt) -> Self {
-        match value {
-            DbErrorWriteOrReplayInterrupt::DbError(err) => WorkflowFunctionError::DbError(err),
-            DbErrorWriteOrReplayInterrupt::ReplayInterrupt => {
-                WorkflowFunctionError::ReplayInterrupt
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -505,11 +494,10 @@ impl StubFnCall<'_> {
         target_execution_id: ExecutionIdDerived,
         target_ffqn: &FunctionFqn,
         retval: SupportedFunctionReturnValue,
-        called_at: DateTime<Utc>,
     ) -> Result<StubIntent, WorkflowFunctionError> {
         match ctx
             .db_connection
-            .get_stub_create_request(&ExecutionId::Derived(target_execution_id), called_at)
+            .get_stub_create_request(&ExecutionId::Derived(target_execution_id))
             .await
         {
             Ok(create_req) if *target_ffqn == create_req.ffqn => {
@@ -523,14 +511,9 @@ impl StubFnCall<'_> {
                 "ffqn mismatch, code stubs {target_ffqn}, but execution was created with {}",
                 create_req.ffqn
             )))),
-            Err(DbErrorWriteOrReplayInterrupt::DbError(DbErrorWrite::NotFound)) => {
-                Ok(StubIntent::Err(StubIntentErr::ExecutionNotFound))
-            }
-            Err(DbErrorWriteOrReplayInterrupt::DbError(err)) => {
-                Err(WorkflowFunctionError::DbError(err)) // intermittent error
-            }
-            Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt) => {
-                Err(WorkflowFunctionError::ReplayInterrupt)
+            Err(DbErrorRead::NotFound) => Ok(StubIntent::Err(StubIntentErr::ExecutionNotFound)),
+            Err(err) => {
+                Err(WorkflowFunctionError::DbError(err.into())) // intermittent error
             }
         }
     }
@@ -559,9 +542,7 @@ impl StubFnCall<'_> {
             target_execution_id: target_execution_id.clone(),
             retval_hash: StubRetVal::Typed(retval.clone()).hash(),
         };
-        let intent =
-            Self::get_stub_intent(ctx, target_execution_id, &target_ffqn, retval, called_at)
-                .await?;
+        let intent = Self::get_stub_intent(ctx, target_execution_id, &target_ffqn, retval).await?;
 
         let stub_result = Stub {
             intent,
@@ -1934,17 +1915,16 @@ pub(crate) mod workflow_support {
     };
     use crate::component_logger::log_activities::obelisk::log::log::Host as LogHost;
     use crate::workflow::event_history::{
-        DbErrorWriteOrReplayInterrupt, JoinNext, JoinNextTry, Persist, ScheduleIntent, StubIntent,
-        StubIntentErr, StubParams, SubmitDelay,
+        JoinNext, JoinNextTry, Persist, ScheduleIntent, StubIntent, StubIntentErr, StubParams,
+        SubmitDelay,
     };
     use crate::workflow::host_exports::latest::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::{self, latest};
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT, JoinSetCreateError};
-    use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
-    use concepts::storage::{DbErrorWrite, HistoryEventScheduleAt, StubRetVal};
+    use concepts::storage::{DbErrorRead, HistoryEventScheduleAt, StubRetVal};
     use concepts::{CHARSET_ALPHANUMERIC, ComponentType, JoinSetId, JoinSetKind, Params};
     use concepts::{ExecutionId, ReturnType, SupportedFunctionReturnValue};
     use concepts::{FunctionFqn, storage};
@@ -2471,19 +2451,15 @@ pub(crate) mod workflow_support {
             &mut self,
             target_execution_id: ExecutionIdDerived,
             retval: String,
-            called_at: DateTime<Utc>,
-        ) -> Result<(StubIntent, StubParams), DbErrorWriteOrReplayInterrupt> {
+        ) -> Result<(StubIntent, StubParams), DbErrorRead> {
             // Look up the target function's FFQN
             let target_ffqn = match self
                 .db_connection
-                .get_stub_create_request(
-                    &ExecutionId::Derived(target_execution_id.clone()),
-                    called_at,
-                )
+                .get_stub_create_request(&ExecutionId::Derived(target_execution_id.clone()))
                 .await
             {
                 Ok(create_req) => create_req.ffqn.clone(),
-                Err(DbErrorWriteOrReplayInterrupt::DbError(DbErrorWrite::NotFound)) => {
+                Err(DbErrorRead::NotFound) => {
                     return Ok((
                         StubIntent::Err(StubIntentErr::ExecutionNotFound),
                         StubParams {
@@ -2492,11 +2468,8 @@ pub(crate) mod workflow_support {
                         },
                     ));
                 }
-                Err(DbErrorWriteOrReplayInterrupt::DbError(db_err)) => {
-                    return Err(DbErrorWriteOrReplayInterrupt::DbError(db_err)); // intermittent error
-                }
-                Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt) => {
-                    return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
+                Err(db_err) => {
+                    return Err(db_err); // intermittent error
                 }
             };
 
@@ -2620,8 +2593,9 @@ pub(crate) mod workflow_support {
 
             let called_at = self.clock_fn.now();
             let (intent, params) = self
-                .get_stub_intent_and_params(target_execution_id, retval, called_at)
-                .await?;
+                .get_stub_intent_and_params(target_execution_id, retval)
+                .await
+                .map_err(|err| WorkflowFunctionError::DbError(err.into()))?;
 
             // Apply the stub
 
@@ -2746,25 +2720,81 @@ fn trace_on_replay(ctx: &mut WorkflowCtx, level: LogLevel, message: String) {
     }
 }
 
+fn emit_application_log_to_tracing_only(ctx: &WorkflowCtx, level: LogLevel, message: &str) {
+    const TARGET: &str = "app";
+    ctx.component_logger.span.in_scope(|| match level {
+        LogLevel::Trace => trace!(target: TARGET, "{message}"),
+        LogLevel::Debug => debug!(target: TARGET, "{message}"),
+        LogLevel::Info => info!(target: TARGET, "{message}"),
+        LogLevel::Warn => warn!(target: TARGET, "{message}"),
+        LogLevel::Error => error!(target: TARGET, "{message}"),
+    });
+}
+
+fn capture_replay_application_log(ctx: &mut WorkflowCtx, level: LogLevel, message: &str) -> bool {
+    if ctx.is_replay != Some(ReplayKind::Unfinished) {
+        return false;
+    }
+    let Some(logs_storage_config) = &ctx.component_logger.logs_storage_config else {
+        return false;
+    };
+    if ctx.event_history.has_unprocessed_requests() || ctx.event_history.has_unprocessed_responses()
+    {
+        return false;
+    }
+    if level >= logs_storage_config.min_level {
+        return ctx.db_connection.capture_application_log(LogInfoAppendRow {
+            execution_id: ctx.component_logger.execution_id.clone(),
+            run_id: ctx.component_logger.run_id,
+            log_entry: LogEntry::Log {
+                created_at: ctx.clock_fn.now(),
+                level,
+                message: message.to_owned(),
+            },
+        });
+    }
+    false
+}
+
 impl log_activities::obelisk::log::log::Host for WorkflowCtx {
     fn trace(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Trace, message);
+        if capture_replay_application_log(self, LogLevel::Trace, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Trace, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Trace, message);
+        }
     }
 
     fn debug(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Debug, message);
+        if capture_replay_application_log(self, LogLevel::Debug, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Debug, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Debug, message);
+        }
     }
 
     fn info(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Info, message);
+        if capture_replay_application_log(self, LogLevel::Info, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Info, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Info, message);
+        }
     }
 
     fn warn(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Warn, message);
+        if capture_replay_application_log(self, LogLevel::Warn, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Warn, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Warn, message);
+        }
     }
 
     fn error(&mut self, message: String) {
-        trace_on_replay(self, LogLevel::Error, message);
+        if capture_replay_application_log(self, LogLevel::Error, &message) {
+            emit_application_log_to_tracing_only(self, LogLevel::Error, &message);
+        } else {
+            trace_on_replay(self, LogLevel::Error, message);
+        }
     }
 }
 

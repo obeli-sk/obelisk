@@ -68,7 +68,25 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 3
     }
   ],
-  "responses": [],
+  "responses": [
+    {
+      "created_at": "1970-01-01T00:00:00.200Z",
+      "event": {
+        "join_set_id": "g:1",
+        "event": {
+          "type": "child_execution_finished",
+          "child_execution_id": "E_00000000000000000000000000.g:1_1",
+          "finished_version": 1,
+          "result": {
+            "ok": {
+              "type": "string",
+              "value": "hello"
+            }
+          }
+        }
+      }
+    }
+  ],
   "next_version": 4,
   "pending_state": {
     "status": "paused",
