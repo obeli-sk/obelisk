@@ -30,13 +30,11 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::ExecutionIdTopLevel;
 use concepts::prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived};
 use concepts::storage;
-use concepts::storage::AppendEventsToExecution;
 use concepts::storage::AppendResponseToExecution;
 use concepts::storage::BacktraceInfo;
 use concepts::storage::ChildExecutionRequestError;
 use concepts::storage::DbErrorReadWithTimeout;
 use concepts::storage::DbErrorWrite;
-use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::Locked;
 use concepts::storage::PersistKind;
@@ -123,6 +121,16 @@ impl From<DbErrorWriteOrReplayInterrupt> for ApplyError {
             DbErrorWriteOrReplayInterrupt::ReplayInterrupt => ApplyError::ReplayWaitingForResponse,
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum UpsertStubOrReplayInterrupt {
+    #[error("stub conflict")]
+    StubConflict,
+    #[error(transparent)]
+    DbError(DbErrorWrite),
+    #[error("replay interrupt")]
+    ReplayInterrupt,
 }
 
 #[expect(clippy::struct_field_names)]
@@ -1432,94 +1440,47 @@ impl EventHistory {
                     StubIntent::StubTypeChecked(retval_intent) => {
                         let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
                         let (parent_id, join_set_id) = params.target_execution_id.split_to_parts();
-                        // Attempt to write to target_execution_id and its parent, ignoring the possible conflict error on this tx
-                        let first_write_attempt = {
-                            let finished_req = AppendRequest {
-                                created_at: called_at,
-                                event: ExecutionRequest::Finished {
-                                    retval: retval_intent.clone(),
-                                    http_client_traces: None,
-                                },
-                            };
-                            let stub_outcome = db_connection
-                                .append_stub_response(
-                                    AppendEventsToExecution {
-                                        execution_id: ExecutionId::Derived(
-                                            params.target_execution_id.clone(),
-                                        ),
-                                        version: stub_finished_version.clone(),
-                                        batch: vec![finished_req],
-                                    },
-                                    AppendResponseToExecution {
-                                        parent_execution_id: parent_id,
-                                        created_at: called_at,
-                                        join_set_id,
-                                        child_execution_id: params.target_execution_id.clone(),
-                                        finished_version: stub_finished_version.clone(),
-                                        result: retval_intent.clone(),
-                                    },
-                                    called_at,
-                                )
-                                .await;
-                            match stub_outcome {
-                                Ok(ok) => Ok(ok),
-                                Err(DbErrorWriteOrReplayInterrupt::DbError(err)) => Err(err),
-                                Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt) => {
-                                    debug!(target_execution_id = %params.target_execution_id, "StubRequest: first write interrupting replay");
-                                    return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
-                                }
-                            }
+                        let finished_req = AppendRequest {
+                            created_at: called_at,
+                            event: ExecutionRequest::Finished {
+                                retval: retval_intent.clone(),
+                                http_client_traces: None,
+                            },
                         };
-                        debug!(target_execution_id = %params.target_execution_id, "Executed append_stub_response: {first_write_attempt:?}");
-                        // The server might crash at this point, and restart processing.
-                        let result = match first_write_attempt {
+                        let result = match db_connection
+                            .upsert_stub_response(
+                                ExecutionId::Derived(params.target_execution_id.clone()),
+                                stub_finished_version.clone(),
+                                finished_req,
+                                AppendResponseToExecution {
+                                    parent_execution_id: parent_id,
+                                    created_at: called_at,
+                                    join_set_id,
+                                    child_execution_id: params.target_execution_id.clone(),
+                                    finished_version: stub_finished_version,
+                                    result: retval_intent.clone(),
+                                },
+                                called_at,
+                            )
+                            .await
+                        {
                             Ok(_) => Ok(()),
-                            Err(DbErrorWrite::NonRetriable(
-                                DbErrorWriteNonRetriable::AlreadyFinished,
-                            )) => {
+                            Err(UpsertStubOrReplayInterrupt::StubConflict) => {
                                 info!(target_execution_id = %params.target_execution_id,
-                                    "Got conflict while appending Finished event for stubbed execution"
-                                );
-                                // In case of conflict, select row (target_execution_id, version:1)
-                                let found = db_connection
-                                    .get_execution_event(
-                                        &ExecutionId::Derived(params.target_execution_id.clone()),
-                                        &stub_finished_version,
-                                    )
-                                    .await
-                                    .map_err(DbErrorWrite::from)?; // Not found at this point should not happen, unless the previous write failed. Will be retried.
-                                match found.event {
-                                    ExecutionRequest::Finished {
-                                        retval: found_result,
-                                        ..
-                                    } if retval_intent == found_result => Ok(()),
-                                    ExecutionRequest::Finished { .. } => {
-                                        info!(
-                                            target_execution_id = %params.target_execution_id,
-                                            "Different value found in stubbed execution's finished event"
-                                        );
-                                        Err(StubError::Conflict)
-                                    }
-                                    other => {
-                                        info!(target_execution_id = %params.target_execution_id,
-                                            "Unexpected execution event at stubbed execution - {other:?}"
-                                        );
-                                        Err(StubError::Conflict)
-                                    }
-                                }
-                            }
-                            Err(DbErrorWrite::NonRetriable(other_non_retriable)) => {
-                                info!(target_execution_id = %params.target_execution_id,
-                                    "Got nonretriable error appending Finished event for stubbed execution: {other_non_retriable:?}"
+                                    "Got conflict while upserting stub response"
                                 );
                                 Err(StubError::Conflict)
                             }
-                            Err(db_error_write) => {
-                                return Err(DbErrorWriteOrReplayInterrupt::DbError(db_error_write));
-                            } // intermittent db error
+                            Err(UpsertStubOrReplayInterrupt::ReplayInterrupt) => {
+                                debug!(target_execution_id = %params.target_execution_id, "StubRequest: upsert interrupting replay");
+                                return Err(DbErrorWriteOrReplayInterrupt::ReplayInterrupt);
+                            }
+                            Err(UpsertStubOrReplayInterrupt::DbError(db_err)) => {
+                                return Err(DbErrorWriteOrReplayInterrupt::DbError(db_err));
+                            }
                         };
+                        debug!(target_execution_id = %params.target_execution_id, "Executed upsert_stub_response: {result:?}");
                         // Second write tx: Append the HistoryEvent with target_result.
-                        debug!(target_execution_id = %params.target_execution_id, "Second stub write");
                         let event = HistoryEvent::Stub {
                             target_execution_id: params.target_execution_id.clone(),
                             retval_hash: params.retval_hash.clone(),

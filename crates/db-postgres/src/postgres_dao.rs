@@ -10,11 +10,11 @@ use concepts::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, DeploymentRecord, DeploymentState, DeploymentStatus,
-        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
-        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentRecord, DeploymentState,
+        DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
+        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
@@ -3778,6 +3778,75 @@ impl DbConnection for PostgresConnection {
 
         tx.commit().await?;
         Ok(event)
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all)]
+    async fn upsert_stub_response(
+        &self,
+        execution_id: ExecutionId,
+        version: Version,
+        req: AppendRequest,
+        response: AppendResponseToExecution,
+        current_time: DateTime<Utc>,
+    ) -> Result<AppendBatchResponse, DbErrorStubResponse> {
+        debug!("upsert_stub_response");
+        if execution_id == response.parent_execution_id {
+            return Err(DbErrorStubResponse::Write(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::ValidationFailed(
+                    "Parameters `execution_id` and `parent_execution_id` cannot be the same".into(),
+                ),
+            )));
+        }
+
+        let expected_retval = response.result.clone();
+        let fallback_version = version.increment();
+        let version_for_read = version.0;
+
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        match append(&tx, &execution_id, req, version).await {
+            Ok((next_version, notifier_of_child)) => {
+                let pending_at_parent = append_response(
+                    &tx,
+                    &response.parent_execution_id,
+                    JoinSetResponseEventOuter {
+                        created_at: response.created_at,
+                        event: JoinSetResponseEvent {
+                            join_set_id: response.join_set_id,
+                            event: JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id: response.child_execution_id,
+                                finished_version: response.finished_version,
+                                result: response.result,
+                            },
+                        },
+                    },
+                )
+                .await
+                .map_err(DbErrorStubResponse::Write)?;
+
+                tx.commit().await?;
+                drop(client_guard);
+
+                self.notify_all(vec![notifier_of_child, pending_at_parent], current_time);
+                Ok(next_version)
+            }
+            Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)) => {
+                // Idempotency check: read the existing event and compare retval.
+                let found = get_execution_event(&tx, &execution_id, version_for_read)
+                    .await
+                    .map_err(|_| DbErrorStubResponse::StubConflict)?;
+                tx.commit().await?;
+                drop(client_guard);
+                match found.event {
+                    ExecutionRequest::Finished { retval, .. } if retval == expected_retval => {
+                        Ok(fallback_version)
+                    }
+                    _ => Err(DbErrorStubResponse::StubConflict),
+                }
+            }
+            Err(other) => Err(DbErrorStubResponse::Write(other)),
+        }
     }
 
     async fn get_pending_state(
