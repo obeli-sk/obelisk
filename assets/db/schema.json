@@ -1216,6 +1216,10 @@
             "schedule_at": {
               "$ref": "#/$defs/HistoryEventScheduleAt"
             },
+            "paused": {
+              "type": "boolean",
+              "default": false
+            },
             "type": {
               "type": "string",
               "const": "delay_request"
