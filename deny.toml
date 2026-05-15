@@ -61,6 +61,8 @@ skip = [
     # wasmtime uses wasm-compose which requires petgraph 0.6
     { name = "petgraph", version = "0.6" },
     { name = "fixedbitset", version = "0.4" },
+    # hashbrown 0.14.5 used by boa_engine
+    { name = "hashbrown", version = "0.14" },
     # hashbrown 0.15 is used by prost-build, regalloc2 (wasmtime), wasmparser 0.244
     { name = "hashbrown", version = "0.15" },
     { name = "hashbrown", version = "0.16.1" },
