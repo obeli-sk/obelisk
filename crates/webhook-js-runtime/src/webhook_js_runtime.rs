@@ -111,17 +111,20 @@ use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::crypto::setup_crypto;
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
 use boa_common::helpers::{new_object, parse_ffqn};
+use boa_common::imports::{self, ProxyKind};
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::class::Class;
+use boa_engine::module::MapModuleLoader;
 use boa_engine::{
-    Context, JsArgs, JsNativeError, JsResult, JsValue, NativeFunction, Source, js_string,
+    Context, JsArgs, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source, js_string,
     property::Attribute,
 };
 use boa_runtime::extensions::FetchExtension;
 use boa_runtime::fetch::request::JsRequest;
 use boa_runtime::fetch::response::JsResponse;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use wstd::http::body::Body;
 use wstd::http::{Request, Response, StatusCode};
@@ -211,13 +214,134 @@ async fn run_js_handler_async(
     }
 }
 
+/// Create a `NativeFunction` that proxies a direct call to `call-json`
+/// from `obelisk:webhook/webhook-support`.
+fn create_direct_call_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    let ifc = js_string!(interface_name);
+    let func = js_string!(function_name);
+
+    let native = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, (ifc, func): &(JsString, JsString), ctx| {
+            let function = Function {
+                interface_name: ifc.to_std_string_escaped(),
+                function_name: func.to_std_string_escaped(),
+            };
+            let array = boa_engine::object::builtins::JsArray::new(ctx)?;
+            for (i, arg) in args.iter().enumerate() {
+                array.set(i as u32, arg.clone(), false, ctx)?;
+            }
+            let params_json = json_stringify(&array.into(), ctx)?;
+
+            let backtrace = capture_backtrace(ctx);
+            match webhook_support::call_json(&function, &params_json, None, Some(&backtrace)) {
+                Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
+                Ok(Ok(None)) => Ok(JsValue::null()),
+                Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
+                Ok(Err(None)) => Err(JsNativeError::error()
+                    .with_message("child execution failed")
+                    .into()),
+                Err(e) => Err(JsNativeError::error()
+                    .with_message(format!("call failed: {:?}", e))
+                    .into()),
+            }
+        },
+        (ifc, func),
+    );
+    native.to_js_function(context.realm()).into()
+}
+
+/// Create a `NativeFunction` that proxies a schedule call via
+/// `execution-id-generate` + `schedule-json` from `obelisk:webhook/webhook-support`.
+///
+/// JS signature: `myFuncSchedule(scheduleAt, ...args) → executionId`
+fn create_schedule_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    let ifc = js_string!(interface_name);
+    let func = js_string!(function_name);
+
+    let native = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, (ifc, func): &(JsString, JsString), ctx| {
+            let function = Function {
+                interface_name: ifc.to_std_string_escaped(),
+                function_name: func.to_std_string_escaped(),
+            };
+
+            let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
+
+            let array = boa_engine::object::builtins::JsArray::new(ctx)?;
+            for (i, arg) in args.iter().skip(1).enumerate() {
+                array.set(i as u32, arg.clone(), false, ctx)?;
+            }
+            let params_json = json_stringify(&array.into(), ctx)?;
+
+            let backtrace = capture_backtrace(ctx);
+            let exec_id = webhook_support::execution_id_generate();
+
+            match webhook_support::schedule_json(
+                &exec_id,
+                schedule,
+                &function,
+                &params_json,
+                None,
+                Some(&backtrace),
+            ) {
+                Ok(()) => Ok(JsValue::from(js_string!(exec_id.id))),
+                Err(e) => Err(JsNativeError::error()
+                    .with_message(format!("schedule failed: {:?}", e))
+                    .into()),
+            }
+        },
+        (ifc, func),
+    );
+    native.to_js_function(context.realm()).into()
+}
+
+/// Webhook proxy factory for [`imports::register_import_modules`].
+///
+/// Webhooks support direct calls and schedule only — ext imports are not supported.
+fn create_webhook_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
+    match kind {
+        ProxyKind::DirectCall {
+            interface_name,
+            function_name,
+        } => create_direct_call_proxy(interface_name, function_name, context),
+        ProxyKind::Schedule {
+            interface_name,
+            function_name,
+        } => create_schedule_proxy(interface_name, function_name, context),
+        ProxyKind::ExtSubmit { .. }
+        | ProxyKind::ExtAwaitNext
+        | ProxyKind::ExtGet
+        | ProxyKind::Stub { .. } => {
+            unreachable!("webhooks do not support -obelisk-ext or -obelisk-stub imports")
+        }
+    }
+}
+
+/// Read resolved imports from the `__OBELISK_RESOLVED_IMPORTS__` env var.
+fn read_resolved_imports() -> HashMap<String, Vec<(String, String)>> {
+    match std::env::var("__OBELISK_RESOLVED_IMPORTS__") {
+        Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
 async fn run_js_handler_inner(
     js_source: &str,
     js_request: JsRequest,
 ) -> Result<Response<Body>, String> {
     let executor = Rc::new(WasiJobExecutor::default());
+    let loader = Rc::new(MapModuleLoader::new());
     let mut context = Context::builder()
         .job_executor(executor.clone())
+        .module_loader(loader.clone())
         .build()
         .expect("building context must work");
 
@@ -232,6 +356,17 @@ async fn run_js_handler_inner(
 
     // Set up the obelisk global object with webhook support APIs
     setup_obelisk_api(&mut context).expect("obelisk API setup must work");
+
+    // Register synthetic modules for WIT-style imports (e.g., 'ns:pkg/ifc').
+    let resolved_imports = read_resolved_imports();
+    if !resolved_imports.is_empty() {
+        imports::register_import_modules(
+            &resolved_imports,
+            &loader,
+            &mut context,
+            &create_webhook_proxy,
+        );
+    }
 
     // Wrap the incoming request as a JS Request object so the handler receives a proper
     // Request object with text(), json(), formData(), method, url, and headers.

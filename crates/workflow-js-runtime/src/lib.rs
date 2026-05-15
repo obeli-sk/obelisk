@@ -33,7 +33,8 @@ impl Guest for Component {
         js_code: String,
         params_json: Vec<String>,
         js_file_name: Option<String>,
+        resolved_imports: Vec<(String, Vec<(String, String)>)>,
     ) -> Result<Result<String, String>, JsRuntimeError> {
-        workflow_js_runtime::execute(&js_code, &params_json, js_file_name)
+        workflow_js_runtime::execute(&js_code, &params_json, js_file_name, resolved_imports)
     }
 }

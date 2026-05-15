@@ -181,6 +181,41 @@ expression: components
   {
     "component_id": {
       "component_type": "workflow",
+      "name": "test_import_call_activity_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "name": "test_import_star_call_activity_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "name": "test_import_schedule_activity_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "name": "test_import_ext_activity_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "name": "test_import_stub_activity_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
       "name": "test_make_record_workflow",
       "component_digest": "sha256:<REDACTED>"
     }
@@ -273,6 +308,20 @@ expression: components
     "component_id": {
       "component_type": "webhook_endpoint",
       "name": "test_generate_execution_id_webhook",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
+      "name": "test_import_call_activity_webhook",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
+      "name": "test_import_schedule_activity_webhook",
       "component_digest": "sha256:<REDACTED>"
     }
   },

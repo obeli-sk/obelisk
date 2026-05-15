@@ -17,6 +17,7 @@ utils.workspace = true
 val-json.workspace = true
 
 arbitrary.workspace = true
+boa_engine.workspace = true
 assert_matches.workspace = true
 async-trait.workspace = true
 bytes.workspace = true

@@ -128,15 +128,19 @@ use crate::generated::obelisk::workflow::workflow_support::{
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{new_object, parse_ffqn};
+use boa_common::imports::{self, ProxyKind};
 use boa_engine::context::time::FixedClock;
+use boa_engine::module::MapModuleLoader;
 use boa_engine::{
-    Context, JsArgs, JsError, JsNativeError, JsResult, JsValue, Module, NativeFunction, Source,
+    Context, JsArgs, JsError, JsNativeError, JsResult, JsString, JsValue, Module, NativeFunction,
+    Source,
     builtins::promise::PromiseState,
     js_string,
     object::builtins::{JsDate, JsFunction},
     property::Attribute,
 };
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Logger implementation using the generated obelisk:log bindings.
@@ -235,6 +239,307 @@ fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
     WasmBacktrace { frames }
 }
 
+/// Create a `NativeFunction` that proxies a direct call to `call-json-bt`.
+///
+/// When invoked from JS, the function:
+/// 1. JSON-serializes all arguments into a JSON array string
+/// 2. Calls the host `call_json` with the derived FFQN
+/// 3. Returns the Ok value or throws the Err value
+fn create_direct_call_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    let ifc = js_string!(interface_name);
+    let func = js_string!(function_name);
+
+    let native = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, (ifc, func): &(JsString, JsString), ctx| {
+            let function = Function {
+                interface_name: ifc.to_std_string_escaped(),
+                function_name: func.to_std_string_escaped(),
+            };
+            // Serialize args as JSON array: [arg0, arg1, ...]
+            let array = boa_engine::object::builtins::JsArray::new(ctx)?;
+            for (i, arg) in args.iter().enumerate() {
+                array.set(i as u32, arg.clone(), false, ctx)?;
+            }
+            let params_json = json_stringify(&array.into(), ctx)?;
+
+            let backtrace = capture_backtrace(ctx);
+            match call_json(&function, &params_json, None, Some(&backtrace)) {
+                Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
+                Ok(Ok(None)) => Ok(JsValue::null()),
+                Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
+                Ok(Err(None)) => Err(JsNativeError::error()
+                    .with_message("child execution failed")
+                    .into()),
+                Err(e) => Err(JsNativeError::error()
+                    .with_message(format!("call failed: {:?}", e))
+                    .into()),
+            }
+        },
+        (ifc, func),
+    );
+    native.to_js_function(context.realm()).into()
+}
+
+/// Create a `NativeFunction` that proxies a schedule call via
+/// `execution-id-generate` + `schedule-json` from `obelisk:workflow/workflow-support`.
+///
+/// JS signature: `myFuncSchedule(scheduleAt, ...args) → executionId`
+fn create_schedule_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    let ifc = js_string!(interface_name);
+    let func = js_string!(function_name);
+
+    let native = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, (ifc, func): &(JsString, JsString), ctx| {
+            let function = Function {
+                interface_name: ifc.to_std_string_escaped(),
+                function_name: func.to_std_string_escaped(),
+            };
+
+            // First argument is scheduleAt
+            let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
+
+            // Remaining arguments are the function params
+            let array = boa_engine::object::builtins::JsArray::new(ctx)?;
+            for (i, arg) in args.iter().skip(1).enumerate() {
+                array.set(i as u32, arg.clone(), false, ctx)?;
+            }
+            let params_json = json_stringify(&array.into(), ctx)?;
+
+            let backtrace = capture_backtrace(ctx);
+            let exec_id = execution_id_generate(Some(&backtrace));
+
+            match schedule_json(
+                &exec_id,
+                schedule,
+                &function,
+                &params_json,
+                None,
+                Some(&backtrace),
+            ) {
+                Ok(()) => Ok(JsValue::from(js_string!(exec_id.id))),
+                Err(e) => Err(JsNativeError::error()
+                    .with_message(format!("schedule failed: {:?}", e))
+                    .into()),
+            }
+        },
+        (ifc, func),
+    );
+    native.to_js_function(context.realm()).into()
+}
+
+/// Create a `NativeFunction` that proxies `submit-json-bt` for extension imports.
+///
+/// JS signature: `addSubmit(joinSet, ...args) → executionId`
+fn create_ext_submit_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    let ifc = js_string!(interface_name);
+    let func = js_string!(function_name);
+
+    let native = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, (ifc, func): &(JsString, JsString), ctx| {
+            let function = Function {
+                interface_name: ifc.to_std_string_escaped(),
+                function_name: func.to_std_string_escaped(),
+            };
+
+            // First arg is the join set object
+            let js_obj = args.get_or_undefined(0).as_object().ok_or_else(|| {
+                JsNativeError::typ().with_message("first argument must be a join set")
+            })?;
+            let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
+
+            // Remaining args are function params
+            let array = boa_engine::object::builtins::JsArray::new(ctx)?;
+            for (i, arg) in args.iter().skip(1).enumerate() {
+                array.set(i as u32, arg.clone(), false, ctx)?;
+            }
+            let params_json = json_stringify(&array.into(), ctx)?;
+
+            let backtrace = capture_backtrace(ctx);
+            let result = with_join_set(idx, |js| {
+                submit_json_bt(js, &function, &params_json, None, Some(&backtrace))
+            })?;
+
+            match result {
+                Ok(exec_id) => Ok(JsValue::from(js_string!(exec_id.id))),
+                Err(e) => Err(JsNativeError::error()
+                    .with_message(format!("submit failed: {:?}", e))
+                    .into()),
+            }
+        },
+        (ifc, func),
+    );
+    native.to_js_function(context.realm()).into()
+}
+
+/// Create a `NativeFunction` that proxies `join-next-bt` + `get-result-json-bt`
+/// for extension imports.
+///
+/// JS signature: `addAwaitNext(joinSet) → [execId, { tag: 'ok'|'err', val }]`
+fn create_ext_await_next_proxy(context: &mut Context) -> JsValue {
+    let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+        let js_obj = args.get_or_undefined(0).as_object().ok_or_else(|| {
+            JsNativeError::typ().with_message("first argument must be a join set")
+        })?;
+        let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
+
+        let backtrace = capture_backtrace(ctx);
+        let join_result = with_join_set(idx, |js| join_next_bt(js, Some(&backtrace)))?;
+
+        match join_result {
+            Ok((ResponseId::ExecutionId(exec_id), _ok_status)) => {
+                let get_result = get_result_json_bt(&exec_id, Some(&backtrace));
+                match get_result {
+                    Ok(inner_result) => {
+                        let result_obj = build_tagged_result(inner_result, ctx)?;
+                        // Return [execId, result]
+                        let array = boa_engine::object::builtins::JsArray::new(ctx)?;
+                        array.set(0u32, js_string!(exec_id.id), false, ctx)?;
+                        array.set(1u32, result_obj, false, ctx)?;
+                        Ok(array.into())
+                    }
+                    Err(e) => Err(JsNativeError::error()
+                        .with_message(format!("get result failed: {:?}", e))
+                        .into()),
+                }
+            }
+            Ok((ResponseId::DelayId(_), _)) => Err(JsNativeError::error()
+                .with_message("unexpected delay response in awaitNext")
+                .into()),
+            Err(_) => Err(JsNativeError::error()
+                .with_message("JoinSetEmpty: all responses processed")
+                .into()),
+        }
+    });
+    native.to_js_function(context.realm()).into()
+}
+
+/// Create a `NativeFunction` that proxies `get-result-json-bt` for extension imports.
+///
+/// JS signature: `addGet(execId) → { tag: 'ok'|'err', val }`
+fn create_ext_get_proxy(context: &mut Context) -> JsValue {
+    let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+        let exec_id_str = args
+            .get_or_undefined(0)
+            .as_string()
+            .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
+            .to_std_string_escaped();
+
+        let exec_id = ExecutionId { id: exec_id_str };
+        let backtrace = capture_backtrace(ctx);
+
+        match get_result_json_bt(&exec_id, Some(&backtrace)) {
+            Ok(inner_result) => build_tagged_result(inner_result, ctx),
+            Err(e) => Err(JsNativeError::error()
+                .with_message(format!("get result failed: {:?}", e))
+                .into()),
+        }
+    });
+    native.to_js_function(context.realm()).into()
+}
+
+/// Build a `{ tag: 'ok', val }` or `{ tag: 'err', val }` JS object from a
+/// `Result<Option<String>, Option<String>>` returned by `get-result-json-bt`.
+fn build_tagged_result(
+    inner_result: Result<Option<String>, Option<String>>,
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let result_obj = new_object(ctx);
+    match inner_result {
+        Ok(Some(json_str)) => {
+            result_obj.set(js_string!("tag"), js_string!("ok"), false, ctx)?;
+            let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
+            result_obj.set(js_string!("val"), parsed, false, ctx)?;
+        }
+        Ok(None) => {
+            result_obj.set(js_string!("tag"), js_string!("ok"), false, ctx)?;
+            result_obj.set(js_string!("val"), JsValue::null(), false, ctx)?;
+        }
+        Err(Some(err_str)) => {
+            result_obj.set(js_string!("tag"), js_string!("err"), false, ctx)?;
+            let parsed = ctx.eval(Source::from_bytes(&format!("({})", err_str)))?;
+            result_obj.set(js_string!("val"), parsed, false, ctx)?;
+        }
+        Err(None) => {
+            result_obj.set(js_string!("tag"), js_string!("err"), false, ctx)?;
+            result_obj.set(js_string!("val"), JsValue::null(), false, ctx)?;
+        }
+    }
+    Ok(result_obj.into())
+}
+
+/// Create a `NativeFunction` that proxies `stub-json` for stub imports.
+///
+/// JS signature: `fooStub(execId, result) → undefined`
+///
+/// The `result` argument is a JS value representing the execution result,
+/// JSON-serialized before passing to `stub-json`.
+fn create_stub_proxy(interface_name: &str, function_name: &str, context: &mut Context) -> JsValue {
+    // interface_name and function_name are not used by stub_json itself,
+    // but kept for consistency and future error messages.
+    let _ifc = js_string!(interface_name);
+    let _func = js_string!(function_name);
+
+    let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+        let exec_id_str = args
+            .get_or_undefined(0)
+            .as_string()
+            .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
+            .to_std_string_escaped();
+
+        let exec_id = ExecutionId { id: exec_id_str };
+
+        let result_val = args.get_or_undefined(1);
+        let result_json = json_stringify(result_val, ctx)?;
+
+        let backtrace = capture_backtrace(ctx);
+        match stub_json(&exec_id, &result_json, Some(&backtrace)) {
+            Ok(()) => Ok(JsValue::undefined()),
+            Err(e) => Err(JsNativeError::error()
+                .with_message(format!("stub failed: {:?}", e))
+                .into()),
+        }
+    });
+    native.to_js_function(context.realm()).into()
+}
+
+/// Workflow proxy factory for [`imports::register_import_modules`].
+///
+/// Routes to the appropriate host function proxy based on [`ProxyKind`].
+fn create_workflow_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
+    match kind {
+        ProxyKind::DirectCall {
+            interface_name,
+            function_name,
+        } => create_direct_call_proxy(interface_name, function_name, context),
+        ProxyKind::Schedule {
+            interface_name,
+            function_name,
+        } => create_schedule_proxy(interface_name, function_name, context),
+        ProxyKind::ExtSubmit {
+            interface_name,
+            function_name,
+        } => create_ext_submit_proxy(interface_name, function_name, context),
+        ProxyKind::ExtAwaitNext => create_ext_await_next_proxy(context),
+        ProxyKind::ExtGet => create_ext_get_proxy(context),
+        ProxyKind::Stub {
+            interface_name,
+            function_name,
+        } => create_stub_proxy(interface_name, function_name, context),
+    }
+}
+
 /// Execute JavaScript code with the given parameters.
 ///
 /// `js_file_name` is the source file name used in backtraces (from `__OBELISK_JS_FILE_NAME__`).
@@ -244,15 +549,20 @@ pub fn execute(
     js_code: &str,
     params_json: &[String],
     js_file_name: Option<String>,
+    resolved_imports: Vec<(String, Vec<(String, String)>)>,
 ) -> Result<Result<String, String>, JsRuntimeError> {
     if let Some(js_file_name) = js_file_name {
         JS_FILE_NAME.with(|s| *s.borrow_mut() = js_file_name);
     }
 
+    // Convert resolved imports from host into the HashMap format expected by register_import_modules.
+    let imports: HashMap<String, Vec<(String, String)>> = resolved_imports.into_iter().collect();
     let executor = Rc::new(DeterministicJobExecutor::default());
+    let loader = Rc::new(MapModuleLoader::new());
     let mut context = Context::builder()
         .job_executor(executor.clone())
         .clock(Rc::new(FixedClock::from_millis(0)))
+        .module_loader(loader.clone())
         .build()
         .expect("building context must work");
 
@@ -268,6 +578,13 @@ pub fn execute(
 
     // Override Date.now() to use the Obelisk clock via sleep(0)
     setup_date_now(&mut context).expect("Date.now setup must work");
+
+    // Register synthetic modules for WIT-style imports (e.g., 'ns:pkg/ifc').
+    // Each imported function becomes a NativeFunction proxy to the appropriate
+    // workflow host function (call-json-bt for direct, schedule-json for schedule).
+    if !imports.is_empty() {
+        imports::register_import_modules(&imports, &loader, &mut context, &create_workflow_proxy);
+    }
 
     // Get the default export function from the ES module
     let default_fn = match get_default_export_workflow(js_code, &mut context) {

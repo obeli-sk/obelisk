@@ -32,6 +32,26 @@ pub fn parse_ffqn(ffqn: &str) -> JsResult<(String, String)> {
     Ok((interface_name.to_string(), function_name.to_string()))
 }
 
+/// Convert a JS camelCase name to WIT kebab-case.
+///
+/// Examples: `"accountInfo"` → `"account-info"`, `"add"` → `"add"`.
+pub fn camel_to_kebab(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 4);
+    for (i, ch) in s.char_indices() {
+        if ch.is_uppercase() {
+            if i > 0 {
+                result.push('-');
+            }
+            for lower in ch.to_lowercase() {
+                result.push(lower);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// Extract a string message from a `JsError`.
 ///
 /// Handles the case where `throw 'string'` is used (opaque error with string value).
