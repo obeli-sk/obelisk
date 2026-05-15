@@ -1375,6 +1375,14 @@ pub trait DbExternalApi: DbConnection {
         execution_id: &ExecutionId,
         unpaused_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite>;
+
+    /// Pause a delay, preventing it from being picked up by the expired timers watcher.
+    /// Returns `NotFound` if the delay does not exist (already processed or cancelled).
+    async fn pause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite>;
+
+    /// Unpause a previously paused delay.
+    /// Returns `NotFound` if the delay does not exist (already processed or cancelled).
+    async fn unpause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite>;
 }
 pub const LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH: u16 = 20;
 pub const LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION: Pagination<Option<DeploymentId>> =

@@ -177,6 +177,62 @@
         }
       }
     },
+    "/v1/delays/{delay_id}/pause": {
+      "put": {
+        "tags": [
+          "delays"
+        ],
+        "summary": "Pause a delay",
+        "operationId": "delay_pause",
+        "parameters": [
+          {
+            "name": "delay_id",
+            "in": "path",
+            "description": "Delay ID to pause",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delay paused"
+          },
+          "404": {
+            "description": "Delay not found"
+          }
+        }
+      }
+    },
+    "/v1/delays/{delay_id}/unpause": {
+      "put": {
+        "tags": [
+          "delays"
+        ],
+        "summary": "Unpause a delay",
+        "operationId": "delay_unpause",
+        "parameters": [
+          {
+            "name": "delay_id",
+            "in": "path",
+            "description": "Delay ID to unpause",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delay unpaused"
+          },
+          "404": {
+            "description": "Delay not found"
+          }
+        }
+      }
+    },
     "/v1/deployment-id": {
       "get": {
         "tags": [

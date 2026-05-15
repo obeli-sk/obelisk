@@ -3672,7 +3672,7 @@ impl DbConnection for PostgresConnection {
         // Expired Delays
         let rows = tx
             .query(
-                "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= $1",
+                "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= $1 AND NOT is_paused",
                 &[&at],
             )
             .await?;
@@ -4406,6 +4406,48 @@ impl DbExternalApi for PostgresConnection {
 
         tx.commit().await?;
         Ok(next_version)
+    }
+
+    #[instrument(skip(self))]
+    async fn pause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
+        let (execution_id, join_set_id) = delay_id.split_to_parts();
+        let client_guard = self.client.lock().await;
+        let rows_modified = client_guard
+            .execute(
+                "UPDATE t_delay SET is_paused = TRUE \
+                 WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3 AND NOT is_paused",
+                &[
+                    &execution_id.to_string(),
+                    &join_set_id.to_string(),
+                    &delay_id.to_string(),
+                ],
+            )
+            .await?;
+        if rows_modified == 0 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn unpause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
+        let (execution_id, join_set_id) = delay_id.split_to_parts();
+        let client_guard = self.client.lock().await;
+        let rows_modified = client_guard
+            .execute(
+                "UPDATE t_delay SET is_paused = FALSE \
+                 WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3 AND is_paused",
+                &[
+                    &execution_id.to_string(),
+                    &join_set_id.to_string(),
+                    &delay_id.to_string(),
+                ],
+            )
+            .await?;
+        if rows_modified == 0 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(())
     }
 }
 

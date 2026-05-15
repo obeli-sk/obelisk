@@ -29,6 +29,9 @@ service ExecutionRepository {
 
     rpc PauseExecution(PauseExecutionRequest) returns (PauseExecutionResponse);
     rpc UnpauseExecution(UnpauseExecutionRequest) returns (UnpauseExecutionResponse);
+
+    rpc PauseDelay(PauseDelayRequest) returns (PauseDelayResponse);
+    rpc UnpauseDelay(UnpauseDelayRequest) returns (UnpauseDelayResponse);
 }
 
 service FunctionRepository {
@@ -1046,4 +1049,16 @@ message UnpauseExecutionRequest {
     ExecutionId execution_id = 1;
 }
 message UnpauseExecutionResponse {
+}
+
+message PauseDelayRequest {
+    DelayId delay_id = 1;
+}
+message PauseDelayResponse {
+}
+
+message UnpauseDelayRequest {
+    DelayId delay_id = 1;
+}
+message UnpauseDelayResponse {
 }

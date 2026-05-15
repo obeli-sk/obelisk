@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS t_delay (
     join_set_id TEXT NOT NULL,
     delay_id TEXT NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
+    is_paused BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (execution_id, join_set_id, delay_id)
 );
 
