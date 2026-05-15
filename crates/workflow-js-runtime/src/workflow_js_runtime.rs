@@ -514,6 +514,291 @@ fn create_stub_proxy(interface_name: &str, function_name: &str, context: &mut Co
     native.to_js_function(context.realm()).into()
 }
 
+/// Create a proxy for an `obelisk:` built-in import in the workflow runtime.
+///
+/// Matches on the WIT function name and routes to the appropriate host function.
+/// Supports `obelisk:workflow/workflow-support` and `obelisk:log/log`.
+fn create_workflow_builtin_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    // Strip version for matching: "obelisk:workflow/workflow-support@5.1.0" → "obelisk:workflow/workflow-support"
+    let base_ifc = interface_name
+        .rfind('@')
+        .map_or(interface_name, |pos| &interface_name[..pos]);
+
+    match (base_ifc, function_name) {
+        // --- obelisk:workflow/workflow-support ---
+        ("obelisk:workflow/workflow-support", "join-set-create") => {
+            let native = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
+                let backtrace = capture_backtrace(ctx);
+                let js = join_set_create_bt(Some(&backtrace));
+                create_join_set_object(js, ctx)
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:workflow/workflow-support", "join-set-create-named") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let name = args
+                    .get_or_undefined(0)
+                    .as_string()
+                    .ok_or_else(|| JsNativeError::typ().with_message("name must be a string"))?
+                    .to_std_string_escaped();
+                let backtrace = capture_backtrace(ctx);
+                match join_set_create_named_bt(&name, Some(&backtrace)) {
+                    Ok(js) => create_join_set_object(js, ctx),
+                    Err(e) => Err(JsNativeError::error()
+                        .with_message(format!("Failed to create named join set: {:?}", e))
+                        .into()),
+                }
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:workflow/workflow-support", "join-set-close") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let js_obj = args.get_or_undefined(0).as_object().ok_or_else(|| {
+                    JsNativeError::typ().with_message("joinSet must be a join set object")
+                })?;
+                let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
+                if let Some(js) = take_join_set(idx) {
+                    let backtrace = capture_backtrace(ctx);
+                    join_set_close_bt(js, Some(&backtrace));
+                }
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:workflow/workflow-support", "join-next") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let js_obj = args.get_or_undefined(0).as_object().ok_or_else(|| {
+                    JsNativeError::typ().with_message("joinSet must be a join set object")
+                })?;
+                let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
+
+                let backtrace = capture_backtrace(ctx);
+                let join_result = with_join_set(idx, |js| join_next_bt(js, Some(&backtrace)))?;
+
+                match join_result {
+                    Ok((response_id, result)) => {
+                        let result_obj = new_object(ctx);
+                        match response_id {
+                            ResponseId::ExecutionId(exec_id) => {
+                                result_obj.set(
+                                    js_string!("type"),
+                                    js_string!("execution"),
+                                    false,
+                                    ctx,
+                                )?;
+                                result_obj.set(
+                                    js_string!("id"),
+                                    js_string!(exec_id.id),
+                                    false,
+                                    ctx,
+                                )?;
+                                result_obj.set(js_string!("ok"), result.is_ok(), false, ctx)?;
+                            }
+                            ResponseId::DelayId(delay_id) => {
+                                result_obj.set(
+                                    js_string!("type"),
+                                    js_string!("delay"),
+                                    false,
+                                    ctx,
+                                )?;
+                                result_obj.set(
+                                    js_string!("id"),
+                                    js_string!(delay_id.id),
+                                    false,
+                                    ctx,
+                                )?;
+                                result_obj.set(js_string!("ok"), result.is_ok(), false, ctx)?;
+                            }
+                        }
+                        Ok(result_obj.into())
+                    }
+                    Err(_) => Err(JsNativeError::error()
+                        .with_message("JoinSetEmpty: all responses processed")
+                        .into()),
+                }
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:workflow/workflow-support", "join-next-try") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let js_obj = args.get_or_undefined(0).as_object().ok_or_else(|| {
+                    JsNativeError::typ().with_message("joinSet must be a join set object")
+                })?;
+                let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
+
+                let backtrace = capture_backtrace(ctx);
+                let join_result = with_join_set(idx, |js| join_next_try_bt(js, Some(&backtrace)))?;
+
+                match join_result {
+                    Ok((response_id, result)) => {
+                        let result_obj = new_object(ctx);
+                        match response_id {
+                            ResponseId::ExecutionId(exec_id) => {
+                                result_obj.set(
+                                    js_string!("type"),
+                                    js_string!("execution"),
+                                    false,
+                                    ctx,
+                                )?;
+                                result_obj.set(
+                                    js_string!("id"),
+                                    js_string!(exec_id.id),
+                                    false,
+                                    ctx,
+                                )?;
+                                result_obj.set(js_string!("ok"), result.is_ok(), false, ctx)?;
+                            }
+                            ResponseId::DelayId(delay_id) => {
+                                result_obj.set(
+                                    js_string!("type"),
+                                    js_string!("delay"),
+                                    false,
+                                    ctx,
+                                )?;
+                                result_obj.set(
+                                    js_string!("id"),
+                                    js_string!(delay_id.id),
+                                    false,
+                                    ctx,
+                                )?;
+                                match result {
+                                    Ok(()) => {
+                                        result_obj.set(js_string!("ok"), true, false, ctx)?;
+                                    }
+                                    Err(()) => {
+                                        result_obj.set(js_string!("ok"), false, false, ctx)?;
+                                        result_obj.set(
+                                            js_string!("error"),
+                                            js_string!("cancelled"),
+                                            false,
+                                            ctx,
+                                        )?;
+                                    }
+                                }
+                            }
+                        }
+                        Ok(result_obj.into())
+                    }
+                    Err(JoinNextTryError::AllProcessed) => {
+                        let result_obj = new_object(ctx);
+                        result_obj.set(
+                            js_string!("status"),
+                            js_string!("allProcessed"),
+                            false,
+                            ctx,
+                        )?;
+                        Ok(result_obj.into())
+                    }
+                    Err(JoinNextTryError::Pending) => {
+                        let result_obj = new_object(ctx);
+                        result_obj.set(js_string!("status"), js_string!("pending"), false, ctx)?;
+                        Ok(result_obj.into())
+                    }
+                }
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:workflow/workflow-support", "sleep") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
+                let backtrace = capture_backtrace(ctx);
+                match sleep_named_bt(schedule, None, Some(&backtrace)) {
+                    Ok(dt) => {
+                        let ms =
+                            (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
+                        let date = JsDate::new(ctx);
+                        date.set_time(ms, ctx)?;
+                        Ok(date.into())
+                    }
+                    Err(()) => Err(JsNativeError::error()
+                        .with_message("Sleep was cancelled")
+                        .into()),
+                }
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:workflow/workflow-support", "execution-id-current") => {
+            let native = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
+                let exec_id = workflow_support::execution_id_current();
+                Ok(JsValue::from(js_string!(exec_id.id)))
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:workflow/workflow-support", "execution-id-generate") => {
+            let native = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
+                let backtrace = capture_backtrace(ctx);
+                let exec_id = execution_id_generate(Some(&backtrace));
+                Ok(JsValue::from(js_string!(exec_id.id)))
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:workflow/workflow-support", "submit-delay") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let js_obj = args.get_or_undefined(0).as_object().ok_or_else(|| {
+                    JsNativeError::typ().with_message("joinSet must be a join set object")
+                })?;
+                let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
+
+                let schedule = parse_schedule_at(args.get_or_undefined(1), ctx)?;
+                let backtrace = capture_backtrace(ctx);
+                let delay_id =
+                    with_join_set(idx, |js| submit_delay_bt(js, schedule, Some(&backtrace)))?;
+                Ok(JsValue::from(js_string!(delay_id.id)))
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        // --- obelisk:log/log ---
+        ("obelisk:log/log", "trace") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                obelisk_log::trace(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:log/log", "debug") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                obelisk_log::debug(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:log/log", "info") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                obelisk_log::info(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:log/log", "warn") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                obelisk_log::warn(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:log/log", "error") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                obelisk_log::error(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        _ => unreachable!(
+            "unsupported obelisk builtin: {interface_name}/{function_name} \
+             (should have been rejected by resolve_js_imports)"
+        ),
+    }
+}
+
 /// Workflow proxy factory for [`imports::register_import_modules`].
 ///
 /// Routes to the appropriate host function proxy based on [`ProxyKind`].
@@ -537,6 +822,10 @@ fn create_workflow_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
             interface_name,
             function_name,
         } => create_stub_proxy(interface_name, function_name, context),
+        ProxyKind::ObeliskBuiltin {
+            interface_name,
+            function_name,
+        } => create_workflow_builtin_proxy(interface_name, function_name, context),
     }
 }
 

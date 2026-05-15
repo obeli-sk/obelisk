@@ -55,6 +55,11 @@ pub enum ProxyKind<'a> {
         interface_name: &'a str,
         function_name: &'a str,
     },
+    /// Obelisk built-in: `import { sleep } from 'obelisk:workflow/workflow-support@5.1.0'`
+    ObeliskBuiltin {
+        interface_name: &'a str,
+        function_name: &'a str,
+    },
 }
 
 /// Build a [`MapModuleLoader`] with [`SyntheticModule`]s for each imported specifier.
@@ -75,6 +80,9 @@ pub fn register_import_modules(
     for (specifier, funcs) in imports {
         let mut export_names: Vec<JsString> = Vec::new();
 
+        // Detect obelisk built-in imports (obelisk: namespace).
+        let is_obelisk_builtin = specifier.starts_with("obelisk:");
+
         // Detect obelisk suffix to determine the proxy kind.
         let schedule_base = strip_specifier_suffix(specifier, SCHEDULE_SUFFIX);
         let ext_base = strip_specifier_suffix(specifier, EXT_SUFFIX);
@@ -84,7 +92,15 @@ pub fn register_import_modules(
         // SyntheticModuleInitializer to retrieve during evaluation.
         let exports_obj = JsObject::with_null_proto();
         for (js_name, wit_name) in funcs {
-            let proxy = if let Some(base_specifier) = &schedule_base {
+            let proxy = if is_obelisk_builtin {
+                create_proxy(
+                    ProxyKind::ObeliskBuiltin {
+                        interface_name: specifier,
+                        function_name: wit_name,
+                    },
+                    context,
+                )
+            } else if let Some(base_specifier) = &schedule_base {
                 // Schedule proxy: strip `-schedule` from wit_name to get base function name
                 let base_fn = wit_name.strip_suffix("-schedule").unwrap_or(wit_name);
                 create_proxy(

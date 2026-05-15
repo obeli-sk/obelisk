@@ -14,6 +14,46 @@ const EXT_SUFFIX: &str = "-obelisk-ext";
 /// Suffix appended to WIT package names for stub imports.
 const STUB_SUFFIX: &str = "-obelisk-stub";
 
+/// Supported functions for `obelisk:workflow/workflow-support` imports.
+const WORKFLOW_SUPPORT_FUNCTIONS: &[&str] = &[
+    "join-set-create",
+    "join-set-create-named",
+    "join-set-close",
+    "join-next",
+    "join-next-try",
+    "sleep",
+    "execution-id-current",
+    "execution-id-generate",
+    "submit-delay",
+];
+
+/// Supported functions for `obelisk:webhook/webhook-support` imports.
+const WEBHOOK_SUPPORT_FUNCTIONS: &[&str] = &[
+    "execution-id-current",
+    "execution-id-generate",
+    "get-status",
+    "get",
+    "try-get",
+];
+
+/// Supported functions for `obelisk:log/log` imports.
+const LOG_FUNCTIONS: &[&str] = &["trace", "debug", "info", "warn", "error"];
+
+/// Base interface path (without version) → (accepted versions, supported functions).
+const OBELISK_INTERFACES: &[(&str, &[&str], &[&str])] = &[
+    (
+        "obelisk:workflow/workflow-support",
+        &["5.0.0", "5.1.0"],
+        WORKFLOW_SUPPORT_FUNCTIONS,
+    ),
+    (
+        "obelisk:webhook/webhook-support",
+        &["5.0.0", "5.1.0", "5.2.0"],
+        WEBHOOK_SUPPORT_FUNCTIONS,
+    ),
+    ("obelisk:log/log", &["1.0.0"], LOG_FUNCTIONS),
+];
+
 /// Strip an obelisk suffix from a WIT specifier's package name.
 ///
 /// Specifier format: `"ns:pkg-obelisk-schedule/ifc"` → `"ns:pkg/ifc"`.
@@ -96,11 +136,6 @@ fn extract_js_imports(js_code: &str) -> Result<HashMap<String, JsImportKind>, St
             .unwrap_or("")
             .to_string();
 
-        // Skip obelisk: namespace (host-provided)
-        if specifier.starts_with("obelisk:") {
-            continue;
-        }
-
         match entry.import_name() {
             ImportName::Name(sym) => {
                 let js_name = interner
@@ -149,6 +184,13 @@ pub fn resolve_js_imports(
     let mut resolved: HashMap<String, Vec<(String, String)>> = HashMap::new();
 
     for (specifier, kind) in raw_imports {
+        // Handle obelisk: namespace imports (host-provided APIs) without registry lookup.
+        if specifier.starts_with("obelisk:") {
+            let obelisk_funcs = resolve_obelisk_import(&specifier, &kind)?;
+            resolved.insert(specifier, obelisk_funcs);
+            continue;
+        }
+
         // Check for obelisk suffixes that change the proxy type.
         // For suffixed specifiers, look up the base interface for validation.
         let schedule_base = strip_specifier_suffix(&specifier, SCHEDULE_SUFFIX);
@@ -256,4 +298,63 @@ pub fn resolve_js_imports(
         }
     }
     Ok(resolved)
+}
+
+/// Strip the version suffix from an obelisk specifier.
+///
+/// `"obelisk:workflow/workflow-support@5.1.0"` → `("obelisk:workflow/workflow-support", Some("5.1.0"))`
+/// `"obelisk:log/log"` → `("obelisk:log/log", None)`
+fn split_obelisk_version(specifier: &str) -> (&str, Option<&str>) {
+    match specifier.rfind('@') {
+        Some(pos) => (&specifier[..pos], Some(&specifier[pos + 1..])),
+        None => (specifier, None),
+    }
+}
+
+/// Resolve an `obelisk:` namespace import against the known set of host interfaces.
+///
+/// Validates the interface path and version, then resolves named imports against
+/// the supported function list or expands namespace imports to all supported functions.
+fn resolve_obelisk_import(
+    specifier: &str,
+    kind: &JsImportKind,
+) -> Result<Vec<(String, String)>, String> {
+    let (base_path, version) = split_obelisk_version(specifier);
+
+    // Find the matching obelisk interface
+    let (_, accepted_versions, supported_fns) = OBELISK_INTERFACES
+        .iter()
+        .find(|(path, _, _)| *path == base_path)
+        .ok_or_else(|| format!("unsupported obelisk interface '{base_path}'"))?;
+
+    // Validate version if present
+    if let Some(ver) = version
+        && !accepted_versions.contains(&ver)
+    {
+        return Err(format!(
+            "unsupported version '@{ver}' for '{base_path}' (accepted: {})",
+            accepted_versions.join(", ")
+        ));
+    }
+
+    match kind {
+        JsImportKind::Named(funcs) => {
+            // Validate each imported function exists in the supported list
+            for (js_name, wit_name) in funcs {
+                if !supported_fns.contains(&wit_name.as_str()) {
+                    return Err(format!(
+                        "function '{js_name}' ('{wit_name}') is not supported for import from '{base_path}'"
+                    ));
+                }
+            }
+            Ok(funcs.clone())
+        }
+        JsImportKind::Namespace => {
+            // Expand to all supported functions
+            Ok(supported_fns
+                .iter()
+                .map(|wit_name| (kebab_to_camel(wit_name), wit_name.to_string()))
+                .collect())
+        }
+    }
 }

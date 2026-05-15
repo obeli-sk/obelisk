@@ -267,6 +267,16 @@ params = [
 return_type = "result<string, string>"
 
 [[workflow_js]]
+name = "test_import_obelisk_host_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/import_obelisk_host.js"
+ffqn = "testing:integration/workflow-import-obelisk-host.add-via-activity"
+params = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+]
+return_type = "result<string, string>"
+
+[[workflow_js]]
 name = "test_make_record_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/make_record.js"
 ffqn = "testing:integration/workflow-make-record.make-record"
@@ -1717,6 +1727,27 @@ async fn submit_workflow_with_import_stub() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": "stub-ok" }));
+
+    server.shutdown().await;
+}
+
+// ---- Workflow: obelisk: namespace import (join set + log) ----
+
+#[tokio::test]
+async fn submit_workflow_with_import_obelisk_host() {
+    let server = TestServer::start(test_addr!(76)).await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/workflow-import-obelisk-host.add-via-activity",
+            vec![json!(3), json!(4)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": "ok" }));
 
     server.shutdown().await;
 }

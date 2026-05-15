@@ -316,12 +316,271 @@ fn create_webhook_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
             interface_name,
             function_name,
         } => create_schedule_proxy(interface_name, function_name, context),
+        ProxyKind::ObeliskBuiltin {
+            interface_name,
+            function_name,
+        } => create_webhook_builtin_proxy(interface_name, function_name, context),
         ProxyKind::ExtSubmit { .. }
         | ProxyKind::ExtAwaitNext
         | ProxyKind::ExtGet
         | ProxyKind::Stub { .. } => {
             unreachable!("webhooks do not support -obelisk-ext or -obelisk-stub imports")
         }
+    }
+}
+
+/// Create a proxy for an `obelisk:` built-in import in the webhook runtime.
+///
+/// Matches on the WIT function name and routes to the appropriate host function.
+/// Supports `obelisk:webhook/webhook-support` and `obelisk:log/log`.
+fn create_webhook_builtin_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    // Strip version for matching
+    let base_ifc = interface_name
+        .rfind('@')
+        .map_or(interface_name, |pos| &interface_name[..pos]);
+
+    match (base_ifc, function_name) {
+        // --- obelisk:webhook/webhook-support ---
+        ("obelisk:webhook/webhook-support", "execution-id-current") => {
+            let native = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
+                let exec_id = webhook_support::execution_id_current();
+                Ok(JsValue::from(js_string!(exec_id.id)))
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:webhook/webhook-support", "execution-id-generate") => {
+            let native = NativeFunction::from_fn_ptr(|_this, _args, _ctx| {
+                let exec_id = webhook_support::execution_id_generate();
+                Ok(JsValue::from(js_string!(exec_id.id)))
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:webhook/webhook-support", "get-status") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let exec_id_str = args
+                    .get_or_undefined(0)
+                    .as_string()
+                    .ok_or_else(|| {
+                        JsNativeError::typ().with_message("executionId must be a string")
+                    })?
+                    .to_std_string_escaped();
+                let exec_id = ExecutionId { id: exec_id_str };
+                let backtrace = capture_backtrace(ctx);
+                match webhook_support::get_status(&exec_id, Some(&backtrace)) {
+                    Ok(status) => {
+                        let result_obj = new_object(ctx);
+                        match status {
+                            ExecutionStatus::PendingAt(dt) => {
+                                result_obj.set(
+                                    js_string!("status"),
+                                    js_string!("pendingAt"),
+                                    false,
+                                    ctx,
+                                )?;
+                                let dt_obj = new_object(ctx);
+                                dt_obj.set(
+                                    js_string!("seconds"),
+                                    JsValue::from(dt.seconds),
+                                    false,
+                                    ctx,
+                                )?;
+                                dt_obj.set(
+                                    js_string!("nanoseconds"),
+                                    JsValue::from(dt.nanoseconds),
+                                    false,
+                                    ctx,
+                                )?;
+                                result_obj.set(js_string!("pendingAt"), dt_obj, false, ctx)?;
+                            }
+                            ExecutionStatus::Locked => {
+                                result_obj.set(
+                                    js_string!("status"),
+                                    js_string!("locked"),
+                                    false,
+                                    ctx,
+                                )?;
+                            }
+                            ExecutionStatus::Paused => {
+                                result_obj.set(
+                                    js_string!("status"),
+                                    js_string!("paused"),
+                                    false,
+                                    ctx,
+                                )?;
+                            }
+                            ExecutionStatus::BlockedByJoinSet => {
+                                result_obj.set(
+                                    js_string!("status"),
+                                    js_string!("blockedByJoinSet"),
+                                    false,
+                                    ctx,
+                                )?;
+                            }
+                            ExecutionStatus::Finished(finished) => {
+                                result_obj.set(
+                                    js_string!("status"),
+                                    js_string!("finished"),
+                                    false,
+                                    ctx,
+                                )?;
+                                let finished_status = match finished {
+                                    ExecutionStatusFinished::Ok => "ok",
+                                    ExecutionStatusFinished::Err => "err",
+                                    ExecutionStatusFinished::ExecutionFailure => "executionFailure",
+                                };
+                                result_obj.set(
+                                    js_string!("finishedStatus"),
+                                    js_string!(finished_status),
+                                    false,
+                                    ctx,
+                                )?;
+                            }
+                        }
+                        Ok(result_obj.into())
+                    }
+                    Err(e) => Err(JsNativeError::error()
+                        .with_message(format!("getStatus failed: {:?}", e))
+                        .into()),
+                }
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:webhook/webhook-support", "get") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let exec_id_str = args
+                    .get_or_undefined(0)
+                    .as_string()
+                    .ok_or_else(|| {
+                        JsNativeError::typ().with_message("executionId must be a string")
+                    })?
+                    .to_std_string_escaped();
+                let exec_id = ExecutionId { id: exec_id_str };
+                let backtrace = capture_backtrace(ctx);
+                match webhook_support::get(&exec_id, Some(&backtrace)) {
+                    Ok(inner_result) => {
+                        let result_obj = new_object(ctx);
+                        match inner_result {
+                            Ok(Some(json_str)) => {
+                                let parsed =
+                                    ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
+                                result_obj.set(js_string!("ok"), parsed, false, ctx)?;
+                            }
+                            Ok(None) => {
+                                result_obj.set(js_string!("ok"), JsValue::null(), false, ctx)?;
+                            }
+                            Err(Some(err_str)) => {
+                                let parsed =
+                                    ctx.eval(Source::from_bytes(&format!("({})", err_str)))?;
+                                result_obj.set(js_string!("err"), parsed, false, ctx)?;
+                            }
+                            Err(None) => {
+                                result_obj.set(js_string!("err"), JsValue::null(), false, ctx)?;
+                            }
+                        }
+                        Ok(result_obj.into())
+                    }
+                    Err(e) => Err(JsNativeError::error()
+                        .with_message(format!("get failed: {:?}", e))
+                        .into()),
+                }
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:webhook/webhook-support", "try-get") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let exec_id_str = args
+                    .get_or_undefined(0)
+                    .as_string()
+                    .ok_or_else(|| {
+                        JsNativeError::typ().with_message("executionId must be a string")
+                    })?
+                    .to_std_string_escaped();
+                let exec_id = ExecutionId { id: exec_id_str };
+                let backtrace = capture_backtrace(ctx);
+                match webhook_support::try_get(&exec_id, Some(&backtrace)) {
+                    Ok(inner_result) => {
+                        let result_obj = new_object(ctx);
+                        match inner_result {
+                            Ok(Some(json_str)) => {
+                                let parsed =
+                                    ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
+                                result_obj.set(js_string!("ok"), parsed, false, ctx)?;
+                            }
+                            Ok(None) => {
+                                result_obj.set(js_string!("ok"), JsValue::null(), false, ctx)?;
+                            }
+                            Err(Some(err_str)) => {
+                                let parsed =
+                                    ctx.eval(Source::from_bytes(&format!("({})", err_str)))?;
+                                result_obj.set(js_string!("err"), parsed, false, ctx)?;
+                            }
+                            Err(None) => {
+                                result_obj.set(js_string!("err"), JsValue::null(), false, ctx)?;
+                            }
+                        }
+                        Ok(result_obj.into())
+                    }
+                    Err(webhook_support::TryGetError::NotFinishedYet) => {
+                        let result_obj = new_object(ctx);
+                        result_obj.set(js_string!("pending"), JsValue::from(true), false, ctx)?;
+                        Ok(result_obj.into())
+                    }
+                    Err(e) => Err(JsNativeError::error()
+                        .with_message(format!("tryGet failed: {:?}", e))
+                        .into()),
+                }
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        // --- obelisk:log/log ---
+        ("obelisk:log/log", "trace") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                log::trace(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:log/log", "debug") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                log::debug(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:log/log", "info") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                log::info(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:log/log", "warn") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                log::warn(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        ("obelisk:log/log", "error") => {
+            let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+                let msg = args.get_or_undefined(0).to_string(ctx)?;
+                log::error(&msg.to_std_string_escaped());
+                Ok(JsValue::undefined())
+            });
+            native.to_js_function(context.realm()).into()
+        }
+        _ => unreachable!(
+            "unsupported obelisk builtin: {interface_name}/{function_name} \
+             (should have been rejected by resolve_js_imports)"
+        ),
     }
 }
 
