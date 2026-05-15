@@ -258,6 +258,15 @@ params = [
 return_type = "result<u32, string>"
 
 [[workflow_js]]
+name = "test_import_stub_activity_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/import_stub_activity.js"
+ffqn = "testing:integration/workflow-import-stub-activity.call-stub"
+params = [
+  {{ name = "id", type = "u64" }},
+]
+return_type = "result<string, string>"
+
+[[workflow_js]]
 name = "test_make_record_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/make_record.js"
 ffqn = "testing:integration/workflow-make-record.make-record"
@@ -1690,6 +1699,24 @@ async fn submit_workflow_with_import_ext() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": 15 }));
+
+    server.shutdown().await;
+}
+
+// ---- Workflow: ES module stub import ----
+
+#[tokio::test]
+async fn submit_workflow_with_import_stub() {
+    let server = TestServer::start(test_addr!(75)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/workflow-import-stub-activity.call-stub",
+            vec![json!(42u64)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": "stub-ok" }));
 
     server.shutdown().await;
 }

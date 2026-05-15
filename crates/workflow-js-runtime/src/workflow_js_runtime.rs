@@ -479,6 +479,45 @@ fn build_tagged_result(
     Ok(result_obj.into())
 }
 
+/// Create a `NativeFunction` that proxies `stub-json` for stub imports.
+///
+/// JS signature: `fooStub(execId, result) → undefined`
+///
+/// The `result` argument is a JS value representing the execution result,
+/// JSON-serialized before passing to `stub-json`.
+fn create_stub_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    // interface_name and function_name are not used by stub_json itself,
+    // but kept for consistency and future error messages.
+    let _ifc = js_string!(interface_name);
+    let _func = js_string!(function_name);
+
+    let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
+        let exec_id_str = args
+            .get_or_undefined(0)
+            .as_string()
+            .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
+            .to_std_string_escaped();
+
+        let exec_id = ExecutionId { id: exec_id_str };
+
+        let result_val = args.get_or_undefined(1);
+        let result_json = json_stringify(result_val, ctx)?;
+
+        let backtrace = capture_backtrace(ctx);
+        match stub_json(&exec_id, &result_json, Some(&backtrace)) {
+            Ok(()) => Ok(JsValue::undefined()),
+            Err(e) => Err(JsNativeError::error()
+                .with_message(format!("stub failed: {:?}", e))
+                .into()),
+        }
+    });
+    native.to_js_function(context.realm()).into()
+}
+
 /// Workflow proxy factory for [`imports::register_import_modules`].
 ///
 /// Routes to the appropriate host function proxy based on [`ProxyKind`].
@@ -498,6 +537,10 @@ fn create_workflow_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
         } => create_ext_submit_proxy(interface_name, function_name, context),
         ProxyKind::ExtAwaitNext => create_ext_await_next_proxy(context),
         ProxyKind::ExtGet => create_ext_get_proxy(context),
+        ProxyKind::Stub {
+            interface_name,
+            function_name,
+        } => create_stub_proxy(interface_name, function_name, context),
     }
 }
 

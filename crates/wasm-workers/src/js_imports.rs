@@ -11,6 +11,8 @@ use std::collections::HashMap;
 const SCHEDULE_SUFFIX: &str = "-obelisk-schedule";
 /// Suffix appended to WIT package names for extension imports (submit/awaitNext/get).
 const EXT_SUFFIX: &str = "-obelisk-ext";
+/// Suffix appended to WIT package names for stub imports.
+const STUB_SUFFIX: &str = "-obelisk-stub";
 
 /// Strip an obelisk suffix from a WIT specifier's package name.
 ///
@@ -151,11 +153,14 @@ pub fn resolve_js_imports(
         // For suffixed specifiers, look up the base interface for validation.
         let schedule_base = strip_specifier_suffix(&specifier, SCHEDULE_SUFFIX);
         let ext_base = strip_specifier_suffix(&specifier, EXT_SUFFIX);
+        let stub_base = strip_specifier_suffix(&specifier, STUB_SUFFIX);
         let is_schedule = schedule_base.is_some();
         let is_ext = ext_base.is_some();
+        let is_stub = stub_base.is_some();
         let lookup_specifier = schedule_base
             .as_deref()
             .or(ext_base.as_deref())
+            .or(stub_base.as_deref())
             .unwrap_or(&specifier);
 
         // Find the interface in the registry using the base specifier
@@ -200,6 +205,17 @@ pub fn resolve_js_imports(
                             ));
                         }
                     }
+                } else if is_stub {
+                    // For stub imports, strip the `-stub` suffix from
+                    // wit_name before validating against the base interface.
+                    for (js_name, wit_name) in &funcs {
+                        let base_wit = wit_name.strip_suffix("-stub").unwrap_or(wit_name);
+                        if !ifc.fns.keys().any(|k| &**k == base_wit) {
+                            return Err(format!(
+                                "function '{js_name}' (base '{base_wit}') not found in interface '{lookup_specifier}'"
+                            ));
+                        }
+                    }
                 } else {
                     // For direct call imports, validate each function exists
                     for (js_name, wit_name) in &funcs {
@@ -228,6 +244,9 @@ pub fn resolve_js_imports(
                             format!("{wit_name}-await-next"),
                         ));
                         funcs.push((format!("{js_name}Get"), format!("{wit_name}-get")));
+                    } else if is_stub {
+                        // Add Stub suffix: "myFunc" → "myFuncStub" / "my-func-stub"
+                        funcs.push((format!("{js_name}Stub"), format!("{wit_name}-stub")));
                     } else {
                         funcs.push((js_name, wit_name));
                     }

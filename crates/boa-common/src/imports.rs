@@ -13,6 +13,8 @@ use std::collections::HashMap;
 pub const SCHEDULE_SUFFIX: &str = "-obelisk-schedule";
 /// Suffix appended to WIT package names for extension imports (submit/awaitNext/get).
 pub const EXT_SUFFIX: &str = "-obelisk-ext";
+/// Suffix appended to WIT package names for stub imports.
+pub const STUB_SUFFIX: &str = "-obelisk-stub";
 
 /// Strip an obelisk suffix from a WIT specifier's package name.
 ///
@@ -48,6 +50,11 @@ pub enum ProxyKind<'a> {
     ExtAwaitNext,
     /// Extension get: `import { addGet } from 'ns:pkg-obelisk-ext/ifc'`
     ExtGet,
+    /// Stub: `import { fooStub } from 'ns:pkg-obelisk-stub/ifc'`
+    Stub {
+        interface_name: &'a str,
+        function_name: &'a str,
+    },
 }
 
 /// Build a [`MapModuleLoader`] with [`SyntheticModule`]s for each imported specifier.
@@ -58,6 +65,7 @@ pub enum ProxyKind<'a> {
 /// - No suffix → [`ProxyKind::DirectCall`]
 /// - `-obelisk-schedule` → [`ProxyKind::Schedule`] (base specifier + base function name)
 /// - `-obelisk-ext` → [`ProxyKind::ExtSubmit`] / [`ProxyKind::ExtAwaitNext`] / [`ProxyKind::ExtGet`]
+/// - `-obelisk-stub` → [`ProxyKind::Stub`] (base specifier + base function name)
 pub fn register_import_modules(
     imports: &HashMap<String, Vec<(String, String)>>,
     loader: &MapModuleLoader,
@@ -70,6 +78,7 @@ pub fn register_import_modules(
         // Detect obelisk suffix to determine the proxy kind.
         let schedule_base = strip_specifier_suffix(specifier, SCHEDULE_SUFFIX);
         let ext_base = strip_specifier_suffix(specifier, EXT_SUFFIX);
+        let stub_base = strip_specifier_suffix(specifier, STUB_SUFFIX);
 
         // Create all proxy functions and store them in a plain JsObject for the
         // SyntheticModuleInitializer to retrieve during evaluation.
@@ -109,6 +118,16 @@ pub fn register_import_modules(
                         context,
                     )
                 }
+            } else if let Some(base_specifier) = &stub_base {
+                // Stub proxy: strip `-stub` from wit_name to get base function name
+                let base_fn = wit_name.strip_suffix("-stub").unwrap_or(wit_name);
+                create_proxy(
+                    ProxyKind::Stub {
+                        interface_name: base_specifier,
+                        function_name: base_fn,
+                    },
+                    context,
+                )
             } else {
                 create_proxy(
                     ProxyKind::DirectCall {
@@ -163,6 +182,17 @@ mod tests {
         assert_eq!(
             strip_specifier_suffix("testing:integration-obelisk-ext/activity", EXT_SUFFIX),
             Some("testing:integration/activity".to_string())
+        );
+    }
+
+    #[test]
+    fn strip_stub_suffix() {
+        assert_eq!(
+            strip_specifier_suffix(
+                "testing:stub-activity-obelisk-stub/activity",
+                STUB_SUFFIX
+            ),
+            Some("testing:stub-activity/activity".to_string())
         );
     }
 

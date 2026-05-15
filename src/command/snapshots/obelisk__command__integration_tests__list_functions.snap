@@ -91,6 +91,9 @@ expression: functions
     "ffqn": "testing:integration/workflow-import-ext-activity.add-via-activity"
   },
   {
+    "ffqn": "testing:integration/workflow-import-stub-activity.call-stub"
+  },
+  {
     "ffqn": "testing:integration/workflow-make-record.make-record"
   },
   {
