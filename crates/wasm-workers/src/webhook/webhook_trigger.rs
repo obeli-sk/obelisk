@@ -31,6 +31,7 @@ use hyper::{Method, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use log_activities::obelisk::log::log::Host;
 use route_recognizer::{Match, Router};
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -302,6 +303,14 @@ impl WebhookEndpointCompiled {
             }
         }
 
+        // Resolve JS imports against the function registry before linking.
+        let mut config = self.config;
+        if let Some(js_config) = &mut config.js_config {
+            js_config.resolved_imports =
+                crate::js_imports::resolve_js_imports(&js_config.source, fn_registry)
+                    .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+        }
+
         // Pre-instantiate to catch missing imports
         let proxy_pre = linker
             .instantiate_pre(&self.runnable_component.wasmtime_component)
@@ -313,7 +322,7 @@ impl WebhookEndpointCompiled {
         })?);
 
         Ok(WebhookEndpointInstanceLinked {
-            config: Arc::new(self.config),
+            config: Arc::new(config),
             proxy_pre,
         })
     }
@@ -536,6 +545,9 @@ pub struct WebhookEndpointConfig {
 pub struct WebhookEndpointJsConfig {
     pub source: String,
     pub file_name: String,
+    /// Resolved imports: specifier → [(`js_name`, `wit_name`)].
+    /// Serialized as JSON and passed to the runtime via `__OBELISK_RESOLVED_IMPORTS__`.
+    pub resolved_imports: HashMap<String, Vec<(String, String)>>,
 }
 
 struct WebhookEndpointCtx {
@@ -1594,6 +1606,11 @@ impl WebhookEndpointCtx {
         if let Some(js_config) = &config.js_config {
             wasi_ctx.env("__OBELISK_JS_SOURCE__", &js_config.source);
             wasi_ctx.env("__OBELISK_JS_FILE_NAME__", &js_config.file_name);
+            if !js_config.resolved_imports.is_empty() {
+                let imports_json = serde_json::to_string(&js_config.resolved_imports)
+                    .expect("resolved imports must be serializable");
+                wasi_ctx.env("__OBELISK_RESOLVED_IMPORTS__", &imports_json);
+            }
         }
 
         // Generate fresh placeholders for this execution run
@@ -2657,6 +2674,7 @@ pub(crate) mod tests {
         use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
         use concepts::time::{ClockFn, TokioSleep};
         use concepts::{ComponentId, ComponentType, StrVariant};
+        use std::collections::HashMap;
         use std::net::SocketAddr;
         use std::sync::Arc;
         use test_utils::sim_clock::SimClock;
@@ -2708,6 +2726,7 @@ pub(crate) mod tests {
                         js_config: Some(WebhookEndpointJsConfig {
                             source: source.to_string(),
                             file_name: String::new(),
+                            resolved_imports: HashMap::new(),
                         }),
                         config_section_hint:
                             crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,
@@ -2858,6 +2877,7 @@ pub(crate) mod tests {
                         js_config: Some(WebhookEndpointJsConfig {
                             source: source.to_string(),
                             file_name: String::new(),
+                            resolved_imports: HashMap::new(),
                         }),
                         config_section_hint:
                             crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,
@@ -3233,6 +3253,7 @@ pub(crate) mod tests {
                             js_config: Some(WebhookEndpointJsConfig {
                                 source: js_source.to_string(),
                                 file_name: String::new(),
+                                resolved_imports: HashMap::new(),
                             }),
                             config_section_hint:
                                 crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,

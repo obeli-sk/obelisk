@@ -457,6 +457,16 @@ location = "{ws}/crates/testing/test-programs/js/webhook/generate_execution_id.j
 routes = [{{ methods = ["GET"], route = "/generate-execution-id" }}]
 
 [[webhook_endpoint_js]]
+name = "test_import_call_activity_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/import_call_activity.js"
+routes = [{{ methods = ["GET"], route = "/import-call-activity" }}]
+
+[[webhook_endpoint_js]]
+name = "test_import_schedule_activity_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/import_schedule_activity.js"
+routes = [{{ methods = ["GET"], route = "/import-schedule-activity" }}]
+
+[[webhook_endpoint_js]]
 name = "test_body_text_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/body_text.js"
 routes = [{{ methods = ["POST"], route = "/body-text" }}]
@@ -1986,6 +1996,46 @@ async fn webhook_js_call_activity() {
     let body: Value = resp.json().await.unwrap();
     // The add activity returns the sum as a string
     assert_eq!(body["result"], 12);
+    server.shutdown().await;
+}
+
+// ---- Webhook: ES module import calling activity ----
+
+#[tokio::test]
+async fn webhook_js_import_call_activity() {
+    let server = TestServer::start(test_addr!(72)).await;
+    let resp = server
+        .client
+        .get(format!("{}/import-call-activity", server.webhook_base_url))
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["result"], 12);
+    server.shutdown().await;
+}
+
+// ---- Webhook: ES module schedule import ----
+
+#[tokio::test]
+async fn webhook_js_import_schedule_activity() {
+    let server = TestServer::start(test_addr!(73)).await;
+    let resp = server
+        .client
+        .get(format!(
+            "{}/import-schedule-activity",
+            server.webhook_base_url
+        ))
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert!(
+        body["execId"].is_string(),
+        "expected execId to be a string, got: {body}"
+    );
     server.shutdown().await;
 }
 

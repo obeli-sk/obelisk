@@ -95,6 +95,16 @@ name = "webhook_js_call_activity"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/call_activity.js"
 routes = [{ methods = ["GET"], route = "/call-activity/:a/:b" }]
 
+[[webhook_endpoint_js]]
+name = "webhook_js_import_call_activity"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/import_call_activity.js"
+routes = [{ methods = ["GET"], route = "/import-call-activity" }]
+
+[[webhook_endpoint_js]]
+name = "webhook_js_import_schedule_activity"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/import_schedule_activity.js"
+routes = [{ methods = ["GET"], route = "/import-schedule-activity" }]
+
 # stub
 
 [[workflow_js]]

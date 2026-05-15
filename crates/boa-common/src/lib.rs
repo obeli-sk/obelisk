@@ -4,5 +4,6 @@ pub mod console;
 pub mod crypto;
 pub mod esm;
 pub mod helpers;
+pub mod imports;
 pub mod wasi_fetcher;
 pub mod wasi_job_executor;

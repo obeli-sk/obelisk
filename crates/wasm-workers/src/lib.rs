@@ -11,6 +11,7 @@ pub mod engines;
 pub mod epoch_ticker;
 pub mod http_hooks;
 pub mod http_request_policy;
+pub(crate) mod js_imports;
 pub(crate) mod js_worker_utils;
 pub mod log_db_forwarder;
 pub(crate) mod policy_builder;

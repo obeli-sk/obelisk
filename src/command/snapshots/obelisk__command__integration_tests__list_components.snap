@@ -300,6 +300,20 @@ expression: components
   {
     "component_id": {
       "component_type": "webhook_endpoint",
+      "name": "test_import_call_activity_webhook",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
+      "name": "test_import_schedule_activity_webhook",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
       "name": "test_body_text_webhook",
       "component_digest": "sha256:<REDACTED>"
     }

@@ -26,7 +26,6 @@ use concepts::{
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
-use boa_engine::ast::declaration::ImportName;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -101,10 +100,8 @@ impl WorkflowJsWorkerCompiled {
         // Resolve JS imports against the function registry before linking.
         // This validates named imports and resolves namespace imports (`import *`).
         // Parse errors in JS source are caught here early rather than at runtime.
-        let resolved_imports =
-            resolve_js_imports(&self.js_source, fn_registry.as_ref()).map_err(|e| {
-                crate::WasmFileError::linking_error("JS import resolution", e)
-            })?;
+        let resolved_imports = resolve_js_imports(&self.js_source, fn_registry.as_ref())
+            .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
 
         let linked = self.inner.link(fn_registry)?;
         Ok(WorkflowJsWorkerLinked {
@@ -126,7 +123,7 @@ pub struct WorkflowJsWorkerLinked {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
-    /// Resolved imports: specifier → [(js_name, wit_name)].
+    /// Resolved imports: specifier → [(`js_name`, `wit_name`)].
     resolved_imports: HashMap<String, Vec<(String, String)>>,
 }
 
@@ -165,212 +162,11 @@ pub struct WorkflowJsWorker {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
-    /// Resolved imports: specifier → [(js_name, wit_name)].
+    /// Resolved imports: specifier → [(`js_name`, `wit_name`)].
     resolved_imports: HashMap<String, Vec<(String, String)>>,
 }
 
-/// Import kind extracted from JS source.
-#[derive(Debug)]
-enum JsImportKind {
-    /// `import { a, b } from 'spec'` — list of (js_name, wit_name) pairs.
-    Named(Vec<(String, String)>),
-    /// `import * as ns from 'spec'`.
-    Namespace,
-}
-
-/// Known obelisk specifier suffixes that change the proxy type.
-const SCHEDULE_SUFFIX: &str = "-obelisk-schedule";
-
-/// Strip an obelisk suffix from a WIT specifier's package name.
-///
-/// Specifier format: `"ns:pkg-obelisk-schedule/ifc"` → `"ns:pkg/ifc"`.
-/// Returns `Some(base_specifier)` if the suffix was found, `None` otherwise.
-fn strip_specifier_suffix(specifier: &str, suffix: &str) -> Option<String> {
-    let slash_pos = specifier.find('/')?;
-    let pkg_part = &specifier[..slash_pos];
-    let ifc_part = &specifier[slash_pos..];
-    if pkg_part.ends_with(suffix) {
-        let base_pkg = &pkg_part[..pkg_part.len() - suffix.len()];
-        Some(format!("{base_pkg}{ifc_part}"))
-    } else {
-        None
-    }
-}
-
-/// Convert a JS camelCase name to WIT kebab-case.
-fn camel_to_kebab(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 4);
-    for (i, ch) in s.char_indices() {
-        if ch.is_uppercase() {
-            if i > 0 {
-                result.push('-');
-            }
-            for lower in ch.to_lowercase() {
-                result.push(lower);
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
-
-/// Convert a WIT kebab-case name to JS camelCase.
-///
-/// Examples: `"account-info"` → `"accountInfo"`, `"add"` → `"add"`.
-fn kebab_to_camel(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut capitalize_next = false;
-    for ch in s.chars() {
-        if ch == '-' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            for upper in ch.to_uppercase() {
-                result.push(upper);
-            }
-            capitalize_next = false;
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
-
-/// Extract import specifiers and their imported names from JS source code (host-side).
-///
-/// Returns a map from specifier to `JsImportKind`.
-/// Imports from the `obelisk:` namespace are skipped.
-fn extract_js_imports(js_code: &str) -> Result<HashMap<String, JsImportKind>, String> {
-    let mut interner = boa_engine::interner::Interner::new();
-    let mut parser = boa_engine::parser::Parser::new(boa_engine::Source::from_bytes(js_code));
-    let scope = boa_engine::ast::scope::Scope::new_global();
-    let module = parser
-        .parse_module(&scope, &mut interner)
-        .map_err(|e| format!("import extraction parse error: {e}"))?;
-
-    let mut imports: HashMap<String, JsImportKind> = HashMap::new();
-
-    for entry in module.items().import_entries() {
-        let specifier = interner
-            .resolve_expect(entry.module_request())
-            .utf8()
-            .unwrap_or("")
-            .to_string();
-
-        // Skip obelisk: namespace (host-provided)
-        if specifier.starts_with("obelisk:") {
-            continue;
-        }
-
-        match entry.import_name() {
-            ImportName::Name(sym) => {
-                let js_name = interner
-                    .resolve_expect(sym)
-                    .utf8()
-                    .unwrap_or("")
-                    .to_string();
-                let wit_name = camel_to_kebab(&js_name);
-                match imports.entry(specifier) {
-                    std::collections::hash_map::Entry::Occupied(mut e) => {
-                        if let JsImportKind::Named(funcs) = e.get_mut() {
-                            funcs.push((js_name, wit_name));
-                        }
-                    }
-                    std::collections::hash_map::Entry::Vacant(e) => {
-                        e.insert(JsImportKind::Named(vec![(js_name, wit_name)]));
-                    }
-                }
-            }
-            ImportName::Namespace => {
-                imports.insert(specifier, JsImportKind::Namespace);
-            }
-        }
-    }
-    Ok(imports)
-}
-
-/// Resolve JS imports against the function registry.
-///
-/// For named imports, validates each function exists.
-/// For namespace imports (`import *`), resolves all functions for the interface.
-/// Returns the fully resolved imports map: specifier → [(js_name, wit_name)].
-fn resolve_js_imports(
-    js_code: &str,
-    fn_registry: &dyn FunctionRegistry,
-) -> Result<HashMap<String, Vec<(String, String)>>, String> {
-    let raw_imports = extract_js_imports(js_code)?;
-    if raw_imports.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let all_exports = fn_registry.all_exports();
-    let mut resolved: HashMap<String, Vec<(String, String)>> = HashMap::new();
-
-    for (specifier, kind) in raw_imports {
-        // Check for obelisk suffixes that change the proxy type.
-        // For suffixed specifiers, look up the base interface for validation.
-        let base_specifier = strip_specifier_suffix(&specifier, SCHEDULE_SUFFIX);
-        let is_schedule = base_specifier.is_some();
-        let lookup_specifier = base_specifier.as_deref().unwrap_or(&specifier);
-
-        // Find the interface in the registry using the base specifier
-        let ifc = all_exports
-            .iter()
-            .find(|pkg| &*pkg.ifc_fqn == lookup_specifier);
-
-        // Interface must exist at link time for all import kinds.
-        let ifc = ifc.ok_or_else(|| {
-            format!("interface '{lookup_specifier}' not found for import")
-        })?;
-
-        match kind {
-            JsImportKind::Named(funcs) => {
-                if is_schedule {
-                    // For schedule imports, strip the `-schedule` suffix from
-                    // wit_name before validating against the base interface.
-                    for (js_name, wit_name) in &funcs {
-                        let base_wit = wit_name
-                            .strip_suffix("-schedule")
-                            .unwrap_or(wit_name);
-                        if !ifc.fns.keys().any(|k| &**k == base_wit) {
-                            return Err(format!(
-                                "function '{js_name}' (base '{base_wit}') not found in interface '{lookup_specifier}'"
-                            ));
-                        }
-                    }
-                } else {
-                    // For direct call imports, validate each function exists
-                    for (js_name, wit_name) in &funcs {
-                        if !ifc.fns.keys().any(|k| &**k == wit_name) {
-                            return Err(format!(
-                                "function '{js_name}' ('{wit_name}') not found in interface '{specifier}'"
-                            ));
-                        }
-                    }
-                }
-                resolved.insert(specifier, funcs);
-            }
-            JsImportKind::Namespace => {
-                let funcs: Vec<(String, String)> = ifc
-                    .fns
-                    .keys()
-                    .map(|fn_name| {
-                        let wit_name = fn_name.to_string();
-                        let js_name = kebab_to_camel(&wit_name);
-                        if is_schedule {
-                            // Add Schedule suffix: "fibo" → "fiboSchedule" / "fibo-schedule"
-                            (format!("{js_name}Schedule"), format!("{wit_name}-schedule"))
-                        } else {
-                            (js_name, wit_name)
-                        }
-                    })
-                    .collect();
-                resolved.insert(specifier, funcs);
-            }
-        }
-    }
-    Ok(resolved)
-}
+use crate::js_imports::resolve_js_imports;
 
 impl WorkflowJsWorker {
     fn boa_invocation(
@@ -672,8 +468,7 @@ impl WorkflowJsWorker {
         let already_finished_result = log.as_finished_result();
         let resolved_imports =
             resolve_js_imports(&js_source, fn_registry.as_ref()).unwrap_or_default();
-        let (ffqn, params) =
-            Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
+        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
 
         let (captured_writes, mut fatal_error) = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
@@ -765,8 +560,7 @@ impl WorkflowJsWorker {
         let old_version = log.next_version.clone();
         let resolved_imports =
             resolve_js_imports(&js_source, fn_registry.as_ref()).unwrap_or_default();
-        let (ffqn, params) =
-            Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
+        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
         let log_forwarder_sender = logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
@@ -988,13 +782,9 @@ mod tests {
             subscription_interruption: None,
         };
 
-        let compiled = WorkflowWorkerCompiled::new_with_config(
-            runnable_component,
-            config,
-            engine,
-            clock_fn,
-        )
-        .unwrap();
+        let compiled =
+            WorkflowWorkerCompiled::new_with_config(runnable_component, config, engine, clock_fn)
+                .unwrap();
 
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,

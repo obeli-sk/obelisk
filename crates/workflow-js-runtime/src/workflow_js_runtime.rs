@@ -128,17 +128,15 @@ use crate::generated::obelisk::workflow::workflow_support::{
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{new_object, parse_ffqn};
+use boa_common::imports::{self, ProxyKind};
 use boa_engine::context::time::FixedClock;
-use boa_engine::module::{MapModuleLoader, SyntheticModuleInitializer};
+use boa_engine::module::MapModuleLoader;
 use boa_engine::{
     Context, JsArgs, JsError, JsNativeError, JsResult, JsString, JsValue, Module, NativeFunction,
     Source,
     builtins::promise::PromiseState,
     js_string,
-    object::{
-        JsObject,
-        builtins::{JsDate, JsFunction},
-    },
+    object::builtins::{JsDate, JsFunction},
     property::Attribute,
 };
 use std::cell::RefCell;
@@ -286,34 +284,10 @@ fn create_direct_call_proxy(
     native.to_js_function(context.realm()).into()
 }
 
-/// Known obelisk specifier suffixes that change the proxy type.
-const SCHEDULE_SUFFIX: &str = "-obelisk-schedule";
-
-/// Strip an obelisk suffix from a WIT specifier's package name.
-///
-/// Specifier format: `"ns:pkg-obelisk-schedule/ifc"` → `"ns:pkg/ifc"`.
-/// Returns `Some(base_specifier)` if the suffix was found, `None` otherwise.
-fn strip_specifier_suffix(specifier: &str, suffix: &str) -> Option<String> {
-    let slash_pos = specifier.find('/')?;
-    let pkg_part = &specifier[..slash_pos];
-    let ifc_part = &specifier[slash_pos..];
-    if pkg_part.ends_with(suffix) {
-        let base_pkg = &pkg_part[..pkg_part.len() - suffix.len()];
-        Some(format!("{base_pkg}{ifc_part}"))
-    } else {
-        None
-    }
-}
-
 /// Create a `NativeFunction` that proxies a schedule call via
-/// `execution-id-generate` + `schedule-json`.
+/// `execution-id-generate` + `schedule-json` from `obelisk:workflow/workflow-support`.
 ///
 /// JS signature: `myFuncSchedule(scheduleAt, ...args) → executionId`
-///
-/// - `scheduleAt` is parsed by `parse_schedule_at` (object like `{ seconds: 60 }`,
-///   or `null`/`undefined` for immediate).
-/// - Remaining args are JSON-serialized and passed as params.
-/// - Returns the generated execution ID string.
 fn create_schedule_proxy(
     interface_name: &str,
     function_name: &str,
@@ -361,59 +335,20 @@ fn create_schedule_proxy(
     native.to_js_function(context.realm()).into()
 }
 
-/// Build a `MapModuleLoader` with `SyntheticModule`s for each imported specifier.
+/// Workflow proxy factory for [`imports::register_import_modules`].
 ///
-/// Each imported JS name becomes a `NativeFunction` proxy. The proxy type depends
-/// on the specifier suffix:
-/// - No suffix → `call-json-bt` (direct call)
-/// - `-obelisk-schedule` → `execution-id-generate` + `schedule-json`
-fn register_import_modules(
-    imports: &HashMap<String, Vec<(String, String)>>,
-    loader: &MapModuleLoader,
-    context: &mut Context,
-) {
-    for (specifier, funcs) in imports {
-        let mut export_names: Vec<JsString> = Vec::new();
-
-        // Detect obelisk suffix to determine the proxy type.
-        let schedule_base = strip_specifier_suffix(specifier, SCHEDULE_SUFFIX);
-
-        // Create all proxy functions and store them in a plain JsObject for the
-        // SyntheticModuleInitializer to retrieve during evaluation.
-        let exports_obj = JsObject::with_null_proto();
-        for (js_name, wit_name) in funcs {
-            let proxy = if let Some(base_specifier) = &schedule_base {
-                // Schedule proxy: strip `-schedule` from wit_name to get base function name
-                let base_fn = wit_name.strip_suffix("-schedule").unwrap_or(wit_name);
-                create_schedule_proxy(base_specifier, base_fn, context)
-            } else {
-                create_direct_call_proxy(specifier, wit_name, context)
-            };
-            let js_name_str = js_string!(js_name.as_str());
-            exports_obj
-                .set(js_name_str.clone(), proxy, false, context)
-                .expect("set on plain object must work");
-            export_names.push(js_name_str);
-        }
-
-        let synth = Module::synthetic(
-            &export_names,
-            SyntheticModuleInitializer::from_copy_closure_with_captures(
-                |module, (obj, names): &(JsObject, Vec<JsString>), ctx| {
-                    for name in names {
-                        let val = obj.get(name.clone(), ctx)?;
-                        module.set_export(name, val)?;
-                    }
-                    Ok(())
-                },
-                (exports_obj, export_names.clone()),
-            ),
-            None,
-            None,
-            context,
-        );
-
-        loader.insert(specifier, synth);
+/// Routes to `call-json-bt` (direct) or `execution-id-generate` + `schedule-json` (schedule)
+/// from `obelisk:workflow/workflow-support`.
+fn create_workflow_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
+    match kind {
+        ProxyKind::DirectCall {
+            interface_name,
+            function_name,
+        } => create_direct_call_proxy(interface_name, function_name, context),
+        ProxyKind::Schedule {
+            interface_name,
+            function_name,
+        } => create_schedule_proxy(interface_name, function_name, context),
     }
 }
 
@@ -433,8 +368,7 @@ pub fn execute(
     }
 
     // Convert resolved imports from host into the HashMap format expected by register_import_modules.
-    let imports: HashMap<String, Vec<(String, String)>> =
-        resolved_imports.into_iter().collect();
+    let imports: HashMap<String, Vec<(String, String)>> = resolved_imports.into_iter().collect();
     let executor = Rc::new(DeterministicJobExecutor::default());
     let loader = Rc::new(MapModuleLoader::new());
     let mut context = Context::builder()
@@ -458,9 +392,10 @@ pub fn execute(
     setup_date_now(&mut context).expect("Date.now setup must work");
 
     // Register synthetic modules for WIT-style imports (e.g., 'ns:pkg/ifc').
-    // Each imported function becomes a NativeFunction proxy to call-json-bt.
+    // Each imported function becomes a NativeFunction proxy to the appropriate
+    // workflow host function (call-json-bt for direct, schedule-json for schedule).
     if !imports.is_empty() {
-        register_import_modules(&imports, &loader, &mut context);
+        imports::register_import_modules(&imports, &loader, &mut context, &create_workflow_proxy);
     }
 
     // Get the default export function from the ES module
