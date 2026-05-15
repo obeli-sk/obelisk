@@ -178,6 +178,25 @@ enum JsImportKind {
     Namespace,
 }
 
+/// Known obelisk specifier suffixes that change the proxy type.
+const SCHEDULE_SUFFIX: &str = "-obelisk-schedule";
+
+/// Strip an obelisk suffix from a WIT specifier's package name.
+///
+/// Specifier format: `"ns:pkg-obelisk-schedule/ifc"` → `"ns:pkg/ifc"`.
+/// Returns `Some(base_specifier)` if the suffix was found, `None` otherwise.
+fn strip_specifier_suffix(specifier: &str, suffix: &str) -> Option<String> {
+    let slash_pos = specifier.find('/')?;
+    let pkg_part = &specifier[..slash_pos];
+    let ifc_part = &specifier[slash_pos..];
+    if pkg_part.ends_with(suffix) {
+        let base_pkg = &pkg_part[..pkg_part.len() - suffix.len()];
+        Some(format!("{base_pkg}{ifc_part}"))
+    } else {
+        None
+    }
+}
+
 /// Convert a JS camelCase name to WIT kebab-case.
 fn camel_to_kebab(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
@@ -288,15 +307,39 @@ fn resolve_js_imports(
     let mut resolved: HashMap<String, Vec<(String, String)>> = HashMap::new();
 
     for (specifier, kind) in raw_imports {
-        // Find the interface in the registry
+        // Check for obelisk suffixes that change the proxy type.
+        // For suffixed specifiers, look up the base interface for validation.
+        let base_specifier = strip_specifier_suffix(&specifier, SCHEDULE_SUFFIX);
+        let is_schedule = base_specifier.is_some();
+        let lookup_specifier = base_specifier.as_deref().unwrap_or(&specifier);
+
+        // Find the interface in the registry using the base specifier
         let ifc = all_exports
             .iter()
-            .find(|pkg| &*pkg.ifc_fqn == specifier);
+            .find(|pkg| &*pkg.ifc_fqn == lookup_specifier);
+
+        // Interface must exist at link time for all import kinds.
+        let ifc = ifc.ok_or_else(|| {
+            format!("interface '{lookup_specifier}' not found for import")
+        })?;
 
         match kind {
             JsImportKind::Named(funcs) => {
-                // For named imports, validate each function exists
-                if let Some(ifc) = ifc {
+                if is_schedule {
+                    // For schedule imports, strip the `-schedule` suffix from
+                    // wit_name before validating against the base interface.
+                    for (js_name, wit_name) in &funcs {
+                        let base_wit = wit_name
+                            .strip_suffix("-schedule")
+                            .unwrap_or(wit_name);
+                        if !ifc.fns.keys().any(|k| &**k == base_wit) {
+                            return Err(format!(
+                                "function '{js_name}' (base '{base_wit}') not found in interface '{lookup_specifier}'"
+                            ));
+                        }
+                    }
+                } else {
+                    // For direct call imports, validate each function exists
                     for (js_name, wit_name) in &funcs {
                         if !ifc.fns.keys().any(|k| &**k == wit_name) {
                             return Err(format!(
@@ -305,21 +348,21 @@ fn resolve_js_imports(
                         }
                     }
                 }
-                // Even if interface not found, pass through — call-json will
-                // return function-not-found at call time (existing Phase 1 behavior)
                 resolved.insert(specifier, funcs);
             }
             JsImportKind::Namespace => {
-                let ifc = ifc.ok_or_else(|| {
-                    format!("interface '{specifier}' not found for namespace import")
-                })?;
                 let funcs: Vec<(String, String)> = ifc
                     .fns
                     .keys()
                     .map(|fn_name| {
                         let wit_name = fn_name.to_string();
                         let js_name = kebab_to_camel(&wit_name);
-                        (js_name, wit_name)
+                        if is_schedule {
+                            // Add Schedule suffix: "fibo" → "fiboSchedule" / "fibo-schedule"
+                            (format!("{js_name}Schedule"), format!("{wit_name}-schedule"))
+                        } else {
+                            (js_name, wit_name)
+                        }
                     })
                     .collect();
                 resolved.insert(specifier, funcs);

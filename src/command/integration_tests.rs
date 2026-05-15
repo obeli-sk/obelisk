@@ -238,6 +238,16 @@ params = [
 return_type = "result<u32, string>"
 
 [[workflow_js]]
+name = "test_import_schedule_activity_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/import_schedule_activity.js"
+ffqn = "testing:integration/workflow-import-schedule-activity.schedule-activity"
+params = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+]
+return_type = "result<string, string>"
+
+[[workflow_js]]
 name = "test_make_record_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/make_record.js"
 ffqn = "testing:integration/workflow-make-record.make-record"
@@ -1614,6 +1624,31 @@ async fn submit_workflow_with_import_star_call() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": 7 }));
+
+    server.shutdown().await;
+}
+
+// ---- Workflow: ES module schedule import ----
+
+#[tokio::test]
+async fn submit_workflow_with_import_schedule() {
+    let server = TestServer::start(test_addr!(71)).await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/workflow-import-schedule-activity.schedule-activity",
+            vec![json!(3), json!(4)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    // schedule returns Ok(execution_id_string)
+    assert!(
+        body["ok"].is_string(),
+        "expected ok to be an execution ID string, got: {body}"
+    );
 
     server.shutdown().await;
 }

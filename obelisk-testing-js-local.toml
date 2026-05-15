@@ -68,6 +68,15 @@ params = [
   { name = "b", type = "u32" },
 ]
 
+[[workflow_js]]
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/import_schedule_activity.js"
+ffqn = "testing:integration/workflow-import-schedule-activity.schedule-activity"
+params = [
+  { name = "a", type = "u32" },
+  { name = "b", type = "u32" },
+]
+return_type = "result<string, string>"
+
 [[webhook_endpoint_js]]
 name = "webhook_js_hello"
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/hello.js"

@@ -85,6 +85,9 @@ expression: functions
     "ffqn": "testing:integration/workflow-import-star-call-activity.call-activity"
   },
   {
+    "ffqn": "testing:integration/workflow-import-schedule-activity.schedule-activity"
+  },
+  {
     "ffqn": "testing:integration/workflow-make-record.make-record"
   },
   {

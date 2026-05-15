@@ -286,10 +286,87 @@ fn create_direct_call_proxy(
     native.to_js_function(context.realm()).into()
 }
 
+/// Known obelisk specifier suffixes that change the proxy type.
+const SCHEDULE_SUFFIX: &str = "-obelisk-schedule";
+
+/// Strip an obelisk suffix from a WIT specifier's package name.
+///
+/// Specifier format: `"ns:pkg-obelisk-schedule/ifc"` → `"ns:pkg/ifc"`.
+/// Returns `Some(base_specifier)` if the suffix was found, `None` otherwise.
+fn strip_specifier_suffix(specifier: &str, suffix: &str) -> Option<String> {
+    let slash_pos = specifier.find('/')?;
+    let pkg_part = &specifier[..slash_pos];
+    let ifc_part = &specifier[slash_pos..];
+    if pkg_part.ends_with(suffix) {
+        let base_pkg = &pkg_part[..pkg_part.len() - suffix.len()];
+        Some(format!("{base_pkg}{ifc_part}"))
+    } else {
+        None
+    }
+}
+
+/// Create a `NativeFunction` that proxies a schedule call via
+/// `execution-id-generate` + `schedule-json`.
+///
+/// JS signature: `myFuncSchedule(scheduleAt, ...args) → executionId`
+///
+/// - `scheduleAt` is parsed by `parse_schedule_at` (object like `{ seconds: 60 }`,
+///   or `null`/`undefined` for immediate).
+/// - Remaining args are JSON-serialized and passed as params.
+/// - Returns the generated execution ID string.
+fn create_schedule_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    let ifc = js_string!(interface_name);
+    let func = js_string!(function_name);
+
+    let native = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, (ifc, func): &(JsString, JsString), ctx| {
+            let function = Function {
+                interface_name: ifc.to_std_string_escaped(),
+                function_name: func.to_std_string_escaped(),
+            };
+
+            // First argument is scheduleAt
+            let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
+
+            // Remaining arguments are the function params
+            let array = boa_engine::object::builtins::JsArray::new(ctx)?;
+            for (i, arg) in args.iter().skip(1).enumerate() {
+                array.set(i as u32, arg.clone(), false, ctx)?;
+            }
+            let params_json = json_stringify(&array.into(), ctx)?;
+
+            let backtrace = capture_backtrace(ctx);
+            let exec_id = execution_id_generate(Some(&backtrace));
+
+            match schedule_json(
+                &exec_id,
+                schedule,
+                &function,
+                &params_json,
+                None,
+                Some(&backtrace),
+            ) {
+                Ok(()) => Ok(JsValue::from(js_string!(exec_id.id))),
+                Err(e) => Err(JsNativeError::error()
+                    .with_message(format!("schedule failed: {:?}", e))
+                    .into()),
+            }
+        },
+        (ifc, func),
+    );
+    native.to_js_function(context.realm()).into()
+}
+
 /// Build a `MapModuleLoader` with `SyntheticModule`s for each imported specifier.
 ///
-/// Each imported JS name becomes a `NativeFunction` proxy that calls `call-json-bt`
-/// with the FFQN derived from the specifier and the kebab-case function name.
+/// Each imported JS name becomes a `NativeFunction` proxy. The proxy type depends
+/// on the specifier suffix:
+/// - No suffix → `call-json-bt` (direct call)
+/// - `-obelisk-schedule` → `execution-id-generate` + `schedule-json`
 fn register_import_modules(
     imports: &HashMap<String, Vec<(String, String)>>,
     loader: &MapModuleLoader,
@@ -298,11 +375,20 @@ fn register_import_modules(
     for (specifier, funcs) in imports {
         let mut export_names: Vec<JsString> = Vec::new();
 
+        // Detect obelisk suffix to determine the proxy type.
+        let schedule_base = strip_specifier_suffix(specifier, SCHEDULE_SUFFIX);
+
         // Create all proxy functions and store them in a plain JsObject for the
         // SyntheticModuleInitializer to retrieve during evaluation.
         let exports_obj = JsObject::with_null_proto();
         for (js_name, wit_name) in funcs {
-            let proxy = create_direct_call_proxy(specifier, wit_name, context);
+            let proxy = if let Some(base_specifier) = &schedule_base {
+                // Schedule proxy: strip `-schedule` from wit_name to get base function name
+                let base_fn = wit_name.strip_suffix("-schedule").unwrap_or(wit_name);
+                create_schedule_proxy(base_specifier, base_fn, context)
+            } else {
+                create_direct_call_proxy(specifier, wit_name, context)
+            };
             let js_name_str = js_string!(js_name.as_str());
             exports_obj
                 .set(js_name_str.clone(), proxy, false, context)
