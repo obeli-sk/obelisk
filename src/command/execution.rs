@@ -13,7 +13,6 @@ use chrono::DateTime;
 use concepts::ExecutionFailureKind;
 use concepts::JoinSetId;
 use concepts::JoinSetKind;
-use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::grpc_gen;
@@ -29,7 +28,6 @@ use grpc_gen::execution_status::Status;
 use http::header::ACCEPT;
 use itertools::Either;
 use std::fmt::Write as _;
-use std::str::FromStr;
 use std::time::Duration;
 use tracing::instrument;
 
@@ -169,31 +167,49 @@ impl args::Execution {
                 }
             }
             args::Execution::Cancel(cancel_request) => cancel_request.execute().await,
-            args::Execution::Pause {
-                api_url,
-                execution_id,
-            } => {
+            args::Execution::Pause { api_url, id } => {
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_execution_repository_client(channel).await?;
-                client
-                    .pause_execution(tonic::Request::new(grpc_gen::PauseExecutionRequest {
-                        execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
-                    }))
-                    .await?;
+                match id {
+                    args::ExecutionIdOrDelayId::Execution(execution_id) => {
+                        client
+                            .pause_execution(tonic::Request::new(grpc_gen::PauseExecutionRequest {
+                                execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
+                            }))
+                            .await?;
+                    }
+                    args::ExecutionIdOrDelayId::Delay(delay_id) => {
+                        client
+                            .pause_delay(tonic::Request::new(grpc_gen::PauseDelayRequest {
+                                delay_id: Some(grpc_gen::DelayId::from(delay_id)),
+                            }))
+                            .await?;
+                    }
+                }
                 println!("Paused");
                 Ok(())
             }
-            args::Execution::Unpause {
-                api_url,
-                execution_id,
-            } => {
+            args::Execution::Unpause { api_url, id } => {
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_execution_repository_client(channel).await?;
-                client
-                    .unpause_execution(tonic::Request::new(grpc_gen::UnpauseExecutionRequest {
-                        execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
-                    }))
-                    .await?;
+                match id {
+                    args::ExecutionIdOrDelayId::Execution(execution_id) => {
+                        client
+                            .unpause_execution(tonic::Request::new(
+                                grpc_gen::UnpauseExecutionRequest {
+                                    execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
+                                },
+                            ))
+                            .await?;
+                    }
+                    args::ExecutionIdOrDelayId::Delay(delay_id) => {
+                        client
+                            .unpause_delay(tonic::Request::new(grpc_gen::UnpauseDelayRequest {
+                                delay_id: Some(grpc_gen::DelayId::from(delay_id)),
+                            }))
+                            .await?;
+                    }
+                }
                 println!("Unpaused");
                 Ok(())
             }
@@ -1337,20 +1353,21 @@ impl CancelCommand {
     pub(crate) async fn execute(self) -> anyhow::Result<()> {
         let channel = to_channel(&self.api_url).await?;
         let mut client = get_execution_repository_client(channel).await?;
-        let request = if let Ok(execution_id) = ExecutionId::from_str(&self.id) {
-            cancel_request::Request::Activity(CancelRequestActivity {
-                execution_id: Some(grpc_gen::ExecutionId {
-                    id: execution_id.to_string(),
-                }),
-            })
-        } else if let Ok(delay_id) = DelayId::from_str(&self.id) {
-            cancel_request::Request::Delay(CancelRequestDelay {
-                delay_id: Some(grpc_gen::DelayId {
-                    id: delay_id.to_string(),
-                }),
-            })
-        } else {
-            bail!("id is not a derived execution id nor a delay id")
+        let request = match self.id {
+            args::ExecutionIdOrDelayId::Execution(execution_id) => {
+                cancel_request::Request::Activity(CancelRequestActivity {
+                    execution_id: Some(grpc_gen::ExecutionId {
+                        id: execution_id.to_string(),
+                    }),
+                })
+            }
+            args::ExecutionIdOrDelayId::Delay(delay_id) => {
+                cancel_request::Request::Delay(CancelRequestDelay {
+                    delay_id: Some(grpc_gen::DelayId {
+                        id: delay_id.to_string(),
+                    }),
+                })
+            }
         };
         let resp = client
             .cancel(tonic::Request::new(CancelRequest {

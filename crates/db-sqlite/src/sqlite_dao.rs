@@ -4154,6 +4154,58 @@ impl DbExternalApi for SqlitePool {
         )
         .await
     }
+
+    #[instrument(skip(self))]
+    async fn pause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
+        let delay_id = delay_id.clone();
+        self.transaction(
+            move |tx| {
+                let (execution_id, join_set_id) = delay_id.split_to_parts();
+                let rows_modified = tx.execute(
+                    "UPDATE t_delay SET is_paused = 1 \
+                     WHERE execution_id = :execution_id AND join_set_id = :join_set_id AND delay_id = :delay_id AND NOT is_paused",
+                    named_params! {
+                        ":execution_id": execution_id.to_string(),
+                        ":join_set_id": join_set_id.to_string(),
+                        ":delay_id": delay_id.to_string(),
+                    },
+                )?;
+                if rows_modified == 0 {
+                    return Err(DbErrorWrite::NotFound);
+                }
+                Ok(())
+            },
+            TxType::Other,
+            "pause_delay",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn unpause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
+        let delay_id = delay_id.clone();
+        self.transaction(
+            move |tx| {
+                let (execution_id, join_set_id) = delay_id.split_to_parts();
+                let rows_modified = tx.execute(
+                    "UPDATE t_delay SET is_paused = 0 \
+                     WHERE execution_id = :execution_id AND join_set_id = :join_set_id AND delay_id = :delay_id AND is_paused",
+                    named_params! {
+                        ":execution_id": execution_id.to_string(),
+                        ":join_set_id": join_set_id.to_string(),
+                        ":delay_id": delay_id.to_string(),
+                    },
+                )?;
+                if rows_modified == 0 {
+                    return Err(DbErrorWrite::NotFound);
+                }
+                Ok(())
+            },
+            TxType::Other,
+            "unpause_delay",
+        )
+        .await
+    }
 }
 
 #[async_trait]
@@ -4541,7 +4593,7 @@ impl DbConnection for SqlitePool {
         self.transaction(
             move |conn| {
                 let mut expired_timers = conn.prepare(
-                    "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= :at",
+                    "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= :at AND NOT is_paused",
                 )?
                 .query_map(
                         named_params! {

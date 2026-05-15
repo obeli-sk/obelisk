@@ -84,6 +84,8 @@ pub(crate) struct WebApiState {
     paths(
         execution_id_generate,
         delay_cancel,
+        delay_pause,
+        delay_unpause,
         executions_list,
         execution_cancel,
         execution_pause,
@@ -176,6 +178,8 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/functions", routing::get(functions_list))
         .route("/functions/wit", routing::get(function_wit))
         .route("/delays/{delay-id}/cancel", routing::put(delay_cancel))
+        .route("/delays/{delay-id}/pause", routing::put(delay_pause))
+        .route("/delays/{delay-id}/unpause", routing::put(delay_unpause))
         .route("/execution-id", routing::get(execution_id_generate))
         .route("/executions", routing::get(executions_list))
         .route("/executions", routing::post(execution_submit_post))
@@ -295,6 +299,76 @@ async fn delay_cancel(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())
+}
+
+/// Pause a delay
+#[utoipa::path(
+    put,
+    path = "/v1/delays/{delay_id}/pause",
+    tag = "delays",
+    params(
+        ("delay_id" = String, Path, description = "Delay ID to pause")
+    ),
+    responses(
+        (status = 200, description = "Delay paused"),
+        (status = 404, description = "Delay not found")
+    )
+)]
+#[instrument(skip_all, fields(delay_id))]
+async fn delay_pause(
+    Path(delay_id): Path<DelayId>,
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    conn.pause_delay(&delay_id)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    Ok(HttpResponse {
+        status: StatusCode::OK,
+        message: "paused".to_string(),
+        accept,
+    }
+    .into_response())
+}
+
+/// Unpause a delay
+#[utoipa::path(
+    put,
+    path = "/v1/delays/{delay_id}/unpause",
+    tag = "delays",
+    params(
+        ("delay_id" = String, Path, description = "Delay ID to unpause")
+    ),
+    responses(
+        (status = 200, description = "Delay unpaused"),
+        (status = 404, description = "Delay not found")
+    )
+)]
+#[instrument(skip_all, fields(delay_id))]
+async fn delay_unpause(
+    Path(delay_id): Path<DelayId>,
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    conn.unpause_delay(&delay_id)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    Ok(HttpResponse {
+        status: StatusCode::OK,
+        message: "unpaused".to_string(),
+        accept,
+    }
+    .into_response())
 }
 
 #[derive(Deserialize, Debug, IntoParams)]

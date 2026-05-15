@@ -1252,6 +1252,46 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .to_status()?;
         Ok(tonic::Response::new(grpc_gen::UnpauseExecutionResponse {}))
     }
+
+    #[instrument(skip_all, fields(delay_id))]
+    async fn pause_delay(
+        &self,
+        request: tonic::Request<grpc_gen::PauseDelayRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::PauseDelayResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let delay_id: DelayId = request
+            .delay_id
+            .argument_must_exist("delay_id")?
+            .try_into()?;
+        tracing::Span::current().record("delay_id", tracing::field::display(&delay_id));
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        conn.pause_delay(&delay_id).await.to_status()?;
+        Ok(tonic::Response::new(grpc_gen::PauseDelayResponse {}))
+    }
+
+    #[instrument(skip_all, fields(delay_id))]
+    async fn unpause_delay(
+        &self,
+        request: tonic::Request<grpc_gen::UnpauseDelayRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::UnpauseDelayResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let delay_id: DelayId = request
+            .delay_id
+            .argument_must_exist("delay_id")?
+            .try_into()?;
+        tracing::Span::current().record("delay_id", tracing::field::display(&delay_id));
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        conn.unpause_delay(&delay_id).await.to_status()?;
+        Ok(tonic::Response::new(grpc_gen::UnpauseDelayResponse {}))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS t_delay (
     join_set_id TEXT NOT NULL,
     delay_id TEXT NOT NULL,
     expires_at TEXT NOT NULL,
+    is_paused INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (execution_id, join_set_id, delay_id)
 ) STRICT;
 

@@ -1,7 +1,7 @@
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
-    prefixed_ulid::{DeploymentId, ExecutionIdDerived},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
 };
 
 /// Deployment TOML section names, used as the key in the deployment TOML file.
@@ -597,21 +597,23 @@ pub(crate) enum Execution {
     },
     /// Request cancellation of a running activity or pending delay.
     Cancel(CancelCommand),
-    /// Pause a workflow execution, preventing it from being picked up until unpaused.
+    /// Pause a workflow execution or a pending delay.
     Pause {
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
-        /// Execution ID to pause.
-        execution_id: ExecutionId,
+        /// Execution ID (`E_01`...) or delay ID (`Delay_01`...) to pause.
+        #[arg(value_name = "ID")]
+        id: ExecutionIdOrDelayId,
     },
-    /// Resume a previously paused workflow execution.
+    /// Resume a previously paused workflow execution or delay.
     Unpause {
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
-        /// Execution ID to unpause.
-        execution_id: ExecutionId,
+        /// Execution ID (`E_01`...) or delay ID (`Delay_01`...) to unpause.
+        #[arg(value_name = "ID")]
+        id: ExecutionIdOrDelayId,
     },
     /// Replay a workflow execution from its execution log, checking for non-determinism.
     Replay {
@@ -753,6 +755,29 @@ pub(crate) struct Stub {
     pub(crate) return_value: String,
 }
 
+/// An ID that is either an execution ID or a delay ID.
+#[derive(Debug, Clone)]
+pub(crate) enum ExecutionIdOrDelayId {
+    Execution(ExecutionId),
+    Delay(DelayId),
+}
+
+impl std::str::FromStr for ExecutionIdOrDelayId {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(execution_id) = s.parse::<ExecutionId>() {
+            Ok(Self::Execution(execution_id))
+        } else if let Ok(delay_id) = s.parse::<DelayId>() {
+            Ok(Self::Delay(delay_id))
+        } else {
+            Err(format!(
+                "cannot parse `{s}` as an execution ID or a delay ID"
+            ))
+        }
+    }
+}
+
 #[derive(Debug, clap::Args)]
 #[command()]
 #[expect(clippy::doc_markdown)]
@@ -762,5 +787,5 @@ pub(crate) struct CancelCommand {
     pub(crate) api_url: String,
     /// Execution id of an activity (E_01...) or a delay request (Delay_01...)
     #[arg(value_name = "ID")]
-    pub(crate) id: String,
+    pub(crate) id: ExecutionIdOrDelayId,
 }
