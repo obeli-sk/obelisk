@@ -127,8 +127,7 @@ use crate::generated::obelisk::workflow::workflow_support::{
     schedule_json, sleep_named_bt, stub_json, submit_delay_bt, submit_json_bt,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
-use boa_common::helpers::{camel_to_kebab, new_object, parse_ffqn};
-use boa_engine::ast::declaration::ImportName;
+use boa_common::helpers::{new_object, parse_ffqn};
 use boa_engine::context::time::FixedClock;
 use boa_engine::module::{MapModuleLoader, SyntheticModuleInitializer};
 use boa_engine::{
@@ -242,47 +241,6 @@ fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
     WasmBacktrace { frames }
 }
 
-/// Extract import specifiers and their imported names from JS source code.
-///
-/// Returns a map from specifier (e.g., `"testing:integration/activity"`) to a list of
-/// `(js_name, wit_name)` pairs (e.g., `("accountInfo", "account-info")`).
-///
-/// Imports from the `obelisk:` namespace are skipped — those are host-provided.
-fn extract_imports(js_code: &str) -> Result<HashMap<String, Vec<(String, String)>>, String> {
-    let mut interner = boa_engine::interner::Interner::new();
-    let mut parser = boa_engine::parser::Parser::new(Source::from_bytes(js_code));
-    let scope = boa_engine::ast::scope::Scope::new_global();
-    let module = parser
-        .parse_module(&scope, &mut interner)
-        .map_err(|e| format!("import extraction parse error: {e}"))?;
-
-    let mut imports: HashMap<String, Vec<(String, String)>> = HashMap::new();
-
-    for entry in module.items().import_entries() {
-        let specifier = interner
-            .resolve_expect(entry.module_request())
-            .utf8()
-            .unwrap_or("")
-            .to_string();
-
-        let js_name = match entry.import_name() {
-            ImportName::Name(sym) => interner
-                .resolve_expect(sym)
-                .utf8()
-                .unwrap_or("")
-                .to_string(),
-            ImportName::Namespace => continue, // skip `import * as ns`
-        };
-
-        let wit_name = camel_to_kebab(&js_name);
-        imports
-            .entry(specifier)
-            .or_default()
-            .push((js_name, wit_name));
-    }
-    Ok(imports)
-}
-
 /// Create a `NativeFunction` that proxies a direct call to `call-json-bt`.
 ///
 /// When invoked from JS, the function:
@@ -382,13 +340,15 @@ pub fn execute(
     js_code: &str,
     params_json: &[String],
     js_file_name: Option<String>,
+    resolved_imports: Vec<(String, Vec<(String, String)>)>,
 ) -> Result<Result<String, String>, JsRuntimeError> {
     if let Some(js_file_name) = js_file_name {
         JS_FILE_NAME.with(|s| *s.borrow_mut() = js_file_name);
     }
 
-    // Extract import specifiers from JS source so we can create synthetic modules.
-    let imports = extract_imports(js_code).map_err(JsRuntimeError::ModuleParseError)?;
+    // Convert resolved imports from host into the HashMap format expected by register_import_modules.
+    let imports: HashMap<String, Vec<(String, String)>> =
+        resolved_imports.into_iter().collect();
     let executor = Rc::new(DeterministicJobExecutor::default());
     let loader = Rc::new(MapModuleLoader::new());
     let mut context = Context::builder()

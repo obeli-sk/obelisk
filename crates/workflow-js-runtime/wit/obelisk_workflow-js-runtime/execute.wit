@@ -21,7 +21,14 @@ interface execute {
     /// The default export receives params as positional arguments
     /// (each element is one JSON-serialized parameter value) and returns a string.
     ///
+    /// `resolved-imports` maps ES module import specifiers to their functions, resolved
+    /// by the host against the function registry. Each entry is:
+    ///   (interface-name, list of (js-camel-case-name, wit-kebab-case-name))
+    /// For example: ("testing:integration/activity", [("accountInfo", "account-info")])
+    /// This enables `import * as ns` (host resolves all functions for the interface)
+    /// and validates named imports before entering the JS runtime.
+    ///
     /// Returns Ok(Ok(result)) on success, Ok(Err(error_message)) on user error,
     /// or Err(js-runtime-error) on runtime error.
-    run: func(js-code: string, params-json: list<string>, js-file-name: option<string>) -> result<result<string, string>, js-runtime-error>;
+    run: func(js-code: string, params-json: list<string>, js-file-name: option<string>, resolved-imports: list<tuple<string, list<tuple<string, string>>>>) -> result<result<string, string>, js-runtime-error>;
 }

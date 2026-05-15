@@ -26,6 +26,8 @@ use concepts::{
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
+use boa_engine::ast::declaration::ImportName;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 use utils::wasm_tools::WasmComponent;
@@ -96,6 +98,14 @@ impl WorkflowJsWorkerCompiled {
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
+        // Resolve JS imports against the function registry before linking.
+        // This validates named imports and resolves namespace imports (`import *`).
+        // Parse errors in JS source are caught here early rather than at runtime.
+        let resolved_imports =
+            resolve_js_imports(&self.js_source, fn_registry.as_ref()).map_err(|e| {
+                crate::WasmFileError::linking_error("JS import resolution", e)
+            })?;
+
         let linked = self.inner.link(fn_registry)?;
         Ok(WorkflowJsWorkerLinked {
             inner: linked,
@@ -104,6 +114,7 @@ impl WorkflowJsWorkerCompiled {
             user_params: self.user_params,
             user_return_type: self.user_return_type,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
+            resolved_imports,
         })
     }
 }
@@ -115,6 +126,8 @@ pub struct WorkflowJsWorkerLinked {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
+    /// Resolved imports: specifier → [(js_name, wit_name)].
+    resolved_imports: HashMap<String, Vec<(String, String)>>,
 }
 
 impl WorkflowJsWorkerLinked {
@@ -140,6 +153,7 @@ impl WorkflowJsWorkerLinked {
             user_params: self.user_params,
             user_return_type: self.user_return_type,
             user_exports_noext: self.user_exports_noext,
+            resolved_imports: self.resolved_imports,
         }
     }
 }
@@ -151,6 +165,168 @@ pub struct WorkflowJsWorker {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
+    /// Resolved imports: specifier → [(js_name, wit_name)].
+    resolved_imports: HashMap<String, Vec<(String, String)>>,
+}
+
+/// Import kind extracted from JS source.
+#[derive(Debug)]
+enum JsImportKind {
+    /// `import { a, b } from 'spec'` — list of (js_name, wit_name) pairs.
+    Named(Vec<(String, String)>),
+    /// `import * as ns from 'spec'`.
+    Namespace,
+}
+
+/// Convert a JS camelCase name to WIT kebab-case.
+fn camel_to_kebab(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 4);
+    for (i, ch) in s.char_indices() {
+        if ch.is_uppercase() {
+            if i > 0 {
+                result.push('-');
+            }
+            for lower in ch.to_lowercase() {
+                result.push(lower);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Convert a WIT kebab-case name to JS camelCase.
+///
+/// Examples: `"account-info"` → `"accountInfo"`, `"add"` → `"add"`.
+fn kebab_to_camel(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut capitalize_next = false;
+    for ch in s.chars() {
+        if ch == '-' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            for upper in ch.to_uppercase() {
+                result.push(upper);
+            }
+            capitalize_next = false;
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Extract import specifiers and their imported names from JS source code (host-side).
+///
+/// Returns a map from specifier to `JsImportKind`.
+/// Imports from the `obelisk:` namespace are skipped.
+fn extract_js_imports(js_code: &str) -> Result<HashMap<String, JsImportKind>, String> {
+    let mut interner = boa_engine::interner::Interner::new();
+    let mut parser = boa_engine::parser::Parser::new(boa_engine::Source::from_bytes(js_code));
+    let scope = boa_engine::ast::scope::Scope::new_global();
+    let module = parser
+        .parse_module(&scope, &mut interner)
+        .map_err(|e| format!("import extraction parse error: {e}"))?;
+
+    let mut imports: HashMap<String, JsImportKind> = HashMap::new();
+
+    for entry in module.items().import_entries() {
+        let specifier = interner
+            .resolve_expect(entry.module_request())
+            .utf8()
+            .unwrap_or("")
+            .to_string();
+
+        // Skip obelisk: namespace (host-provided)
+        if specifier.starts_with("obelisk:") {
+            continue;
+        }
+
+        match entry.import_name() {
+            ImportName::Name(sym) => {
+                let js_name = interner
+                    .resolve_expect(sym)
+                    .utf8()
+                    .unwrap_or("")
+                    .to_string();
+                let wit_name = camel_to_kebab(&js_name);
+                match imports.entry(specifier) {
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        if let JsImportKind::Named(funcs) = e.get_mut() {
+                            funcs.push((js_name, wit_name));
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(JsImportKind::Named(vec![(js_name, wit_name)]));
+                    }
+                }
+            }
+            ImportName::Namespace => {
+                imports.insert(specifier, JsImportKind::Namespace);
+            }
+        }
+    }
+    Ok(imports)
+}
+
+/// Resolve JS imports against the function registry.
+///
+/// For named imports, validates each function exists.
+/// For namespace imports (`import *`), resolves all functions for the interface.
+/// Returns the fully resolved imports map: specifier → [(js_name, wit_name)].
+fn resolve_js_imports(
+    js_code: &str,
+    fn_registry: &dyn FunctionRegistry,
+) -> Result<HashMap<String, Vec<(String, String)>>, String> {
+    let raw_imports = extract_js_imports(js_code)?;
+    if raw_imports.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let all_exports = fn_registry.all_exports();
+    let mut resolved: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+    for (specifier, kind) in raw_imports {
+        // Find the interface in the registry
+        let ifc = all_exports
+            .iter()
+            .find(|pkg| &*pkg.ifc_fqn == specifier);
+
+        match kind {
+            JsImportKind::Named(funcs) => {
+                // For named imports, validate each function exists
+                if let Some(ifc) = ifc {
+                    for (js_name, wit_name) in &funcs {
+                        if !ifc.fns.keys().any(|k| &**k == wit_name) {
+                            return Err(format!(
+                                "function '{js_name}' ('{wit_name}') not found in interface '{specifier}'"
+                            ));
+                        }
+                    }
+                }
+                // Even if interface not found, pass through — call-json will
+                // return function-not-found at call time (existing Phase 1 behavior)
+                resolved.insert(specifier, funcs);
+            }
+            JsImportKind::Namespace => {
+                let ifc = ifc.ok_or_else(|| {
+                    format!("interface '{specifier}' not found for namespace import")
+                })?;
+                let funcs: Vec<(String, String)> = ifc
+                    .fns
+                    .keys()
+                    .map(|fn_name| {
+                        let wit_name = fn_name.to_string();
+                        let js_name = kebab_to_camel(&wit_name);
+                        (js_name, wit_name)
+                    })
+                    .collect();
+                resolved.insert(specifier, funcs);
+            }
+        }
+    }
+    Ok(resolved)
 }
 
 impl WorkflowJsWorker {
@@ -158,6 +334,7 @@ impl WorkflowJsWorker {
         params: &Params,
         js_source: String,
         js_file_name: Option<String>,
+        resolved_imports: &HashMap<String, Vec<(String, String)>>,
     ) -> (FunctionFqn, Params) {
         let json_params = params
             .as_json_values()
@@ -170,12 +347,34 @@ impl WorkflowJsWorker {
                 )
             })
             .collect();
+
+        // Serialize resolved imports as list<tuple<string, list<tuple<string, string>>>>
+        let imports_json: Vec<serde_json::Value> = resolved_imports
+            .iter()
+            .map(|(specifier, funcs)| {
+                let funcs_json: Vec<serde_json::Value> = funcs
+                    .iter()
+                    .map(|(js_name, wit_name)| {
+                        serde_json::Value::Array(vec![
+                            serde_json::Value::String(js_name.clone()),
+                            serde_json::Value::String(wit_name.clone()),
+                        ])
+                    })
+                    .collect();
+                serde_json::Value::Array(vec![
+                    serde_json::Value::String(specifier.clone()),
+                    serde_json::Value::Array(funcs_json),
+                ])
+            })
+            .collect();
+
         let ffqn =
             FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(js_source),
             serde_json::Value::Array(params_json_list),
             js_file_name.map_or(serde_json::Value::Null, serde_json::Value::String),
+            serde_json::Value::Array(imports_json),
         ]);
         let params = Params::from_json_values(
             boa_params,
@@ -183,6 +382,13 @@ impl WorkflowJsWorker {
                 &TypeWrapper::String,
                 &TypeWrapper::List(Box::new(TypeWrapper::String)),
                 &TypeWrapper::Option(Box::new(TypeWrapper::String)),
+                &TypeWrapper::List(Box::new(TypeWrapper::Tuple(Box::new([
+                    TypeWrapper::String,
+                    TypeWrapper::List(Box::new(TypeWrapper::Tuple(Box::new([
+                        TypeWrapper::String,
+                        TypeWrapper::String,
+                    ])))),
+                ])))),
             ]
             .into_iter(),
         )
@@ -210,6 +416,7 @@ impl Worker for WorkflowJsWorker {
             &ctx.params,
             self.js_source.clone(),
             Some(self.js_file_name.clone()),
+            &self.resolved_imports,
         );
 
         let inner_worker_ok = self.inner.run(ctx).await?;
@@ -420,7 +627,10 @@ impl WorkflowJsWorker {
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
         let already_finished_result = log.as_finished_result();
-        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
+        let resolved_imports =
+            resolve_js_imports(&js_source, fn_registry.as_ref()).unwrap_or_default();
+        let (ffqn, params) =
+            Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
 
         let (captured_writes, mut fatal_error) = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
@@ -510,7 +720,10 @@ impl WorkflowJsWorker {
         }
 
         let old_version = log.next_version.clone();
-        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None);
+        let resolved_imports =
+            resolve_js_imports(&js_source, fn_registry.as_ref()).unwrap_or_default();
+        let (ffqn, params) =
+            Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
         let log_forwarder_sender = logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
@@ -703,6 +916,62 @@ mod tests {
         new_js_workflow_worker_with_return_type(js_source, user_ffqn, default_return_type())
     }
 
+    /// Like `new_js_workflow_worker` but returns the Result from `link()` for testing error cases.
+    fn try_link_js_workflow_worker(
+        js_source: &str,
+        user_ffqn: &FunctionFqn,
+    ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
+        let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let clock_fn: Box<dyn ClockFn> = Now.clone_box();
+
+        let component_id = concepts::ComponentId::new(
+            ComponentType::Workflow,
+            StrVariant::Static("test_js_workflow"),
+            COMPONENT_DIGEST_DUMMY,
+        )
+        .unwrap();
+
+        let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
+        let runnable_component =
+            RunnableComponent::new(wasm_path, &engine, component_id.component_type).unwrap();
+
+        let config = WorkflowConfig {
+            component_id,
+            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+            backtrace_persist: false,
+            stub_wasi: false,
+            fuel: None,
+            lock_extension: None,
+            subscription_interruption: None,
+        };
+
+        let compiled = WorkflowWorkerCompiled::new_with_config(
+            runnable_component,
+            config,
+            engine,
+            clock_fn,
+        )
+        .unwrap();
+
+        let js_compiled = WorkflowJsWorkerCompiled::new(
+            compiled,
+            js_source.to_string(),
+            String::new(),
+            user_ffqn,
+            vec![ParameterType {
+                type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
+                name: StrVariant::Static("params"),
+                wit_type: StrVariant::Static("list<string>"),
+            }],
+            default_return_type(),
+        )
+        .unwrap();
+
+        let fn_registry: Arc<dyn FunctionRegistry> =
+            TestingFnRegistry::new_from_components(Vec::new());
+        js_compiled.link(fn_registry)
+    }
+
     fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
         // The user function signature is: func(params: list<string>) -> result<string, string>
         // So we wrap the params in a list
@@ -836,7 +1105,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workflow_js_syntax_error_should_fail_to_instantiate() {
+    async fn workflow_js_syntax_error_should_fail_to_link() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "broken");
         let js_source = r"
@@ -845,19 +1114,13 @@ mod tests {
             }
         ";
 
-        let worker = new_js_workflow_worker(js_source, &ffqn);
-        let ctx = make_worker_context(ffqn, &[]);
-
-        let err = worker.run(ctx).await.unwrap_err();
-        assert_matches!(
-            err,
-            WorkerError::FatalError(
-                FatalError::CannotInstantiate { reason, detail: _ },
-                _version,
-            ) => {
-                assert!(reason.contains("module_parse_error"), "reason: {reason}");
+        match try_link_js_workflow_worker(js_source, &ffqn) {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(msg.contains("parse error"), "error: {msg}");
             }
-        );
+            Ok(_) => panic!("linking should fail for JS with syntax errors"),
+        }
     }
 
     #[tokio::test]

@@ -3372,6 +3372,7 @@ dependencies = [
  "insta",
  "itertools",
  "obeli-db-tests",
+ "obeli-sk-boa-engine",
  "obeli-sk-concepts",
  "obeli-sk-db-mem",
  "obeli-sk-db-sqlite",
