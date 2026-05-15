@@ -304,6 +304,8 @@ fn create_schedule_proxy(
 }
 
 /// Webhook proxy factory for [`imports::register_import_modules`].
+///
+/// Webhooks support direct calls and schedule only — ext imports are not supported.
 fn create_webhook_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
     match kind {
         ProxyKind::DirectCall {
@@ -314,6 +316,9 @@ fn create_webhook_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
             interface_name,
             function_name,
         } => create_schedule_proxy(interface_name, function_name, context),
+        ProxyKind::ExtSubmit { .. } | ProxyKind::ExtAwaitNext | ProxyKind::ExtGet => {
+            unreachable!("webhooks do not support -obelisk-ext imports")
+        }
     }
 }
 

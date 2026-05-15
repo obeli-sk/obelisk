@@ -11,6 +11,8 @@ use std::collections::HashMap;
 
 /// Suffix appended to WIT package names for schedule imports.
 pub const SCHEDULE_SUFFIX: &str = "-obelisk-schedule";
+/// Suffix appended to WIT package names for extension imports (submit/awaitNext/get).
+pub const EXT_SUFFIX: &str = "-obelisk-ext";
 
 /// Strip an obelisk suffix from a WIT specifier's package name.
 ///
@@ -37,6 +39,15 @@ pub enum ProxyKind<'a> {
         interface_name: &'a str,
         function_name: &'a str,
     },
+    /// Extension submit: `import { addSubmit } from 'ns:pkg-obelisk-ext/ifc'`
+    ExtSubmit {
+        interface_name: &'a str,
+        function_name: &'a str,
+    },
+    /// Extension awaitNext: `import { addAwaitNext } from 'ns:pkg-obelisk-ext/ifc'`
+    ExtAwaitNext,
+    /// Extension get: `import { addGet } from 'ns:pkg-obelisk-ext/ifc'`
+    ExtGet,
 }
 
 /// Build a [`MapModuleLoader`] with [`SyntheticModule`]s for each imported specifier.
@@ -46,6 +57,7 @@ pub enum ProxyKind<'a> {
 ///
 /// - No suffix → [`ProxyKind::DirectCall`]
 /// - `-obelisk-schedule` → [`ProxyKind::Schedule`] (base specifier + base function name)
+/// - `-obelisk-ext` → [`ProxyKind::ExtSubmit`] / [`ProxyKind::ExtAwaitNext`] / [`ProxyKind::ExtGet`]
 pub fn register_import_modules(
     imports: &HashMap<String, Vec<(String, String)>>,
     loader: &MapModuleLoader,
@@ -57,6 +69,7 @@ pub fn register_import_modules(
 
         // Detect obelisk suffix to determine the proxy kind.
         let schedule_base = strip_specifier_suffix(specifier, SCHEDULE_SUFFIX);
+        let ext_base = strip_specifier_suffix(specifier, EXT_SUFFIX);
 
         // Create all proxy functions and store them in a plain JsObject for the
         // SyntheticModuleInitializer to retrieve during evaluation.
@@ -72,6 +85,30 @@ pub fn register_import_modules(
                     },
                     context,
                 )
+            } else if let Some(base_specifier) = &ext_base {
+                // Extension proxy: determine type from wit_name suffix
+                if let Some(base_fn) = wit_name.strip_suffix("-submit") {
+                    create_proxy(
+                        ProxyKind::ExtSubmit {
+                            interface_name: base_specifier,
+                            function_name: base_fn,
+                        },
+                        context,
+                    )
+                } else if wit_name.ends_with("-await-next") {
+                    create_proxy(ProxyKind::ExtAwaitNext, context)
+                } else if wit_name.ends_with("-get") {
+                    create_proxy(ProxyKind::ExtGet, context)
+                } else {
+                    // Unknown ext suffix — fall back to direct call on base specifier
+                    create_proxy(
+                        ProxyKind::DirectCall {
+                            interface_name: base_specifier,
+                            function_name: wit_name,
+                        },
+                        context,
+                    )
+                }
             } else {
                 create_proxy(
                     ProxyKind::DirectCall {
@@ -118,6 +155,14 @@ mod tests {
         assert_eq!(
             strip_specifier_suffix("testing:fibo-obelisk-schedule/fibo", SCHEDULE_SUFFIX),
             Some("testing:fibo/fibo".to_string())
+        );
+    }
+
+    #[test]
+    fn strip_ext_suffix() {
+        assert_eq!(
+            strip_specifier_suffix("testing:integration-obelisk-ext/activity", EXT_SUFFIX),
+            Some("testing:integration/activity".to_string())
         );
     }
 

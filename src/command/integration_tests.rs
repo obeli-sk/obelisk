@@ -248,6 +248,16 @@ params = [
 return_type = "result<string, string>"
 
 [[workflow_js]]
+name = "test_import_ext_activity_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/import_ext_activity.js"
+ffqn = "testing:integration/workflow-import-ext-activity.add-via-activity"
+params = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+]
+return_type = "result<u32, string>"
+
+[[workflow_js]]
 name = "test_make_record_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/make_record.js"
 ffqn = "testing:integration/workflow-make-record.make-record"
@@ -1659,6 +1669,27 @@ async fn submit_workflow_with_import_schedule() {
         body["ok"].is_string(),
         "expected ok to be an execution ID string, got: {body}"
     );
+
+    server.shutdown().await;
+}
+
+// ---- Workflow: ES module ext import (submit/awaitNext) ----
+
+#[tokio::test]
+async fn submit_workflow_with_import_ext() {
+    let server = TestServer::start(test_addr!(74)).await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/workflow-import-ext-activity.add-via-activity",
+            vec![json!(7), json!(8)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": 15 }));
 
     server.shutdown().await;
 }

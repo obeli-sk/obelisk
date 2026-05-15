@@ -9,6 +9,8 @@ use std::collections::HashMap;
 
 /// Suffix appended to WIT package names for schedule imports.
 const SCHEDULE_SUFFIX: &str = "-obelisk-schedule";
+/// Suffix appended to WIT package names for extension imports (submit/awaitNext/get).
+const EXT_SUFFIX: &str = "-obelisk-ext";
 
 /// Strip an obelisk suffix from a WIT specifier's package name.
 ///
@@ -147,9 +149,14 @@ pub fn resolve_js_imports(
     for (specifier, kind) in raw_imports {
         // Check for obelisk suffixes that change the proxy type.
         // For suffixed specifiers, look up the base interface for validation.
-        let base_specifier = strip_specifier_suffix(&specifier, SCHEDULE_SUFFIX);
-        let is_schedule = base_specifier.is_some();
-        let lookup_specifier = base_specifier.as_deref().unwrap_or(&specifier);
+        let schedule_base = strip_specifier_suffix(&specifier, SCHEDULE_SUFFIX);
+        let ext_base = strip_specifier_suffix(&specifier, EXT_SUFFIX);
+        let is_schedule = schedule_base.is_some();
+        let is_ext = ext_base.is_some();
+        let lookup_specifier = schedule_base
+            .as_deref()
+            .or(ext_base.as_deref())
+            .unwrap_or(&specifier);
 
         // Find the interface in the registry using the base specifier
         let ifc = all_exports
@@ -173,6 +180,26 @@ pub fn resolve_js_imports(
                             ));
                         }
                     }
+                } else if is_ext {
+                    // For ext imports, strip `-submit`, `-await-next`, or `-get`
+                    // suffix from wit_name before validating against the base interface.
+                    for (js_name, wit_name) in &funcs {
+                        let base_wit = wit_name
+                            .strip_suffix("-submit")
+                            .or_else(|| wit_name.strip_suffix("-await-next"))
+                            .or_else(|| wit_name.strip_suffix("-get"))
+                            .ok_or_else(|| {
+                                format!(
+                                    "ext import '{js_name}' ('{wit_name}') must end with \
+                                     Submit, AwaitNext, or Get"
+                                )
+                            })?;
+                        if !ifc.fns.keys().any(|k| &**k == base_wit) {
+                            return Err(format!(
+                                "function '{js_name}' (base '{base_wit}') not found in interface '{lookup_specifier}'"
+                            ));
+                        }
+                    }
                 } else {
                     // For direct call imports, validate each function exists
                     for (js_name, wit_name) in &funcs {
@@ -186,20 +213,25 @@ pub fn resolve_js_imports(
                 resolved.insert(specifier, funcs);
             }
             JsImportKind::Namespace => {
-                let funcs: Vec<(String, String)> = ifc
-                    .fns
-                    .keys()
-                    .map(|fn_name| {
-                        let wit_name = fn_name.to_string();
-                        let js_name = kebab_to_camel(&wit_name);
-                        if is_schedule {
-                            // Add Schedule suffix: "fibo" → "fiboSchedule" / "fibo-schedule"
-                            (format!("{js_name}Schedule"), format!("{wit_name}-schedule"))
-                        } else {
-                            (js_name, wit_name)
-                        }
-                    })
-                    .collect();
+                let mut funcs: Vec<(String, String)> = Vec::new();
+                for fn_name in ifc.fns.keys() {
+                    let wit_name = fn_name.to_string();
+                    let js_name = kebab_to_camel(&wit_name);
+                    if is_schedule {
+                        // Add Schedule suffix: "fibo" → "fiboSchedule" / "fibo-schedule"
+                        funcs.push((format!("{js_name}Schedule"), format!("{wit_name}-schedule")));
+                    } else if is_ext {
+                        // Generate three functions per base function
+                        funcs.push((format!("{js_name}Submit"), format!("{wit_name}-submit")));
+                        funcs.push((
+                            format!("{js_name}AwaitNext"),
+                            format!("{wit_name}-await-next"),
+                        ));
+                        funcs.push((format!("{js_name}Get"), format!("{wit_name}-get")));
+                    } else {
+                        funcs.push((js_name, wit_name));
+                    }
+                }
                 resolved.insert(specifier, funcs);
             }
         }
