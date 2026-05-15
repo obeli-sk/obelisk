@@ -485,11 +485,7 @@ fn build_tagged_result(
 ///
 /// The `result` argument is a JS value representing the execution result,
 /// JSON-serialized before passing to `stub-json`.
-fn create_stub_proxy(
-    interface_name: &str,
-    function_name: &str,
-    context: &mut Context,
-) -> JsValue {
+fn create_stub_proxy(interface_name: &str, function_name: &str, context: &mut Context) -> JsValue {
     // interface_name and function_name are not used by stub_json itself,
     // but kept for consistency and future error messages.
     let _ifc = js_string!(interface_name);

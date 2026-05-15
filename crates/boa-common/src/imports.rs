@@ -188,10 +188,7 @@ mod tests {
     #[test]
     fn strip_stub_suffix() {
         assert_eq!(
-            strip_specifier_suffix(
-                "testing:stub-activity-obelisk-stub/activity",
-                STUB_SUFFIX
-            ),
+            strip_specifier_suffix("testing:stub-activity-obelisk-stub/activity", STUB_SUFFIX),
             Some("testing:stub-activity/activity".to_string())
         );
     }
