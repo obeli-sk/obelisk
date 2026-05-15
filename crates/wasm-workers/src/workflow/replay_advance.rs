@@ -298,10 +298,12 @@ fn normalize_join_set_request_for_matching(request: JoinSetRequest) -> JoinSetRe
             delay_id,
             expires_at: _,
             schedule_at,
+            paused: _, // Ignore for comparison, user's flag will make it to the database in `merge_requested_overrides_into_fresh_write`
         } => JoinSetRequest::DelayRequest {
             delay_id,
             expires_at: DateTime::UNIX_EPOCH,
             schedule_at: normalize_schedule_at_for_matching(schedule_at),
+            paused: false,
         },
         JoinSetRequest::ChildExecutionRequest {
             child_execution_id,
@@ -346,6 +348,7 @@ pub(crate) fn merge_requested_overrides_into_fresh_write(
         (
             CapturedDbWrite::AppendBatchCreateNewExecution {
                 child_req: requested_child_req,
+                batch: requested_batch,
                 ..
             },
             CapturedDbWrite::AppendBatchCreateNewExecution { child_req: _, .. },
@@ -353,6 +356,7 @@ pub(crate) fn merge_requested_overrides_into_fresh_write(
             let mut merged = fresh.clone();
             let CapturedDbWrite::AppendBatchCreateNewExecution {
                 child_req: merged_child_req,
+                batch: merged_batch,
                 ..
             } = &mut merged.write
             else {
@@ -361,8 +365,79 @@ pub(crate) fn merge_requested_overrides_into_fresh_write(
             for (requested, fresh) in requested_child_req.iter().zip(merged_child_req.iter_mut()) {
                 fresh.paused = requested.paused; // Allow users to specify the paused behavior.
             }
+            merge_delay_paused_flags(requested_batch, merged_batch);
+            merged
+        }
+        (
+            CapturedDbWrite::Append {
+                req: requested_req, ..
+            },
+            CapturedDbWrite::Append { .. },
+        ) => {
+            let mut merged = fresh.clone();
+            let CapturedDbWrite::Append {
+                req: merged_req, ..
+            } = &mut merged.write
+            else {
+                unreachable!("matched variant must stay matched")
+            };
+            merge_delay_paused_flag(requested_req, merged_req);
+            merged
+        }
+        (
+            CapturedDbWrite::AppendBatch {
+                batch: requested_batch,
+                ..
+            },
+            CapturedDbWrite::AppendBatch { .. },
+        ) => {
+            let mut merged = fresh.clone();
+            let CapturedDbWrite::AppendBatch {
+                batch: merged_batch,
+                ..
+            } = &mut merged.write
+            else {
+                unreachable!("matched variant must stay matched")
+            };
+            merge_delay_paused_flags(requested_batch, merged_batch);
             merged
         }
         _ => fresh.clone(),
+    }
+}
+
+fn merge_delay_paused_flags(requested: &[AppendRequest], merged: &mut [AppendRequest]) {
+    for (requested, merged) in requested.iter().zip(merged.iter_mut()) {
+        merge_delay_paused_flag(requested, merged);
+    }
+}
+
+fn merge_delay_paused_flag(requested: &AppendRequest, merged: &mut AppendRequest) {
+    if let (
+        ExecutionRequest::HistoryEvent {
+            event:
+                HistoryEvent::JoinSetRequest {
+                    request:
+                        JoinSetRequest::DelayRequest {
+                            paused: requested_paused,
+                            ..
+                        },
+                    ..
+                },
+        },
+        ExecutionRequest::HistoryEvent {
+            event:
+                HistoryEvent::JoinSetRequest {
+                    request:
+                        JoinSetRequest::DelayRequest {
+                            paused: merged_paused,
+                            ..
+                        },
+                    ..
+                },
+        },
+    ) = (&requested.event, &mut merged.event)
+    {
+        *merged_paused = *requested_paused;
     }
 }

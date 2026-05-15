@@ -794,6 +794,7 @@ impl EventHistory {
                             delay_id: found_delay_id,
                             expires_at,
                             schedule_at: found_schedule_at,
+                            ..
                         },
                 },
             ) if *join_set_id == *found_join_set_id
@@ -1300,6 +1301,7 @@ impl EventHistory {
                         delay_id,
                         expires_at: expires_at_if_new,
                         schedule_at,
+                        paused: false,
                     },
                 };
                 let history_event = (event.clone(), db_connection.version().clone());
@@ -1779,6 +1781,7 @@ impl EventHistory {
                         delay_id,
                         expires_at: expires_at_if_new,
                         schedule_at,
+                        paused: false,
                     },
                 };
                 version = version.increment();

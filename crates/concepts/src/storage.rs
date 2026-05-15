@@ -810,6 +810,8 @@ pub enum JoinSetRequest {
         delay_id: DelayId,
         expires_at: DateTime<Utc>,
         schedule_at: HistoryEventScheduleAt,
+        #[serde(default)]
+        paused: bool,
     },
     // Must be created by the executor in `PendingState::Locked`.
     #[display("ChildExecutionRequest({child_execution_id}, {target_ffqn}, params: {params})")]

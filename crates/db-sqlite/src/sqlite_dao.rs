@@ -63,6 +63,7 @@ struct DelayReq {
     join_set_id: JoinSetId,
     delay_id: DelayId,
     expires_at: DateTime<Utc>,
+    paused: bool,
 }
 /*
 mmap_size = 128MB - Set the global memory map so all processes can share some data
@@ -1326,19 +1327,21 @@ impl SqlitePool {
             join_set_id,
             delay_id,
             expires_at,
+            paused,
         }) = delay_req
         {
             debug!("Inserting delay to `t_delay`");
             let mut stmt = tx.prepare_cached(
-                "INSERT INTO t_delay (execution_id, join_set_id, delay_id, expires_at) \
+                "INSERT INTO t_delay (execution_id, join_set_id, delay_id, expires_at, is_paused) \
                 VALUES \
-                (:execution_id, :join_set_id, :delay_id, :expires_at)",
+                (:execution_id, :join_set_id, :delay_id, :expires_at, :is_paused)",
             )?;
             stmt.execute(named_params! {
                 ":execution_id": execution_id_str,
                 ":join_set_id": join_set_id.to_string(),
                 ":delay_id": delay_id.to_string(),
                 ":expires_at": expires_at,
+                ":is_paused": paused,
             })?;
         }
         Ok(appending_version.increment())
@@ -2120,6 +2123,7 @@ impl SqlitePool {
                             JoinSetRequest::DelayRequest {
                                 delay_id,
                                 expires_at,
+                                paused,
                                 ..
                             },
                     },
@@ -2133,6 +2137,7 @@ impl SqlitePool {
                             join_set_id: join_set_id.clone(),
                             delay_id: delay_id.clone(),
                             expires_at: *expires_at,
+                            paused: *paused,
                         }),
                     )?,
                     AppendNotifier::default(),
