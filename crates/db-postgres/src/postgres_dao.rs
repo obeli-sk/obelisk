@@ -341,6 +341,7 @@ struct DelayReq {
     join_set_id: JoinSetId,
     delay_id: DelayId,
     expires_at: DateTime<Utc>,
+    paused: bool,
 }
 
 async fn fetch_created_event(
@@ -882,16 +883,18 @@ async fn bump_state_next_version(
         join_set_id,
         delay_id,
         expires_at,
+        paused,
     }) = delay_req
     {
         debug!("Inserting delay to `t_delay`");
         tx.execute(
-            "INSERT INTO t_delay (execution_id, join_set_id, delay_id, expires_at) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO t_delay (execution_id, join_set_id, delay_id, expires_at, is_paused) VALUES ($1, $2, $3, $4, $5)",
             &[
                 &execution_id_str,
                 &join_set_id.to_string(),
                 &delay_id.to_string(),
                 &expires_at,
+                &paused,
             ],
         )
         .await?;
@@ -2104,6 +2107,7 @@ async fn append(
                         JoinSetRequest::DelayRequest {
                             delay_id,
                             expires_at,
+                            paused,
                             ..
                         },
                 },
@@ -2117,6 +2121,7 @@ async fn append(
                         join_set_id: join_set_id.clone(),
                         delay_id: delay_id.clone(),
                         expires_at: *expires_at,
+                        paused: *paused,
                     }),
                 )
                 .await?,

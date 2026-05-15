@@ -447,6 +447,7 @@ message ExecutionEvent {
                 DelayId delay_id = 1;
                 google.protobuf.Timestamp expires_at = 2;
                 ScheduledAt scheduled_at = 3;
+                bool paused = 4;
             }
 
             message ChildExecutionRequest {

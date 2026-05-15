@@ -77,7 +77,8 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
                   "secs": 10,
                   "nanos": 0
                 }
-              }
+              },
+              "paused": false
             }
           }
         }

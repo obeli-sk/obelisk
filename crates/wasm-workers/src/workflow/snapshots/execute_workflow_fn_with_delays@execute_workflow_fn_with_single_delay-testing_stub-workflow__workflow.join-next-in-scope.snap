@@ -100,7 +100,8 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
                   "secs": 86400,
                   "nanos": 0
                 }
-              }
+              },
+              "paused": false
             }
           }
         }
@@ -248,7 +249,8 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
                   "secs": 86400,
                   "nanos": 0
                 }
-              }
+              },
+              "paused": false
             }
           }
         }

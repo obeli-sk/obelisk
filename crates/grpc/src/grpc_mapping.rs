@@ -1182,6 +1182,7 @@ fn history_event_from_grpc(
                         schedule_at: delay_schedule_at_from_grpc(
                             delay.scheduled_at.argument_must_exist("scheduled_at")?,
                         )?,
+                        paused: delay.paused,
                     }
                 }
                 history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(child) => {
@@ -1386,12 +1387,14 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                         delay_id,
                         expires_at,
                         schedule_at,
+                        paused,
                     } => Some(
                         history_event::join_set_request::JoinSetRequest::DelayRequest(
                             history_event::join_set_request::DelayRequest {
                                 delay_id: Some(delay_id.into()),
                                 expires_at: Some(prost_wkt_types::Timestamp::from(expires_at)),
                                 scheduled_at: Some(delay_schedule_at_to_grpc(schedule_at)),
+                                paused,
                             },
                         ),
                     ),
