@@ -824,25 +824,35 @@ pub(crate) fn build_primary_resolve(
         .package_names
         .insert(resolve.packages[pkg_id].name.clone(), pkg_id);
 
+    // Track already-created interfaces so that multiple PackageIfcFns entries
+    // sharing the same interface name get their functions merged into one interface.
+    let mut ifc_name_to_id: HashMap<String, InterfaceId> = HashMap::new();
+
     for &pkg_ifc_fns in ifc_fns_list {
         let ifc_name = pkg_ifc_fns.ifc_fqn.ifc_name().to_string();
-        let iface = Interface {
-            name: Some(ifc_name.clone()),
-            types: IndexMap::new(),
-            functions: IndexMap::new(),
-            docs: wit_parser::Docs::default(),
-            stability: Stability::default(),
-            package: Some(pkg_id),
-            span: Span::default(),
-            clone_of: None,
+        let ifc_id = if let Some(&existing_id) = ifc_name_to_id.get(&ifc_name) {
+            existing_id
+        } else {
+            let iface = Interface {
+                name: Some(ifc_name.clone()),
+                types: IndexMap::new(),
+                functions: IndexMap::new(),
+                docs: wit_parser::Docs::default(),
+                stability: Stability::default(),
+                package: Some(pkg_id),
+                span: Span::default(),
+                clone_of: None,
+            };
+            let new_id = resolve.interfaces.alloc(iface);
+            resolve
+                .packages
+                .get_mut(pkg_id)
+                .unwrap()
+                .interfaces
+                .insert(ifc_name.clone(), new_id);
+            ifc_name_to_id.insert(ifc_name, new_id);
+            new_id
         };
-        let ifc_id = resolve.interfaces.alloc(iface);
-        resolve
-            .packages
-            .get_mut(pkg_id)
-            .unwrap()
-            .interfaces
-            .insert(ifc_name.clone(), ifc_id);
 
         let mut dedup = HashMap::new();
 

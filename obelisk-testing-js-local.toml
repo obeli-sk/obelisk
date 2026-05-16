@@ -158,7 +158,7 @@ max_retries = 0
 
 [[workflow_js]]
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy-cpu.js"
-ffqn = "testing:integration/workflow-busy-cpu.busy-cpu"
+ffqn = "testing:integration/workflow-busy.busy-cpu"
 params = []
 exec.lock_expiry.seconds = 10
 
