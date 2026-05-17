@@ -358,10 +358,12 @@
           "$ref": "#/$defs/WasmtimeAllocatorConfig"
         },
         "global_executor_instance_limiter": {
-          "$ref": "#/$defs/InflightSemaphore"
+          "$ref": "#/$defs/InflightSemaphore",
+          "default": "unlimited"
         },
         "global_webhook_instance_limiter": {
-          "$ref": "#/$defs/InflightSemaphore"
+          "$ref": "#/$defs/InflightSemaphore",
+          "default": "unlimited"
         },
         "fuel": {
           "$ref": "#/$defs/ValueOrUnlimited"

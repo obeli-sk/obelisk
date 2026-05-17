@@ -36,6 +36,7 @@ pub struct ExecConfig {
     pub batch_size: u32,
     pub component_id: ComponentId,
     pub task_limiter_global: Option<Arc<tokio::sync::Semaphore>>,
+    pub task_limiter_local: Option<Arc<tokio::sync::Semaphore>>,
     pub executor_id: ExecutorId,
     pub retry_config: ComponentRetryConfig,
     pub locking_strategy: LockingStrategy,
@@ -290,26 +291,52 @@ impl ExecTask {
     }
 
     fn acquire_task_permits(&self) -> Vec<TaskLimiterPermit> {
-        if let Some(task_limiter) = &self.config.task_limiter_global {
-            let mut locks = Vec::new();
-            for _ in 0..self.config.batch_size {
-                if let Ok(permit) = task_limiter.clone().try_acquire_owned() {
-                    locks.push(TaskLimiterPermit {
-                        global: Some(permit),
-                        local: None,
-                    });
-                } else {
-                    break;
+        let mut locks = Vec::with_capacity(
+            usize::try_from(self.config.batch_size).expect("16 bit systems are unsupported"),
+        );
+        for _ in 0..self.config.batch_size {
+            match (
+                &self.config.task_limiter_global,
+                &self.config.task_limiter_local,
+            ) {
+                (Some(global), Some(local)) => {
+                    if let Ok(global) = global.clone().try_acquire_owned()
+                        && let Ok(local) = local.clone().try_acquire_owned()
+                    {
+                        locks.push(TaskLimiterPermit {
+                            global: Some(global),
+                            local: Some(local),
+                        });
+                    } else {
+                        break;
+                    }
+                }
+                (Some(global), None) => {
+                    if let Ok(global) = global.clone().try_acquire_owned() {
+                        locks.push(TaskLimiterPermit {
+                            global: Some(global),
+                            local: None,
+                        });
+                    } else {
+                        break;
+                    }
+                }
+                (None, Some(local)) => {
+                    if let Ok(local) = local.clone().try_acquire_owned() {
+                        locks.push(TaskLimiterPermit {
+                            global: None,
+                            local: Some(local),
+                        });
+                    } else {
+                        break;
+                    }
+                }
+                (None, None) => {
+                    locks.push(TaskLimiterPermit::default());
                 }
             }
-            locks
-        } else {
-            let mut vec = Vec::with_capacity(self.config.batch_size as usize);
-            for _ in 0..self.config.batch_size {
-                vec.push(TaskLimiterPermit::default());
-            }
-            vec
         }
+        locks
     }
 
     #[cfg(feature = "test")]
@@ -1012,6 +1039,7 @@ mod tests {
             tick_sleep: Duration::from_millis(100),
             component_id: ComponentId::dummy_activity(),
             task_limiter_global: None,
+            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1067,6 +1095,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter_global: None,
+            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1201,6 +1230,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter_global: None,
+            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config,
             locking_strategy,
@@ -1337,6 +1367,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter_global: None,
+            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1478,6 +1509,7 @@ mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter_global: None,
+                task_limiter_local: None,
                 executor_id: parent_executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy,
@@ -1568,6 +1600,7 @@ mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter_global: None,
+                task_limiter_local: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy,
@@ -1694,6 +1727,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter_global: None,
+            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config,
             locking_strategy,
