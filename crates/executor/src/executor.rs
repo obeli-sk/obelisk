@@ -35,7 +35,7 @@ pub struct ExecConfig {
     pub tick_sleep: Duration,
     pub batch_size: u32,
     pub component_id: ComponentId,
-    pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    pub task_limiter_global: Option<Arc<tokio::sync::Semaphore>>,
     pub executor_id: ExecutorId,
     pub retry_config: ComponentRetryConfig,
     pub locking_strategy: LockingStrategy,
@@ -164,6 +164,13 @@ enum LockingStrategyHolder {
     ByComponentId,
 }
 
+#[derive(Default)]
+#[expect(dead_code)] // Stored permits limit semaphores until dropped.
+struct TaskLimiterPermit {
+    global: Option<tokio::sync::OwnedSemaphorePermit>,
+    local: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
 impl ExecTask {
     #[cfg(feature = "test")]
     pub fn new_test(
@@ -282,12 +289,15 @@ impl ExecTask {
         }
     }
 
-    fn acquire_task_permits(&self) -> Vec<Option<tokio::sync::OwnedSemaphorePermit>> {
-        if let Some(task_limiter) = &self.config.task_limiter {
+    fn acquire_task_permits(&self) -> Vec<TaskLimiterPermit> {
+        if let Some(task_limiter) = &self.config.task_limiter_global {
             let mut locks = Vec::new();
             for _ in 0..self.config.batch_size {
                 if let Ok(permit) = task_limiter.clone().try_acquire_owned() {
-                    locks.push(Some(permit));
+                    locks.push(TaskLimiterPermit {
+                        global: Some(permit),
+                        local: None,
+                    });
                 } else {
                     break;
                 }
@@ -296,7 +306,7 @@ impl ExecTask {
         } else {
             let mut vec = Vec::with_capacity(self.config.batch_size as usize);
             for _ in 0..self.config.batch_size {
-                vec.push(None);
+                vec.push(TaskLimiterPermit::default());
             }
             vec
         }
@@ -1001,7 +1011,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
             component_id: ComponentId::dummy_activity(),
-            task_limiter: None,
+            task_limiter_global: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1056,7 +1066,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter: None,
+            task_limiter_global: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1190,7 +1200,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter: None,
+            task_limiter_global: None,
             executor_id: ExecutorId::generate(),
             retry_config,
             locking_strategy,
@@ -1326,7 +1336,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter: None,
+            task_limiter_global: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1467,7 +1477,7 @@ mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
-                task_limiter: None,
+                task_limiter_global: None,
                 executor_id: parent_executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy,
@@ -1557,7 +1567,7 @@ mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
-                task_limiter: None,
+                task_limiter_global: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy,
@@ -1683,7 +1693,7 @@ mod tests {
             lock_expiry,
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter: None,
+            task_limiter_global: None,
             executor_id: ExecutorId::generate(),
             retry_config,
             locking_strategy,

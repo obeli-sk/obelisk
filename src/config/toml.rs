@@ -1070,7 +1070,7 @@ impl ExecConfigToml {
             batch_size: self.batch_size,
             locking_strategy: locking_strategy(self.locking_strategy, component_id.component_type)?,
             component_id,
-            task_limiter: global_executor_instance_limiter,
+            task_limiter_global: global_executor_instance_limiter,
             executor_id: ExecutorId::generate(),
             retry_config,
         })
