@@ -3239,7 +3239,8 @@ pub(crate) mod tests {
                     lock_expiry: Duration::from_secs(1),
                     tick_sleep: TICK_SLEEP,
                     component_id: ComponentId::dummy_workflow(),
-                    task_limiter: None,
+                    task_limiter_global: None,
+                    task_limiter_local: None,
                     executor_id: ExecutorId::from_parts(0, 0), // only appears in Locked events
                     retry_config: ComponentRetryConfig::ZERO,
                     locking_strategy: LockingStrategy::ByFfqns,
@@ -3745,7 +3746,8 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_workflow(),
-                task_limiter: None,
+                task_limiter_global: None,
+                task_limiter_local: None,
                 executor_id: ExecutorId::from_parts(
                     u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
                     next_u128(),

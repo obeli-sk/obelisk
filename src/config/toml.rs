@@ -1044,6 +1044,8 @@ pub(crate) struct ExecConfigToml {
     tick_sleep: DurationConfig,
     #[serde(default)]
     locking_strategy: Option<LockingStrategy>,
+    #[serde(default)]
+    instance_limiter: InflightSemaphore,
 }
 
 impl Default for ExecConfigToml {
@@ -1053,6 +1055,7 @@ impl Default for ExecConfigToml {
             lock_expiry: default_lock_expiry(),
             tick_sleep: default_tick_sleep(),
             locking_strategy: None,
+            instance_limiter: InflightSemaphore::default(),
         }
     }
 }
@@ -1061,7 +1064,7 @@ impl ExecConfigToml {
     pub(crate) fn into_exec_exec_config(
         self,
         component_id: ComponentId,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        task_limiter_global: Option<Arc<tokio::sync::Semaphore>>,
         retry_config: ComponentRetryConfig,
     ) -> Result<executor::executor::ExecConfig, anyhow::Error> {
         Ok(executor::executor::ExecConfig {
@@ -1070,7 +1073,8 @@ impl ExecConfigToml {
             batch_size: self.batch_size,
             locking_strategy: locking_strategy(self.locking_strategy, component_id.component_type)?,
             component_id,
-            task_limiter: global_executor_instance_limiter,
+            task_limiter_global,
+            task_limiter_local: self.instance_limiter.as_semaphore(),
             executor_id: ExecutorId::generate(),
             retry_config,
         })
@@ -3459,7 +3463,7 @@ impl<T> From<ValueOrUnlimited<T>> for Option<T> {
 }
 
 // TODO: Unify with ValueOrUnlimited
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(untagged)]
 pub(crate) enum InflightSemaphore {
     Unlimited(Unlimited),
@@ -3471,7 +3475,7 @@ impl Default for InflightSemaphore {
     }
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy)]
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Unlimited {
     #[default]
