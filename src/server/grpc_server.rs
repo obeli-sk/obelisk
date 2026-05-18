@@ -22,6 +22,7 @@ use concepts::storage::BacktraceFilter;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbErrorGeneric;
+use concepts::storage::DbErrorWrite;
 use concepts::storage::DbPool;
 use concepts::storage::DeploymentState;
 use concepts::storage::DeploymentStatus;
@@ -694,57 +695,62 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         }
     }
 
-    #[instrument(skip_all, fields(execution_id, delay_id))]
-    async fn cancel(
+    #[instrument(skip_all, fields(execution_id))]
+    async fn cancel_activity(
         &self,
-        request: tonic::Request<grpc_gen::CancelRequest>,
-    ) -> std::result::Result<tonic::Response<grpc_gen::CancelResponse>, tonic::Status> {
+        request: tonic::Request<grpc_gen::CancelActivityRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::CancelActivityResponse>, tonic::Status> {
         let request = request.into_inner();
         let executed_at = Now.now();
-        let response_id = request.request.argument_must_exist("request")?;
-        let outcome = match response_id {
-            grpc_gen::cancel_request::Request::Activity(activity_req) => {
-                let child_execution_id = activity_req
-                    .execution_id
-                    .argument_must_exist("execution_id")?;
-                let execution_id = ExecutionId::try_from(child_execution_id)?;
-                tracing::Span::current()
-                    .record("execution_id", tracing::field::display(&execution_id));
+        let child_execution_id = request.execution_id.argument_must_exist("execution_id")?;
+        let execution_id = ExecutionId::try_from(child_execution_id)?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
 
-                let conn = self
-                    .db_pool
-                    .external_api_conn()
-                    .await
-                    .map_err(map_to_status)?;
-                let child_create_req = conn.get_create_request(&execution_id).await.to_status()?;
-                if !child_create_req.component_id.component_type.is_activity() {
-                    return Err(tonic::Status::invalid_argument(
-                        "cancelled execution must be an activity",
-                    ));
-                }
-                self.cancel_registry
-                    .cancel_activity(conn.as_ref(), &execution_id, executed_at)
-                    .await
-                    .to_status()?
-            }
-            grpc_gen::cancel_request::Request::Delay(delay_req) => {
-                let delay_id = delay_req.delay_id.argument_must_exist("delay_id")?;
-                let delay_id = DelayId::try_from(delay_id)?;
-                tracing::Span::current().record("delay_id", tracing::field::display(&delay_id));
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        let child_create_req = conn.get_create_request(&execution_id).await.to_status()?;
+        if !child_create_req.component_id.component_type.is_activity() {
+            return Err(tonic::Status::invalid_argument(
+                "cancelled execution must be an activity",
+            ));
+        }
+        let outcome = self
+            .cancel_registry
+            .cancel_activity(conn.as_ref(), &execution_id, executed_at)
+            .await
+            .to_status()?;
 
-                let conn = self
-                    .db_pool
-                    .external_api_conn()
-                    .await
-                    .map_err(map_to_status)?;
-                storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
-                    .await
-                    .to_status()?
-            }
-        };
+        Ok(tonic::Response::new(grpc_gen::CancelActivityResponse {
+            outcome: grpc_gen::cancel_activity_response::CancelActivityOutcome::from(outcome)
+                .into(),
+        }))
+    }
 
-        Ok(tonic::Response::new(grpc_gen::CancelResponse {
-            outcome: grpc_gen::cancel_response::CancelOutcome::from(outcome).into(),
+    #[instrument(skip_all, fields(delay_id))]
+    async fn cancel_delay(
+        &self,
+        request: tonic::Request<grpc_gen::CancelDelayRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::CancelDelayResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let executed_at = Now.now();
+        let delay_id = request.delay_id.argument_must_exist("delay_id")?;
+        let delay_id = DelayId::try_from(delay_id)?;
+        tracing::Span::current().record("delay_id", tracing::field::display(&delay_id));
+
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        let outcome = storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
+            .await
+            .to_status()?;
+
+        Ok(tonic::Response::new(grpc_gen::CancelDelayResponse {
+            outcome: grpc_gen::cancel_delay_response::CancelDelayOutcome::from(outcome).into(),
         }))
     }
 
@@ -1266,8 +1272,16 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
-        conn.pause_delay(&delay_id).await.to_status()?;
-        Ok(tonic::Response::new(grpc_gen::PauseDelayResponse {}))
+        let outcome = match conn.pause_delay(&delay_id).await {
+            Ok(()) => grpc_gen::pause_delay_response::PauseDelayOutcome::Paused,
+            Err(DbErrorWrite::NotFound) => {
+                grpc_gen::pause_delay_response::PauseDelayOutcome::AlreadyFinished
+            }
+            Err(other) => return Err(db_error_write_to_status(&other)),
+        };
+        Ok(tonic::Response::new(grpc_gen::PauseDelayResponse {
+            outcome: outcome.into(),
+        }))
     }
 
     #[instrument(skip_all, fields(delay_id))]
@@ -1286,8 +1300,16 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
-        conn.unpause_delay(&delay_id).await.to_status()?;
-        Ok(tonic::Response::new(grpc_gen::UnpauseDelayResponse {}))
+        let outcome = match conn.unpause_delay(&delay_id).await {
+            Ok(()) => grpc_gen::unpause_delay_response::UnpauseDelayOutcome::Unpaused,
+            Err(DbErrorWrite::NotFound) => {
+                grpc_gen::unpause_delay_response::UnpauseDelayOutcome::AlreadyFinished
+            }
+            Err(other) => return Err(db_error_write_to_status(&other)),
+        };
+        Ok(tonic::Response::new(grpc_gen::UnpauseDelayResponse {
+            outcome: outcome.into(),
+        }))
     }
 }
 
