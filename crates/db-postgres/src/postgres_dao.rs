@@ -4420,7 +4420,7 @@ impl DbExternalApi for PostgresConnection {
         let rows_modified = client_guard
             .execute(
                 "UPDATE t_delay SET is_paused = TRUE \
-                 WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3 AND NOT is_paused",
+                 WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3",
                 &[
                     &execution_id.to_string(),
                     &join_set_id.to_string(),
@@ -4441,7 +4441,7 @@ impl DbExternalApi for PostgresConnection {
         let rows_modified = client_guard
             .execute(
                 "UPDATE t_delay SET is_paused = FALSE \
-                 WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3 AND is_paused",
+                 WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3",
                 &[
                     &execution_id.to_string(),
                     &join_set_id.to_string(),

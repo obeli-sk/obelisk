@@ -1379,10 +1379,12 @@ pub trait DbExternalApi: DbConnection {
     ) -> Result<AppendResponse, DbErrorWrite>;
 
     /// Pause a delay, preventing it from being picked up by the expired timers watcher.
+    /// No-op if the delay is already paused.
     /// Returns `NotFound` if the delay does not exist (already processed or cancelled).
     async fn pause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite>;
 
     /// Unpause a previously paused delay.
+    /// No-op if the delay is already unpaused.
     /// Returns `NotFound` if the delay does not exist (already processed or cancelled).
     async fn unpause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite>;
 }
