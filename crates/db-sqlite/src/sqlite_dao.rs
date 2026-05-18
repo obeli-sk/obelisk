@@ -4168,7 +4168,7 @@ impl DbExternalApi for SqlitePool {
                 let (execution_id, join_set_id) = delay_id.split_to_parts();
                 let rows_modified = tx.execute(
                     "UPDATE t_delay SET is_paused = 1 \
-                     WHERE execution_id = :execution_id AND join_set_id = :join_set_id AND delay_id = :delay_id AND NOT is_paused",
+                     WHERE execution_id = :execution_id AND join_set_id = :join_set_id AND delay_id = :delay_id",
                     named_params! {
                         ":execution_id": execution_id.to_string(),
                         ":join_set_id": join_set_id.to_string(),
@@ -4194,7 +4194,7 @@ impl DbExternalApi for SqlitePool {
                 let (execution_id, join_set_id) = delay_id.split_to_parts();
                 let rows_modified = tx.execute(
                     "UPDATE t_delay SET is_paused = 0 \
-                     WHERE execution_id = :execution_id AND join_set_id = :join_set_id AND delay_id = :delay_id AND is_paused",
+                     WHERE execution_id = :execution_id AND join_set_id = :join_set_id AND delay_id = :delay_id",
                     named_params! {
                         ":execution_id": execution_id.to_string(),
                         ":join_set_id": join_set_id.to_string(),

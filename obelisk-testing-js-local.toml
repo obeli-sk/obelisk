@@ -51,6 +51,7 @@ params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
 ]
+return_type = "result<u32>"
 
 [[workflow_js]]
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/import_call_activity.js"
@@ -59,6 +60,7 @@ params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
 ]
+return_type = "result<u32>"
 
 [[workflow_js]]
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/import_star_call_activity.js"
@@ -67,6 +69,7 @@ params = [
   { name = "a", type = "u32" },
   { name = "b", type = "u32" },
 ]
+return_type = "result<u32>"
 
 [[workflow_js]]
 location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/import_schedule_activity.js"
