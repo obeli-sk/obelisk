@@ -51,6 +51,7 @@ pub struct WorkflowReplayInfo {
 #[derive(Debug, Clone)]
 pub struct JsWorkflowReplayInfo {
     pub js_source: String,
+    pub js_file_name: String, // Used as frame key to find the source in `DbExternalApi::get_source_file`
     pub user_params: Vec<concepts::ParameterType>,
     pub user_return_type: ReturnTypeExtendable,
 }

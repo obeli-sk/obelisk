@@ -454,8 +454,9 @@ impl WorkflowJsWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
-        js_source: String,
-        user_return_type: &ReturnTypeExtendable,
+        js_source: String,            // TODO: replace with &JsWorkflowReplayInfo
+        js_file_name: Option<String>, // TODO: replace with &JsWorkflowReplayInfo
+        user_return_type: &ReturnTypeExtendable, // TODO: replace with &JsWorkflowReplayInfo
     ) -> Result<ReplayResponse, ReplayError> {
         let db_conn = real_db_pool
             .connection()
@@ -468,7 +469,8 @@ impl WorkflowJsWorker {
         let already_finished_result = log.as_finished_result();
         let resolved_imports =
             resolve_js_imports(&js_source, fn_registry.as_ref()).unwrap_or_default();
-        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
+        let (ffqn, params) =
+            Self::boa_invocation(log.params(), js_source, js_file_name, &resolved_imports);
 
         let (captured_writes, mut fatal_error) = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
@@ -533,8 +535,9 @@ impl WorkflowJsWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
-        js_source: String,
-        user_return_type: &ReturnTypeExtendable,
+        js_source: String,            // TODO: replace with &JsWorkflowReplayInfo
+        js_file_name: Option<String>, // TODO: replace with &JsWorkflowReplayInfo
+        user_return_type: &ReturnTypeExtendable, // TODO: replace with &JsWorkflowReplayInfo
         requested: ReplayAdvanceable,
     ) -> Result<AdvanceResponse, AdvanceError> {
         info!("Advance to requested {requested:?}");
@@ -560,7 +563,8 @@ impl WorkflowJsWorker {
         let old_version = log.next_version.clone();
         let resolved_imports =
             resolve_js_imports(&js_source, fn_registry.as_ref()).unwrap_or_default();
-        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
+        let (ffqn, params) =
+            Self::boa_invocation(log.params(), js_source, js_file_name, &resolved_imports);
         let log_forwarder_sender = logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
@@ -1460,6 +1464,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -2245,6 +2250,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -2297,6 +2303,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -2353,6 +2360,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -2444,6 +2452,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -2485,6 +2494,7 @@ mod tests {
             }),
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -2772,6 +2782,7 @@ mod tests {
             logs_storage_config.clone(),
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -2795,6 +2806,7 @@ mod tests {
             logs_storage_config,
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
             replay,
         )
@@ -2888,6 +2900,7 @@ mod tests {
                 logs_storage_config.clone(),
                 sim_clock.clone_box(),
                 js_source.to_string(),
+                None,
                 &default_return_type(),
             )
             .await
@@ -2908,6 +2921,7 @@ mod tests {
                 logs_storage_config.clone(),
                 sim_clock.clone_box(),
                 js_source.to_string(),
+                None,
                 &default_return_type(),
                 replay.truncate_to(1),
             )
@@ -2933,6 +2947,7 @@ mod tests {
             logs_storage_config,
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -2986,6 +3001,7 @@ mod tests {
                 harness.logs_storage_config.clone(),
                 harness.sim_clock.clone_box(),
                 harness.js_source.clone(),
+                None,
                 &default_return_type(),
             )
             .await
@@ -3060,6 +3076,7 @@ mod tests {
                 harness.logs_storage_config.clone(),
                 harness.sim_clock.clone_box(),
                 harness.js_source.clone(),
+                None,
                 &default_return_type(),
                 requested.clone(),
             )
@@ -3179,6 +3196,7 @@ mod tests {
             None,
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -3236,6 +3254,7 @@ mod tests {
             None,
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
             requested,
         )
@@ -3334,6 +3353,7 @@ mod tests {
             None,
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
         )
         .await
@@ -3393,6 +3413,7 @@ mod tests {
             None,
             sim_clock.clone_box(),
             js_source.to_string(),
+            None,
             &default_return_type(),
             requested,
         )

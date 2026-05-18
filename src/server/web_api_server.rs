@@ -2210,6 +2210,7 @@ async fn execution_advance(
             logs_storage_config,
             Now.clone_box(),
             js_info.js_source.clone(),
+            Some(js_info.js_file_name.clone()),
             &js_info.user_return_type,
             expected,
         )
@@ -2414,6 +2415,7 @@ async fn replay_execution_internal(
             logs_storage_config,
             Now.clone_box(),
             js_info.js_source.clone(),
+            Some(js_info.js_file_name.clone()),
             &js_info.user_return_type,
         )
         .await
@@ -2503,6 +2505,7 @@ async fn execution_upgrade(
                 logs_storage_config,
                 Now.clone_box(),
                 js_info.js_source.clone(),
+                Some(js_info.js_file_name.clone()),
                 &js_info.user_return_type,
             )
             .await
