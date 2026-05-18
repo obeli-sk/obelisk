@@ -9,6 +9,7 @@ use super::workflow_worker::{
 };
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
+use crate::registry::JsWorkflowReplayInfo;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
 use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use crate::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
@@ -454,8 +455,7 @@ impl WorkflowJsWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
-        js_source: String,
-        user_return_type: &ReturnTypeExtendable,
+        js_info: &JsWorkflowReplayInfo,
     ) -> Result<ReplayResponse, ReplayError> {
         let db_conn = real_db_pool
             .connection()
@@ -467,8 +467,13 @@ impl WorkflowJsWorker {
             .map_err(concepts::storage::DbErrorWrite::from)?;
         let already_finished_result = log.as_finished_result();
         let resolved_imports =
-            resolve_js_imports(&js_source, fn_registry.as_ref()).unwrap_or_default();
-        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
+            resolve_js_imports(&js_info.js_source, fn_registry.as_ref()).unwrap_or_default();
+        let (ffqn, params) = Self::boa_invocation(
+            log.params(),
+            js_info.js_source.clone(),
+            Some(js_info.js_file_name.clone()),
+            &resolved_imports,
+        );
 
         let (captured_writes, mut fatal_error) = WorkflowWorker::capture_replay_writes_from_log(
             deployment_id,
@@ -498,8 +503,11 @@ impl WorkflowJsWorker {
                         current_time,
                         retval, // workflow-js-runtime WASM result
                     } => {
-                        let (retval, fatal_error_from_wit) =
-                            transform_to_append_finished(retval, &version, user_return_type);
+                        let (retval, fatal_error_from_wit) = transform_to_append_finished(
+                            retval,
+                            &version,
+                            &js_info.user_return_type,
+                        );
                         if fatal_error_from_wit.is_some() {
                             // TODO: can both fatal errors be present?
                             fatal_error = fatal_error_from_wit;
@@ -533,8 +541,7 @@ impl WorkflowJsWorker {
         execution_id: ExecutionId,
         logs_storage_config: Option<LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
-        js_source: String,
-        user_return_type: &ReturnTypeExtendable,
+        js_info: &JsWorkflowReplayInfo,
         requested: ReplayAdvanceable,
     ) -> Result<AdvanceResponse, AdvanceError> {
         info!("Advance to requested {requested:?}");
@@ -559,8 +566,13 @@ impl WorkflowJsWorker {
 
         let old_version = log.next_version.clone();
         let resolved_imports =
-            resolve_js_imports(&js_source, fn_registry.as_ref()).unwrap_or_default();
-        let (ffqn, params) = Self::boa_invocation(log.params(), js_source, None, &resolved_imports);
+            resolve_js_imports(&js_info.js_source, fn_registry.as_ref()).unwrap_or_default();
+        let (ffqn, params) = Self::boa_invocation(
+            log.params(),
+            js_info.js_source.clone(),
+            Some(js_info.js_file_name.clone()),
+            &resolved_imports,
+        );
         let log_forwarder_sender = logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
@@ -589,7 +601,7 @@ impl WorkflowJsWorker {
         }) = fresh_replay.last_mut()
         {
             let (retval_transformed, _fatal_error_from_wit) =
-                transform_to_append_finished(retval.clone(), version, user_return_type);
+                transform_to_append_finished(retval.clone(), version, &js_info.user_return_type);
             *retval = retval_transformed;
         }
         WorkflowWorker::advance_from_log(
@@ -677,6 +689,15 @@ mod tests {
                 err: Some(Box::new(TypeWrapper::String)),
             },
             wit_type: StrVariant::Static("result<string, string>"),
+        }
+    }
+
+    fn default_js_info(js_source: &str) -> JsWorkflowReplayInfo {
+        JsWorkflowReplayInfo {
+            js_source: js_source.to_string(),
+            js_file_name: String::new(),
+            user_params: Vec::new(),
+            user_return_type: default_return_type(),
         }
     }
 
@@ -1459,8 +1480,7 @@ mod tests {
                 log_sender,
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -2244,8 +2264,7 @@ mod tests {
                 log_sender: log_sender.clone(),
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -2296,8 +2315,7 @@ mod tests {
                 log_sender: log_sender.clone(),
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -2352,8 +2370,7 @@ mod tests {
                 log_sender: log_sender.clone(),
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -2443,8 +2460,7 @@ mod tests {
                 log_sender: log_sender.clone(),
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -2484,8 +2500,7 @@ mod tests {
                 log_sender: log_sender.clone(),
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -2771,8 +2786,7 @@ mod tests {
             execution_id.clone(),
             logs_storage_config.clone(),
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -2794,8 +2808,7 @@ mod tests {
             execution_id,
             logs_storage_config,
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
             replay,
         )
         .await
@@ -2887,8 +2900,7 @@ mod tests {
                 execution_id.clone(),
                 logs_storage_config.clone(),
                 sim_clock.clone_box(),
-                js_source.to_string(),
-                &default_return_type(),
+                &default_js_info(js_source),
             )
             .await
             .unwrap();
@@ -2907,8 +2919,7 @@ mod tests {
                 execution_id.clone(),
                 logs_storage_config.clone(),
                 sim_clock.clone_box(),
-                js_source.to_string(),
-                &default_return_type(),
+                &default_js_info(js_source),
                 replay.truncate_to(1),
             )
             .await
@@ -2932,8 +2943,7 @@ mod tests {
             execution_id,
             logs_storage_config,
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -2985,8 +2995,7 @@ mod tests {
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
                 harness.sim_clock.clone_box(),
-                harness.js_source.clone(),
-                &default_return_type(),
+                &default_js_info(&harness.js_source),
             )
             .await
             .unwrap();
@@ -3059,8 +3068,7 @@ mod tests {
                 harness.execution_id.clone(),
                 harness.logs_storage_config.clone(),
                 harness.sim_clock.clone_box(),
-                harness.js_source.clone(),
-                &default_return_type(),
+                &default_js_info(&harness.js_source),
                 requested.clone(),
             )
             .await
@@ -3178,8 +3186,7 @@ mod tests {
             execution_id.clone(),
             None,
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -3235,8 +3242,7 @@ mod tests {
             execution_id,
             None,
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
             requested,
         )
         .await
@@ -3333,8 +3339,7 @@ mod tests {
             execution_id.clone(),
             None,
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
         )
         .await
         .unwrap();
@@ -3392,8 +3397,7 @@ mod tests {
             execution_id,
             None,
             sim_clock.clone_box(),
-            js_source.to_string(),
-            &default_return_type(),
+            &default_js_info(js_source),
             requested,
         )
         .await

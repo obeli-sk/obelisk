@@ -176,6 +176,7 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
         }
     }
 }
+
 pub fn redact_component_digest(value: Value) -> Value {
     match value {
         Value::Array(items) => {
@@ -184,7 +185,7 @@ pub fn redact_component_digest(value: Value) -> Value {
         Value::Object(map) => Value::Object(
             map.into_iter()
                 .map(|(key, value)| {
-                    if key == "component_digest" {
+                    if key == "component_digest" && value.is_string() {
                         (key, Value::String("sha256:<REDACTED>".to_string()))
                     } else {
                         (key, redact_component_digest(value))

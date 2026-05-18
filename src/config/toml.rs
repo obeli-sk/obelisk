@@ -2036,8 +2036,11 @@ impl WorkflowJsConfigVerified {
         &self.workflow_config.component_id
     }
 
-    pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
-        FrameFilesToSourceContent::from([(self.js_file_name.clone(), self.js_source.clone())])
+    pub(crate) fn frame_sources(
+        js_file_name: String,
+        js_source: String,
+    ) -> FrameFilesToSourceContent {
+        FrameFilesToSourceContent::from([(js_file_name, js_source)])
     }
 }
 

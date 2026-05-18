@@ -490,7 +490,7 @@ impl WorkflowWorker {
 
         let config = WorkflowConfig {
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-            backtrace_persist: false,
+            backtrace_persist: true,
             lock_extension: None,
             subscription_interruption: None,
             component_id,
@@ -1514,7 +1514,7 @@ pub(crate) mod tests {
     use insta::assert_json_snapshot;
     use rstest::rstest;
 
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::collections::VecDeque;
     use std::ops::Deref;
     use std::str::FromStr;
@@ -4775,6 +4775,38 @@ pub(crate) mod tests {
         logs_storage_config: Option<LogStrageConfig>,
     }
 
+    fn redact_replay(replay: &ReplayAdvanceable) -> serde_json::Value {
+        let replay = serde_json::to_value(replay).unwrap();
+        let replay = redact_backtrace_file(replay);
+        redact_component_digest(replay)
+    }
+
+    fn redact_backtrace_file(value: Value) -> Value {
+        match value {
+            Value::Array(items) => {
+                Value::Array(items.into_iter().map(redact_backtrace_file).collect())
+            }
+            Value::Object(map) => Value::Object(
+                map.into_iter()
+                    .map(|(key, value)| {
+                        if key == "file"
+                            && let Value::String(value) = value
+                        {
+                            let suffix = value
+                                .rsplit_once('/')
+                                .map(|(_, suffix)| suffix.to_string())
+                                .unwrap_or_default();
+                            (key, Value::String(format!("<REDACTED>/{suffix}")))
+                        } else {
+                            (key, redact_backtrace_file(value))
+                        }
+                    })
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
     async fn advance_paused_workflow_until_finished(
         db_connection: &dyn DbConnectionTest,
         harness: WorkflowAdvanceHarness,
@@ -4832,7 +4864,7 @@ pub(crate) mod tests {
                 snapshot_suffix => format!("{test_name}_replay_{steps}"),
                 prepend_module_to_snapshot => false},
                 {
-                    insta::assert_json_snapshot!(redact_component_digest(serde_json::to_value(&replay).unwrap()));
+                    insta::assert_json_snapshot!(redact_replay(&replay));
                 }
             );
 

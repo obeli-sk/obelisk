@@ -3074,7 +3074,6 @@ fn prespawn_workflow_js(
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
-    let frame_sources = workflow_js.as_frame_sources();
     let engine = engines.workflow_engine.clone();
 
     let inner = WorkflowWorkerCompiled::new_with_config(
@@ -3103,7 +3102,7 @@ fn prespawn_workflow_js(
         workflows_lock_extension_leeway,
         wit,
         workflow_js.js_source,
-        frame_sources,
+        workflow_js.js_file_name,
         workflow_js.params,
         workflow_js.return_type,
     ))
@@ -3271,10 +3270,12 @@ impl WorkerCompiled {
         workflows_lock_extension_leeway: Duration,
         wit: String,
         js_source: String,
-        frame_files: FrameFilesToSourceContent, // to be served by GetBacktraceSource
+        js_file_name: String,
         user_params: Vec<concepts::ParameterType>,
         user_return_type: ReturnTypeExtendable,
     ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
+        let frame_files =
+            WorkflowJsConfigVerified::frame_sources(js_file_name.clone(), js_source.clone());
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -3288,6 +3289,7 @@ impl WorkerCompiled {
                 logs_store_min_level,
                 js_workflow_info: Some(JsWorkflowReplayInfo {
                     js_source,
+                    js_file_name,
                     user_params,
                     user_return_type,
                 }),
