@@ -16,11 +16,10 @@ use concepts::JoinSetKind;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::grpc_gen;
-use grpc::grpc_gen::CancelRequest;
-use grpc::grpc_gen::cancel_request;
-use grpc::grpc_gen::cancel_request::CancelRequestActivity;
-use grpc::grpc_gen::cancel_request::CancelRequestDelay;
-use grpc::grpc_gen::cancel_response::CancelOutcome;
+use grpc::grpc_gen::CancelActivityRequest;
+use grpc::grpc_gen::CancelDelayRequest;
+use grpc::grpc_gen::cancel_activity_response::CancelActivityOutcome;
+use grpc::grpc_gen::cancel_delay_response::CancelDelayOutcome;
 use grpc::grpc_gen::execution_status::BlockedByJoinSet;
 use grpc::grpc_gen::execution_status::Finished;
 use grpc::to_channel;
@@ -1353,33 +1352,41 @@ impl CancelCommand {
     pub(crate) async fn execute(self) -> anyhow::Result<()> {
         let channel = to_channel(&self.api_url).await?;
         let mut client = get_execution_repository_client(channel).await?;
-        let request = match self.id {
+        match self.id {
             args::ExecutionIdOrDelayId::Execution(execution_id) => {
-                cancel_request::Request::Activity(CancelRequestActivity {
-                    execution_id: Some(grpc_gen::ExecutionId {
-                        id: execution_id.to_string(),
-                    }),
-                })
+                let resp = client
+                    .cancel_activity(tonic::Request::new(CancelActivityRequest {
+                        execution_id: Some(grpc_gen::ExecutionId {
+                            id: execution_id.to_string(),
+                        }),
+                    }))
+                    .await?
+                    .into_inner();
+                match resp.outcome() {
+                    CancelActivityOutcome::Unspecified => panic!("unspecified"),
+                    CancelActivityOutcome::Cancelled => println!("Cancelled"),
+                    CancelActivityOutcome::AlreadyFinished => {
+                        println!("Already successfully finished");
+                    }
+                }
             }
             args::ExecutionIdOrDelayId::Delay(delay_id) => {
-                cancel_request::Request::Delay(CancelRequestDelay {
-                    delay_id: Some(grpc_gen::DelayId {
-                        id: delay_id.to_string(),
-                    }),
-                })
+                let resp = client
+                    .cancel_delay(tonic::Request::new(CancelDelayRequest {
+                        delay_id: Some(grpc_gen::DelayId {
+                            id: delay_id.to_string(),
+                        }),
+                    }))
+                    .await?
+                    .into_inner();
+                match resp.outcome() {
+                    CancelDelayOutcome::Unspecified => panic!("unspecified"),
+                    CancelDelayOutcome::Cancelled => println!("Cancelled"),
+                    CancelDelayOutcome::AlreadyFinished => {
+                        println!("Already successfully finished");
+                    }
+                }
             }
-        };
-        let resp = client
-            .cancel(tonic::Request::new(CancelRequest {
-                request: Some(request),
-            }))
-            .await?
-            .into_inner();
-
-        match resp.outcome() {
-            CancelOutcome::Unspecified => panic!("unspecified"),
-            CancelOutcome::Cancelled => println!("Cancelled"),
-            CancelOutcome::AlreadyFinished => println!("Already successfully finished"),
         }
         Ok(())
     }

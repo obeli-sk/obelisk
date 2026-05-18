@@ -20,7 +20,8 @@ service ExecutionRepository {
     rpc GetBacktraceSource(GetBacktraceSourceRequest) returns (GetBacktraceSourceResponse);
     rpc Stub(StubRequest) returns (StubResponse);
     // Activity cancellation is best effort.
-    rpc Cancel(CancelRequest) returns (CancelResponse);
+    rpc CancelActivity(CancelActivityRequest) returns (CancelActivityResponse);
+    rpc CancelDelay(CancelDelayRequest) returns (CancelDelayResponse);
     rpc ListLogs(ListLogsRequest) returns (ListLogsResponse);
 
     rpc ReplayExecution(ReplayExecutionRequest) returns (ReplayExecutionResponse);
@@ -726,29 +727,32 @@ message GetBacktraceSourceResponse {
     string content = 1;
 }
 
-message CancelRequest {
-    message CancelRequestActivity {
-        ExecutionId execution_id = 1;
-    }
-    message CancelRequestDelay {
-        DelayId delay_id = 1;
-    }
-    oneof request {
-        CancelRequestActivity activity = 1;
-        CancelRequestDelay delay = 2;
-    }
+message CancelActivityRequest {
+    ExecutionId execution_id = 1;
 }
 
-message CancelResponse {
-    enum CancelOutcome {
-        CANCEL_OUTCOME_UNSPECIFIED = 0;
+message CancelActivityResponse {
+    enum CancelActivityOutcome {
+        CANCEL_ACTIVITY_OUTCOME_UNSPECIFIED = 0;
         // Cancel successfully requested, activity termination is best effort.
         // The activity may still be running.
-        CANCEL_OUTCOME_CANCELLED = 1;
-        // Execution or delay was already marked as finished, and not cancelled.
-        CANCEL_OUTCOME_ALREADY_FINISHED = 2;
+        CANCEL_ACTIVITY_OUTCOME_CANCELLED = 1;
+        CANCEL_ACTIVITY_OUTCOME_ALREADY_FINISHED = 2;
     }
-    CancelOutcome outcome = 1;
+    CancelActivityOutcome outcome = 1;
+}
+
+message CancelDelayRequest {
+    DelayId delay_id = 1;
+}
+
+message CancelDelayResponse {
+    enum CancelDelayOutcome {
+        CANCEL_DELAY_OUTCOME_UNSPECIFIED = 0;
+        CANCEL_DELAY_OUTCOME_CANCELLED = 1;
+        CANCEL_DELAY_OUTCOME_ALREADY_FINISHED = 2;
+    }
+    CancelDelayOutcome outcome = 1;
 }
 
 message ReplayExecutionRequest {
@@ -1056,10 +1060,22 @@ message PauseDelayRequest {
     DelayId delay_id = 1;
 }
 message PauseDelayResponse {
+    enum PauseDelayOutcome {
+        PAUSE_DELAY_OUTCOME_UNSPECIFIED = 0;
+        PAUSE_DELAY_OUTCOME_PAUSED = 1;
+        PAUSE_DELAY_OUTCOME_ALREADY_FINISHED = 2;
+    }
+    PauseDelayOutcome outcome = 1;
 }
 
 message UnpauseDelayRequest {
     DelayId delay_id = 1;
 }
 message UnpauseDelayResponse {
+    enum UnpauseDelayOutcome {
+        UNPAUSE_DELAY_OUTCOME_UNSPECIFIED = 0;
+        UNPAUSE_DELAY_OUTCOME_UNPAUSED = 1;
+        UNPAUSE_DELAY_OUTCOME_ALREADY_FINISHED = 2;
+    }
+    UnpauseDelayOutcome outcome = 1;
 }
