@@ -1766,6 +1766,18 @@
               "execution_id": {
                 "type": "string"
               },
+              "parent_execution_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "parent_join_set_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "retval": {
                 "type": "object"
               },

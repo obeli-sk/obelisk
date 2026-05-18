@@ -1603,6 +1603,10 @@ pub(crate) enum CapturedWriteSer {
         version: u32,
         #[schema(value_type = Object)]
         retval: SupportedFunctionReturnValue,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parent_execution_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parent_join_set_id: Option<String>,
     },
 }
 
@@ -1671,10 +1675,13 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                 version,
                 retval,
                 current_time: _,
+                parent,
             } => CapturedWriteSer::AppendFinished {
                 execution_id: execution_id.to_string(),
                 version: version.0,
                 retval,
+                parent_execution_id: parent.as_ref().map(|(id, _)| id.to_string()),
+                parent_join_set_id: parent.map(|(_, js)| js.to_string()),
             },
         }
     }
@@ -1760,14 +1767,36 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                 execution_id,
                 version,
                 retval,
-            } => Ok(Self::AppendFinished {
-                execution_id: execution_id
-                    .parse()
-                    .map_err(|err| format!("invalid execution_id - {err}"))?,
-                version: Version::new(version),
-                retval,
-                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
-            }),
+                parent_execution_id,
+                parent_join_set_id,
+            } => {
+                let parent = match (parent_execution_id, parent_join_set_id) {
+                    (Some(exec_id), Some(js_id)) => Some((
+                        exec_id
+                            .parse()
+                            .map_err(|err| format!("invalid parent_execution_id - {err}"))?,
+                        js_id
+                            .parse()
+                            .map_err(|err| format!("invalid parent_join_set_id - {err}"))?,
+                    )),
+                    (None, None) => None,
+                    _ => {
+                        return Err(
+                            "parent_execution_id and parent_join_set_id must both be set or both be unset"
+                                .to_string(),
+                        );
+                    }
+                };
+                Ok(Self::AppendFinished {
+                    execution_id: execution_id
+                        .parse()
+                        .map_err(|err| format!("invalid execution_id - {err}"))?,
+                    version: Version::new(version),
+                    retval,
+                    current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                    parent,
+                })
+            }
         }
     }
 }

@@ -498,6 +498,7 @@ impl WorkflowWorker {
             fuel: None,
         };
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let parent = log.parent();
         let replay_db_connection = ReplayWorkflowDbConnection::new(
             execution_id.clone(),
             log.next_version.clone(),
@@ -505,6 +506,7 @@ impl WorkflowWorker {
                 .connection()
                 .await
                 .map_err(DbErrorWrite::from)?,
+            parent,
         );
         let ctx = WorkerContext {
             execution_id,
@@ -1044,11 +1046,13 @@ impl WorkflowWorker {
             // Capture the Finished event that the executor would write.
             let version = replay_db_connection.version().clone();
             let execution_id = replay_db_connection.execution_id().clone();
+            let parent = replay_db_connection.parent();
             replay_db_connection.push_write(CapturedDbWrite::AppendFinished {
                 execution_id,
                 version,
                 current_time: self.clock_fn.now(),
                 retval,
+                parent,
             });
         }
         Ok((replay_db_connection.into_writes(), fatal_error))
@@ -4690,6 +4694,7 @@ pub(crate) mod tests {
                 version: Version::new(third_version),
                 current_time,
                 retval: SupportedFunctionReturnValue::Ok(None),
+                parent: None,
             },
             vec![make_log("third")],
         );

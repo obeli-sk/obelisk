@@ -2024,18 +2024,32 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                 version,
                 retval,
                 current_time: _,
-            } => grpc_gen::captured_write::Write::AppendFinished(
-                grpc_gen::captured_write::AppendFinished {
-                    execution_id: Some(grpc_gen::ExecutionId {
-                        id: execution_id.to_string(),
-                    }),
-                    version: version.0,
-                    event: Some(grpc_gen::execution_event::Finished {
-                        value: Some(grpc_gen::SupportedFunctionResult::from(retval)),
-                        http_client_traces: Vec::new(),
-                    }),
-                },
-            ),
+                parent,
+            } => {
+                let (parent_execution_id, parent_join_set_id) = match parent {
+                    Some((exec_id, join_set_id)) => (
+                        Some(grpc_gen::ExecutionId {
+                            id: exec_id.to_string(),
+                        }),
+                        Some(grpc_gen::JoinSetId::from(join_set_id)),
+                    ),
+                    None => (None, None),
+                };
+                grpc_gen::captured_write::Write::AppendFinished(
+                    grpc_gen::captured_write::AppendFinished {
+                        execution_id: Some(grpc_gen::ExecutionId {
+                            id: execution_id.to_string(),
+                        }),
+                        version: version.0,
+                        event: Some(grpc_gen::execution_event::Finished {
+                            value: Some(grpc_gen::SupportedFunctionResult::from(retval)),
+                            http_client_traces: Vec::new(),
+                        }),
+                        parent_execution_id,
+                        parent_join_set_id,
+                    },
+                )
+            }
         }),
     }
 }
@@ -2145,6 +2159,21 @@ pub fn captured_write_from_grpc(
         }
         grpc_gen::captured_write::Write::AppendFinished(append_finished) => {
             let finished = append_finished.event.argument_must_exist("event")?;
+            let parent = match (
+                append_finished.parent_execution_id,
+                append_finished.parent_join_set_id,
+            ) {
+                (Some(parent_execution_id), Some(parent_join_set_id)) => Some((
+                    parent_execution_id.try_into()?,
+                    parent_join_set_id.try_into()?,
+                )),
+                (None, None) => None,
+                _ => {
+                    return Err(tonic::Status::invalid_argument(
+                        "parent_execution_id and parent_join_set_id must both be set or both be unset",
+                    ));
+                }
+            };
             Ok(CapturedDbWrite::AppendFinished {
                 execution_id: append_finished
                     .execution_id
@@ -2153,6 +2182,7 @@ pub fn captured_write_from_grpc(
                 version: Version::new(append_finished.version),
                 retval: finished.value.argument_must_exist("value")?.try_into()?,
                 current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                parent,
             })
         }
     }

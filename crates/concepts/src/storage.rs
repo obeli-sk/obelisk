@@ -1043,6 +1043,7 @@ pub enum CapturedDbWrite {
         version: Version,
         current_time: DateTime<Utc>,
         retval: SupportedFunctionReturnValue,
+        parent: Option<(ExecutionId, JoinSetId)>,
     },
 }
 

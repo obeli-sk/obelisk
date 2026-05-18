@@ -797,6 +797,8 @@ message CapturedWrite {
     ExecutionId execution_id = 1;
     uint32 version = 2;
     ExecutionEvent.Finished event = 3;
+    optional ExecutionId parent_execution_id = 4;
+    optional JoinSetId parent_join_set_id = 5;
   }
   oneof write {
     Append append = 1;

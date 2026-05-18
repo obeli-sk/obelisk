@@ -1,6 +1,6 @@
 ---
 source: crates/wasm-workers/src/workflow/workflow_worker.rs
-expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
+expression: redact_replay(&replay)
 ---
 {
   "captured_writes": [
@@ -14,7 +14,8 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
             "type": "u64",
             "value": 55
           }
-        }
+        },
+        "parent": null
       }
     }
   ]
