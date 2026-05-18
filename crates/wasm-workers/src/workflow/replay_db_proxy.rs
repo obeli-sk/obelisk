@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::DbErrorStubResponse;
 use concepts::{
-    ComponentId, ExecutionId,
+    ComponentId, ExecutionId, JoinSetId,
     prefixed_ulid::ExecutionIdDerived,
     storage::{
         self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
@@ -228,20 +228,50 @@ async fn apply_captured_write(
             version,
             current_time,
             retval,
-        } => conn
-            .append(
-                execution_id,
-                version,
-                AppendRequest {
+            parent,
+        } => {
+            if let Some((parent_execution_id, parent_join_set)) = parent {
+                let ExecutionId::Derived(child_execution_id) = execution_id.clone() else {
+                    panic!("AppendFinished with parent must have a derived execution_id")
+                };
+                let events = AppendEventsToExecution {
+                    execution_id,
+                    version: version.clone(),
+                    batch: vec![AppendRequest {
+                        created_at: current_time,
+                        event: ExecutionRequest::Finished {
+                            retval: retval.clone(),
+                            http_client_traces: None,
+                        },
+                    }],
+                };
+                let response = AppendResponseToExecution {
+                    parent_execution_id,
                     created_at: current_time,
-                    event: ExecutionRequest::Finished {
-                        retval,
-                        http_client_traces: None,
+                    join_set_id: parent_join_set,
+                    child_execution_id,
+                    finished_version: version,
+                    result: retval,
+                };
+                conn.append_batch_respond_to_parent(events, response, current_time)
+                    .await
+                    .map(Some)
+            } else {
+                conn.append(
+                    execution_id,
+                    version,
+                    AppendRequest {
+                        created_at: current_time,
+                        event: ExecutionRequest::Finished {
+                            retval,
+                            http_client_traces: None,
+                        },
                     },
-                },
-            )
-            .await
-            .map(Some),
+                )
+                .await
+                .map(Some)
+            }
+        }
     }
 }
 
@@ -252,6 +282,7 @@ pub(crate) struct ReplayWorkflowDbConnection {
     collector: ReplayEventCollector,
     version: Version,
     real_connection: Box<dyn DbConnection>,
+    parent: Option<(ExecutionId, JoinSetId)>,
 }
 
 impl ReplayWorkflowDbConnection {
@@ -259,12 +290,14 @@ impl ReplayWorkflowDbConnection {
         execution_id: ExecutionId,
         version: Version,
         real_connection: Box<dyn DbConnection>,
+        parent: Option<(ExecutionId, JoinSetId)>,
     ) -> Self {
         Self {
             execution_id,
             collector: ReplayEventCollector::default(),
             version,
             real_connection,
+            parent,
         }
     }
     pub(crate) fn into_writes(self) -> Vec<InternalCapturedWrite> {
@@ -286,6 +319,10 @@ impl ReplayWorkflowDbConnection {
 
     pub(crate) fn execution_id(&self) -> &ExecutionId {
         &self.execution_id
+    }
+
+    pub(crate) fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
+        self.parent.clone()
     }
 }
 
@@ -720,6 +757,7 @@ mod tests {
                 parent_execution_id.clone(),
                 parent_version,
                 real_connection,
+                None, // test helper, no parent
             )),
         };
         connection

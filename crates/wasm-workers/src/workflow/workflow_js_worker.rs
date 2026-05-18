@@ -502,6 +502,7 @@ impl WorkflowJsWorker {
                         version,
                         current_time,
                         retval, // workflow-js-runtime WASM result
+                        parent,
                     } => {
                         let (retval, fatal_error_from_wit) = transform_to_append_finished(
                             retval,
@@ -517,6 +518,7 @@ impl WorkflowJsWorker {
                             version,
                             current_time,
                             retval,
+                            parent,
                         }
                     }
                     _ => write,
