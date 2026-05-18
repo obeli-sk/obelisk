@@ -4793,7 +4793,7 @@ pub(crate) mod tests {
                             && let Value::String(value) = value
                         {
                             let suffix = value
-                                .rsplit_once("/")
+                                .rsplit_once('/')
                                 .map(|(_, suffix)| suffix.to_string())
                                 .unwrap_or_default();
                             (key, Value::String(format!("<REDACTED>/{suffix}")))
