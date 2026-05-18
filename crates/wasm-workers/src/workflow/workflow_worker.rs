@@ -490,7 +490,7 @@ impl WorkflowWorker {
 
         let config = WorkflowConfig {
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-            backtrace_persist: false,
+            backtrace_persist: true,
             lock_extension: None,
             subscription_interruption: None,
             component_id,
