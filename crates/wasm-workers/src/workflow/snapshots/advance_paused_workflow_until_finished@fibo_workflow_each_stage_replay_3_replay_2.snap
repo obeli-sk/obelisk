@@ -22,7 +22,63 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
             }
           }
         },
-        "backtraces": []
+        "backtraces": [
+          {
+            "execution_id": "E_00000000000000000000000003",
+            "component_id": {
+              "component_type": "workflow",
+              "name": "",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "version_min_including": 7,
+            "version_max_excluding": 8,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "module": "<unknown>",
+                  "func_name": "<wasm function 5>",
+                  "symbols": []
+                },
+                {
+                  "module": "test_programs_fibo_workflow.wasm",
+                  "func_name": "test_programs_fibo_workflow::generated::testing::fibo_obelisk_ext::fibo::fibo_await_next::h0e8d9ba882be7d50",
+                  "symbols": [
+                    {
+                      "func_name": "fibo_await_next",
+                      "file": "/home/tomas/work/workspaces/workflow/obelisk/target/release_testprograms/wasm32-unknown-unknown/release_testprograms/build/test-programs-fibo-workflow-d0ce3ef7f7084a22/out/any.rs",
+                      "line": 4484,
+                      "col": 47
+                    }
+                  ]
+                },
+                {
+                  "module": "test_programs_fibo_workflow.wasm",
+                  "func_name": "testing:fibo-workflow/workflow#fiboa-concurrent",
+                  "symbols": [
+                    {
+                      "func_name": "fiboa_concurrent",
+                      "file": "/home/tomas/work/workspaces/workflow/obelisk/crates/testing/test-programs/fibo/workflow/src/lib.rs",
+                      "line": 57,
+                      "col": 20
+                    },
+                    {
+                      "func_name": "_export_fiboa_concurrent_cabi<test_programs_fibo_workflow::Component>",
+                      "file": "/home/tomas/work/workspaces/workflow/obelisk/target/release_testprograms/wasm32-unknown-unknown/release_testprograms/build/test-programs-fibo-workflow-d0ce3ef7f7084a22/out/any.rs",
+                      "line": 4809,
+                      "col": 43
+                    },
+                    {
+                      "func_name": "export_fiboa_concurrent",
+                      "file": "/home/tomas/work/workspaces/workflow/obelisk/target/release_testprograms/wasm32-unknown-unknown/release_testprograms/build/test-programs-fibo-workflow-d0ce3ef7f7084a22/out/any.rs",
+                      "line": 5067,
+                      "col": 109
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
       }
     }
   ]
