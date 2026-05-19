@@ -1230,12 +1230,40 @@ pub enum AppendDelayResponseOutcome {
 
 #[derive(Debug, Clone, Default)]
 pub struct ListExecutionsFilter {
-    pub ffqn_prefix: Option<String>,
+    pub function_name_filter: Option<FunctionNameFilter>,
     pub show_derived: bool,
     pub hide_finished: bool,
     pub execution_id_prefix: Option<String>,
     pub component_digest: Option<ComponentDigest>,
     pub deployment_id: Option<DeploymentId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionNameFilter {
+    PackageName(String),
+    InterfaceName(String),
+    FunctionName(String),
+}
+
+impl FunctionNameFilter {
+    #[must_use]
+    pub fn like_pattern(&self) -> String {
+        match self {
+            Self::FunctionName(function_name) | Self::InterfaceName(function_name) => {
+                format!("{function_name}%")
+            }
+            Self::PackageName(package_name) => {
+                if let Some((pkg_fqn_without_version, version)) = package_name.rsplit_once('@')
+                    && !version.is_empty()
+                    && pkg_fqn_without_version.contains(':')
+                {
+                    format!("{pkg_fqn_without_version}/%@{version}.%")
+                } else {
+                    format!("{package_name}%")
+                }
+            }
+        }
+    }
 }
 
 #[async_trait]
