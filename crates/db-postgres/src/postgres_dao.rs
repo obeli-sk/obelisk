@@ -1107,7 +1107,7 @@ async fn list_executions(
     };
 
     let inner_sql = format!(
-        r"SELECT created_at, first_scheduled_at, component_id_input_digest, deployment_id,
+        r"SELECT created_at, first_scheduled_at, component_id_input_digest, component_type, deployment_id,
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
