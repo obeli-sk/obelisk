@@ -36,7 +36,7 @@ impl BuildConfig {
 /// name and strips the `-builder` suffix to determine the target package name.
 /// Then, it runs `cargo build` with the appropriate target triple and sets
 /// the `--target` directory to the output of [`get_target_dir`].
-#[allow(clippy::must_use_candidate)]
+#[expect(clippy::must_use_candidate)]
 pub fn build_activity(conf: BuildConfig) -> PathBuf {
     build_internal(WASI_P2, ComponentType::Activity, conf)
 }
@@ -47,7 +47,7 @@ pub fn build_activity(conf: BuildConfig) -> PathBuf {
 /// name and strips the `-builder` suffix to determine the target package name.
 /// Then, it runs `cargo build` with the appropriate target triple and sets
 /// the `--target` directory to the output of [`get_target_dir`].
-#[allow(clippy::must_use_candidate)]
+#[expect(clippy::must_use_candidate)]
 pub fn build_webhook_endpoint(conf: BuildConfig) -> PathBuf {
     build_internal(WASI_P2, ComponentType::WebhookEndpoint, conf)
 }
@@ -58,7 +58,7 @@ pub fn build_webhook_endpoint(conf: BuildConfig) -> PathBuf {
 /// name and strips the `-builder` suffix to determine the target package name.
 /// Then, it runs `cargo build` with the appropriate target triple and sets
 /// the `--target` directory to the output of [`get_target_dir`].
-#[allow(clippy::must_use_candidate)]
+#[expect(clippy::must_use_candidate)]
 pub fn build_workflow(conf: BuildConfig) -> PathBuf {
     build_internal(WASM_CORE_MODULE, ComponentType::Workflow, conf)
 }
@@ -67,7 +67,7 @@ pub fn build_workflow(conf: BuildConfig) -> PathBuf {
 ///
 /// Unlike regular workflows that use `wasm32-unknown-unknown`, these workflows
 /// use `wasm32-wasip2` target.
-#[allow(clippy::must_use_candidate)]
+#[expect(clippy::must_use_candidate)]
 pub fn build_workflow_wasi_p2(conf: BuildConfig) -> PathBuf {
     build_internal(WASI_P2, ComponentType::Workflow, conf)
 }

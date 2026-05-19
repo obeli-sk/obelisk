@@ -50,7 +50,7 @@ pub struct ActivityExecWorkerCompiled {
 }
 
 impl ActivityExecWorkerCompiled {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         program: ExecProgram,
         user_ffqn: FunctionFqn,

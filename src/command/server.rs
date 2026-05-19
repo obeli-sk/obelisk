@@ -3261,7 +3261,7 @@ impl WorkerCompiled {
         ))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn new_js_workflow(
         worker: WorkflowJsWorkerCompiled,
         runnable_component: RunnableComponent,

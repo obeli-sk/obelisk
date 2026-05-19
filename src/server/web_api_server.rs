@@ -3350,7 +3350,6 @@ mod backtrace {
 
     /// Selector for which backtrace version to retrieve: "first", "last" (default), or a version number
     #[derive(Debug, Clone)]
-    #[allow(clippy::enum_variant_names)]
     pub(crate) enum BacktraceVersionQuery {
         First,
         Last,

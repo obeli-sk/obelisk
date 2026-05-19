@@ -443,7 +443,7 @@ impl WorkflowJsWorker {
     /// This function recreates the workflow execution from the database log,
     /// transforming the context to call the workflow-js-runtime just like the
     /// regular `run` method does.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn replay(
         deployment_id: DeploymentId,
         component_id: ComponentId,
@@ -530,7 +530,7 @@ impl WorkflowJsWorker {
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn advance(
         deployment_id: DeploymentId,
         component_id: ComponentId,
