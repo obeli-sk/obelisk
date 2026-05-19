@@ -3,21 +3,22 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, RunId};
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
-    BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, ExecutionRequest,
-    ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, JoinSetRequest,
-    JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution, Pagination,
-    PendingState, PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePaused,
-    PendingStatePendingAt, ResponseCursor, TimeoutOutcome, Version, VersionType, WasmBacktrace,
+    BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest,
+    ExecutionListPagination, ExecutionRequest, ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo,
+    FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter,
+    LockedBy, LockedExecution, Pagination, PendingState, PendingStateBlockedByJoinSet,
+    PendingStateLocked, PendingStatePaused, PendingStatePendingAt, ResponseCursor, TimeoutOutcome,
+    Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus};
-use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent};
+use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent, ListExecutionsFilter};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent, LogFilter};
 use concepts::storage::{LogEntry, LogInfoAppendRow};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::{ComponentId, Params, StrVariant, SupportedFunctionReturnValue};
 use concepts::{ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VALUE_OK_EMPTY};
-use concepts::{ExecutionId, prefixed_ulid::ExecutorId};
+use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use db_postgres::postgres_dao::{DbInitialzationOutcome, PostgresPool, ProvisionPolicy};
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use obeli_db_tests::SOME_FFQN;
@@ -4057,5 +4058,83 @@ async fn create_paused_workflow(database: Database) {
     }
 
     drop(db_connection);
+    db_close.close().await;
+}
+
+#[rstest]
+#[tokio::test]
+async fn list_executions_filters_by_versioned_package_name(
+    #[values(Database::Sqlite, Database::Postgres)] database: Database,
+) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let matching_execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: matching_execution_id.clone(),
+            ffqn: FunctionFqn::new_static(
+                "obelisk-client:api-http/executions@1.0.0-beta",
+                "generate",
+            ),
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: ExecutionId::generate(),
+            ffqn: FunctionFqn::new_static(
+                "obelisk-client:api-http/executions@2.0.0-beta",
+                "generate",
+            ),
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+
+    drop(db_connection);
+
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    let executions = api_conn
+        .list_executions(
+            ListExecutionsFilter {
+                function_name_filter: Some(FunctionNameFilter::PackageName(
+                    "obelisk-client:api-http@1.0.0-beta".to_string(),
+                )),
+                ..Default::default()
+            },
+            ExecutionListPagination::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(1, executions.len());
+    assert_eq!(matching_execution_id, executions[0].execution_id);
+    assert_eq!(
+        "obelisk-client:api-http/executions@1.0.0-beta.generate",
+        executions[0].ffqn.to_string()
+    );
+
+    drop(api_conn);
     db_close.close().await;
 }

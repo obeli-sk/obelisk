@@ -56,6 +56,13 @@ message GenerateExecutionIdResponse {
 }
 
 message ListExecutionsRequest {
+    message ExecutionFunctionFilter {
+        oneof scope {
+            string package_name = 1;
+            string interface_name = 2;
+            string function_name = 3;
+        }
+    }
     message Cursor {
         oneof cursor {
             ExecutionId execution_id = 1;
@@ -73,7 +80,7 @@ message ListExecutionsRequest {
         bool including_cursor = 3;
     }
 
-    optional string function_name_prefix = 1;
+    optional string function_name_prefix = 1 [deprecated = true];
 
     // Do not return child executions
     bool top_level_only = 2;
@@ -87,6 +94,7 @@ message ListExecutionsRequest {
 
     optional ContentDigest component_digest = 7;
     optional DeploymentId deployment_id = 8;
+    ExecutionFunctionFilter function_filter = 9;
 }
 
 message ExecutionSummary {

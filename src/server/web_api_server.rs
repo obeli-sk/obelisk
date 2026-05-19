@@ -28,8 +28,9 @@ use concepts::{
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, ExecutionEvent, ExecutionListPagination,
-        ExecutionRequest, ExecutionWithState, ListExecutionsFilter, LogInfoAppendRow, Pagination,
-        PendingState, ResponseCursor, ResponseWithCursor, TimeoutOutcome, Version, VersionType,
+        ExecutionRequest, ExecutionWithState, FunctionNameFilter, ListExecutionsFilter,
+        LogInfoAppendRow, Pagination, PendingState, ResponseCursor, ResponseWithCursor,
+        TimeoutOutcome, Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -564,7 +565,12 @@ async fn executions_list(
         .map_err(|e| ErrorWrapper(e, accept))?;
 
     let filter = ListExecutionsFilter {
-        ffqn_prefix: params.ffqn_prefix,
+        function_name_filter: {
+            // Map `ffqn_prefix` to a FunctionName.
+            // If this is a package name with a version, the search will not find anything as the
+            // FFQN contains the version behind the interface.
+            params.ffqn_prefix.map(FunctionNameFilter::FunctionName)
+        },
         show_derived: params.show_derived,
         hide_finished: params.hide_finished,
         execution_id_prefix: params.execution_id_prefix,

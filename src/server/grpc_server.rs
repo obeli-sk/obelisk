@@ -30,7 +30,6 @@ use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
 use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH;
 use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION;
-use concepts::storage::ListExecutionsFilter;
 use concepts::storage::LogFilter;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
@@ -39,6 +38,7 @@ use concepts::storage::Pagination;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
+use concepts::storage::{FunctionNameFilter, ListExecutionsFilter};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use grpc::TonicRespResult;
@@ -431,11 +431,31 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     },
                 ));
 
+        #[allow(deprecated)]
         let filter = ListExecutionsFilter {
             show_derived: !request.top_level_only,
             hide_finished: request.hide_finished,
             execution_id_prefix: request.execution_id_prefix,
-            ffqn_prefix: request.function_name_prefix,
+            function_name_filter: request
+                .function_filter
+                .map(|filter| match filter.scope {
+                    Some(
+                        grpc_gen::list_executions_request::execution_function_filter::Scope::PackageName(package_name),
+                    ) => FunctionNameFilter::PackageName(package_name),
+                    Some(
+                        grpc_gen::list_executions_request::execution_function_filter::Scope::InterfaceName(interface_name),
+                    ) => FunctionNameFilter::InterfaceName(interface_name),
+                    Some(
+                        grpc_gen::list_executions_request::execution_function_filter::Scope::FunctionName(function_name),
+                    ) => FunctionNameFilter::FunctionName(function_name),
+                    None => unreachable!("`scope` is set when `function_filter` is present"),
+                })
+                .or_else(|| {
+                    // Map deprecated `function_name_prefix` to a FunctionName.
+                    // If this is a package name with a version, the search will not find anything as the
+                    // FFQN contains the version behind the interface.
+                    request.function_name_prefix.map(FunctionNameFilter::FunctionName)
+                }),
             component_digest: request
                 .component_digest
                 .map(ComponentDigest::try_from)

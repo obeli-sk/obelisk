@@ -1066,11 +1066,11 @@ async fn list_executions(
     if !filter.show_derived {
         qb.add_where("is_top_level = true".to_string());
     }
-    let like = |str| format!("{str}%");
-    if let Some(ffqn_prefix) = filter.ffqn_prefix {
-        let placeholder = qb.add_param(like(ffqn_prefix));
+    if let Some(function_name_filter) = filter.function_name_filter {
+        let placeholder = qb.add_param(function_name_filter.like_pattern());
         qb.add_where(format!("ffqn LIKE {placeholder}"));
     }
+    let like = |value: String| format!("{value}%");
     if filter.hide_finished {
         qb.add_where(format!("state != '{STATE_FINISHED}'"));
     }
@@ -1107,7 +1107,7 @@ async fn list_executions(
     };
 
     let inner_sql = format!(
-        r"SELECT created_at, first_scheduled_at, component_id_input_digest, deployment_id,
+        r"SELECT created_at, first_scheduled_at, component_id_input_digest, component_type, deployment_id,
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,

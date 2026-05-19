@@ -32,7 +32,8 @@ use db_common::{
 use hashbrown::HashMap;
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Row, ToSql, Transaction,
-    TransactionBehavior, named_params, types::ToSqlOutput,
+    TransactionBehavior, named_params,
+    types::{ToSqlOutput, Value},
 };
 use sha2::{Digest as _, Sha256};
 use std::{
@@ -1468,17 +1469,12 @@ impl SqlitePool {
                 paginate(pagination, "execution_id", filter)?
             }
         };
-        let like = |str| format!("{str}%");
-
-        let ffqn_temporary;
-        if let Some(ffqn_prefix) = &filter.ffqn_prefix {
+        if let Some(function_name_filter) = &filter.function_name_filter {
+            let ffqn = ToSqlOutput::Owned(Value::from(function_name_filter.like_pattern()));
             statement_mod.where_vec.push("ffqn LIKE :ffqn".to_string());
-            ffqn_temporary = like(ffqn_prefix);
-            let ffqn = ffqn_temporary
-                .to_sql()
-                .expect("string conversion never fails");
             statement_mod.params.push((":ffqn", ffqn));
         }
+        let like = |value: &str| format!("{value}%");
 
         if filter.hide_finished {
             statement_mod
