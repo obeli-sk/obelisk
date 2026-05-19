@@ -1463,6 +1463,8 @@ impl EventHistory {
                                     result: retval_intent.clone(),
                                 },
                                 called_at,
+                                wasm_backtrace.clone(),
+                                &self.locked_event.component_id,
                             )
                             .await
                         {

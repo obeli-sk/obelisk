@@ -1999,6 +1999,7 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                 events,
                 response,
                 current_time: _,
+                backtraces,
             } => grpc_gen::captured_write::Write::AppendStubResponse(
                 grpc_gen::captured_write::AppendStubResponse {
                     execution_id: Some(grpc_gen::ExecutionId {
@@ -2017,6 +2018,7 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                         response.result.clone(),
                     )),
                     finished_version: response.finished_version.0,
+                    backtraces: backtraces.into_iter().map(Into::into).collect(),
                 },
             ),
             CapturedDbWrite::AppendFinished {
@@ -2155,6 +2157,11 @@ pub fn captured_write_from_grpc(
                     result: batch.result.argument_must_exist("result")?.try_into()?,
                 },
                 current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                backtraces: batch
+                    .backtraces
+                    .into_iter()
+                    .map(BacktraceInfo::try_from)
+                    .collect::<Result<Vec<BacktraceInfo>, _>>()?,
             })
         }
         grpc_gen::captured_write::Write::AppendFinished(append_finished) => {

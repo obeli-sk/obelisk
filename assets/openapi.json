@@ -1729,6 +1729,12 @@
               "type"
             ],
             "properties": {
+              "backtraces": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BacktraceInfoSer"
+                }
+              },
               "events": {
                 "type": "array",
                 "items": {

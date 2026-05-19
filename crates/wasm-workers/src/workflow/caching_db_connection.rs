@@ -78,6 +78,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite>;
 
+    #[expect(clippy::too_many_arguments)]
     async fn upsert_stub_response(
         &mut self,
         execution_id: ExecutionIdDerived,
@@ -85,6 +86,8 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
     ) -> Result<(), UpsertStubOrReplayInterrupt>;
 
     // Part of writing stub response: start with this read, then attempt to write the response in `EventHistory::append_to_db_non_blocking`.
@@ -450,6 +453,8 @@ impl WorkflowDbConnection for CachingDbConnection {
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
+        _wasm_backtrace: Option<storage::WasmBacktrace>,
+        _component_id: &ComponentId,
     ) -> Result<(), UpsertStubOrReplayInterrupt> {
         self.db_connection
             .upsert_stub_response(execution_id, version, req, response, current_time)

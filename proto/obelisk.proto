@@ -792,6 +792,7 @@ message CapturedWrite {
     SupportedFunctionResult result = 7;
     reserved 8, 9;
     uint32 finished_version = 10;
+    repeated CapturedBacktrace backtraces = 11;
   }
   message AppendFinished {
     ExecutionId execution_id = 1;

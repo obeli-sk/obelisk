@@ -100,6 +100,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
             events,
             response,
             current_time: _,
+            backtraces,
         } => CapturedDbWrite::AppendStubResponse {
             events: AppendEventsToExecution {
                 execution_id: events.execution_id,
@@ -119,6 +120,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
                 result: response.result,
             },
             current_time: DateTime::UNIX_EPOCH,
+            backtraces,
         },
         CapturedDbWrite::AppendFinished {
             execution_id,
