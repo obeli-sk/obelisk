@@ -39,7 +39,35 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
             }
           }
         },
-        "current_time": "1970-01-01T00:00:00.500Z"
+        "current_time": "1970-01-01T00:00:00.500Z",
+        "backtraces": [
+          {
+            "execution_id": "E_00000000000000000000000001",
+            "component_id": {
+              "component_type": "workflow",
+              "name": "test_js_workflow",
+              "component_digest": "sha256:<REDACTED>"
+            },
+            "version_min_including": 4,
+            "version_max_excluding": 2,
+            "wasm_backtrace": {
+              "frames": [
+                {
+                  "module": "unknown",
+                  "func_name": "call_stub",
+                  "symbols": [
+                    {
+                      "func_name": null,
+                      "file": null,
+                      "line": 5,
+                      "col": 25
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
       }
     }
   ]
