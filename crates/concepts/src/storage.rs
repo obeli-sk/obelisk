@@ -1035,7 +1035,7 @@ pub enum CapturedDbWrite {
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-        // no backtraces as this is the second write (to the stub execution + current execution response)
+        backtraces: Vec<BacktraceInfo>,
     },
     AppendFinished {
         // TODO: Extract struct AppendFinished

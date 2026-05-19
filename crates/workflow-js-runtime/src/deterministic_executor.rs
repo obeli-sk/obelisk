@@ -14,7 +14,7 @@ use std::rc::Rc;
 /// for a custom event loop.
 ///
 /// To disable running promise jobs on the engine, see [`IdleJobExecutor`].
-#[allow(clippy::struct_field_names)]
+#[expect(clippy::struct_field_names)]
 #[derive(Default)]
 pub struct DeterministicJobExecutor {
     promise_jobs: RefCell<VecDeque<PromiseJob>>,

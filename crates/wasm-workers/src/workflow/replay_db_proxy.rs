@@ -206,6 +206,7 @@ async fn apply_captured_write(
             events,
             response,
             current_time,
+            backtraces: _,
         } => {
             let mut batch = events.batch;
             let req = batch.pop().expect("stub batch must have exactly one item");
@@ -595,6 +596,8 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
     ) -> Result<(), UpsertStubOrReplayInterrupt> {
         let execution_id = ExecutionId::Derived(execution_id);
         // Query the database first.
@@ -622,6 +625,14 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             }
         }
 
+        let next = next_version(&version, 1);
+        let backtraces = make_backtrace(
+            &self.execution_id,
+            component_id,
+            &self.version,
+            &next,
+            wasm_backtrace,
+        );
         self.collector
             .push_write(CapturedDbWrite::AppendStubResponse {
                 events: AppendEventsToExecution {
@@ -631,6 +642,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 },
                 response,
                 current_time,
+                backtraces,
             });
         // no idea about the response
         Err(UpsertStubOrReplayInterrupt::ReplayInterrupt)

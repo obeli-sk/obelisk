@@ -1597,6 +1597,8 @@ pub(crate) enum CapturedWriteSer {
         #[schema(value_type = Vec<Object>)]
         events: Vec<concepts::storage::AppendRequest>,
         response: StubResponseSer,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        backtraces: Vec<backtrace::BacktraceInfoSer>,
     },
     AppendFinished {
         execution_id: String,
@@ -1664,11 +1666,16 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                 events,
                 response,
                 current_time: _,
+                backtraces,
             } => CapturedWriteSer::AppendStubResponse {
                 execution_id: events.execution_id.to_string(),
                 version: events.version.0,
                 events: events.batch,
                 response: StubResponseSer::from(response),
+                backtraces: backtraces
+                    .into_iter()
+                    .map(backtrace::BacktraceInfoSer::from)
+                    .collect(),
             },
             CapturedDbWrite::AppendFinished {
                 execution_id,
@@ -1752,6 +1759,7 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                 version,
                 events,
                 response,
+                backtraces,
             } => Ok(Self::AppendStubResponse {
                 events: concepts::storage::AppendEventsToExecution {
                     execution_id: execution_id
@@ -1762,6 +1770,10 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                 },
                 response: response.try_into()?,
                 current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                backtraces: backtraces
+                    .into_iter()
+                    .map(concepts::storage::BacktraceInfo::try_from)
+                    .collect::<Result<Vec<_>, _>>()?,
             }),
             CapturedWriteSer::AppendFinished {
                 execution_id,
@@ -3338,7 +3350,6 @@ mod backtrace {
 
     /// Selector for which backtrace version to retrieve: "first", "last" (default), or a version number
     #[derive(Debug, Clone)]
-    #[allow(clippy::enum_variant_names)]
     pub(crate) enum BacktraceVersionQuery {
         First,
         Last,
