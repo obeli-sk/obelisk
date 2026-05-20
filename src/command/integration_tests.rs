@@ -1964,6 +1964,43 @@ async fn submit_workflow_with_import_schedule() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn submit_scheduled_execution_via_schedule_extension() {
+    let server = TestServer::start(test_addr!(76)).await;
+
+    let resp = server
+        .client
+        .post(format!("{}/v1/executions", server.base_url))
+        .header("Accept", "application/json")
+        .json(&json!({
+            "ffqn": "testing:integration-obelisk-schedule/activity.add-schedule",
+            "params": [
+                { "in": { "seconds": 60 } },
+                3,
+                4
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 201);
+
+    let body: Value = resp.json().await.unwrap();
+    let scheduled_exec_id = body["ok"]
+        .as_str()
+        .expect("expected scheduled execution ID in ok result");
+    assert!(
+        scheduled_exec_id.starts_with("E_"),
+        "expected execution ID, got: {scheduled_exec_id}"
+    );
+
+    let status = server.get_status(scheduled_exec_id).await;
+    assert_eq!(status["ffqn"], json!("testing:integration/activity.add"));
+    assert_eq!(status["pending_state"]["status"], json!("pending_at"));
+
+    server.shutdown().await;
+}
+
 // ---- Workflow: ES module ext import (submit/awaitNext) ----
 
 #[tokio::test]
