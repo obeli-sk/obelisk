@@ -2670,13 +2670,15 @@ pub(crate) mod components {
         } else {
             state.deployment_ctx.read().await.deployment_id
         };
-        let conn = state.db_pool.external_api_conn().await.map_err(|err| {
-            HttpResponse {
+        let conn = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|err| HttpResponse {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 message: err.to_string(),
                 accept: AcceptHeader::Text,
-            }
-        })?;
+            })?;
         let wit = conn
             .get_deployment_component_wit(deployment_id, &digest)
             .await

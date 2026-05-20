@@ -1539,7 +1539,9 @@ pub struct DeploymentComponentDetail {
     pub wit: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
 pub struct PersistedFunctionMetadata {
     pub ffqn: FunctionFqn,
     pub parameter_types: Vec<PersistedParameterType>,
@@ -1548,7 +1550,9 @@ pub struct PersistedFunctionMetadata {
     pub submittable: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
 pub struct PersistedParameterType {
     pub name: String,
     pub wit_type: String,
