@@ -12,7 +12,6 @@ use concepts::ComponentId;
 use concepts::ExecutionId;
 use concepts::FunctionExtension;
 use concepts::FunctionFqn;
-use concepts::FunctionMetadata;
 use concepts::SupportedFunctionReturnValue;
 use concepts::component_id::ComponentDigest;
 use concepts::prefixed_ulid::DelayId;
@@ -36,6 +35,8 @@ use concepts::storage::LogLevel;
 use concepts::storage::LogStreamType;
 use concepts::storage::Pagination;
 use concepts::storage::PendingState;
+use concepts::storage::PersistedFunctionMetadata;
+use concepts::storage::PersistedParameterType;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
 use concepts::storage::{FunctionNameFilter, ListExecutionsFilter};
@@ -1495,13 +1496,20 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
         request: tonic::Request<grpc_gen::ListComponentsRequest>,
     ) -> TonicRespResult<grpc_gen::ListComponentsResponse> {
         let request = request.into_inner();
-        let component_registry_ro = self
-            .deployment_ctx
-            .read()
+        let deployment_id = if let Some(deployment_id) = request.deployment_id {
+            DeploymentId::try_from(deployment_id)?
+        } else {
+            self.deployment_ctx.read().await.deployment_id
+        };
+        let conn = self
+            .db_pool
+            .external_api_conn()
             .await
-            .component_registry_ro
-            .clone();
-        let mut components = component_registry_ro.list(request.extensions);
+            .map_err(|err| tonic::Status::internal(err.to_string()))?;
+        let mut components = conn
+            .list_deployment_components(deployment_id)
+            .await
+            .map_err(|err| tonic::Status::internal(err.to_string()))?;
 
         if let Some(digest) = request
             .component_digest
@@ -1516,12 +1524,10 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
             .transpose()?
         {
             components.retain(|c| {
-                c.workflow_or_activity_config.as_ref().is_some_and(|exp| {
-                    exp.exports_ext
-                        .iter()
-                        .find(|fn_meta| fn_meta.ffqn == ffqn)
-                        .is_some()
-                })
+                filtered_exports(c, request.extensions)
+                    .iter()
+                    .find(|fn_meta| fn_meta.ffqn == ffqn)
+                    .is_some()
             });
         }
 
@@ -1529,13 +1535,8 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
         for component in components {
             // Transform to gRPC Component.
             let res_component = grpc_gen::Component {
-                component_id: Some(component.component_id.into()),
-                exports: component
-                    .workflow_or_activity_config
-                    .map(|workflow_or_activity_config| {
-                        list_fns(workflow_or_activity_config.exports_ext)
-                    })
-                    .unwrap_or_default(),
+                component_id: Some(component.component_id.clone().into()),
+                exports: list_fns(filtered_exports(&component, request.extensions)),
                 imports: list_fns(component.imports),
             };
             grpc_components.push(res_component);
@@ -1574,9 +1575,9 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
     }
 }
 
-fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
+fn list_fns(functions: Vec<PersistedFunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
     let mut vec = Vec::with_capacity(functions.len());
-    for FunctionMetadata {
+    for PersistedFunctionMetadata {
         ffqn,
         parameter_types,
         return_type,
@@ -1586,23 +1587,22 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
     {
         let fun = grpc_gen::FunctionDetail {
             params: parameter_types
-                .0
                 .into_iter()
-                .map(|param| grpc_gen::FunctionParameter {
-                    name: param.name.to_string(),
-                    r#type: Some(grpc_gen::WitType {
-                        wit_type: param.wit_type.to_string(),
-                        type_wrapper: serde_json::to_string(&param.type_wrapper)
-                            .expect("`TypeWrapper` must be serializable"),
-                        wit_type_inline: param.type_wrapper.to_string(),
-                    }),
-                })
+                .map(
+                    |param: PersistedParameterType| grpc_gen::FunctionParameter {
+                        name: param.name,
+                        r#type: Some(grpc_gen::WitType {
+                            wit_type: param.wit_type.clone(),
+                            type_wrapper: param.wit_type.clone(),
+                            wit_type_inline: param.wit_type,
+                        }),
+                    },
+                )
                 .collect(),
             return_type: Some(grpc_gen::WitType {
-                wit_type: return_type.wit_type().to_string(),
-                type_wrapper: serde_json::to_string(&return_type.type_wrapper())
-                    .expect("`TypeWrapper` must be serializable"),
-                wit_type_inline: return_type.type_wrapper().to_string(),
+                wit_type: return_type.clone(),
+                type_wrapper: return_type.clone(),
+                wit_type_inline: return_type,
             }),
             function_name: Some(ffqn.into()),
             extension: extension.map(|it| {
@@ -1620,6 +1620,17 @@ fn list_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc_gen::FunctionDetail> {
         vec.push(fun);
     }
     vec
+}
+
+fn filtered_exports(
+    component: &concepts::storage::DeploymentComponentDetail,
+    extensions: bool,
+) -> Vec<PersistedFunctionMetadata> {
+    let mut exports = component.exports.clone();
+    if !extensions {
+        exports.retain(|fn_metadata| !fn_metadata.ffqn.ifc_fqn.is_extension());
+    }
+    exports
 }
 
 impl From<SubmitError> for tonic::Status {

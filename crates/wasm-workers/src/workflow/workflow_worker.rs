@@ -4783,6 +4783,7 @@ pub(crate) mod tests {
     fn redact_replay(replay: &ReplayAdvanceable) -> serde_json::Value {
         let replay = serde_json::to_value(replay).unwrap();
         let replay = redact_backtrace_file(replay);
+        let replay = redact_rust_symbol_hash(replay);
         redact_component_digest(replay)
     }
 
@@ -4810,6 +4811,45 @@ pub(crate) mod tests {
             ),
             other => other,
         }
+    }
+
+    /// Strip Rust symbol hash suffixes (e.g. `::h0e8d9ba882be7d50`) from `func_name` values.
+    /// These hashes are not stable across rebuilds and cause snapshot churn.
+    fn redact_rust_symbol_hash(value: Value) -> Value {
+        match value {
+            Value::Array(items) => {
+                Value::Array(items.into_iter().map(redact_rust_symbol_hash).collect())
+            }
+            Value::Object(map) => Value::Object(
+                map.into_iter()
+                    .map(|(key, value)| {
+                        if key == "func_name"
+                            && let Value::String(s) = value
+                        {
+                            (key, Value::String(strip_rust_symbol_hash(&s)))
+                        } else {
+                            (key, redact_rust_symbol_hash(value))
+                        }
+                    })
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
+    /// If `s` ends with `::h` followed by exactly 16 hex digits, replace that suffix with `::h<REDACTED>`.
+    fn strip_rust_symbol_hash(s: &str) -> String {
+        // `::h` + 16 hex chars = 19 bytes from the end
+        if s.len() >= 19 {
+            let (prefix, suffix) = s.split_at(s.len() - 19);
+            if suffix.starts_with("::h")
+                && suffix[3..].len() == 16
+                && suffix[3..].chars().all(|c| c.is_ascii_hexdigit())
+            {
+                return format!("{prefix}::h<REDACTED>");
+            }
+        }
+        s.to_string()
     }
 
     async fn advance_paused_workflow_until_finished(

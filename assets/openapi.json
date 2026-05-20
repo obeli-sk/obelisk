@@ -22,6 +22,15 @@
         "operationId": "components_list",
         "parameters": [
           {
+            "name": "deployment_id",
+            "in": "query",
+            "description": "Filter by deployment ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "type",
             "in": "query",
             "description": "Filter by component type (workflow, activity, webhook)",

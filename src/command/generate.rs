@@ -1,8 +1,8 @@
 use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::server::{
-    PrepareDirsParams, VerifyParams, create_engines, deployment_verify_config_compile_link,
-    prepare_dirs, server_verify,
+    PrepareDirsParams, VerifyParams, create_engines, deployment_compile_link,
+    deployment_verify_config, prepare_dirs, server_verify,
 };
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{ConfigHolder, load_deployment_validated};
@@ -382,10 +382,17 @@ pub(crate) async fn generate_wit_deps(
     let engines = create_engines(&config, &prepared_dirs)?;
 
     let server_verified = Box::pin(server_verify(config, engines)).await?;
-    let compiled_and_linked = deployment_verify_config_compile_link(
-        server_verified,
+    let deployment_verified = deployment_verify_config(
+        &server_verified,
         &prepared_dirs,
         deployment,
+        verify_params.clone(),
+        &mut termination_watcher,
+    )
+    .await?;
+    let compiled_and_linked = deployment_compile_link(
+        server_verified,
+        deployment_verified,
         DeploymentId::generate(),
         verify_params,
         &mut termination_watcher,

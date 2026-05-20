@@ -117,6 +117,7 @@ message ListComponentsRequest {
     optional FunctionName function_name = 1;
     optional ContentDigest component_digest = 2;
     bool extensions = 3;
+    optional DeploymentId deployment_id = 4;
 }
 
 message ListComponentsResponse {

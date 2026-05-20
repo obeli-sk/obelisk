@@ -2601,6 +2601,8 @@ pub(crate) mod components {
     use concepts::{
         ComponentId, ComponentType, FunctionExtension, FunctionMetadata, ParameterType,
         component_id::ComponentDigest,
+        prefixed_ulid::DeploymentId,
+        storage::{DeploymentComponentDetail, PersistedFunctionMetadata, PersistedParameterType},
     };
     use itertools::Itertools;
     use std::fmt::{Debug, Write as _};
@@ -2608,6 +2610,9 @@ pub(crate) mod components {
     #[derive(Deserialize, Debug, IntoParams)]
     #[into_params(parameter_in = Query)]
     pub(crate) struct ComponentsListParams {
+        /// Filter by deployment ID
+        #[param(value_type = Option<String>)]
+        deployment_id: Option<DeploymentId>,
         /// Filter by component type (workflow, activity, webhook)
         #[param(value_type = Option<String>)]
         r#type: Option<ComponentType>,
@@ -2680,13 +2685,32 @@ pub(crate) mod components {
         Query(params): Query<ComponentsListParams>,
         accept: AcceptHeader,
     ) -> Response {
-        let component_registry_ro = state
-            .deployment_ctx
-            .read()
-            .await
-            .component_registry_ro
-            .clone();
-        let mut components = component_registry_ro.list(params.extensions);
+        let deployment_id = if let Some(deployment_id) = params.deployment_id {
+            deployment_id
+        } else {
+            state.deployment_ctx.read().await.deployment_id
+        };
+        let mut components = match state.db_pool.external_api_conn().await {
+            Ok(conn) => match conn.list_deployment_components(deployment_id).await {
+                Ok(components) => components,
+                Err(err) => {
+                    return HttpResponse {
+                        status: StatusCode::INTERNAL_SERVER_ERROR,
+                        message: err.to_string(),
+                        accept,
+                    }
+                    .into_response();
+                }
+            },
+            Err(err) => {
+                return HttpResponse {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    message: err.to_string(),
+                    accept,
+                }
+                .into_response();
+            }
+        };
 
         if let Some(name) = params.name {
             components.retain(|c| c.component_id.name.as_ref() == name);
@@ -2696,12 +2720,10 @@ pub(crate) mod components {
         }
         if let Some(ffqn) = params.ffqn {
             components.retain(|c| {
-                c.workflow_or_activity_config.as_ref().is_some_and(|exp| {
-                    exp.exports_ext
-                        .iter()
-                        .find(|fn_meta| fn_meta.ffqn == ffqn)
-                        .is_some()
-                })
+                filtered_exports(c, params.extensions)
+                    .iter()
+                    .find(|fn_meta| fn_meta.ffqn == ffqn)
+                    .is_some()
             });
         }
         if let Some(ty) = params.r#type {
@@ -2712,10 +2734,8 @@ pub(crate) mod components {
             .map(|c| {
                 let exports = if params.exports {
                     let mut exports = Vec::new();
-                    for export in c
-                        .workflow_or_activity_config
+                    for export in filtered_exports(&c, params.extensions)
                         .into_iter()
-                        .flat_map(|c| c.exports_ext)
                         .filter(|e| {
                             if let Some(submittable) = params.submittable {
                                 e.submittable == submittable
@@ -2826,6 +2846,21 @@ pub(crate) mod components {
             }
         }
     }
+    impl From<PersistedFunctionMetadata> for FunctionMetadataLite {
+        fn from(value: PersistedFunctionMetadata) -> Self {
+            FunctionMetadataLite {
+                ffqn: value.ffqn,
+                parameter_types: value
+                    .parameter_types
+                    .into_iter()
+                    .map(ParameterTypeLite::from)
+                    .collect(),
+                return_type: value.return_type,
+                extension: value.extension,
+                submittable: value.submittable,
+            }
+        }
+    }
 
     /// Parameter type information
     #[derive(serde::Serialize, derive_more::Display, ToSchema)]
@@ -2844,6 +2879,25 @@ pub(crate) mod components {
                 wit_type: value.wit_type.to_string(),
             }
         }
+    }
+    impl From<PersistedParameterType> for ParameterTypeLite {
+        fn from(value: PersistedParameterType) -> Self {
+            ParameterTypeLite {
+                name: value.name,
+                wit_type: value.wit_type,
+            }
+        }
+    }
+
+    fn filtered_exports(
+        component: &DeploymentComponentDetail,
+        extensions: bool,
+    ) -> Vec<PersistedFunctionMetadata> {
+        let mut exports = component.exports.clone();
+        if !extensions {
+            exports.retain(|fn_metadata| !fn_metadata.ffqn.ifc_fqn.is_extension());
+        }
+        exports
     }
 }
 
