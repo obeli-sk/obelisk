@@ -1556,21 +1556,27 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
                 .component_digest
                 .argument_must_exist("component_digest")?,
         )?;
-        let component_registry_ro = self
-            .deployment_ctx
-            .read()
+        let deployment_id = if let Some(deployment_id) = request.deployment_id {
+            DeploymentId::try_from(deployment_id)?
+        } else {
+            self.deployment_ctx.read().await.deployment_id
+        };
+        let conn = self
+            .db_pool
+            .external_api_conn()
             .await
-            .component_registry_ro
-            .clone();
-        let wit = component_registry_ro
-            .get_wit(&component_digest)
+            .map_err(|err| tonic::Status::internal(err.to_string()))?;
+        let wit = conn
+            .get_deployment_component_wit(deployment_id, &component_digest)
+            .await
+            .map_err(|err| tonic::Status::internal(err.to_string()))?
             .ok_or_else(|| {
                 tonic::Status::not_found(format!(
                     "WIT not found for component digest '{component_digest}'"
                 ))
             })?;
         Ok(tonic::Response::new(grpc_gen::GetWitResponse {
-            content: Some(wit.to_string()),
+            content: Some(wit),
         }))
     }
 }

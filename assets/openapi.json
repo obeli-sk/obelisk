@@ -136,6 +136,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "deployment_id",
+            "in": "query",
+            "description": "Filter by deployment ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {

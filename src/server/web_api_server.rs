@@ -2637,13 +2637,22 @@ pub(crate) mod components {
         submittable: Option<bool>,
     }
 
+    #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+    #[into_params(parameter_in = Query)]
+    pub(crate) struct ComponentWitParams {
+        /// Filter by deployment ID
+        #[param(value_type = Option<String>)]
+        deployment_id: Option<DeploymentId>,
+    }
+
     /// Get WIT definition for a component
     #[utoipa::path(
         get,
         path = "/v1/components/{digest}/wit",
         tag = "components",
         params(
-            ("digest" = String, Path, description = "Component content digest")
+            ("digest" = String, Path, description = "Component content digest"),
+            ComponentWitParams,
         ),
         responses(
             (status = 200, description = "WIT definition", body = String),
@@ -2654,20 +2663,35 @@ pub(crate) mod components {
     pub(crate) async fn component_wit(
         Path(digest): Path<ComponentDigest>,
         state: State<Arc<WebApiState>>,
+        Query(params): Query<ComponentWitParams>,
     ) -> Result<Response, HttpResponse> {
-        let component_registry_ro = state
-            .deployment_ctx
-            .read()
+        let deployment_id = if let Some(deployment_id) = params.deployment_id {
+            deployment_id
+        } else {
+            state.deployment_ctx.read().await.deployment_id
+        };
+        let conn = state.db_pool.external_api_conn().await.map_err(|err| {
+            HttpResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: err.to_string(),
+                accept: AcceptHeader::Text,
+            }
+        })?;
+        let wit = conn
+            .get_deployment_component_wit(deployment_id, &digest)
             .await
-            .component_registry_ro
-            .clone();
-        let Some(wit) = component_registry_ro.get_wit(&digest) else {
-            return Err(HttpResponse::not_found(
+            .map_err(|err| HttpResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: err.to_string(),
+                accept: AcceptHeader::Text,
+            })?;
+        match wit {
+            Some(wit) => Ok(wit.into_response()),
+            None => Err(HttpResponse::not_found(
                 AcceptHeader::Text,
                 Some("component"),
-            ));
-        };
-        Ok(wit.to_string().into_response())
+            )),
+        }
     }
 
     /// List components

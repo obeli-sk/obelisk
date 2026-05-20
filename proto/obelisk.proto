@@ -676,6 +676,7 @@ message ListExecutionEventsAndResponsesResponse {
 
 message GetWitRequest {
     ContentDigest component_digest = 1;
+    optional DeploymentId deployment_id = 2;
 }
 
 message GetWitResponse {
