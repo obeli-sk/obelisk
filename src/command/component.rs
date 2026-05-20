@@ -572,6 +572,7 @@ pub(crate) async fn list_components(
             function_name: None,
             component_digest: None,
             extensions,
+            deployment_id: None,
         }))
         .await?
         .into_inner()

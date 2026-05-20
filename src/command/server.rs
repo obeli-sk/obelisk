@@ -62,9 +62,10 @@ use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
+use concepts::storage::DeploymentComponentRecord;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
-use concepts::storage::{DeploymentRecord, DeploymentStatus};
+use concepts::storage::{ComponentMetadataRecord, DeploymentRecord, DeploymentStatus};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
@@ -644,26 +645,35 @@ pub(crate) async fn deployment_verify_config_compile_link(
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<ServerCompiledLinked, anyhow::Error> {
     info!("Verifying deployment configuration, compiling WASM components");
-    // Verify deployment
-    let config = Box::pin(ConfigVerified::fetch_and_verify_all(
+    let deployment_verified = deployment_verify_config(
+        &server_verified,
+        prepared_dirs,
         deployment,
-        server_verified.http_servers,
-        prepared_dirs.wasm_cache_dir.clone(),
-        prepared_dirs.metadata_dir.clone(),
-        params.ignore_missing_env_vars,
-        server_verified.global_backtrace_persist,
-        server_verified.global_executor_instance_limiter,
-        server_verified.fuel,
+        params.clone(),
         termination_watcher,
-        server_verified.database_subscription_interruption,
-        server_verified.api_addr_if_webui_enabled,
-    ))
+    )
     .await?;
-    trace!("Verified config: {config:#?}");
+    deployment_compile_link(
+        server_verified,
+        deployment_verified,
+        deployment_id,
+        params,
+        termination_watcher,
+    )
+    .await
+}
 
+#[instrument(skip_all, fields(%deployment_id))]
+pub(crate) async fn deployment_compile_link(
+    server_verified: ServerVerified,
+    deployment_verified: DeploymentVerified,
+    deployment_id: DeploymentId,
+    params: VerifyParams,
+    termination_watcher: &mut watch::Receiver<()>,
+) -> Result<ServerCompiledLinked, anyhow::Error> {
     let compiled_and_linked = ServerCompiledLinked::new(
         deployment_id,
-        config,
+        deployment_verified,
         server_verified.launch,
         termination_watcher,
         params.suppress_type_checking_errors,
@@ -676,6 +686,32 @@ pub(crate) async fn deployment_verify_config_compile_link(
         warn!("Obelisk configuration was verified with supressed errors");
     }
     Ok(compiled_and_linked)
+}
+
+#[instrument(skip_all)]
+pub(crate) async fn deployment_verify_config(
+    server_verified: &ServerVerified,
+    prepared_dirs: &PreparedDirs,
+    deployment: DeploymentCanonical,
+    params: VerifyParams,
+    termination_watcher: &mut watch::Receiver<()>,
+) -> Result<DeploymentVerified, anyhow::Error> {
+    let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
+        deployment,
+        server_verified.http_servers.clone(),
+        prepared_dirs.wasm_cache_dir.clone(),
+        prepared_dirs.metadata_dir.clone(),
+        params.ignore_missing_env_vars,
+        server_verified.global_backtrace_persist,
+        server_verified.global_executor_instance_limiter.clone(),
+        server_verified.fuel,
+        termination_watcher,
+        server_verified.database_subscription_interruption,
+        server_verified.api_addr_if_webui_enabled.clone(),
+    ))
+    .await?;
+    trace!("Verified deployment: {deployment_verified:#?}");
+    Ok(deployment_verified)
 }
 
 /// Look up the current deployment from the database.
@@ -945,6 +981,16 @@ pub(crate) async fn run_internal(
     ))
     .instrument(span.clone())
     .await?;
+    let api_conn = db_pool
+        .external_api_conn()
+        .await
+        .context("cannot get db connection for component metadata persistence")?;
+    persist_deployment_component_metadata(
+        api_conn.as_ref(),
+        active_deployment_id,
+        &compiled_and_linked.component_registry_ro,
+    )
+    .await?;
 
     let cancel_registry = CancelRegistry::new();
     let subscription_interruption = database.get_subscription_interruption();
@@ -1169,26 +1215,42 @@ pub(crate) struct ServerCompiledLinked {
 impl ServerCompiledLinked {
     async fn new(
         deployment_id: DeploymentId,
-        config: ConfigVerified,
+        deployment_verified: DeploymentVerified,
         server_verified: ServerVerifiedLaunch,
         termination_watcher: &mut watch::Receiver<()>,
         suppress_type_checking_errors: bool,
         suppress_linking_errors: bool,
     ) -> Result<Self, anyhow::Error> {
+        trace!("Verified deployment: {deployment_verified:#?}");
+        let DeploymentVerified {
+            activities_wasm,
+            activities_js,
+            activities_exec,
+            activities_stub_ext,
+            activities_stub_ext_inline,
+            workflows,
+            workflows_js,
+            webhooks_wasm_by_names,
+            webhooks_js_by_names,
+            crons,
+            http_servers_to_webhook_names,
+            global_backtrace_persist,
+            fuel,
+        } = deployment_verified;
         let linked = compile_and_link(
             &server_verified.engines,
-            config.activities_wasm,
-            config.activities_js,
-            config.activities_exec,
-            config.activities_stub_ext,
-            config.activities_stub_ext_inline,
-            config.workflows,
-            config.workflows_js,
-            config.webhooks_wasm_by_names,
-            config.webhooks_js_by_names,
-            config.crons,
-            config.global_backtrace_persist,
-            config.fuel,
+            activities_wasm,
+            activities_js,
+            activities_exec,
+            activities_stub_ext,
+            activities_stub_ext_inline,
+            workflows,
+            workflows_js,
+            webhooks_wasm_by_names,
+            webhooks_js_by_names,
+            crons,
+            global_backtrace_persist,
+            fuel,
             server_verified.build_semaphore,
             server_verified.workflows_lock_extension_leeway,
             termination_watcher,
@@ -1198,9 +1260,9 @@ impl ServerCompiledLinked {
         if !suppress_type_checking_errors && linked.supressed_errors.is_some() {
             bail!("type checking errors detected");
         }
-        let http_server_len = config.http_servers_to_webhook_names.len();
+        let http_server_len = http_servers_to_webhook_names.len();
         let http_servers_to_webhooks = Self::connect_http_servers_to_webhooks(
-            &config.http_servers_to_webhook_names,
+            &http_servers_to_webhook_names,
             linked.webhooks_wasm_by_names,
         );
         assert_eq!(
@@ -1304,6 +1366,104 @@ pub(crate) async fn upsert_backtrace_sources(
     }
 }
 
+fn build_component_metadata_records(
+    deployment_id: DeploymentId,
+    component_registry_ro: &ComponentConfigRegistryRO,
+) -> (
+    Vec<ComponentMetadataRecord>,   // List of components as stored in db
+    Vec<DeploymentComponentRecord>, // List of relations to each component for the depoloyment ID.
+) {
+    let components = component_registry_ro.list(true);
+    let mut metadata_by_digest = HashMap::<ComponentDigest, ComponentMetadataRecord>::new();
+    let mut component_type_by_digest = HashMap::<ComponentDigest, ComponentType>::new();
+    let mut deployment_components = Vec::with_capacity(components.len());
+    for component in components {
+        let component_type = component.component_id.component_type;
+        let component_digest = component.component_id.component_digest.clone();
+        let exports: Vec<concepts::storage::PersistedFunctionMetadata> = component
+            .workflow_or_activity_config
+            .as_ref()
+            .map(|config| {
+                config
+                    .exports_ext
+                    .clone()
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let imports = component
+            .imports
+            .clone()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        let wit_origin = component.wit_origin.to_string();
+        match metadata_by_digest.entry(component_digest.clone()) {
+            hashbrown::hash_map::Entry::Occupied(occupied) => {
+                let existing = occupied.get();
+                assert_eq!(
+                    component_type_by_digest.get(&component_digest),
+                    Some(&component_type),
+                    "component digest reused across different component types"
+                );
+                assert_eq!(
+                    existing.imports, imports,
+                    "component digest reused with different imports"
+                );
+                assert_eq!(
+                    existing.exports, exports,
+                    "component digest reused with different exports"
+                );
+                assert_eq!(
+                    existing.wit, component.wit,
+                    "component digest reused with different WIT"
+                );
+                assert_eq!(
+                    existing.wit_origin, wit_origin,
+                    "component digest reused with different WIT origins"
+                );
+            }
+            hashbrown::hash_map::Entry::Vacant(vacant) => {
+                component_type_by_digest.insert(component_digest.clone(), component_type);
+                vacant.insert(ComponentMetadataRecord {
+                    component_digest: component_digest.clone(),
+                    imports,
+                    exports,
+                    wit: component.wit.clone(),
+                    wit_origin,
+                });
+            }
+        }
+        deployment_components.push(DeploymentComponentRecord {
+            deployment_id,
+            component_name: component.component_id.name,
+            component_digest: component.component_id.component_digest,
+            component_type,
+        });
+    }
+    (
+        metadata_by_digest.into_values().collect(),
+        deployment_components,
+    )
+}
+
+pub(crate) async fn persist_deployment_component_metadata(
+    conn: &dyn DbExternalApi,
+    deployment_id: DeploymentId,
+    component_registry_ro: &ComponentConfigRegistryRO,
+) -> anyhow::Result<()> {
+    let (component_metadata, deployment_components) =
+        build_component_metadata_records(deployment_id, component_registry_ro);
+    conn.upsert_component_metadata(component_metadata)
+        .await
+        .context("cannot insert component metadata")?;
+    conn.insert_deployment_components(deployment_id, deployment_components)
+        .await
+        .context("cannot insert deployment components")?;
+    Ok(())
+}
+
 /// Shared logic for submitting a deployment (used by both gRPC and web API).
 /// Parses, verifies, and inserts the deployment record.
 #[instrument(skip_all)]
@@ -1354,6 +1514,13 @@ pub(crate) async fn submit_deployment(
         created_by,
         config_json: canonical_config,
     })
+    .await?;
+
+    persist_deployment_component_metadata(
+        conn.as_ref(),
+        deployment_id,
+        &server_compiled.component_registry_ro,
+    )
     .await?;
 
     upsert_backtrace_sources(conn.as_ref(), &server_compiled).await;
@@ -1870,7 +2037,7 @@ async fn start_http_servers(
 }
 
 #[derive(Debug)]
-struct ConfigVerified {
+pub(crate) struct DeploymentVerified {
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_exec: Vec<ActivityExecConfigVerified>,
@@ -1886,7 +2053,92 @@ struct ConfigVerified {
     fuel: Option<u64>,
 }
 
-impl ConfigVerified {
+impl DeploymentVerified {
+    fn validate_component_digests(&self) -> Result<(), anyhow::Error> {
+        fn record_component_ids<'a>(
+            component_ids_by_digest: &mut HashMap<ComponentDigest, ComponentId>,
+            component_ids: impl IntoIterator<Item = &'a ComponentId>,
+        ) -> Result<(), anyhow::Error> {
+            for component_id in component_ids {
+                if let Some(existing) = component_ids_by_digest
+                    .insert(component_id.component_digest.clone(), component_id.clone())
+                    && existing.component_type != component_id.component_type
+                {
+                    bail!(
+                        "component digest `{}` is shared between component types `{}` ({}) and `{}` ({})",
+                        component_id.component_digest,
+                        existing.component_type,
+                        existing.name,
+                        component_id.component_type,
+                        component_id.name,
+                    );
+                }
+            }
+            Ok(())
+        }
+
+        let mut component_ids_by_digest = HashMap::<ComponentDigest, ComponentId>::new();
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.activities_wasm
+                .iter()
+                .map(ActivityWasmConfigVerified::component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.activities_js
+                .iter()
+                .map(ActivityJsConfigVerified::component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.activities_exec
+                .iter()
+                .map(ActivityExecConfigVerified::component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.activities_stub_ext
+                .iter()
+                .map(|activity| &activity.component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.activities_stub_ext_inline
+                .iter()
+                .map(|activity| &activity.component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.workflows
+                .iter()
+                .map(WorkflowConfigVerified::component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.workflows_js
+                .iter()
+                .map(WorkflowJsConfigVerified::component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.webhooks_wasm_by_names
+                .values()
+                .map(|webhook| &webhook.component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.webhooks_js_by_names
+                .values()
+                .map(|webhook| &webhook.component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.crons.iter().map(|cron| &cron.component_id),
+        )?;
+        Ok(())
+    }
+
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
@@ -1901,7 +2153,7 @@ impl ConfigVerified {
         termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
         api_addr_if_webui_enabled: Option<String>,
-    ) -> Result<ConfigVerified, anyhow::Error> {
+    ) -> Result<DeploymentVerified, anyhow::Error> {
         trace!("Using deployment toml: {deployment:#?}");
         // Check uniqueness of http_server names.
         if http_servers.len()
@@ -2215,7 +2467,7 @@ impl ConfigVerified {
                     })?);
                 }
 
-                Ok(ConfigVerified {
+                let deployment_verified = DeploymentVerified {
                     activities_wasm,
                     activities_js: activities_js_verified,
                     activities_exec: activities_exec_verified,
@@ -2229,7 +2481,9 @@ impl ConfigVerified {
                     http_servers_to_webhook_names,
                     global_backtrace_persist,
                     fuel
-                })
+                };
+                deployment_verified.validate_component_digests()?;
+                Ok(deployment_verified)
             },
             _ = termination_watcher.changed() => {
                 warn!("Received SIGINT, canceling while resolving the WASM files");
@@ -3473,8 +3727,9 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{
-            ConfigVerified, PrepareDirsParams, ServerCompiledLinked, ServerVerified, VerifyParams,
-            compile_activity_inline, create_engines, prepare_dirs,
+            DeploymentVerified, PrepareDirsParams, ServerCompiledLinked, ServerVerified,
+            VerifyParams, compile_activity_inline, create_engines, deployment_verify_config,
+            prepare_dirs,
         },
         config::config_holder::{ConfigHolder, load_deployment_canonical},
     };
@@ -3556,7 +3811,7 @@ mod tests {
         let webui_enabled = None;
 
         // Verify deployment
-        let config = Box::pin(ConfigVerified::fetch_and_verify_all(
+        let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
             deployment,
             server_verified.http_servers,
             prepared_dirs.wasm_cache_dir.clone(),
@@ -3573,7 +3828,7 @@ mod tests {
 
         let _compiled_and_linked = ServerCompiledLinked::new(
             DeploymentId::generate(),
-            config,
+            deployment_verified,
             server_verified.launch,
             &mut termination_watcher,
             params.suppress_type_checking_errors,
@@ -3581,6 +3836,54 @@ mod tests {
         )
         .await?;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deployment_verify_rejects_digest_shared_across_component_types()
+    -> Result<(), anyhow::Error> {
+        test_utils::set_up();
+
+        let workspace = get_workspace_dir();
+        let project_dirs = crate::project_dirs();
+        let base_dirs = BaseDirs::new();
+        let config_holder = ConfigHolder::new(
+            project_dirs,
+            base_dirs,
+            Some(workspace.join("server-sqlite.toml")),
+        )?;
+        let config = config_holder.load_config().await?;
+
+        let mut deployment =
+            load_deployment_canonical(&workspace.join("obelisk-testing-wasm-local.toml")).await?;
+        let shared_digest: ComponentDigest =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .parse()
+                .unwrap();
+        deployment.activities_wasm[0].component_digest = Some(shared_digest.clone());
+        deployment.workflows[0].component_digest = Some(shared_digest);
+
+        let prepared_dirs = prepare_dirs(
+            &config,
+            &PrepareDirsParams::default(),
+            &config_holder.path_prefixes,
+        )
+        .await?;
+
+        let (_termination_sender, mut termination_watcher) = watch::channel(());
+        let engines = create_engines(&config, &prepared_dirs)?;
+        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let err = deployment_verify_config(
+            &server_verified,
+            &prepared_dirs,
+            deployment,
+            VerifyParams::default(),
+            &mut termination_watcher,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("shared between component types"));
         Ok(())
     }
 }

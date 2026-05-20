@@ -8,10 +8,11 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
-        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
-        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentRecord, DeploymentState,
+        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
+        ComponentMetadataRecord, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
+        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
+        DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
+        DeploymentComponentDetail, DeploymentComponentRecord, DeploymentRecord, DeploymentState,
         DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
         ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
@@ -311,6 +312,42 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
         config_json: get(row, "config_json")?,
         obelisk_version: get(row, "obelisk_version")?,
         created_by: get(row, "created_by")?,
+    })
+}
+
+fn deployment_component_detail_from_pg_row(
+    row: &Row,
+) -> Result<DeploymentComponentDetail, DbErrorRead> {
+    let component_name: String = get(row, "component_name")?;
+    let component_type: ComponentType =
+        get::<String, _>(row, "component_type")?
+            .parse()
+            .map_err(|err| {
+                DbErrorRead::Generic(consistency_db_err(format!("invalid component_type: {err}")))
+            })?;
+    let component_digest = ComponentDigest(Digest(
+        get::<Vec<u8>, _>(row, "component_digest")?
+            .try_into()
+            .map_err(|_| {
+                DbErrorRead::Generic(consistency_db_err("invalid component_digest length"))
+            })?,
+    ));
+    let component_id = ComponentId::new(
+        component_type,
+        StrVariant::from(component_name),
+        component_digest,
+    )
+    .map_err(|err| DbErrorRead::Generic(consistency_db_err(err.to_string())))?;
+    let imports =
+        get::<Json<Vec<concepts::storage::PersistedFunctionMetadata>>, _>(row, "imports_json")?.0;
+    let exports =
+        get::<Json<Vec<concepts::storage::PersistedFunctionMetadata>>, _>(row, "exports_json")?.0;
+    let wit: String = get(row, "wit")?;
+    Ok(DeploymentComponentDetail {
+        component_id,
+        imports,
+        exports,
+        wit,
     })
 }
 
@@ -4003,6 +4040,108 @@ impl DbExternalApi for PostgresConnection {
                 Ok(None)
             }
         }
+    }
+
+    #[instrument(skip_all)]
+    async fn upsert_component_metadata(
+        &self,
+        records: Vec<ComponentMetadataRecord>,
+    ) -> Result<(), DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        for record in records {
+            tx.execute(
+                "INSERT INTO t_component_metadata \
+                 (component_digest, imports_json, exports_json, wit, wit_origin) \
+                 VALUES ($1, $2, $3, $4, $5) \
+                 ON CONFLICT (component_digest) DO NOTHING",
+                &[
+                    &record.component_digest.as_slice(),
+                    &Json(&record.imports),
+                    &Json(&record.exports),
+                    &record.wit,
+                    &record.wit_origin,
+                ],
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn insert_deployment_components(
+        &self,
+        deployment_id: DeploymentId,
+        records: Vec<DeploymentComponentRecord>,
+    ) -> Result<(), DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        for record in records {
+            debug_assert_eq!(record.deployment_id, deployment_id);
+            tx.execute(
+                "INSERT INTO t_deployment_component \
+                 (deployment_id, component_name, component_type, component_digest) \
+                 VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (deployment_id, component_name) DO NOTHING",
+                &[
+                    &deployment_id.to_string(),
+                    &record.component_name.to_string(),
+                    &record.component_type.to_string(),
+                    &record.component_digest.as_slice(),
+                ],
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn list_deployment_components(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<DeploymentComponentDetail>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let rows = tx
+            .query(
+                "SELECT dc.component_name, dc.component_type, dc.component_digest, \
+                        cm.imports_json, cm.exports_json, cm.wit \
+                 FROM t_deployment_component dc \
+                 JOIN t_component_metadata cm ON dc.component_digest = cm.component_digest \
+                 WHERE dc.deployment_id = $1 \
+                 ORDER BY dc.component_type, dc.component_name",
+                &[&deployment_id.to_string()],
+            )
+            .await?;
+        tx.commit().await?;
+        rows.iter()
+            .map(deployment_component_detail_from_pg_row)
+            .collect()
+    }
+
+    #[instrument(skip_all)]
+    async fn get_deployment_component_wit(
+        &self,
+        deployment_id: DeploymentId,
+        component_digest: &ComponentDigest,
+    ) -> Result<Option<String>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let row = tx
+            .query_opt(
+                "SELECT cm.wit \
+                 FROM t_deployment_component dc \
+                 JOIN t_component_metadata cm ON dc.component_digest = cm.component_digest \
+                 WHERE dc.deployment_id = $1 AND dc.component_digest = $2 \
+                 LIMIT 1",
+                &[&deployment_id.to_string(), &component_digest.as_slice()],
+            )
+            .await?;
+        tx.commit().await?;
+        row.map(|row| get::<String, _>(&row, "wit").map_err(DbErrorRead::Generic))
+            .transpose()
     }
 
     #[instrument(skip(self))]

@@ -5,7 +5,9 @@ use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
 use crate::FinishedExecutionError;
+use crate::FunctionExtension;
 use crate::FunctionFqn;
+use crate::FunctionMetadata;
 use crate::JoinSetId;
 use crate::Params;
 use crate::StrVariant;
@@ -1295,6 +1297,32 @@ pub trait DbExternalApi: DbConnection {
         file: &str,
     ) -> Result<Option<String>, DbErrorRead>;
 
+    /// Insert or reuse normalized component metadata rows.
+    async fn upsert_component_metadata(
+        &self,
+        records: Vec<ComponentMetadataRecord>,
+    ) -> Result<(), DbErrorWrite>;
+
+    /// Insert deployment-local component bindings for a deployment.
+    async fn insert_deployment_components(
+        &self,
+        deployment_id: DeploymentId,
+        records: Vec<DeploymentComponentRecord>,
+    ) -> Result<(), DbErrorWrite>;
+
+    /// List all components visible in a deployment, including persisted imports, exports and WIT.
+    async fn list_deployment_components(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<DeploymentComponentDetail>, DbErrorRead>;
+
+    /// Get the WIT for a component digest scoped to a deployment.
+    async fn get_deployment_component_wit(
+        &self,
+        deployment_id: DeploymentId,
+        component_digest: &ComponentDigest,
+    ) -> Result<Option<String>, DbErrorRead>;
+
     /// Returns executions sorted in descending order.
     async fn list_executions(
         &self,
@@ -1480,9 +1508,74 @@ pub struct DeploymentRecord {
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
     pub status: DeploymentStatus,
-    pub config_json: String,
+    pub config_json: String, // Serialized `DeploymentCanonical`
     pub obelisk_version: String,
     pub created_by: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComponentMetadataRecord {
+    pub component_digest: ComponentDigest,
+    pub imports: Vec<PersistedFunctionMetadata>,
+    pub exports: Vec<PersistedFunctionMetadata>,
+    pub wit: String,
+    pub wit_origin: String,
+}
+
+/// Relation between a deployment and its components
+#[derive(Debug, Clone)]
+pub struct DeploymentComponentRecord {
+    pub deployment_id: DeploymentId,
+    pub component_name: StrVariant,
+    pub component_digest: ComponentDigest,
+    pub component_type: ComponentType,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeploymentComponentDetail {
+    pub component_id: ComponentId,
+    pub imports: Vec<PersistedFunctionMetadata>,
+    pub exports: Vec<PersistedFunctionMetadata>,
+    pub wit: String,
+}
+
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
+pub struct PersistedFunctionMetadata {
+    pub ffqn: FunctionFqn,
+    pub parameter_types: Vec<PersistedParameterType>,
+    pub return_type: String,
+    pub extension: Option<FunctionExtension>,
+    pub submittable: bool,
+}
+
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
+pub struct PersistedParameterType {
+    pub name: String,
+    pub wit_type: String,
+}
+
+impl From<FunctionMetadata> for PersistedFunctionMetadata {
+    fn from(value: FunctionMetadata) -> Self {
+        PersistedFunctionMetadata {
+            ffqn: value.ffqn,
+            parameter_types: value
+                .parameter_types
+                .0
+                .into_iter()
+                .map(|param| PersistedParameterType {
+                    name: param.name.to_string(),
+                    wit_type: param.wit_type.to_string(),
+                })
+                .collect(),
+            return_type: value.return_type.wit_type().to_string(),
+            extension: value.extension,
+            submittable: value.submittable,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -2438,6 +2531,7 @@ pub struct DbStorageSchema {
     pub pending_state: PendingState,
     pub join_set_response: JoinSetResponse,
     pub wasm_backtrace: WasmBacktrace,
+    pub persisted_function_metadata: PersistedFunctionMetadata,
 }
 
 #[cfg(test)]

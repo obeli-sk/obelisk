@@ -708,15 +708,70 @@ impl TestServer {
     }
 
     async fn list_components(&self) -> Value {
-        self.client
-            .get(format!("{}/v1/components", self.base_url))
+        self.list_components_for_deployment(None).await
+    }
+
+    async fn list_components_for_deployment(&self, deployment_id: Option<DeploymentId>) -> Value {
+        let url = match deployment_id {
+            Some(deployment_id) => format!(
+                "{}/v1/components?deployment_id={deployment_id}",
+                self.base_url
+            ),
+            None => format!("{}/v1/components", self.base_url),
+        };
+        let resp = self
+            .client
+            .get(url)
             .header("Accept", "application/json")
             .send()
             .await
-            .expect("components request failed")
-            .json()
+            .expect("components request failed");
+        let status = resp.status();
+        let body = resp.text().await.expect("components body read failed");
+        assert!(
+            status.is_success(),
+            "components request failed: {status} - {body}"
+        );
+        serde_json::from_str(&body).expect("components parse failed")
+    }
+
+    async fn grpc_list_components(
+        &self,
+        deployment_id: Option<DeploymentId>,
+    ) -> grpc::grpc_gen::ListComponentsResponse {
+        let mut fn_client =
+            FunctionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        fn_client
+            .list_components(ListComponentsRequest {
+                function_name: None,
+                component_digest: None,
+                extensions: false,
+                deployment_id: deployment_id.map(|deployment_id| GrpcDeploymentId {
+                    id: deployment_id.to_string(),
+                }),
+            })
             .await
-            .expect("components parse failed")
+            .unwrap()
+            .into_inner()
+    }
+
+    async fn submit_modified_deployment(
+        &self,
+        mutate: impl FnOnce(&mut DeploymentCanonical),
+    ) -> DeploymentId {
+        let pool = SqlitePool::new(&self.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.external_api_conn().await.unwrap();
+        let active = conn.get_active_deployment().await.unwrap().unwrap();
+        pool.close().await;
+        let mut new_deployment: DeploymentCanonical =
+            serde_json::from_str(&active.config_json).unwrap();
+        mutate(&mut new_deployment);
+        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
+        self.webapi_submit_deployment(&new_config_json).await
     }
 
     async fn list_executions(&self) -> Value {
@@ -1320,12 +1375,239 @@ async fn list_components() {
 }
 
 #[tokio::test]
+async fn list_components_webapi_by_explicit_deployment_id() {
+    let server = TestServer::start(test_addr!(40_100)).await;
+    const NEW_STUB_NAME: &str = "explicit_deployment_stub";
+
+    let second_deployment_id = server
+        .submit_modified_deployment(|new_deployment| {
+            new_deployment
+                .activities_stub
+                .push(ActivityStubComponentConfigCanonical::Inline(
+                    ActivityStubExtInlineConfigCanonical {
+                        name: ConfigName::new(concepts::StrVariant::from(NEW_STUB_NAME)).unwrap(),
+                        ffqn: "testing:integration/stubs.explicit-deployment-stub"
+                            .parse()
+                            .unwrap(),
+                        params: Some(vec![]),
+                        return_type: Some("result<string, string>".to_string()),
+                    },
+                ));
+        })
+        .await;
+
+    let current_components = server.list_components().await;
+    assert!(
+        !current_components
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|component| component["component_id"]["name"] == NEW_STUB_NAME),
+        "inactive deployment component must not appear without explicit deployment_id"
+    );
+
+    let explicit_components = server
+        .list_components_for_deployment(Some(second_deployment_id))
+        .await;
+    assert!(
+        explicit_components
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|component| component["component_id"]["name"] == NEW_STUB_NAME),
+        "explicit deployment_id must return the submitted deployment's components"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn list_components_webapi_filters_with_explicit_deployment_id() {
+    let server = TestServer::start(test_addr!(40_101)).await;
+    const NEW_STUB_NAME: &str = "explicit_deployment_stub_filters";
+
+    let second_deployment_id = server
+        .submit_modified_deployment(|new_deployment| {
+            new_deployment
+                .activities_stub
+                .push(ActivityStubComponentConfigCanonical::Inline(
+                    ActivityStubExtInlineConfigCanonical {
+                        name: ConfigName::new(concepts::StrVariant::from(NEW_STUB_NAME)).unwrap(),
+                        ffqn: "testing:integration/stubs.explicit-deployment-filters"
+                            .parse()
+                            .unwrap(),
+                        params: Some(vec![]),
+                        return_type: Some("result<string, string>".to_string()),
+                    },
+                ));
+        })
+        .await;
+
+    let explicit_components = server
+        .list_components_for_deployment(Some(second_deployment_id))
+        .await;
+    let target = explicit_components
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|component| component["component_id"]["name"] == NEW_STUB_NAME)
+        .unwrap();
+    let digest = target["component_id"]["component_digest"].as_str().unwrap();
+
+    let filtered: Value = server
+        .client
+        .get(format!(
+            "{}/v1/components?deployment_id={}&name={}&type=activity_stub&digest={}&exports=true&submittable=false",
+            server.base_url, second_deployment_id, NEW_STUB_NAME, digest
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let filtered = filtered.as_array().unwrap();
+    assert_eq!(1, filtered.len());
+    assert_eq!(NEW_STUB_NAME, filtered[0]["component_id"]["name"]);
+    assert_eq!(
+        "activity_stub",
+        filtered[0]["component_id"]["component_type"]
+    );
+    assert_eq!(digest, filtered[0]["component_id"]["component_digest"]);
+    assert_eq!(1, filtered[0]["exports"].as_array().unwrap().len());
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn list_functions() {
     let server = TestServer::start(test_addr!(3)).await;
 
     let functions = server.list_functions().await;
     let functions = sanitize_json(&functions);
     insta::assert_json_snapshot!("list_functions", functions);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn list_components_grpc_by_explicit_deployment_id() {
+    let server = TestServer::start(test_addr!(40_102)).await;
+    const NEW_STUB_NAME: &str = "explicit_deployment_stub_grpc";
+    const NEW_STUB_FFQN: &str = "testing:integration/stubs.explicit-deployment-grpc";
+
+    let second_deployment_id = server
+        .submit_modified_deployment(|new_deployment| {
+            new_deployment
+                .activities_stub
+                .push(ActivityStubComponentConfigCanonical::Inline(
+                    ActivityStubExtInlineConfigCanonical {
+                        name: ConfigName::new(concepts::StrVariant::from(NEW_STUB_NAME)).unwrap(),
+                        ffqn: NEW_STUB_FFQN.parse().unwrap(),
+                        params: Some(vec![]),
+                        return_type: Some("result<string, string>".to_string()),
+                    },
+                ));
+        })
+        .await;
+
+    let current_components = server.grpc_list_components(None).await;
+    assert!(
+        !current_components.components.iter().any(|component| {
+            component.exports.iter().any(|export| {
+                export.function_name.as_ref().is_some_and(|function_name| {
+                    function_name.function_name == "explicit-deployment-grpc"
+                })
+            })
+        }),
+        "inactive deployment component must not appear without explicit deployment_id"
+    );
+
+    let explicit_components = server
+        .grpc_list_components(Some(second_deployment_id))
+        .await;
+    assert!(
+        explicit_components.components.iter().any(|component| {
+            component
+                .component_id
+                .as_ref()
+                .is_some_and(|component_id| component_id.name == NEW_STUB_NAME)
+        }),
+        "explicit deployment_id must return the submitted deployment's components"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn list_components_grpc_filters_with_explicit_deployment_id() {
+    let server = TestServer::start(test_addr!(40_103)).await;
+    const NEW_STUB_NAME: &str = "explicit_deployment_stub_grpc_filters";
+    const NEW_STUB_FFQN: &str = "testing:integration/stubs.explicit-deployment-grpc-filters";
+
+    let second_deployment_id = server
+        .submit_modified_deployment(|new_deployment| {
+            new_deployment
+                .activities_stub
+                .push(ActivityStubComponentConfigCanonical::Inline(
+                    ActivityStubExtInlineConfigCanonical {
+                        name: ConfigName::new(concepts::StrVariant::from(NEW_STUB_NAME)).unwrap(),
+                        ffqn: NEW_STUB_FFQN.parse().unwrap(),
+                        params: Some(vec![]),
+                        return_type: Some("result<string, string>".to_string()),
+                    },
+                ));
+        })
+        .await;
+
+    let explicit_components = server
+        .grpc_list_components(Some(second_deployment_id))
+        .await;
+    let target = explicit_components
+        .components
+        .iter()
+        .find(|component| {
+            component
+                .component_id
+                .as_ref()
+                .is_some_and(|component_id| component_id.name == NEW_STUB_NAME)
+        })
+        .unwrap();
+    let digest = target
+        .component_id
+        .as_ref()
+        .unwrap()
+        .digest
+        .as_ref()
+        .unwrap()
+        .digest
+        .clone();
+
+    let mut fn_client = FunctionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap();
+    let filtered = fn_client
+        .list_components(ListComponentsRequest {
+            function_name: Some(grpc::grpc_gen::FunctionName::from(
+                &NEW_STUB_FFQN.parse::<FunctionFqn>().unwrap(),
+            )),
+            component_digest: Some(grpc::grpc_gen::ContentDigest { digest }),
+            extensions: false,
+            deployment_id: Some(GrpcDeploymentId {
+                id: second_deployment_id.to_string(),
+            }),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(1, filtered.components.len());
+    assert_eq!(
+        NEW_STUB_NAME,
+        filtered.components[0].component_id.as_ref().unwrap().name
+    );
+
     server.shutdown().await;
 }
 
@@ -2316,6 +2598,7 @@ async fn hot_redeploy_registry_impl(server: &TestServer, deploy_client: &TestDep
                 function_name: None,
                 component_digest: None,
                 extensions: false,
+                deployment_id: None,
             })
             .await
             .unwrap()

@@ -147,7 +147,7 @@ expression: redact_replay(&replay)
                 },
                 {
                   "module": "test_programs_fibo_workflow.wasm",
-                  "func_name": "test_programs_fibo_workflow::generated::testing::fibo_obelisk_ext::fibo::fibo_await_next::h0e8d9ba882be7d50",
+                  "func_name": "test_programs_fibo_workflow::generated::testing::fibo_obelisk_ext::fibo::fibo_await_next::h<REDACTED>",
                   "symbols": [
                     {
                       "func_name": "fibo_await_next",

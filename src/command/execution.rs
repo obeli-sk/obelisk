@@ -263,6 +263,7 @@ pub(crate) async fn submit(
                     function_name: None,
                     component_digest: None,
                     extensions: false,
+                    deployment_id: None,
                 }))
                 .await?
                 .into_inner()
@@ -1442,6 +1443,7 @@ async fn upgrade(
             function_name: Some(grpc_gen::FunctionName::from(&ffqn)),
             component_digest: None,
             extensions: false,
+            deployment_id: None,
         }))
         .await
         .context("failed to list components")?

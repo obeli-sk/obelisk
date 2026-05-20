@@ -2,16 +2,17 @@ use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ExecutionId, FunctionFqn, JoinSetId, StrVariant,
-    SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ExecutionId, FunctionFqn, JoinSetId,
+    StrVariant, SupportedFunctionReturnValue,
     component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
-        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CreateRequest,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
-        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentRecord, DeploymentState,
+        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
+        ComponentMetadataRecord, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
+        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
+        DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
+        DeploymentComponentDetail, DeploymentComponentRecord, DeploymentRecord, DeploymentState,
         DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
         ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
@@ -427,6 +428,48 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
         config_json: row.get("config_json")?,
         obelisk_version: row.get("obelisk_version")?,
         created_by: row.get("created_by")?,
+    })
+}
+
+fn deployment_component_detail_from_row(
+    row: &Row<'_>,
+) -> Result<DeploymentComponentDetail, DbErrorGeneric> {
+    let component_name: String = row
+        .get("component_name")
+        .map_err(|err| consistency_db_err(format!("invalid component_name: {err}")))?;
+    let component_type: String = row
+        .get("component_type")
+        .map_err(|err| consistency_db_err(format!("invalid component_type: {err}")))?;
+    let component_type = component_type
+        .parse::<ComponentType>()
+        .map_err(|err| consistency_db_err(format!("invalid component_type: {err}")))?;
+    let component_digest: ComponentDigest = row
+        .get("component_digest")
+        .map_err(|err| consistency_db_err(format!("invalid component_digest: {err}")))?;
+    let component_id = ComponentId::new(
+        component_type,
+        StrVariant::from(component_name),
+        component_digest,
+    )
+    .map_err(|err| consistency_db_err(err.to_string()))?;
+    let imports: String = row
+        .get("imports_json")
+        .map_err(|err| consistency_db_err(format!("invalid imports_json: {err}")))?;
+    let imports = serde_json::from_str(&imports)
+        .map_err(|err| consistency_db_err(format!("invalid imports_json: {err}")))?;
+    let exports: String = row
+        .get("exports_json")
+        .map_err(|err| consistency_db_err(format!("invalid exports_json: {err}")))?;
+    let exports = serde_json::from_str(&exports)
+        .map_err(|err| consistency_db_err(format!("invalid exports_json: {err}")))?;
+    let wit: String = row
+        .get("wit")
+        .map_err(|err| consistency_db_err(format!("invalid wit: {err}")))?;
+    Ok(DeploymentComponentDetail {
+        component_id,
+        imports,
+        exports,
+        wit,
     })
 }
 
@@ -3872,6 +3915,135 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::Other,
             "get_source_file",
+        )
+        .await
+    }
+
+    #[instrument(skip_all)]
+    async fn upsert_component_metadata(
+        &self,
+        records: Vec<ComponentMetadataRecord>,
+    ) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let mut stmt = tx.prepare(
+                    "INSERT OR IGNORE INTO t_component_metadata \
+                     (component_digest, imports_json, exports_json, wit, wit_origin) \
+                     VALUES (:component_digest, :imports_json, :exports_json, :wit, :wit_origin)",
+                )?;
+                for record in &records {
+                    let imports_json = serde_json::to_string(&record.imports)
+                        .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
+                    let exports_json = serde_json::to_string(&record.exports)
+                        .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
+                    stmt.execute(named_params! {
+                        ":component_digest": record.component_digest.clone(),
+                        ":imports_json": imports_json,
+                        ":exports_json": exports_json,
+                        ":wit": record.wit.clone(),
+                        ":wit_origin": record.wit_origin.clone(),
+                    })?;
+                }
+                Ok(())
+            },
+            TxType::MultipleWrites,
+            "upsert_component_metadata",
+        )
+        .await
+    }
+
+    #[instrument(skip_all)]
+    async fn insert_deployment_components(
+        &self,
+        deployment_id: DeploymentId,
+        records: Vec<DeploymentComponentRecord>,
+    ) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let mut stmt = tx.prepare(
+                    "INSERT OR IGNORE INTO t_deployment_component \
+                     (deployment_id, component_name, component_type, component_digest) \
+                     VALUES (:deployment_id, :component_name, :component_type, :component_digest)",
+                )?;
+                for record in &records {
+                    debug_assert_eq!(record.deployment_id, deployment_id);
+                    stmt.execute(named_params! {
+                        ":deployment_id": deployment_id.to_string(),
+                        ":component_name": record.component_name.to_string(),
+                        ":component_type": record.component_type.to_string(),
+                        ":component_digest": record.component_digest.clone(),
+                    })?;
+                }
+                Ok(())
+            },
+            TxType::MultipleWrites,
+            "insert_deployment_components",
+        )
+        .await
+    }
+
+    #[instrument(skip_all)]
+    async fn list_deployment_components(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<DeploymentComponentDetail>, DbErrorRead> {
+        self.transaction(
+            move |tx| {
+                let mut stmt = tx.prepare(
+                    "SELECT dc.component_name, dc.component_type, dc.component_digest, \
+                            cm.imports_json, cm.exports_json, cm.wit \
+                     FROM t_deployment_component dc \
+                     JOIN t_component_metadata cm ON dc.component_digest = cm.component_digest \
+                     WHERE dc.deployment_id = :deployment_id \
+                     ORDER BY dc.component_type, dc.component_name",
+                )?;
+                let rows = stmt
+                    .query_map(
+                        named_params! { ":deployment_id": deployment_id.to_string() },
+                        |row| {
+                            deployment_component_detail_from_row(row).map_err(|err| {
+                                rusqlite::Error::ToSqlConversionFailure(Box::new(err))
+                            })
+                        },
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            },
+            TxType::Other,
+            "list_deployment_components",
+        )
+        .await
+    }
+
+    #[instrument(skip_all)]
+    async fn get_deployment_component_wit(
+        &self,
+        deployment_id: DeploymentId,
+        component_digest: &ComponentDigest,
+    ) -> Result<Option<String>, DbErrorRead> {
+        let component_digest = component_digest.clone();
+        self.transaction(
+            move |tx| {
+                tx.prepare(
+                    "SELECT cm.wit \
+                     FROM t_deployment_component dc \
+                     JOIN t_component_metadata cm ON dc.component_digest = cm.component_digest \
+                     WHERE dc.deployment_id = :deployment_id \
+                       AND dc.component_digest = :component_digest \
+                     LIMIT 1",
+                )?
+                .query_row(
+                    named_params! {
+                        ":deployment_id": deployment_id.to_string(),
+                        ":component_digest": component_digest,
+                    },
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(DbErrorRead::from)
+            },
+            TxType::Other,
+            "get_deployment_component_wit",
         )
         .await
     }
