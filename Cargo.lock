@@ -4312,7 +4312,7 @@ dependencies = [
 [[package]]
 name = "refinery"
 version = "0.9.0"
-source = "git+https://github.com/tomasol/refinery.git?rev=3b5a6eb7903e6d5d9ebce0fd17b518f9d1a5c1d2#3b5a6eb7903e6d5d9ebce0fd17b518f9d1a5c1d2"
+source = "git+https://github.com/rust-db/refinery.git?rev=14354f54c51a07c9615a78d6432861e0ef7a2db3#14354f54c51a07c9615a78d6432861e0ef7a2db3"
 dependencies = [
  "refinery-core",
  "refinery-macros",
@@ -4321,7 +4321,7 @@ dependencies = [
 [[package]]
 name = "refinery-core"
 version = "0.9.0"
-source = "git+https://github.com/tomasol/refinery.git?rev=3b5a6eb7903e6d5d9ebce0fd17b518f9d1a5c1d2#3b5a6eb7903e6d5d9ebce0fd17b518f9d1a5c1d2"
+source = "git+https://github.com/rust-db/refinery.git?rev=14354f54c51a07c9615a78d6432861e0ef7a2db3#14354f54c51a07c9615a78d6432861e0ef7a2db3"
 dependencies = [
  "async-trait",
  "cfg-if",
@@ -4330,14 +4330,12 @@ dependencies = [
  "rusqlite",
  "rustls",
  "rustls-native-certs",
- "serde",
  "siphasher",
  "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
- "toml 1.1.2+spec-1.1.0",
  "url",
  "walkdir",
 ]
@@ -4345,7 +4343,7 @@ dependencies = [
 [[package]]
 name = "refinery-macros"
 version = "0.9.0"
-source = "git+https://github.com/tomasol/refinery.git?rev=3b5a6eb7903e6d5d9ebce0fd17b518f9d1a5c1d2#3b5a6eb7903e6d5d9ebce0fd17b518f9d1a5c1d2"
+source = "git+https://github.com/rust-db/refinery.git?rev=14354f54c51a07c9615a78d6432861e0ef7a2db3#14354f54c51a07c9615a78d6432861e0ef7a2db3"
 dependencies = [
  "proc-macro2",
  "quote",
