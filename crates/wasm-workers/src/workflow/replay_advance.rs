@@ -52,19 +52,19 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
             execution_id,
             version,
             req,
-            backtraces,
+            backtraces: _,
         } => CapturedDbWrite::Append {
             execution_id,
             version,
             req: normalize_append_request_for_matching(req),
-            backtraces,
+            backtraces: vec![],
         },
         CapturedDbWrite::AppendBatch {
             current_time: _,
             batch,
             execution_id,
             version,
-            backtraces,
+            backtraces: _,
         } => CapturedDbWrite::AppendBatch {
             current_time: DateTime::UNIX_EPOCH,
             batch: batch
@@ -73,7 +73,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
                 .collect(),
             execution_id,
             version,
-            backtraces,
+            backtraces: vec![],
         },
         CapturedDbWrite::AppendBatchCreateNewExecution {
             current_time: _,
@@ -81,7 +81,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
             execution_id,
             version,
             child_req,
-            backtraces,
+            backtraces: _,
         } => CapturedDbWrite::AppendBatchCreateNewExecution {
             current_time: DateTime::UNIX_EPOCH,
             batch: batch
@@ -94,13 +94,13 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
                 .into_iter()
                 .map(normalize_create_request_for_matching)
                 .collect(),
-            backtraces,
+            backtraces: vec![],
         },
         CapturedDbWrite::AppendStubResponse {
             events,
             response,
             current_time: _,
-            backtraces,
+            backtraces: _,
         } => CapturedDbWrite::AppendStubResponse {
             events: AppendEventsToExecution {
                 execution_id: events.execution_id,
@@ -120,7 +120,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
                 result: response.result,
             },
             current_time: DateTime::UNIX_EPOCH,
-            backtraces,
+            backtraces: vec![],
         },
         CapturedDbWrite::AppendFinished {
             execution_id,
