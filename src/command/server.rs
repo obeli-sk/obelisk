@@ -289,8 +289,8 @@ pub(crate) async fn submit(
             .next()
             .expect("checked that `fn_metadata` is FunctionExtension::Schedule");
         let wast_val_with_type = json!({
+            "type": schedule_at_type_wrapper,
             "value": schedule_at,
-            "type": schedule_at_type_wrapper
         });
         let wast_val_with_type: WastValWithType = serde_json::from_value(wast_val_with_type)
             .map_err(|serde_err| {
