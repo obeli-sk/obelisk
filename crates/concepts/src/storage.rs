@@ -1539,7 +1539,7 @@ pub struct DeploymentComponentDetail {
     pub wit: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct PersistedFunctionMetadata {
     pub ffqn: FunctionFqn,
     pub parameter_types: Vec<PersistedParameterType>,
@@ -1548,7 +1548,7 @@ pub struct PersistedFunctionMetadata {
     pub submittable: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct PersistedParameterType {
     pub name: String,
     pub wit_type: String,
@@ -2527,6 +2527,7 @@ pub struct DbStorageSchema {
     pub pending_state: PendingState,
     pub join_set_response: JoinSetResponse,
     pub wasm_backtrace: WasmBacktrace,
+    pub persisted_function_metadata: PersistedFunctionMetadata,
 }
 
 #[cfg(test)]

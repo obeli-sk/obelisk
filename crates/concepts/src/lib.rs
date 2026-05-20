@@ -916,6 +916,7 @@ pub const SUFFIX_FN_GET: &str = "-get";
 
 #[derive(
     Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, strum::EnumIter,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum FunctionExtension {

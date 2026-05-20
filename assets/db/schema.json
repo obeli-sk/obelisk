@@ -15,13 +15,17 @@
     },
     "wasm_backtrace": {
       "$ref": "#/$defs/WasmBacktrace"
+    },
+    "persisted_function_metadata": {
+      "$ref": "#/$defs/PersistedFunctionMetadata"
     }
   },
   "required": [
     "execution_event",
     "pending_state",
     "join_set_response",
-    "wasm_backtrace"
+    "wasm_backtrace",
+    "persisted_function_metadata"
   ],
   "$defs": {
     "ExecutionEvent": {
@@ -1865,6 +1869,67 @@
           "minimum": 0
         }
       }
+    },
+    "PersistedFunctionMetadata": {
+      "type": "object",
+      "properties": {
+        "ffqn": {
+          "type": "string"
+        },
+        "parameter_types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PersistedParameterType"
+          }
+        },
+        "return_type": {
+          "type": "string"
+        },
+        "extension": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FunctionExtension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "submittable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ffqn",
+        "parameter_types",
+        "return_type",
+        "submittable"
+      ]
+    },
+    "PersistedParameterType": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "wit_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "wit_type"
+      ]
+    },
+    "FunctionExtension": {
+      "type": "string",
+      "enum": [
+        "submit",
+        "await_next",
+        "schedule",
+        "stub",
+        "get"
+      ]
     }
   }
 }
