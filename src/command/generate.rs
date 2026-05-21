@@ -42,10 +42,10 @@ impl Generate {
             Generate::ServerConfig {
                 json,
                 output,
-                overwrite,
+                force,
             } => {
                 let config_file =
-                    ConfigHolder::generate_default_server_config(output, overwrite).await?;
+                    ConfigHolder::generate_default_server_config(output, force).await?;
                 let result = GeneratedPathStatus {
                     path: config_file,
                     status: "generated",
@@ -56,10 +56,10 @@ impl Generate {
             Generate::Deployment {
                 json,
                 output,
-                overwrite,
+                force,
             } => {
                 let config_file =
-                    ConfigHolder::generate_default_deployment_config(output, overwrite).await?;
+                    ConfigHolder::generate_default_deployment_config(output, force).await?;
                 let result = GeneratedPathStatus {
                     path: config_file,
                     status: "generated",
@@ -89,10 +89,10 @@ impl Generate {
                 json,
                 component_type,
                 output_directory,
-                overwrite,
+                force,
             } => {
                 let results =
-                    generate_support_wits(component_type, output_directory, overwrite).await?;
+                    generate_support_wits(component_type, output_directory, force).await?;
                 print_generated_path_statuses(&results, json)?;
                 Ok(())
             }
@@ -100,7 +100,7 @@ impl Generate {
                 json,
                 deployment,
                 output_directory,
-                overwrite,
+                force,
                 skip_local,
             } => {
                 let results = generate_wit_deps(
@@ -108,7 +108,7 @@ impl Generate {
                     BaseDirs::new(),
                     deployment,
                     output_directory,
-                    overwrite,
+                    force,
                     skip_local,
                 )
                 .await?;
@@ -306,7 +306,7 @@ fn strip_header(old_content: &str) -> String {
 async fn generate_support_wits(
     component_type: ComponentType,
     output_directory: PathBuf,
-    overwrite: bool,
+    force: bool,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
     let mut results = Vec::new();
     let files = match component_type {
@@ -345,17 +345,13 @@ async fn generate_support_wits(
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .create_new(!overwrite)
+                .create_new(!force)
                 .open(&target_wit)
                 .await
                 .with_context(|| {
                     format!(
                         "cannot open {target_wit:?} for writing{}",
-                        if !overwrite {
-                            ", try using `--overwrite`"
-                        } else {
-                            ""
-                        }
+                        if !force { ", try using `--force`" } else { "" }
                     )
                 })?;
             file.write_all(contents.as_bytes())
@@ -376,7 +372,7 @@ async fn generate_wit_deps(
     base_dirs: Option<BaseDirs>,
     deployment_toml: PathBuf,
     output_directory: PathBuf,
-    overwrite: bool,
+    force: bool,
     skip_local: bool,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
     let deployment = load_deployment_validated(&deployment_toml).await?;
@@ -530,13 +526,13 @@ async fn generate_wit_deps(
             pkg_to_wit.entry(pkg_fqn).or_insert(content);
         }
     }
-    write_wit_deps(&pkg_to_wit, &output_directory, overwrite).await
+    write_wit_deps(&pkg_to_wit, &output_directory, force).await
 }
 
 async fn write_wit_deps(
     pkg_to_wit: &HashMap<PkgFqn, String>,
     output_directory: &std::path::Path,
-    overwrite: bool,
+    force: bool,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
     let mut results = Vec::new();
     for (pkg_fqn, content) in pkg_to_wit {
@@ -559,17 +555,13 @@ async fn write_wit_deps(
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .create_new(!overwrite)
+                .create_new(!force)
                 .open(&target_wit)
                 .await
                 .with_context(|| {
                     format!(
                         "cannot open {target_wit:?} for writing{}",
-                        if !overwrite {
-                            ", try using `--overwrite`"
-                        } else {
-                            ""
-                        }
+                        if !force { ", try using `--force`" } else { "" }
                     )
                 })?;
 

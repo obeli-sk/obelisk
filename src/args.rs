@@ -220,7 +220,7 @@ pub(crate) enum Generate {
         output_directory: PathBuf,
         /// Overwrite existing files in the output directory.
         #[arg(long, short)]
-        overwrite: bool,
+        force: bool,
     },
     /// Generate WIT dependency folder based on activities and workflows found in the deployment TOML.
     WitDeps {
@@ -234,7 +234,7 @@ pub(crate) enum Generate {
         output_directory: PathBuf,
         /// Overwrite existing files.
         #[arg(long, short)]
-        overwrite: bool,
+        force: bool,
         /// Skip local-path components.
         #[arg(long)]
         skip_local: bool,
@@ -248,7 +248,7 @@ pub(crate) enum Generate {
         output: Option<PathBuf>,
         /// Overwrite existing file.
         #[arg(long, short)]
-        overwrite: bool,
+        force: bool,
     },
     /// Generate a default deployment.toml.
     Deployment {
@@ -259,7 +259,7 @@ pub(crate) enum Generate {
         output: Option<PathBuf>,
         /// Overwrite existing file.
         #[arg(long, short)]
-        overwrite: bool,
+        force: bool,
     },
     /// Generate a fresh random execution ID and print it to stdout.
     ExecutionId {
