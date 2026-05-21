@@ -348,7 +348,7 @@ tonic-prost-build = "0.14.6"
 tonic-reflection = "0.14.6"
 tonic-web = "0.14.6"
 tower = "0.5.3"
-tower-http = { version = "0.6.10", features = ["trace", "cors"] }
+tower-http = { version = "0.6.11", features = ["trace", "cors"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.5"
 tracing-error = "0.2.1"
