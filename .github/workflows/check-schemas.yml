@@ -30,34 +30,10 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - name: Run `update-toml-schema.sh`
+      - name: Run `update-schemas.sh`
         run: |
-          nix develop --command scripts/update-toml-schema.sh
-          if [ -n "$(git status --porcelain assets/toml/)" ]; then
-            echo "::error::Uncommitted changes after running 'update-toml-schema.sh'"
-            exit 1
-          fi
-
-      - name: Run `update-openapi-schema.sh`
-        run: |
-          nix develop --command scripts/update-openapi-schema.sh
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::Uncommitted changes after running 'update-openapi-schema.sh'"
-            exit 1
-          fi
-
-      - name: Run `update-db-schema.sh`
-        run: |
-          nix develop --command scripts/update-db-schema.sh
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::Uncommitted changes after running 'update-db-schema.sh'"
-            exit 1
-          fi
-
-      - name: Run `update-cli-schema.sh`
-        run: |
-          nix develop --command scripts/update-cli-schema.sh
+          nix develop --command scripts/update-schemas.sh
           if [ -n "$(git status --porcelain assets/schemas/)" ]; then
-            echo "::error::Uncommitted changes after running 'update-cli-schema.sh'"
+            echo "::error::Uncommitted changes after running 'update-schemas.sh'"
             exit 1
           fi
