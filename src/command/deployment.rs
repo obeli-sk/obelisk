@@ -131,7 +131,7 @@ impl args::Deployment {
                 let mut client = get_deployment_repository_client(channel).await?;
                 let resp = client
                     .get_deployment(grpc_gen::GetDeploymentRequest {
-                        deployment_id: Some(grpc_gen::DeploymentId { id }),
+                        deployment_id: Some(grpc_gen::DeploymentId { id: id.to_string() }),
                     })
                     .await?
                     .into_inner();

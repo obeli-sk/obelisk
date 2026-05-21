@@ -154,7 +154,7 @@ pub(crate) enum Deployment {
     Show {
         /// Deployment ID
         #[arg(value_name = "ID")]
-        id: String,
+        id: DeploymentId,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
