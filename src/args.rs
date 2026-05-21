@@ -193,6 +193,12 @@ pub(crate) enum Generate {
         /// Filename to write the schema to, defaults to <stdout>.
         output: Option<PathBuf>,
     },
+    /// Generate the CLI shape in JSON format.
+    #[cfg(debug_assertions)]
+    CliSchema {
+        /// Filename to write the schema to, defaults to <stdout>.
+        output: Option<PathBuf>,
+    },
     /// Generate extension WIT files that are automatically implemented by Obelisk
     /// based on the exported interfaces of the component (e.g. `-schedule`, `-await-next` variants).
     WitExtensions {

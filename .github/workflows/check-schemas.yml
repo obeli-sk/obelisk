@@ -53,3 +53,11 @@ jobs:
             echo "::error::Uncommitted changes after running 'update-db-schema.sh'"
             exit 1
           fi
+
+      - name: Run `update-cli-schema.sh`
+        run: |
+          nix develop --command scripts/update-cli-schema.sh
+          if [ -n "$(git status --porcelain assets/schemas/)" ]; then
+            echo "::error::Uncommitted changes after running 'update-cli-schema.sh'"
+            exit 1
+          fi
