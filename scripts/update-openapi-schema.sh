@@ -3,4 +3,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-cargo run -- generate open-api-schema ./assets/openapi.json
+mkdir -p assets/schemas
+cargo run -- generate open-api-schema ./assets/schemas/openapi.json
