@@ -275,15 +275,15 @@ pub(crate) enum Generate {
     },
     /// Print a prompt context for authoring an Obelisk application with a coding agent.
     ///
-    /// Usage: obelisk generate prompt 'description of what to build' | claude
+    /// Usage: obelisk generate prompt description of what to build | claude
     ///
     /// Example:
-    ///   obelisk generate prompt 'Create a daily task that monitors the GitHub organization "obeli-sk". Fetch the list of public repositories,
-    ///     then in parallel fetch their dev-deps.txt files from the main branch. If a file exists and contains the line `obelisk someversion`,
-    ///     ensure the same version is used throughout the organization. If not, send an alert via Postmark.'
+    ///   obelisk generate prompt Create a daily task that monitors GitHub org obeli-sk | claude
+    #[command(trailing_var_arg = true)]
     Prompt {
         /// Description of the application to build.
-        description: String,
+        #[arg(trailing_var_arg = true, required = true)]
+        description: Vec<String>,
     },
 }
 
