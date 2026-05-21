@@ -2,46 +2,34 @@
 
 # Upcoming goals
 
-## feat: `generate wit-extensions` with specified interface(s)
-Allows self referential exports, also enables generating on import side.
+## Activities
+* External activity executor gRPC API, streaming connection ends on hot redeploy
+* Lock extension - define max duration, but lock is extended periodically every `lock_duration`, makes for a heartbeat.
 
-## feat: Multiple versions of a component
-dont use global registry, mock locally using imports, allow same component twice. Toml dependency routing using `requires = "auto" | ["dep1"]`
+## Security
+* Dynamic secrets loaded from Vault, missing dynamic secrets should be a warning
+* Secure API endpoint: JS webhook "around" function defined in server.toml
 
-## feat: KV host activity
-Allow using the underlying database.
-Also a conf KV backed by toml file to configure workflows.
+## Workflows
+workflow.legacy - not part of fn registry, can execute old execs without upgrades
+
+## Extend /execution/list
+ExecutionsListParams needs to be able to search by pending status (finished, !finished),
+also fetch only pending in the future / range, also in webUI. WebUI should show pending at relative to now.
+
+Add finished column to execution/list, allow sorting by created, first scheduled, finished
 
 ## feat: Retention
 Perform a cascading delete of top-level executions that finished more than a certain number of days ago.
-
-## feat: Multiple execution queues
-Allow specifying queue ID when submitting, and when configuring an executor.
-
-## feat: Keepalives for activities, extending the lock until completion
-
-## fix: Migrate logging to wasi
-Use wasi:logging/logging@0.1.0-draft
 
 ## feat: Allow setting retry config, timeouts during execution creation using an extension function
 Change `-submit` extension signature to accept a config record.
 
 ## Future ideas
 * Optional caching of activity executions with a TTL - serve cached response if parameters are the same
-* External activities gRPC API
-* External executors support - starting executions solely based on WIT exports. External executors must share write access to the sqlite database.
-* Backpressure: Limits on pending queues, or an eviction strategy, slow down on `LimitReached`
-* Labels restricting workflows/activities to executors
-* Periodic scheduling
 * [Deadline propagation](https://sre.google/sre-book/addressing-cascading-failures)
 * [Cancellation propagation](https://sre.google/sre-book/addressing-cascading-failures)
 * Queue capacity setting, adding backpressure to execution submission
-* Optional stdout,stderr persistence / forwarding
 * Smart dependency routing from a caller via an interface import to one of many components that export it.
 * Smart retries - Retry budget, disabling retries when the activity is failing certain % of requests
 * Configurable jitter added to retries
-* Workflow memory snapshots for faster replay
-* Ability to hotfix a set of workflows, with an approval system when non determinism is detected - forking the execution log
-* Webhook endpoint mappings: running a single function, translating between HTTP and WIT defined parameters and return value
-* Distributed tracing context forwarding for outgoing HTTP as well as webhooks
-* Investigate code-coverage for workflow steps
