@@ -1,0 +1,989 @@
+{
+  "name": "obelisk",
+  "about": "Obelisk: deterministic workflow engine",
+  "options": [
+    {
+      "name": "--version",
+      "short": "v",
+      "help": "Print version"
+    }
+  ],
+  "subcommands": [
+    {
+      "name": "server",
+      "about": "Run or verify the Obelisk server",
+      "subcommands": [
+        {
+          "name": "run",
+          "about": "Start the Obelisk server",
+          "options": [
+            {
+              "name": "--clean-sqlite-directory",
+              "help": "Delete the sqlite database directory before starting. Destroys all execution history"
+            },
+            {
+              "name": "--clean-cache",
+              "help": "Delete both the codegen cache and the OCI image cache before starting"
+            },
+            {
+              "name": "--clean-codegen-cache",
+              "help": "Delete only the codegen cache before starting; OCI image cache is kept"
+            },
+            {
+              "name": "--server-config",
+              "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--deployment",
+              "short": "d",
+              "help": "Path to the deployment TOML file. If provided, the deployment is inserted and activated on startup, overriding any existing Enqueued or Active deployment in the database",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--empty",
+              "help": "Start with an empty deployment, ignoring any Enqueued or Active deployment in the database. Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via gRPC"
+            },
+            {
+              "name": "--suppress-type-checking-errors",
+              "short": "s",
+              "help": "Do not fail startup when a component's imports/exports fail type checking against the current deployment"
+            }
+          ]
+        },
+        {
+          "name": "verify",
+          "about": "Read the configuration, compile the components, verify their imports and exit without starting the server",
+          "options": [
+            {
+              "name": "--clean-cache",
+              "help": "Delete both the codegen cache and the OCI image cache before verifying"
+            },
+            {
+              "name": "--clean-codegen-cache",
+              "help": "Delete only the codegen cache before verifying; OCI image cache is kept"
+            },
+            {
+              "name": "--server-config",
+              "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--deployment",
+              "short": "d",
+              "help": "Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used, falling back to the Active deployment. Errors if neither is found",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--ignore-missing-env-vars",
+              "short": "i",
+              "help": "Skip the check that every environment variable referenced by the deployment is set"
+            },
+            {
+              "name": "--suppress-type-checking-errors",
+              "short": "s",
+              "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
+            },
+            {
+              "name": "--skip-db",
+              "help": "Skip opening the sqlite database and validating its schema"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execution",
+      "about": "Submit, inspect, stub, cancel, pause, unpause, replay, or upgrade executions against a running server",
+      "subcommands": [
+        {
+          "name": "list",
+          "about": "List recent executions",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--ffqn",
+              "help": "Filter by function FFQN prefix. Accepts any prefix of a fully-qualified function name, e.g.: `namespace:`. Short `.../ifc.fn` form is not supported"
+            },
+            {
+              "name": "--execution-id",
+              "short": "e",
+              "help": "Filter by execution id prefix. Useful to find all child executions if --show-derived flag is enabled"
+            },
+            {
+              "name": "--show-derived",
+              "help": "Include child (derived) executions spawned by workflows. By default only top-level executions are shown"
+            },
+            {
+              "name": "--hide-finished",
+              "help": "Hide finished executions"
+            },
+            {
+              "name": "--limit",
+              "help": "Number of executions to return"
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            }
+          ]
+        },
+        {
+          "name": "logs",
+          "about": "Fetch structured logs for an execution",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--show-derived",
+              "help": "Include logs from child (derived) executions"
+            },
+            {
+              "name": "--level",
+              "help": "Minimum log level: trace, debug, info, warn, error, off. `off` disables structured log output entirely"
+            },
+            {
+              "name": "--stream-type",
+              "help": "Select which stream output to show: stdout, stderr, none. If not specified, both stdout and stderr are shown. Use `none` to hide all stream output"
+            },
+            {
+              "name": "--show-run-id",
+              "help": "Show the run ID in each log line"
+            },
+            {
+              "name": "--after",
+              "help": "Only show entries created after this timestamp (RFC3339, e.g. 2026-04-14T10:00:00Z)"
+            },
+            {
+              "name": "--follow",
+              "help": "Poll for new log entries until the execution finishes"
+            },
+            {
+              "name": "--limit",
+              "help": "Number of log entries to return per request (default: 20, max: 200)"
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID to fetch logs for",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "events",
+          "about": "Show the execution event log (history)",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--from",
+              "help": "Start from this event version (inclusive)"
+            },
+            {
+              "name": "--limit",
+              "help": "Number of events to return"
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "responses",
+          "about": "Show join-set responses for an execution (child results, delay completions)",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--from",
+              "help": "Start from this response cursor (inclusive)"
+            },
+            {
+              "name": "--limit",
+              "help": "Number of responses to return"
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "submit",
+          "about": "Submit a new execution and optionally follow its status stream until it finishes",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--execution-id",
+              "short": "e",
+              "help": "Use this explicit execution ID instead of having the server assign one. Useful for idempotency. See `obelisk generate execution-id`"
+            },
+            {
+              "name": "--follow",
+              "short": "f",
+              "help": "Follow the stream of events until the execution finishes"
+            },
+            {
+              "name": "--no-reconnect",
+              "help": "Do not attempt to reconnect on connection error while following the status stream"
+            },
+            {
+              "name": "--paused",
+              "help": "Create the execution in paused state so it won't run until explicitly unpaused or advanced"
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output events as JSON in Web API format instead of human-readable text"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "ffqn",
+              "help": "Function to invoke, either as a fully qualified name (`ns:pkg/ifc.fn`) or shortened to `.../ifc.fn` when the interface name is unambiguous",
+              "required": true
+            },
+            {
+              "name": "parameters",
+              "value_name": "parameters",
+              "help": "Accepted Parameter Formats:",
+              "accepts": {
+                "many": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "stub",
+          "about": "Write a return value or an execution error to an already created stubbed execution, unblocking any parent workflow that is awaiting it",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID of the stub execution waiting for its return value",
+              "required": true
+            },
+            {
+              "name": "return_value",
+              "help": "Stub a return value encoded as JSON",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "status",
+          "about": "Get the current state of an execution, optionally following status changes",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--follow",
+              "short": "f",
+              "help": "Follow the status stream until the execution finishes"
+            },
+            {
+              "name": "--no-reconnect",
+              "help": "Do not attempt to reconnect on connection error while following the status stream"
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID to look up",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "result",
+          "about": "Get the final result of an execution",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--follow",
+              "short": "f",
+              "help": "Follow until the execution finishes and the final result is available"
+            },
+            {
+              "name": "--no-reconnect",
+              "help": "Do not attempt to reconnect on connection error while following the execution"
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID to look up",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "cancel",
+          "about": "Request cancellation of a running activity or pending delay",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "id",
+              "help": "Execution id of an activity (E_01...) or a delay request (Delay_01...)",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "pause",
+          "about": "Pause a workflow execution or a pending delay",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "id",
+              "help": "Execution ID (`E_01`...) or delay ID (`Delay_01`...) to pause",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "unpause",
+          "about": "Resume a previously paused workflow execution or delay",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "id",
+              "help": "Execution ID (`E_01`...) or delay ID (`Delay_01`...) to unpause",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "replay",
+          "about": "Replay a workflow execution from its execution log, checking for non-determinism",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID to replay",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "advance",
+          "about": "Advance a paused workflow execution by replaying it and applying the next captured writes",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            },
+            {
+              "name": "--trim",
+              "help": "Send only the first N captured writes from replay to advance"
+            },
+            {
+              "name": "--pause-submitted",
+              "help": "Rewrite replayed submitted executions so they are created paused when advance is applied"
+            },
+            {
+              "name": "--force",
+              "help": "Advance even if replay failed with an error, persisting the execution error"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID to advance",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "upgrade",
+          "about": "Upgrade a workflow execution to the current component version in the active deployment",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--skip-determinism-check",
+              "help": "Skip the determinism check during upgrade"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID to upgrade",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "component",
+      "about": "Inspect components or add/push them to an OCI registry",
+      "subcommands": [
+        {
+          "name": "list",
+          "about": "List components",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            },
+            {
+              "name": "--imports",
+              "short": "i",
+              "help": "Show component imports"
+            },
+            {
+              "name": "--extensions",
+              "short": "e",
+              "help": "Show auto-generated export extensions"
+            }
+          ]
+        },
+        {
+          "name": "push",
+          "about": "Push a WASM component to an OCI registry with deployment metadata",
+          "options": [
+            {
+              "name": "--deployment",
+              "short": "d",
+              "help": "Path to the input deployment TOML file",
+              "required": true,
+              "accepts": {
+                "path": true
+              }
+            }
+          ],
+          "positionals": [
+            {
+              "name": "component_name",
+              "help": "Component name in the input deployment TOML",
+              "required": true
+            },
+            {
+              "name": "location",
+              "help": "OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "add",
+          "about": "Add a component to the deployment TOML configuration file from an OCI reference",
+          "options": [
+            {
+              "name": "--deployment",
+              "short": "d",
+              "help": "Path to the target deployment TOML file",
+              "required": true,
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--locked",
+              "help": "Pin the location with the manifest digest (e.g. `image:tag@sha256:...`)"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "location",
+              "help": "OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`",
+              "required": true
+            },
+            {
+              "name": "component_name",
+              "help": "Component name in the target deployment TOML",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "deployment",
+      "about": "Manage deployments",
+      "subcommands": [
+        {
+          "name": "submit",
+          "about": "Upload a deployment TOML as a new deployment; print the new deployment ID",
+          "options": [
+            {
+              "name": "--empty",
+              "help": "Submit an empty deployment with no components"
+            },
+            {
+              "name": "--verify",
+              "help": "Verify all environment variables before persisting"
+            },
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "file",
+              "help": "Path to the deployment TOML file",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "enqueue",
+          "about": "Submit (if a file is given) and enqueue for next server restart",
+          "options": [
+            {
+              "name": "--empty",
+              "help": "Enqueue an empty deployment with no components"
+            },
+            {
+              "name": "--verify",
+              "help": "Verify all environment variables before enqueuing"
+            },
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "source",
+              "help": "Path to a deployment TOML file, or an existing deployment ID"
+            }
+          ]
+        },
+        {
+          "name": "apply",
+          "about": "Submit (if a file is given) and hot-redeploy immediately. Fails if not possible",
+          "options": [
+            {
+              "name": "--empty",
+              "help": "Apply an empty deployment with no components"
+            },
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "source",
+              "help": "Path to a deployment TOML file, or an existing deployment ID"
+            }
+          ]
+        },
+        {
+          "name": "list",
+          "about": "List recent deployments",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ]
+        },
+        {
+          "name": "show",
+          "about": "Show the full configuration of a deployment",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "id",
+              "help": "Deployment ID",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "generate",
+      "about": "Generate configuration files and WIT artifacts",
+      "subcommands": [
+        {
+          "name": "server-config-schema",
+          "about": "Generate the server configuration (server.toml) schema in JSON schema format",
+          "positionals": [
+            {
+              "name": "output",
+              "help": "Filename to write the schema to, defaults to <stdout>",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "deployment-schema",
+          "about": "Generate the deployment configuration (deployment.toml) schema in JSON schema format",
+          "positionals": [
+            {
+              "name": "output",
+              "help": "Filename to write the schema to, defaults to <stdout>",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "deployment-canonical-schema",
+          "about": "Generate the canonical deployment schema (stored in the database) in JSON schema format",
+          "positionals": [
+            {
+              "name": "output",
+              "help": "Filename to write the schema to, defaults to <stdout>",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "db-schema",
+          "about": "Generate the database storage schema in JSON schema format",
+          "positionals": [
+            {
+              "name": "output",
+              "help": "Filename to write the schema to, defaults to <stdout>",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "open-api-schema",
+          "about": "Generate the `OpenAPI` schema in JSON format",
+          "positionals": [
+            {
+              "name": "output",
+              "help": "Filename to write the schema to, defaults to <stdout>",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "cli-schema",
+          "about": "Generate the CLI shape in JSON format",
+          "positionals": [
+            {
+              "name": "output",
+              "help": "Filename to write the schema to, defaults to <stdout>",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "wit-extensions",
+          "about": "Generate extension WIT files that are automatically implemented by Obelisk based on the exported interfaces of the component (e.g. `-schedule`, `-await-next` variants)",
+          "options": [
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            },
+            {
+              "name": "--force",
+              "short": "f",
+              "help": "Overwrite existing files in the output directory"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "component_type",
+              "help": "Component type this WIT is for. One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`",
+              "required": true
+            },
+            {
+              "name": "input_wit_directory",
+              "help": "Path to the `wit` folder containing the target world and, if present, a `deps` subfolder",
+              "required": true,
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "output_directory",
+              "help": "Directory where folders and WIT files will be written to",
+              "required": true,
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "wit-support",
+          "about": "Generate Obelisk's built-in support WIT files (host interfaces) for the given component type",
+          "options": [
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            },
+            {
+              "name": "--force",
+              "short": "f",
+              "help": "Overwrite existing files in the output directory"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "component_type",
+              "help": "Component type whose host interfaces to emit. One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`",
+              "required": true
+            },
+            {
+              "name": "output_directory",
+              "help": "Directory where folders and WIT files will be written to",
+              "required": true,
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "wit-deps",
+          "about": "Generate WIT dependency folder based on activities and workflows found in the deployment TOML",
+          "options": [
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            },
+            {
+              "name": "--deployment",
+              "short": "d",
+              "help": "Path to the deployment TOML file",
+              "required": true,
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--force",
+              "short": "f",
+              "help": "Overwrite existing files"
+            },
+            {
+              "name": "--skip-local",
+              "help": "Skip local-path components"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "output_directory",
+              "help": "Directory where folders and WIT files will be written to",
+              "required": true,
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "server-config",
+          "about": "Generate a default server.toml",
+          "options": [
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            },
+            {
+              "name": "--force",
+              "short": "f",
+              "help": "Overwrite existing file"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "output",
+              "help": "Filename to write the TOML to, defaults to `server.toml`",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "deployment",
+          "about": "Generate a default deployment.toml",
+          "options": [
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of human-readable text"
+            },
+            {
+              "name": "--force",
+              "short": "f",
+              "help": "Overwrite existing file"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "output",
+              "help": "Filename to write the TOML to, defaults to `deployment.toml`",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "execution-id",
+          "about": "Generate a fresh random execution ID and print it to stdout",
+          "options": [
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of plain text"
+            }
+          ]
+        },
+        {
+          "name": "prompt",
+          "about": "Print a prompt context for authoring an Obelisk application with a coding agent",
+          "positionals": [
+            {
+              "name": "description",
+              "help": "Description of the application to build",
+              "required": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

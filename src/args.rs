@@ -154,7 +154,7 @@ pub(crate) enum Deployment {
     Show {
         /// Deployment ID
         #[arg(value_name = "ID")]
-        id: String,
+        id: DeploymentId,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
@@ -190,6 +190,12 @@ pub(crate) enum Generate {
     /// Generate the `OpenAPI` schema in JSON format.
     #[cfg(debug_assertions)]
     OpenApiSchema {
+        /// Filename to write the schema to, defaults to <stdout>.
+        output: Option<PathBuf>,
+    },
+    /// Generate the CLI shape in JSON format.
+    #[cfg(debug_assertions)]
+    CliSchema {
         /// Filename to write the schema to, defaults to <stdout>.
         output: Option<PathBuf>,
     },
@@ -357,7 +363,7 @@ pub(crate) enum Component {
         component_name: String,
         /// OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`
         #[arg(required(true), value_parser = parse_oci_reference)]
-        oci: oci_client::Reference,
+        location: oci_client::Reference,
         /// Path to the input deployment TOML file.
         #[arg(long, short, required = true)]
         deployment: PathBuf,
@@ -452,7 +458,7 @@ pub(crate) enum Execution {
         ffqn_prefix: Option<String>,
         /// Filter by execution id prefix.
         /// Useful to find all child executions if --show-derived flag is enabled.
-        #[arg(long = "execution_id", short, value_name = "EXECUTION_ID_PREFIX")]
+        #[arg(long = "execution-id", short, value_name = "EXECUTION_ID_PREFIX")]
         execution_id_prefix: Option<String>,
         /// Include child (derived) executions spawned by workflows.
         /// By default only top-level executions are shown.
@@ -486,7 +492,7 @@ pub(crate) enum Execution {
         /// Select which stream output to show: stdout, stderr, none.
         /// If not specified, both stdout and stderr are shown.
         /// Use `none` to hide all stream output.
-        #[arg(long, value_name = "TYPE")]
+        #[arg(long = "stream-type", value_name = "TYPE")]
         stream_type: Option<LogStreamTypeArg>,
         /// Show the run ID in each log line.
         #[arg(long)]
@@ -550,7 +556,7 @@ pub(crate) enum Execution {
         execution_id: Option<ExecutionId>,
         /// Function to invoke, either as a fully qualified name (`ns:pkg/ifc.fn`)
         /// or shortened to `.../ifc.fn` when the interface name is unambiguous.
-        #[arg(value_name = "function")]
+        #[arg(value_name = "FUNCTION")]
         ffqn: FunctionFqnOrShort,
         /// Follow the stream of events until the execution finishes.
         #[arg(short, long)]

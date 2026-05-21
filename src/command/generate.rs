@@ -1,5 +1,5 @@
-use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
+use crate::args::{Args, Generate};
 use crate::command::server::{
     PrepareDirsParams, VerifyParams, create_engines, deployment_compile_link,
     deployment_verify_config, prepare_dirs, server_verify,
@@ -13,6 +13,7 @@ use crate::config::toml::{
 use crate::init::{self};
 use crate::project_dirs;
 use anyhow::Context;
+use clap::{Arg, ArgAction, Command, CommandFactory, ValueHint};
 use concepts::{ComponentType, ExecutionId, PackageIfcFns, PkgFqn, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::{HashMap, HashSet};
@@ -39,6 +40,8 @@ impl Generate {
             Generate::DbSchema { output } => generate_db_schema(output),
             #[cfg(debug_assertions)]
             Generate::OpenApiSchema { output } => generate_openapi_schema(output),
+            #[cfg(debug_assertions)]
+            Generate::CliSchema { output } => generate_cli_schema(output),
             Generate::ServerConfig {
                 json,
                 output,
@@ -226,6 +229,182 @@ pub(crate) fn generate_openapi_schema(output: Option<PathBuf>) -> Result<(), any
         writer.flush()?;
     } else {
         serde_json::to_writer_pretty(stdout().lock(), &schema)?;
+        println!();
+    }
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Serialize)]
+struct CliCommandSchema {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    about: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    options: Vec<CliArgSchema>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    positionals: Vec<CliArgSchema>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    subcommands: Vec<CliCommandSchema>,
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Serialize)]
+struct CliArgSchema {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    short: Option<char>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    help: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accepts: Option<CliArgAcceptsSchema>,
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Serialize)]
+struct CliArgAcceptsSchema {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    one_of: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    many: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<bool>,
+}
+
+#[cfg(debug_assertions)]
+fn generate_cli_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    let command = Args::command();
+    let schema = command_to_schema(&command);
+    write_json(output, &schema)
+}
+
+#[cfg(debug_assertions)]
+fn command_to_schema(command: &Command) -> CliCommandSchema {
+    let mut options = Vec::new();
+    let mut positionals = Vec::new();
+    for arg in command.get_arguments() {
+        if skip_arg(arg) {
+            continue;
+        }
+        let schema = arg_to_schema(arg);
+        if arg.is_positional() {
+            positionals.push(schema);
+        } else {
+            options.push(schema);
+        }
+    }
+
+    CliCommandSchema {
+        name: command.get_name().to_string(),
+        about: command_about(command),
+        options,
+        positionals,
+        subcommands: command.get_subcommands().map(command_to_schema).collect(),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn arg_to_schema(arg: &Arg) -> CliArgSchema {
+    CliArgSchema {
+        name: arg_name(arg),
+        short: arg.get_short(),
+        value_name: arg_value_name(arg),
+        help: arg_help(arg),
+        required: arg.is_required_set(),
+        accepts: arg_accepts(arg),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn command_about(command: &Command) -> Option<String> {
+    command
+        .get_about()
+        .map(ToString::to_string)
+        .filter(|about| !about.trim().is_empty())
+}
+
+#[cfg(debug_assertions)]
+fn arg_help(arg: &Arg) -> Option<String> {
+    arg.get_help()
+        .map(ToString::to_string)
+        .filter(|help| !help.trim().is_empty())
+}
+
+#[cfg(debug_assertions)]
+fn arg_name(arg: &Arg) -> String {
+    if let Some(long) = arg.get_long() {
+        format!("--{long}")
+    } else {
+        arg.get_id().to_string()
+    }
+}
+
+#[cfg(debug_assertions)]
+fn arg_value_name(arg: &Arg) -> Option<String> {
+    arg.get_num_args()
+        .filter(clap::builder::ValueRange::takes_values)
+        .and_then(|_| arg.get_value_names())
+        .and_then(|names| names.first())
+        .map(ToString::to_string)
+}
+
+#[cfg(debug_assertions)]
+fn arg_accepts(arg: &Arg) -> Option<CliArgAcceptsSchema> {
+    let choices: Vec<String> = arg
+        .get_possible_values()
+        .into_iter()
+        .filter(|value| !value.is_hide_set())
+        .map(|value| value.get_name().to_string())
+        .filter(|value| value != "true" && value != "false")
+        .collect();
+    let one_of = (!choices.is_empty()).then_some(choices);
+
+    let many = arg.get_num_args().and_then(|range| {
+        let max = range.max_values();
+        ((range.min_values() > 1) || max > 1 || max == usize::MAX).then_some(true)
+    });
+
+    let path = matches!(
+        arg.get_value_hint(),
+        ValueHint::AnyPath | ValueHint::FilePath | ValueHint::DirPath | ValueHint::ExecutablePath
+    )
+    .then_some(true);
+
+    if one_of.is_none() && many.is_none() && path.is_none() {
+        None
+    } else {
+        Some(CliArgAcceptsSchema { one_of, many, path })
+    }
+}
+
+#[cfg(debug_assertions)]
+fn skip_arg(arg: &Arg) -> bool {
+    matches!(
+        arg.get_action(),
+        ArgAction::Help | ArgAction::HelpShort | ArgAction::HelpLong
+    )
+}
+
+#[cfg(debug_assertions)]
+fn write_json<T: serde::Serialize>(
+    output: Option<PathBuf>,
+    value: &T,
+) -> Result<(), anyhow::Error> {
+    use std::{
+        fs::File,
+        io::{BufWriter, Write as _, stdout},
+    };
+    if let Some(output) = output {
+        let mut writer = BufWriter::new(File::create(&output)?);
+        serde_json::to_writer_pretty(&mut writer, value)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+    } else {
+        serde_json::to_writer_pretty(stdout().lock(), value)?;
         println!();
     }
     Ok(())
