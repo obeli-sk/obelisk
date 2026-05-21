@@ -118,7 +118,7 @@
               "help": "Filter by function FFQN prefix. Accepts any prefix of a fully-qualified function name, e.g.: `namespace:`. Short `.../ifc.fn` form is not supported"
             },
             {
-              "name": "--execution_id",
+              "name": "--execution-id",
               "short": "e",
               "help": "Filter by execution id prefix. Useful to find all child executions if --show-derived flag is enabled"
             },
