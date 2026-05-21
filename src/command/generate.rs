@@ -129,6 +129,7 @@ impl Generate {
             }
             Generate::Prompt { description } => {
                 let version = format!("v{PKG_VERSION}");
+                let description = description.join(" ");
                 println!(
                     "Fetch https://obeli.sk/docs/{version}/llms.txt for the full Obelisk reference.\n"
                 );

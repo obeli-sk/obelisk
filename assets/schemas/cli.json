@@ -978,8 +978,12 @@
           "positionals": [
             {
               "name": "description",
+              "value_name": "DESCRIPTION",
               "help": "Description of the application to build",
-              "required": true
+              "required": true,
+              "accepts": {
+                "many": true
+              }
             }
           ]
         }
