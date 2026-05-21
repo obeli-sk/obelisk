@@ -289,7 +289,7 @@ itertools = "0.14"
 jsonwebtoken = { version = "10", default-features = false }
 lazy_static = "1.5"
 libc = "0.2.186"
-oci-client = { version = "0.16.1", default-features = false }
+oci-client = { version = "0.17.0", default-features = false }
 oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
 prost = "0.14.3"
