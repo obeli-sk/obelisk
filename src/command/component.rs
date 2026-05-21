@@ -51,8 +51,8 @@ impl args::Component {
             args::Component::Push {
                 component_name,
                 deployment,
-                oci,
-            } => push_component(&component_name, &deployment, &oci).await,
+                location,
+            } => push_component(&component_name, &deployment, &location).await,
             args::Component::Add {
                 location,
                 component_name,

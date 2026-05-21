@@ -363,7 +363,7 @@ pub(crate) enum Component {
         component_name: String,
         /// OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`
         #[arg(required(true), value_parser = parse_oci_reference)]
-        oci: oci_client::Reference,
+        location: oci_client::Reference,
         /// Path to the input deployment TOML file.
         #[arg(long, short, required = true)]
         deployment: PathBuf,

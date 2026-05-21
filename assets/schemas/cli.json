@@ -572,7 +572,7 @@
               "required": true
             },
             {
-              "name": "oci",
+              "name": "location",
               "help": "OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`",
               "required": true
             }
