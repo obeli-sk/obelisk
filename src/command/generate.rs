@@ -131,9 +131,8 @@ impl Generate {
                 let version = format!("v{PKG_VERSION}");
                 let description = description.join(" ");
                 println!(
-                    "Fetch https://obeli.sk/docs/{version}/llms.txt for the full Obelisk reference.\n"
+                    "Fetch https://obeli.sk/docs/{version}/llms.txt for the full Obelisk reference. Task:\n{description}"
                 );
-                println!("<task>\n{description}\n</task>");
                 Ok(())
             }
         }
