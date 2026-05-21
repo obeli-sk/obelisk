@@ -5,10 +5,15 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
+if ! command -v obelisk >/dev/null; then
+    echo "error: obelisk must be on PATH" >&2
+    exit 1
+fi
+
 TAG="$1"
 OUTPUT_FILE="${2:-assets/workflow-js-runtime-version.txt}"
 
-cargo check --workspace # triggers build.rs of workflow-js-runtime-builder
+cargo check --package workflow-js-runtime-builder # triggers build.rs of workflow-js-runtime-builder
 
 if [ "$TAG" != "dry-run" ]; then
     TMP_TOML=$(mktemp -t workflow-deployment-XXXXXX.toml)
@@ -18,7 +23,7 @@ if [ "$TAG" != "dry-run" ]; then
 name = "pushed"
 location = "$(pwd)/target/release_wasm_runtime/wasm32-unknown-unknown/release_wasm_runtime/workflow_js_runtime_component.wasm"
 EOF
-    OUTPUT=$(cargo run -- component push --deployment "$TMP_TOML" \
+    OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \
         pushed "oci://docker.io/getobelisk/workflow-js-runtime:$TAG")
     echo -n $OUTPUT > $OUTPUT_FILE
 fi

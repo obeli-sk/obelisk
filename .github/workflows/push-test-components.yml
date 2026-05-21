@@ -34,6 +34,10 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
+      - name: Add latest obelisk to PATH
+        run: |
+          ./scripts/get-latest-obelisk-bin-dir.sh >> "$GITHUB_PATH"
+
       - name: Log in to Docker Hub
         run: |
           echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
@@ -43,7 +47,7 @@ jobs:
 
       - name: Push test components
         run: |
-          nix develop --command ./scripts/push-test-components.sh $TAG
+          nix develop --command ./scripts/push-test-components.sh "$TAG"
         env:
           TAG: ${{ github.event.inputs.tag }}
 
@@ -54,26 +58,29 @@ jobs:
 
       - name: Generate Unique Branch Name
         id: branch-name
-        run: echo "branch_name=bump-test-components-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+        run: echo "branch_name=bump-test-components-$(date +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
 
       - name: Push toml
         run: |
-          git checkout -b ${{ steps.branch-name.outputs.branch_name }}
+          git checkout -b "${{ steps.branch-name.outputs.branch_name }}"
           git add .
-          git commit -m "chore: Bump test components to $TAG"
-          git push origin ${{ steps.branch-name.outputs.branch_name }}
-          OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
-          REPO=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          git commit -m "chore: Bump test components to ${TAG}"
+          git push origin "${{ steps.branch-name.outputs.branch_name }}"
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY##*/}"
+          cat > payload.json <<EOF
+          {
+            "title": "chore: Bump test components",
+            "head": "${{ steps.branch-name.outputs.branch_name }}",
+            "base": "main",
+            "body": ""
+          }
+          EOF
           curl -v --fail -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
-            https://api.github.com/repos/$OWNER/$REPO/pulls \
-            -d '{
-              "title": "chore: Bump test components",
-              "head": "'${{ steps.branch-name.outputs.branch_name }}'",
-              "base": "main",
-              "body": ""
-            }'
+            "https://api.github.com/repos/$OWNER/$REPO/pulls" \
+            --data "@payload.json"
 
         env:
           TAG: ${{ github.event.inputs.tag }}

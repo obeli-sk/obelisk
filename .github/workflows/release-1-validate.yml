@@ -1,0 +1,94 @@
+name: release-1-validate
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to process"
+        required: false
+        type: string
+        default: "latest"
+      extra-args:
+        description: "Extra args to be used with cargo publish e.g. --no-verify"
+        type: string
+        required: false
+        default: ""
+      skip_latest:
+        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        required: true
+        type: boolean
+  workflow_call:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to process"
+        required: false
+        type: string
+        default: "latest"
+      extra-args:
+        description: "Extra args to be used with cargo publish e.g. --no-verify"
+        type: string
+        required: false
+        default: ""
+      skip_latest:
+        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        required: true
+        type: boolean
+
+defaults:
+  run:
+    shell: bash -xe {0}
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Validate latest webui bump commit
+        env:
+          EXPECTED_PREFIX: "chore: Bump obelisk submodule to webui"
+          WEBUI_REPO_URL: "https://github.com/obeli-sk/webui.git"
+          WEBUI_BRANCH: "main"
+        run: |
+          git init webui-tmp
+          cd webui-tmp
+          git remote add origin "$WEBUI_REPO_URL"
+          git fetch --depth=1 origin "$WEBUI_BRANCH"
+          COMMIT_SUBJECT="$(git log -1 --pretty=%s FETCH_HEAD)"
+          echo "Latest webui commit subject: $COMMIT_SUBJECT"
+          if [[ "$COMMIT_SUBJECT" != "$EXPECTED_PREFIX"* ]]; then
+            echo "::error::Latest commit in obeli-sk/webui does not start with '$EXPECTED_PREFIX'."
+            exit 1
+          fi
+
+      - name: Validate activity JS runtime version reference
+        run: |
+          ./scripts/check-runtime-version-update.sh \
+            crates/activity-js-runtime \
+            assets/activity-js-runtime-version.txt
+
+      - name: Validate workflow JS runtime version reference
+        run: |
+          ./scripts/check-runtime-version-update.sh \
+            crates/workflow-js-runtime \
+            assets/workflow-js-runtime-version.txt
+
+      - name: Validate webhook JS runtime version reference
+        run: |
+          ./scripts/check-runtime-version-update.sh \
+            crates/webhook-js-runtime \
+            assets/webhook-js-runtime-version.txt
+
+  call_child:
+    needs: validate
+    uses: ./.github/workflows/release-2-cargo-publish.yml
+    secrets: inherit
+    with:
+      ref: ${{ inputs.ref }}
+      extra-args: ${{ inputs.extra-args }}
+      skip_latest: ${{ inputs.skip_latest }}
