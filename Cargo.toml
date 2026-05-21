@@ -403,7 +403,7 @@ opentelemetry-otlp = { version = "0.31.1", default-features = false, features = 
     "metrics",
 ] }
 opentelemetry-semantic-conventions = "0.32.0"
-tracing-opentelemetry = "0.32"
+tracing-opentelemetry = "0.33"
 
 [workspace.lints]
 # lower the priority to allow overriding later
