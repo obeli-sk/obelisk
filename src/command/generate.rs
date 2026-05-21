@@ -16,6 +16,7 @@ use anyhow::Context;
 use concepts::{ComponentType, ExecutionId, PackageIfcFns, PkgFqn, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::{HashMap, HashSet};
+use serde::Serialize;
 use std::{borrow::Cow, path::PathBuf};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
@@ -38,45 +39,71 @@ impl Generate {
             Generate::DbSchema { output } => generate_db_schema(output),
             #[cfg(debug_assertions)]
             Generate::OpenApiSchema { output } => generate_openapi_schema(output),
-            Generate::ServerConfig { output, overwrite } => {
+            Generate::ServerConfig {
+                json,
+                output,
+                overwrite,
+            } => {
                 let config_file =
                     ConfigHolder::generate_default_server_config(output, overwrite).await?;
-                println!("Generated {config_file:?}");
+                let result = GeneratedPathStatus {
+                    path: config_file,
+                    status: "generated",
+                };
+                print_generated_path_statuses(&[result], json)?;
                 Ok(())
             }
-            Generate::Deployment { output, overwrite } => {
+            Generate::Deployment {
+                json,
+                output,
+                overwrite,
+            } => {
                 let config_file =
                     ConfigHolder::generate_default_deployment_config(output, overwrite).await?;
-                println!("Generated {config_file:?}");
+                let result = GeneratedPathStatus {
+                    path: config_file,
+                    status: "generated",
+                };
+                print_generated_path_statuses(&[result], json)?;
                 Ok(())
             }
 
             Generate::WitExtensions {
+                json,
                 component_type,
                 input_wit_directory,
                 output_directory,
                 force,
             } => {
-                generate_exported_extension_wits(
+                let results = generate_exported_extension_wits(
                     input_wit_directory,
                     output_directory,
                     component_type,
                     force,
                 )
-                .await
+                .await?;
+                print_generated_path_statuses(&results, json)?;
+                Ok(())
             }
             Generate::WitSupport {
+                json,
                 component_type,
                 output_directory,
                 overwrite,
-            } => generate_support_wits(component_type, output_directory, overwrite).await,
+            } => {
+                let results =
+                    generate_support_wits(component_type, output_directory, overwrite).await?;
+                print_generated_path_statuses(&results, json)?;
+                Ok(())
+            }
             Generate::WitDeps {
+                json,
                 deployment,
                 output_directory,
                 overwrite,
                 skip_local,
             } => {
-                generate_wit_deps(
+                let results = generate_wit_deps(
                     project_dirs(),
                     BaseDirs::new(),
                     deployment,
@@ -84,10 +111,17 @@ impl Generate {
                     overwrite,
                     skip_local,
                 )
-                .await
+                .await?;
+                print_generated_path_statuses(&results, json)?;
+                Ok(())
             }
-            Generate::ExecutionId => {
-                println!("{}", ExecutionId::generate());
+            Generate::ExecutionId { json } => {
+                let execution_id = ExecutionId::generate();
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&execution_id)?);
+                } else {
+                    println!("{execution_id}");
+                }
                 Ok(())
             }
             Generate::Prompt { description } => {
@@ -96,6 +130,32 @@ impl Generate {
             }
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+struct GeneratedPathStatus {
+    path: PathBuf,
+    status: &'static str,
+}
+
+fn print_generated_path_statuses(
+    results: &[GeneratedPathStatus],
+    json: bool,
+) -> Result<(), anyhow::Error> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(results)?);
+    } else {
+        for result in results {
+            match result.status {
+                "generated" => println!("Generated {:?}", result.path),
+                "created_or_updated" => println!("{:?} created or updated", result.path),
+                "up_to_date" => println!("{:?} is up to date", result.path),
+                "written" => println!("{:?} written", result.path),
+                status => println!("{:?} {status}", result.path),
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(debug_assertions)]
@@ -173,14 +233,15 @@ pub(crate) fn generate_openapi_schema(output: Option<PathBuf>) -> Result<(), any
 
 pub(crate) const OBELISK_WIT_HEADER: &str = "// Generated by Obelisk";
 
-pub(crate) async fn generate_exported_extension_wits(
+async fn generate_exported_extension_wits(
     input_wit_directory: PathBuf,
     output_directory: PathBuf,
     component_type: ComponentType,
     force: bool,
-) -> Result<(), anyhow::Error> {
+) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
     let wasm_component = WasmComponent::new_from_wit_folder(&input_wit_directory, component_type)?;
     let pkgs_to_wits = wasm_component.exported_extension_wits()?;
+    let mut results = Vec::new();
     for (pkg_fqn, new_content) in pkgs_to_wits {
         let pkg_file_name = pkg_fqn.as_file_name();
         let pkg_folder = output_directory.join(&pkg_file_name);
@@ -203,12 +264,18 @@ pub(crate) async fn generate_exported_extension_wits(
             tokio::fs::write(&wit_file, new_content.as_bytes())
                 .await
                 .with_context(|| format!("cannot write {wit_file:?}"))?;
-            println!("{wit_file:?} created or updated");
+            results.push(GeneratedPathStatus {
+                path: wit_file,
+                status: "created_or_updated",
+            });
         } else {
-            println!("{wit_file:?} is up to date");
+            results.push(GeneratedPathStatus {
+                path: wit_file,
+                status: "up_to_date",
+            });
         }
     }
-    Ok(())
+    Ok(results)
 }
 
 fn strip_header(old_content: &str) -> String {
@@ -236,11 +303,12 @@ fn strip_header(old_content: &str) -> String {
     old_content.into_owned()
 }
 
-pub(crate) async fn generate_support_wits(
+async fn generate_support_wits(
     component_type: ComponentType,
     output_directory: PathBuf,
     overwrite: bool,
-) -> Result<(), anyhow::Error> {
+) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
+    let mut results = Vec::new();
     let files = match component_type {
         ComponentType::Activity => {
             vec![wit::WIT_OBELISK_LOG_PACKAGE]
@@ -265,7 +333,10 @@ pub(crate) async fn generate_support_wits(
         if let Ok(actual) = tokio::fs::read_to_string(&target_wit).await
             && actual == contents
         {
-            println!("{target_wit:?} is up to date");
+            results.push(GeneratedPathStatus {
+                path: target_wit,
+                status: "up_to_date",
+            });
         } else {
             tokio::fs::create_dir_all(&output_directory)
                 .await
@@ -291,20 +362,23 @@ pub(crate) async fn generate_support_wits(
                 .await
                 .with_context(|| format!("cannot write to {target_wit:?}"))?;
 
-            println!("{target_wit:?} created or updated");
+            results.push(GeneratedPathStatus {
+                path: target_wit,
+                status: "created_or_updated",
+            });
         }
     }
-    Ok(())
+    Ok(results)
 }
 
-pub(crate) async fn generate_wit_deps(
+async fn generate_wit_deps(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
     deployment_toml: PathBuf,
     output_directory: PathBuf,
     overwrite: bool,
     skip_local: bool,
-) -> Result<(), anyhow::Error> {
+) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
     let deployment = load_deployment_validated(&deployment_toml).await?;
 
     let skipped_oci_component_names: HashSet<String> = if skip_local {
@@ -456,15 +530,15 @@ pub(crate) async fn generate_wit_deps(
             pkg_to_wit.entry(pkg_fqn).or_insert(content);
         }
     }
-    write_wit_deps(&pkg_to_wit, &output_directory, overwrite).await?;
-    Ok(())
+    write_wit_deps(&pkg_to_wit, &output_directory, overwrite).await
 }
 
 async fn write_wit_deps(
     pkg_to_wit: &HashMap<PkgFqn, String>,
     output_directory: &std::path::Path,
     overwrite: bool,
-) -> Result<(), anyhow::Error> {
+) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
+    let mut results = Vec::new();
     for (pkg_fqn, content) in pkg_to_wit {
         let pkg_file_name = pkg_fqn.as_file_name();
         let directory = output_directory.join(&pkg_file_name);
@@ -503,10 +577,13 @@ async fn write_wit_deps(
             file.write_all(content.as_bytes())
                 .await
                 .with_context(|| format!("cannot write to {target_wit:?}"))?;
-            println!("{target_wit:?} written");
+            results.push(GeneratedPathStatus {
+                path: target_wit,
+                status: "written",
+            });
         }
     }
-    Ok(())
+    Ok(results)
 }
 
 const PREAMBLE: &str = "\

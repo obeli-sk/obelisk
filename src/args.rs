@@ -196,6 +196,9 @@ pub(crate) enum Generate {
     /// Generate extension WIT files that are automatically implemented by Obelisk
     /// based on the exported interfaces of the component (e.g. `-schedule`, `-await-next` variants).
     WitExtensions {
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
         /// Overwrite existing files in the output directory.
         #[arg(long, short)]
         force: bool,
@@ -208,6 +211,9 @@ pub(crate) enum Generate {
     },
     /// Generate Obelisk's built-in support WIT files (host interfaces) for the given component type.
     WitSupport {
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
         /// Component type whose host interfaces to emit. One of `workflow`, `activity`, `activity_stub`, `webhook_endpoint`.
         component_type: ComponentType,
         /// Directory where folders and WIT files will be written to.
@@ -218,6 +224,9 @@ pub(crate) enum Generate {
     },
     /// Generate WIT dependency folder based on activities and workflows found in the deployment TOML.
     WitDeps {
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
         /// Path to the deployment TOML file.
         #[arg(long, short)]
         deployment: PathBuf,
@@ -232,6 +241,9 @@ pub(crate) enum Generate {
     },
     /// Generate a default server.toml.
     ServerConfig {
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
         /// Filename to write the TOML to, defaults to `server.toml`.
         output: Option<PathBuf>,
         /// Overwrite existing file.
@@ -240,6 +252,9 @@ pub(crate) enum Generate {
     },
     /// Generate a default deployment.toml.
     Deployment {
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
         /// Filename to write the TOML to, defaults to `deployment.toml`.
         output: Option<PathBuf>,
         /// Overwrite existing file.
@@ -247,7 +262,11 @@ pub(crate) enum Generate {
         overwrite: bool,
     },
     /// Generate a fresh random execution ID and print it to stdout.
-    ExecutionId,
+    ExecutionId {
+        /// Output as JSON instead of plain text.
+        #[arg(short, long)]
+        json: bool,
+    },
     /// Print a prompt context for authoring an Obelisk application with a coding agent.
     ///
     /// Usage: obelisk generate prompt 'description of what to build' | claude
