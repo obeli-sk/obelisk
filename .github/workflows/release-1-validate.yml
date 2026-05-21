@@ -68,19 +68,19 @@ jobs:
 
       - name: Validate activity JS runtime version reference
         run: |
-          ./scripts/check-runtime-version-update.sh \
+          ./scripts/prerelease-check-runtime-version.sh \
             crates/activity-js-runtime \
             assets/activity-js-runtime-version.txt
 
       - name: Validate workflow JS runtime version reference
         run: |
-          ./scripts/check-runtime-version-update.sh \
+          ./scripts/prerelease-check-runtime-version.sh \
             crates/workflow-js-runtime \
             assets/workflow-js-runtime-version.txt
 
       - name: Validate webhook JS runtime version reference
         run: |
-          ./scripts/check-runtime-version-update.sh \
+          ./scripts/prerelease-check-runtime-version.sh \
             crates/webhook-js-runtime \
             assets/webhook-js-runtime-version.txt
 
