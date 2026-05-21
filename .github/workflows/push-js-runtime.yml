@@ -51,6 +51,10 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
+      - name: Add latest obelisk to PATH
+        run: |
+          ./scripts/get-latest-obelisk-bin-dir.sh >> "$GITHUB_PATH"
+
       - name: Log in to Docker Hub
         run: |
           echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
@@ -60,7 +64,8 @@ jobs:
 
       - name: Push JS runtime
         run: |
-          nix develop --command ./scripts/push-$RUNTIME_TYPE.sh $TAG
+          SCRIPT="./scripts/push-${RUNTIME_TYPE}.sh"
+          nix develop --command "$SCRIPT" "$TAG"
         env:
           RUNTIME_TYPE: ${{ github.event.inputs.runtime_type }}
           TAG: ${{ github.event.inputs.tag }}
@@ -73,7 +78,7 @@ jobs:
 
       - name: Generate Unique Branch Name
         id: branch-name
-        run: echo "branch_name=bump-$RUNTIME_TYPE-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+        run: echo "branch_name=bump-${RUNTIME_TYPE}-$(date +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
         env:
           RUNTIME_TYPE: ${{ github.event.inputs.runtime_type }}
 

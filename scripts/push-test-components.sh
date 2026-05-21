@@ -6,21 +6,33 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
+if ! command -v obelisk >/dev/null; then
+    echo "error: obelisk must be on PATH" >&2
+    exit 1
+fi
+
 TAG="$1"
 PREFIX="docker.io/getobelisk/"
 SOURCE_TOML="obelisk-testing-wasm-local.toml"
 TARGET_TOML="obelisk-testing-wasm-oci.toml"
 
-# Make sure all components are fresh
-cargo check --workspace
+# Make sure all pushed components are fresh.
+cargo check \
+    --package test-programs-fibo-activity-builder \
+    --package test-programs-fibo-workflow-builder \
+    --package test-programs-fibo-webhook-builder \
+    --package test-programs-http-get-activity-builder \
+    --package test-programs-http-get-workflow-builder \
+    --package test-programs-sleep-activity-builder \
+    --package test-programs-sleep-workflow-builder
 
 push() {
     COMPONENT_NAME=$1
     OCI_REF="oci://${PREFIX}${COMPONENT_NAME}:${TAG}"
     echo "Pushing ${COMPONENT_NAME} to ${OCI_REF}..."
     # Outputs e.g. "oci://docker.io/getobelisk/name:tag@sha256:..."
-    OUTPUT=$(cargo run -- component push "${COMPONENT_NAME}" "${OCI_REF}" --deployment "${SOURCE_TOML}")
-    cargo run -- component add "${OUTPUT}" "${COMPONENT_NAME}" --deployment "${TARGET_TOML}"
+    OUTPUT=$(obelisk component push "${COMPONENT_NAME}" "${OCI_REF}" --deployment "${SOURCE_TOML}")
+    obelisk component add "${OUTPUT}" "${COMPONENT_NAME}" --deployment "${TARGET_TOML}"
 }
 
 push test_programs_fibo_activity
