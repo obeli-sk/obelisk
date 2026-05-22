@@ -223,8 +223,22 @@ impl args::Execution {
                 json,
                 trim,
                 pause_submitted,
+                pause_delays,
                 force,
-            } => advance(&api_url, execution_id, json, trim, pause_submitted, force).await,
+            } => {
+                advance(
+                    &api_url,
+                    execution_id,
+                    AdvanceOpts {
+                        json,
+                        trim,
+                        pause_submitted,
+                        pause_delays,
+                        force,
+                    },
+                )
+                .await
+            }
             args::Execution::Upgrade {
                 api_url,
                 execution_id,
@@ -860,6 +874,39 @@ fn pause_submitted_in_replay(advance_request: &mut AdvanceRequestSer) {
     }
 }
 
+fn pause_delays_in_replay(advance_request: &mut AdvanceRequestSer) {
+    fn pause_delays_in_events(events: &mut [concepts::storage::AppendRequest]) {
+        for append in events {
+            if let concepts::storage::ExecutionRequest::HistoryEvent {
+                event:
+                    concepts::storage::HistoryEvent::JoinSetRequest {
+                        request: concepts::storage::JoinSetRequest::DelayRequest { paused, .. },
+                        ..
+                    },
+            } = &mut append.event
+            {
+                *paused = true;
+            }
+        }
+    }
+    for captured_write in &mut advance_request.captured_writes {
+        match captured_write {
+            crate::server::web_api_server::CapturedWriteSer::Append { event, .. } => {
+                pause_delays_in_events(std::slice::from_mut(event));
+            }
+            crate::server::web_api_server::CapturedWriteSer::AppendBatch { events, .. }
+            | crate::server::web_api_server::CapturedWriteSer::AppendBatchCreateNewExecution {
+                events,
+                ..
+            }
+            | crate::server::web_api_server::CapturedWriteSer::AppendStubResponse {
+                events, ..
+            } => pause_delays_in_events(events),
+            crate::server::web_api_server::CapturedWriteSer::AppendFinished { .. } => {}
+        }
+    }
+}
+
 fn trim_replay(advance_request: &mut AdvanceRequestSer, trim: usize) {
     advance_request.captured_writes.truncate(trim);
 }
@@ -886,12 +933,12 @@ fn replay_to_advanceable_request(
         } => {
             if force {
                 eprintln!(
-                    "Replay failed: {error}. Advancing with --force to persist execution error."
+                    "Replay failed: {error}. Advancing with --force to persist execution failure."
                 );
                 Ok(AdvanceRequestSer { captured_writes })
             } else {
                 bail!(
-                    "replay failed: {error}, {} captured writes available (use --force to advance with execution error)",
+                    "replay failed: {error}, {} captured writes available (use --force to advance with execution failure)",
                     captured_writes.len()
                 )
             }
@@ -899,24 +946,34 @@ fn replay_to_advanceable_request(
     }
 }
 
-async fn advance(
-    api_url: &str,
-    execution_id: ExecutionId,
+#[expect(clippy::struct_excessive_bools)]
+struct AdvanceOpts {
     json: bool,
     trim: Option<usize>,
     pause_submitted: bool,
+    pause_delays: bool,
+    /// Advance to an execution failure
     force: bool,
+}
+
+async fn advance(
+    api_url: &str,
+    execution_id: ExecutionId,
+    opts: AdvanceOpts,
 ) -> anyhow::Result<()> {
     let replay = replay_json(api_url, &execution_id).await?;
-    let mut advance_request = replay_to_advanceable_request(&replay, force)?;
-    if let Some(trim) = trim {
+    let mut advance_request = replay_to_advanceable_request(&replay, opts.force)?;
+    if let Some(trim) = opts.trim {
         trim_replay(&mut advance_request, trim);
     }
-    if pause_submitted {
+    if opts.pause_submitted {
         pause_submitted_in_replay(&mut advance_request);
     }
+    if opts.pause_delays {
+        pause_delays_in_replay(&mut advance_request);
+    }
     let client = reqwest::Client::new();
-    let accept = if json {
+    let accept = if opts.json {
         "application/json"
     } else {
         "text/plain"
@@ -930,7 +987,9 @@ async fn advance(
 
 #[cfg(test)]
 mod tests {
-    use super::{execution_status_json_is_finished, pause_submitted_in_replay};
+    use super::{
+        execution_status_json_is_finished, pause_delays_in_replay, pause_submitted_in_replay,
+    };
     use crate::server::web_api_server::{AdvanceRequestSer, CapturedWriteSer};
     use chrono::{DateTime, Utc};
     use serde_json::json;
@@ -1005,6 +1064,101 @@ mod tests {
             other => panic!(
                 "expected second write to remain append_batch_create_new_execution, got {other:?}"
             ),
+        }
+    }
+
+    #[test]
+    fn pause_delays_marks_only_delay_requests_as_paused() {
+        let current_time: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+        let execution_id = concepts::ExecutionId::generate();
+        let delay_join_set_id = concepts::JoinSetId::new(
+            concepts::JoinSetKind::Generated,
+            concepts::StrVariant::Static("delay"),
+        )
+        .unwrap();
+        let child_join_set_id = concepts::JoinSetId::new(
+            concepts::JoinSetKind::Generated,
+            concepts::StrVariant::Static("child"),
+        )
+        .unwrap();
+        let delay_id = concepts::prefixed_ulid::DelayId::new(&execution_id, &delay_join_set_id);
+        let child_execution_id = execution_id.next_level(&child_join_set_id);
+        let mut advance_request = AdvanceRequestSer {
+            captured_writes: vec![
+                CapturedWriteSer::Append {
+                    execution_id: execution_id.to_string(),
+                    version: 1,
+                    event: concepts::storage::AppendRequest {
+                        created_at: current_time,
+                        event: concepts::storage::ExecutionRequest::HistoryEvent {
+                            event: concepts::storage::HistoryEvent::JoinSetRequest {
+                                join_set_id: delay_join_set_id,
+                                request: concepts::storage::JoinSetRequest::DelayRequest {
+                                    delay_id,
+                                    expires_at: current_time,
+                                    schedule_at: concepts::storage::HistoryEventScheduleAt::Now,
+                                    paused: false,
+                                },
+                            },
+                        },
+                    },
+                    backtraces: vec![],
+                },
+                CapturedWriteSer::AppendBatch {
+                    execution_id: execution_id.to_string(),
+                    version: 2,
+                    events: vec![concepts::storage::AppendRequest {
+                        created_at: current_time,
+                        event: concepts::storage::ExecutionRequest::HistoryEvent {
+                            event: concepts::storage::HistoryEvent::JoinSetRequest {
+                                join_set_id: child_join_set_id,
+                                request: concepts::storage::JoinSetRequest::ChildExecutionRequest {
+                                    child_execution_id,
+                                    target_ffqn: "testing:fibo/fibo.fibo".parse().unwrap(),
+                                    params: concepts::Params::empty(),
+                                    result: Ok(()),
+                                },
+                            },
+                        },
+                    }],
+                    backtraces: vec![],
+                },
+            ],
+        };
+
+        pause_delays_in_replay(&mut advance_request);
+
+        match &advance_request.captured_writes[0] {
+            CapturedWriteSer::Append { event, .. } => {
+                let concepts::storage::ExecutionRequest::HistoryEvent {
+                    event:
+                        concepts::storage::HistoryEvent::JoinSetRequest {
+                            request: concepts::storage::JoinSetRequest::DelayRequest { paused, .. },
+                            ..
+                        },
+                } = &event.event
+                else {
+                    panic!("expected append history event with delay request");
+                };
+                assert!(*paused);
+            }
+            other => panic!("expected first write to remain append, got {other:?}"),
+        }
+
+        match &advance_request.captured_writes[1] {
+            CapturedWriteSer::AppendBatch { events, .. } => {
+                let concepts::storage::ExecutionRequest::HistoryEvent {
+                    event:
+                        concepts::storage::HistoryEvent::JoinSetRequest {
+                            request: concepts::storage::JoinSetRequest::ChildExecutionRequest { .. },
+                            ..
+                        },
+                } = &events[0].event
+                else {
+                    panic!("expected batch history event with child request");
+                };
+            }
+            other => panic!("expected second write to remain append_batch, got {other:?}"),
         }
     }
 }

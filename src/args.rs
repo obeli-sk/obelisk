@@ -667,7 +667,10 @@ pub(crate) enum Execution {
         /// Rewrite replayed submitted executions so they are created paused when advance is applied.
         #[arg(long)]
         pause_submitted: bool,
-        /// Advance even if replay failed with an error, persisting the execution error.
+        /// Rewrite replayed delay requests so they are created paused when advance is applied.
+        #[arg(long)]
+        pause_delays: bool,
+        /// Advance even if replay finishes with an execution failure, persisting it.
         #[arg(long)]
         force: bool,
     },
