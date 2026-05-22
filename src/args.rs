@@ -666,7 +666,7 @@ pub(crate) enum Execution {
         trim: Option<usize>,
         /// Rewrite replayed submitted executions so they are created paused when advance is applied.
         #[arg(long)]
-        pause_submitted: bool,
+        pause_submitted_executions: bool,
         /// Rewrite replayed delay requests so they are created paused when advance is applied.
         #[arg(long)]
         pause_delays: bool,

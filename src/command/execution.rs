@@ -222,7 +222,7 @@ impl args::Execution {
                 execution_id,
                 json,
                 trim,
-                pause_submitted,
+                pause_submitted_executions,
                 pause_delays,
                 force,
             } => {
@@ -232,7 +232,7 @@ impl args::Execution {
                     AdvanceOpts {
                         json,
                         trim,
-                        pause_submitted,
+                        pause_submitted_executions,
                         pause_delays,
                         force,
                     },
@@ -950,7 +950,7 @@ fn replay_to_advanceable_request(
 struct AdvanceOpts {
     json: bool,
     trim: Option<usize>,
-    pause_submitted: bool,
+    pause_submitted_executions: bool,
     pause_delays: bool,
     /// Advance to an execution failure
     force: bool,
@@ -966,7 +966,7 @@ async fn advance(
     if let Some(trim) = opts.trim {
         trim_replay(&mut advance_request, trim);
     }
-    if opts.pause_submitted {
+    if opts.pause_submitted_executions {
         pause_submitted_in_replay(&mut advance_request);
     }
     if opts.pause_delays {
