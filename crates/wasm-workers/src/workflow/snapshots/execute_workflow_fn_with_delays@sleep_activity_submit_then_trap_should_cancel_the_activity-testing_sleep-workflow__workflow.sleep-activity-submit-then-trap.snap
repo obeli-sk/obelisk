@@ -106,7 +106,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "event": {
         "finished": {
           "retval": {
-            "execution_error": {
+            "execution_failure": {
               "kind": "uncategorized",
               "reason": "workflow trap: wasm trap: wasm `unreachable` instruction executed"
             }
@@ -127,7 +127,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "child_execution_id": "E_00000000000000000000000000.g:1_1",
           "finished_version": 1,
           "result": {
-            "execution_error": {
+            "execution_failure": {
               "kind": "cancelled"
             }
           }

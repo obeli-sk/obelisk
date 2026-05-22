@@ -23,7 +23,7 @@ use concepts::storage::{
 };
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
-    ComponentId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
+    ComponentId, ExecutionId, ExecutionMetadata, FinishedExecutionFailure, FunctionFqn,
     FunctionMetadata, PackageIfcFns, Params, ResultParsingError, StrVariant, TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
@@ -1021,8 +1021,8 @@ impl WorkflowWorker {
             Ok((_, db)) => Ok((None, db, None)), // replay interrupted or db updated (both have writes) or execution is waiting
             Err(WorkflowError::FatalError { err, db_connection }) => {
                 debug!("Replay finished with fatal error: {err:?}");
-                let retval = SupportedFunctionReturnValue::ExecutionError(
-                    FinishedExecutionError::from(&err),
+                let retval = SupportedFunctionReturnValue::ExecutionFailure(
+                    FinishedExecutionFailure::from(&err),
                 );
                 Ok((Some(retval), db_connection, Some(err)))
             }
@@ -1389,7 +1389,7 @@ impl From<WorkflowError> for ReplayError {
             }
             WorkflowError::DbError(db_error_write) => ReplayError::DbError(db_error_write),
             WorkflowError::FatalError { .. } => unreachable!(
-                "fatal errors are transformed to SupportedFunctionReturnValue::ExecutionError"
+                "fatal errors are transformed to SupportedFunctionReturnValue::ExecutionFailure"
             ),
             WorkflowError::LockExpired(_version) => ReplayError::LockExpired,
             WorkflowError::ExecutorClosing(_version) => ReplayError::ExecutorClosing,
@@ -4320,7 +4320,7 @@ pub(crate) mod tests {
             JoinSetResponse::ChildExecutionFinished { result, .. } => result
         );
         let result =
-            assert_matches!(result, SupportedFunctionReturnValue::ExecutionError(err) => err);
+            assert_matches!(result, SupportedFunctionReturnValue::ExecutionFailure(err) => err);
         assert_matches!(result.kind, ExecutionFailureKind::Cancelled);
     }
 
@@ -4344,7 +4344,7 @@ pub(crate) mod tests {
             JoinSetResponse::ChildExecutionFinished { result, .. } => result
         );
         let result =
-            assert_matches!(result, SupportedFunctionReturnValue::ExecutionError(err) => err);
+            assert_matches!(result, SupportedFunctionReturnValue::ExecutionFailure(err) => err);
         assert_matches!(result.kind, ExecutionFailureKind::Cancelled);
     }
 

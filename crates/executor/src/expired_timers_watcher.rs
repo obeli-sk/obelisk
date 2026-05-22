@@ -14,7 +14,7 @@ use concepts::storage::ExecutionLog;
 use concepts::storage::ExpiredDelay;
 use concepts::time::ClockFn;
 use concepts::{
-    FinishedExecutionError,
+    FinishedExecutionFailure,
     storage::{ExecutionRequest, ExpiredTimer},
 };
 use std::{sync::Arc, time::Duration};
@@ -145,7 +145,7 @@ pub(crate) async fn tick(
                         created_at = %executed_at,
                         "Marking execution with expired lock as permanently timed out - {expired:?}");
                     let finished_exec_result =
-                        SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+                        SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
                             kind: ExecutionFailureKind::TimedOut,
                             reason: None,
                             detail: None,

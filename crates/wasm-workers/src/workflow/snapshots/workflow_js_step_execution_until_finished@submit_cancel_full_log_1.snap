@@ -93,7 +93,7 @@ expression: "ExecutionLogSanitized::from(log)"
           "child_execution_id": "E_0000000000000000000000000A.g:1_1",
           "finished_version": 1,
           "result": {
-            "execution_error": {
+            "execution_failure": {
               "kind": "cancelled"
             }
           }

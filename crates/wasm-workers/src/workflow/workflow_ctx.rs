@@ -2828,7 +2828,7 @@ pub(crate) mod tests {
     use concepts::time::{ClockFn, Now};
     use concepts::{
         ComponentId, ComponentRetryConfig, ExecutionFailureKind, ExecutionMetadata,
-        FinishedExecutionError, FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind,
+        FinishedExecutionFailure, FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind,
         RETURN_TYPE_DUMMY, SUFFIX_PKG_EXT, SUPPORTED_RETURN_VALUE_OK_EMPTY,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
@@ -3431,7 +3431,7 @@ pub(crate) mod tests {
         );
         assert_eq!(ExecutionFailureKind::Uncategorized, kind);
         let (reason, kind, _detail) = assert_matches!(log.as_finished_result().unwrap(),
-            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError { reason, kind, detail })
+            SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure { reason, kind, detail })
             =>(reason, kind, detail));
         assert_eq!(ExecutionFailureKind::Uncategorized, kind);
         assert_eq!(

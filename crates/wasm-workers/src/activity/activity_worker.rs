@@ -548,7 +548,9 @@ pub(crate) mod tests {
     use concepts::time::Now;
     use concepts::time::TokioSleep;
     use concepts::{ComponentRetryConfig, ComponentType};
-    use concepts::{ExecutionFailureKind, FinishedExecutionError, SUPPORTED_RETURN_VALUE_OK_EMPTY};
+    use concepts::{
+        ExecutionFailureKind, FinishedExecutionFailure, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+    };
     use concepts::{
         ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue, prefixed_ulid::ExecutorId,
         storage::CreateRequest, storage::DbPoolCloseable,
@@ -1086,7 +1088,7 @@ pub(crate) mod tests {
     #[case(
             10,
             100,
-            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{
+            SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure{
                 kind: ExecutionFailureKind::TimedOut,
                 reason: None, detail: None
             })
@@ -1095,7 +1097,7 @@ pub(crate) mod tests {
     #[case(
             1500,
             1,
-            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{
+            SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure{
                 kind: ExecutionFailureKind::TimedOut,
                 reason: None, detail: None
             })
@@ -1543,10 +1545,10 @@ pub(crate) mod tests {
                 exec_log.last_event().event.clone(),
                 ExecutionRequest::Finished { retval, http_client_traces: Some(http_client_traces) }
                 => (retval, http_client_traces));
-        let res = assert_matches!(res, SupportedFunctionReturnValue::ExecutionError(err) => err);
+        let res = assert_matches!(res, SupportedFunctionReturnValue::ExecutionFailure(err) => err);
         let reason = assert_matches!(
             res,
-            FinishedExecutionError {
+            FinishedExecutionFailure {
                 kind: ExecutionFailureKind::Uncategorized,
                 reason: Some(reason), // activity trap
                 detail: _
@@ -1695,7 +1697,7 @@ pub(crate) mod tests {
             exec_log.last_event().event.clone(),
             ExecutionRequest::Finished { retval, .. } => retval
         );
-        // The execution should fail with an ExecutionError when the WASM traps.
+        // The execution should fail with an ExecutionFailure when the WASM traps.
         // The trap happens because the HTTP request is denied and the WASM unwraps the error.
         let err = assert_matches!(retval, SupportedFunctionReturnValue::Err(Some(err)) => err);
         let err = assert_matches!(err.value, WastVal::String(err) => err);

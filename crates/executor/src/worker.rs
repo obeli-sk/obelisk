@@ -10,7 +10,7 @@ use concepts::storage::Locked;
 use concepts::storage::ResponseWithCursor;
 use concepts::storage::Version;
 use concepts::storage::http_client_trace::HttpClientTrace;
-use concepts::{FinishedExecutionError, StrVariant};
+use concepts::{FinishedExecutionFailure, StrVariant};
 use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
 use concepts::{Params, SupportedFunctionReturnValue};
 use tracing::Span;
@@ -130,44 +130,44 @@ pub enum FatalError {
     Cancelled,
 }
 
-impl From<FatalError> for FinishedExecutionError {
+impl From<FatalError> for FinishedExecutionFailure {
     fn from(err: FatalError) -> Self {
         let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
         match err {
-            FatalError::NondeterminismDetected { detail } => FinishedExecutionError {
+            FatalError::NondeterminismDetected { detail } => FinishedExecutionFailure {
                 reason: None,
                 kind: ExecutionFailureKind::NondeterminismDetected,
                 detail: Some(detail),
             },
-            FatalError::OutOfFuel { reason } => FinishedExecutionError {
+            FatalError::OutOfFuel { reason } => FinishedExecutionFailure {
                 reason: Some(reason),
                 kind: ExecutionFailureKind::OutOfFuel,
                 detail: None,
             },
-            FatalError::ParamsParsingError(err) => FinishedExecutionError {
+            FatalError::ParamsParsingError(err) => FinishedExecutionFailure {
                 reason: Some(reason_generic),
                 kind: ExecutionFailureKind::Uncategorized,
                 detail: err.detail(),
             },
-            FatalError::CannotInstantiate { reason, detail } => FinishedExecutionError {
+            FatalError::CannotInstantiate { reason, detail } => FinishedExecutionFailure {
                 reason: Some(reason),
                 kind: ExecutionFailureKind::Uncategorized,
                 detail,
             },
             FatalError::ResultParsingError(_) | FatalError::ConstraintViolation { reason: _ } => {
-                FinishedExecutionError {
+                FinishedExecutionFailure {
                     reason: Some(reason_generic),
                     kind: ExecutionFailureKind::Uncategorized,
                     detail: None,
                 }
             }
             FatalError::ImportedFunctionCallError { detail, .. }
-            | FatalError::WorkflowTrap { detail, .. } => FinishedExecutionError {
+            | FatalError::WorkflowTrap { detail, .. } => FinishedExecutionFailure {
                 reason: Some(reason_generic),
                 kind: ExecutionFailureKind::Uncategorized,
                 detail,
             },
-            FatalError::Cancelled => FinishedExecutionError {
+            FatalError::Cancelled => FinishedExecutionFailure {
                 kind: ExecutionFailureKind::Cancelled,
                 reason: None,
                 detail: None,
@@ -176,44 +176,44 @@ impl From<FatalError> for FinishedExecutionError {
     }
 }
 
-impl From<&FatalError> for FinishedExecutionError {
+impl From<&FatalError> for FinishedExecutionFailure {
     fn from(err: &FatalError) -> Self {
         let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
         match err {
-            FatalError::NondeterminismDetected { detail } => FinishedExecutionError {
+            FatalError::NondeterminismDetected { detail } => FinishedExecutionFailure {
                 reason: None,
                 kind: ExecutionFailureKind::NondeterminismDetected,
                 detail: Some(detail.clone()),
             },
-            FatalError::OutOfFuel { reason } => FinishedExecutionError {
+            FatalError::OutOfFuel { reason } => FinishedExecutionFailure {
                 reason: Some(reason.clone()),
                 kind: ExecutionFailureKind::OutOfFuel,
                 detail: None,
             },
-            FatalError::ParamsParsingError(err) => FinishedExecutionError {
+            FatalError::ParamsParsingError(err) => FinishedExecutionFailure {
                 reason: Some(reason_generic),
                 kind: ExecutionFailureKind::Uncategorized,
                 detail: err.detail(),
             },
-            FatalError::CannotInstantiate { reason, detail } => FinishedExecutionError {
+            FatalError::CannotInstantiate { reason, detail } => FinishedExecutionFailure {
                 reason: Some(reason.clone()),
                 kind: ExecutionFailureKind::Uncategorized,
                 detail: detail.clone(),
             },
             FatalError::ResultParsingError(_) | FatalError::ConstraintViolation { reason: _ } => {
-                FinishedExecutionError {
+                FinishedExecutionFailure {
                     reason: Some(reason_generic),
                     kind: ExecutionFailureKind::Uncategorized,
                     detail: None,
                 }
             }
             FatalError::ImportedFunctionCallError { detail, .. }
-            | FatalError::WorkflowTrap { detail, .. } => FinishedExecutionError {
+            | FatalError::WorkflowTrap { detail, .. } => FinishedExecutionFailure {
                 reason: Some(reason_generic),
                 kind: ExecutionFailureKind::Uncategorized,
                 detail: detail.clone(),
             },
-            FatalError::Cancelled => FinishedExecutionError {
+            FatalError::Cancelled => FinishedExecutionFailure {
                 kind: ExecutionFailureKind::Cancelled,
                 reason: None,
                 detail: None,

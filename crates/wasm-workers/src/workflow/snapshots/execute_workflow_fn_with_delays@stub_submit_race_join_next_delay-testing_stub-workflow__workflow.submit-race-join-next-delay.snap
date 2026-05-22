@@ -222,7 +222,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "child_execution_id": "E_00000000000000000000000000.g:1_1",
           "finished_version": 1,
           "result": {
-            "execution_error": {
+            "execution_failure": {
               "kind": "cancelled"
             }
           }

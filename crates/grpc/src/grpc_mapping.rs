@@ -2,7 +2,7 @@ use crate::grpc_gen::{self, execution_event::history_event, result_kind};
 use chrono::DateTime;
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
-    ExecutionMetadata, FinishedExecutionError, FunctionFqn, StrVariant,
+    ExecutionMetadata, FinishedExecutionFailure, FunctionFqn, StrVariant,
     SupportedFunctionReturnValue,
     component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutorId, RunId},
@@ -661,7 +661,7 @@ impl From<SupportedFunctionReturnValue> for grpc_gen::SupportedFunctionResult {
                     wit_type_inline,
                 )
             }
-            SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+            SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
                 kind,
                 reason,
                 detail,
@@ -854,8 +854,8 @@ impl TryFrom<grpc_gen::SupportedFunctionResult> for SupportedFunctionReturnValue
                             tonic::Status::invalid_argument("invalid execution failure kind")
                         })
                     })?;
-                Ok(SupportedFunctionReturnValue::ExecutionError(
-                    FinishedExecutionError {
+                Ok(SupportedFunctionReturnValue::ExecutionFailure(
+                    FinishedExecutionFailure {
                         kind,
                         reason,
                         detail,

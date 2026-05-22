@@ -16,7 +16,7 @@ use concepts::{
 use concepts::{ExecutionFailureKind, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
-    FinishedExecutionError,
+    FinishedExecutionFailure,
     storage::{ExecutionRequest, Version},
 };
 use std::{
@@ -649,8 +649,8 @@ impl ExecTask {
                             )
                         } else {
                             info!("Execution timed out");
-                            let result = SupportedFunctionReturnValue::ExecutionError(
-                                FinishedExecutionError {
+                            let result = SupportedFunctionReturnValue::ExecutionFailure(
+                                FinishedExecutionFailure {
                                     kind: ExecutionFailureKind::TimedOut,
                                     reason: None,
                                     detail: None,
@@ -703,8 +703,8 @@ impl ExecTask {
                             info!(
                                 "Activity with `{trap_kind}` marked as permanent failure - {reason_generic}"
                             );
-                            let result = SupportedFunctionReturnValue::ExecutionError(
-                                FinishedExecutionError {
+                            let result = SupportedFunctionReturnValue::ExecutionFailure(
+                                FinishedExecutionFailure {
                                     reason: Some(reason_generic),
                                     kind: ExecutionFailureKind::Uncategorized,
                                     detail,
@@ -754,8 +754,8 @@ impl ExecTask {
                     }
                     WorkerError::FatalError(fatal_error, version) => {
                         warn!("Fatal worker error - {fatal_error:?}");
-                        let result = SupportedFunctionReturnValue::ExecutionError(
-                            FinishedExecutionError::from(fatal_error),
+                        let result = SupportedFunctionReturnValue::ExecutionFailure(
+                            FinishedExecutionFailure::from(fatal_error),
                         );
                         let child_finished =
                             parent.map(|(parent_execution_id, parent_join_set)| {
@@ -1404,7 +1404,7 @@ mod tests {
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionRequest::Finished{
-                    retval: SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError{reason, kind, detail}),
+                    retval: SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure{reason, kind, detail}),
                     http_client_traces: None
                 },
                 created_at: at,
@@ -1434,7 +1434,7 @@ mod tests {
             version: Version::new(2),
             http_client_traces: None,
         };
-        let expected_child_err = FinishedExecutionError {
+        let expected_child_err = FinishedExecutionFailure {
             kind: ExecutionFailureKind::Uncategorized,
             reason: Some("activity trap: error reason".to_string()),
             detail: Some("detail".to_string()),
@@ -1453,7 +1453,7 @@ mod tests {
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,
     ) {
-        let expected_child_err = FinishedExecutionError {
+        let expected_child_err = FinishedExecutionFailure {
             kind: ExecutionFailureKind::TimedOut,
             reason: None,
             detail: None,
@@ -1468,7 +1468,7 @@ mod tests {
 
     async fn child_execution_permanently_failed_should_notify_parent(
         worker_result: WorkerResult,
-        expected_child_err: FinishedExecutionError,
+        expected_child_err: FinishedExecutionFailure,
         locking_strategy: LockingStrategy,
     ) {
         use concepts::storage::JoinSetResponseEventOuter;
@@ -1636,7 +1636,7 @@ mod tests {
         );
         assert_eq!(
             ExecutionRequest::Finished {
-                retval: SupportedFunctionReturnValue::ExecutionError(expected_child_err),
+                retval: SupportedFunctionReturnValue::ExecutionFailure(expected_child_err),
                 http_client_traces: None
             },
             child_log.last_event().event
@@ -1677,7 +1677,7 @@ mod tests {
         assert_eq!(child_log.next_version, *child_finished_version);
         assert_matches!(
             found_result,
-            SupportedFunctionReturnValue::ExecutionError(_)
+            SupportedFunctionReturnValue::ExecutionFailure(_)
         );
 
         db_close.close().await;

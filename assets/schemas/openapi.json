@@ -2541,14 +2541,14 @@
           },
           {
             "type": "object",
-            "description": "Execution failed with an error",
+            "description": "Execution failed",
             "required": [
-              "execution_error"
+              "execution_failure"
             ],
             "properties": {
-              "execution_error": {
+              "execution_failure": {
                 "type": "object",
-                "description": "Execution failed with an error"
+                "description": "Execution failed"
               }
             }
           }

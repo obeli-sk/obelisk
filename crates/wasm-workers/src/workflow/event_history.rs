@@ -1232,7 +1232,10 @@ impl EventHistory {
                         };
                         (Ok(()), params, Some(child_req))
                     }
-                    SubmitChildIntent::Err(err) => (Err(err), Params::empty(), None),
+                    SubmitChildIntent::Err(err) => {
+                        // Function was not found or params parsing error
+                        (Err(err), Params::empty(), None)
+                    }
                 };
 
                 debug!(%child_execution_id, %join_set_id, "SubmitChildExecution: appending, has_child_req: {}", maybe_child_req.is_some());
