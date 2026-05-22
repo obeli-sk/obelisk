@@ -4,7 +4,7 @@ use concepts::storage::{
     PendingState, Version,
 };
 use concepts::{
-    ExecutionFailureKind, ExecutionId, FinishedExecutionError, SupportedFunctionReturnValue,
+    ExecutionFailureKind, ExecutionId, FinishedExecutionFailure, SupportedFunctionReturnValue,
 };
 use rand::rngs::StdRng;
 use rand::{Rng as _, SeedableRng as _};
@@ -152,7 +152,7 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
                 }
                 ExecutionRequest::Finished {
                     retval:
-                        SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+                        SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
                             kind: ExecutionFailureKind::Uncategorized,
                             reason: _,
                             detail,

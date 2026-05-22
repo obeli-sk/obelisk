@@ -511,12 +511,12 @@
         {
           "type": "object",
           "properties": {
-            "execution_error": {
-              "$ref": "#/$defs/FinishedExecutionError"
+            "execution_failure": {
+              "$ref": "#/$defs/FinishedExecutionFailure"
             }
           },
           "required": [
-            "execution_error"
+            "execution_failure"
           ],
           "additionalProperties": false
         }
@@ -892,7 +892,7 @@
         }
       ]
     },
-    "FinishedExecutionError": {
+    "FinishedExecutionFailure": {
       "type": "object",
       "properties": {
         "kind": {

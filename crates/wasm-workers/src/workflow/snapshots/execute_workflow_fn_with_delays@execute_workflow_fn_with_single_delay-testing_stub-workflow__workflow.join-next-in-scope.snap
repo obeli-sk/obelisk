@@ -489,7 +489,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "child_execution_id": "E_00000000000000000000000000.n:a_1",
           "finished_version": 1,
           "result": {
-            "execution_error": {
+            "execution_failure": {
               "kind": "cancelled"
             }
           }
@@ -505,7 +505,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "child_execution_id": "E_00000000000000000000000000.n:c_1",
           "finished_version": 1,
           "result": {
-            "execution_error": {
+            "execution_failure": {
               "kind": "cancelled"
             }
           }
@@ -534,7 +534,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "child_execution_id": "E_00000000000000000000000000.n:f_1",
           "finished_version": 1,
           "result": {
-            "execution_error": {
+            "execution_failure": {
               "kind": "cancelled"
             }
           }

@@ -21,7 +21,7 @@ use axum_accept::AcceptExtractor;
 use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn, JoinSetId,
+    ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
     SupportedFunctionReturnValue,
     component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
@@ -1395,9 +1395,9 @@ enum RetVal {
     /// Error result (WIT result's err variant)
     #[schema(value_type = Option<Object>)]
     Err(Option<WastVal>),
-    /// Execution failed with an error
+    /// Execution failed
     #[schema(value_type = Object)]
-    ExecutionError(FinishedExecutionError),
+    ExecutionFailure(FinishedExecutionFailure),
 }
 impl From<SupportedFunctionReturnValue> for RetVal {
     fn from(value: SupportedFunctionReturnValue) -> RetVal {
@@ -1408,7 +1408,7 @@ impl From<SupportedFunctionReturnValue> for RetVal {
             SupportedFunctionReturnValue::Err(val_with_type) => {
                 RetVal::Err(val_with_type.map(|it| it.value))
             }
-            SupportedFunctionReturnValue::ExecutionError(err) => RetVal::ExecutionError(err),
+            SupportedFunctionReturnValue::ExecutionFailure(err) => RetVal::ExecutionFailure(err),
         }
     }
 }

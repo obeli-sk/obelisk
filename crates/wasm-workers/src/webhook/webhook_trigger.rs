@@ -19,7 +19,7 @@ use concepts::storage::{
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
-    ComponentId, ExecutionFailureKind, ExecutionId, ExecutionMetadata, FinishedExecutionError,
+    ComponentId, ExecutionFailureKind, ExecutionId, ExecutionMetadata, FinishedExecutionFailure,
     FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName, JoinSetKind, Params, ReturnType,
     SUFFIX_PKG_SCHEDULE, SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, TrapKind,
 };
@@ -148,7 +148,7 @@ fn supported_return_value_to_json_result(
             Err(Some(json))
         }
         SupportedFunctionReturnValue::Err(None) => Err(None),
-        SupportedFunctionReturnValue::ExecutionError(err) => {
+        SupportedFunctionReturnValue::ExecutionFailure(err) => {
             Err(Some(format!("execution error: {err}")))
         }
     }
@@ -1211,7 +1211,7 @@ enum WebhookEndpointFunctionError {
     #[error(transparent)]
     DbError(#[from] DbErrorWrite),
     #[error(transparent)]
-    FinishedExecutionError(#[from] FinishedExecutionError),
+    FinishedExecutionFailure(#[from] FinishedExecutionFailure),
     #[error("uncategorized error: {0}")]
     UncategorizedError(&'static str),
     #[error("connection closed")]
@@ -1712,7 +1712,7 @@ impl WebhookEndpointCtx {
                     }
                 };
 
-                SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+                SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
                     reason: Some(err.to_string()),
                     kind: ExecutionFailureKind::Uncategorized,
                     detail: err.detail,

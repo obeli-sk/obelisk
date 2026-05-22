@@ -4,7 +4,7 @@ use crate::ComponentType;
 use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
-use crate::FinishedExecutionError;
+use crate::FinishedExecutionFailure;
 use crate::FunctionExtension;
 use crate::FunctionFqn;
 use crate::FunctionMetadata;
@@ -1169,7 +1169,7 @@ pub trait DbExecutor: Send + Sync {
             .map_err(DbErrorWrite::from)?;
         if let ExecutionRequest::Finished {
             retval:
-                SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
+                SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
                     kind: ExecutionFailureKind::Cancelled,
                     ..
                 }),
@@ -1182,11 +1182,12 @@ pub trait DbExecutor: Send + Sync {
             return Ok(CancelOutcome::AlreadyFinished);
         }
         let finished_version = last_event.version.increment();
-        let child_result = SupportedFunctionReturnValue::ExecutionError(FinishedExecutionError {
-            reason: None,
-            kind: ExecutionFailureKind::Cancelled,
-            detail: None,
-        });
+        let child_result =
+            SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
+                reason: None,
+                kind: ExecutionFailureKind::Cancelled,
+                detail: None,
+            });
         let cancel_request = AppendRequest {
             created_at: cancelled_at,
             event: ExecutionRequest::Finished {

@@ -19,7 +19,7 @@ use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::storage::{CapturedDbWrite, DbPool, Version};
 use concepts::time::ClockFn;
 use concepts::{
-    ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionError,
+    ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionFailure,
     FunctionFqn, FunctionMetadata, FunctionRegistry, PackageIfcFns, ParameterType, Params,
     ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
     SupportedFunctionReturnValue,
@@ -389,10 +389,10 @@ fn transform_to_outer_result(
                 "execution_failed" => {
                     // This variant is returned when a workflow function fails,
                     // e.g., when joinNext returns an error from a child execution.
-                    // We propagate this as an ExecutionError.
+                    // We propagate this as an ExecutionFailure.
                     Ok(RunFinished {
-                        retval: SupportedFunctionReturnValue::ExecutionError(
-                            FinishedExecutionError {
+                        retval: SupportedFunctionReturnValue::ExecutionFailure(
+                            FinishedExecutionFailure {
                                 kind: ExecutionFailureKind::Uncategorized,
                                 reason: Some("js-runtime execution-failed".to_string()),
                                 detail: None,
@@ -406,7 +406,7 @@ fn transform_to_outer_result(
             }
         }
 
-        retval @ SupportedFunctionReturnValue::ExecutionError(_) => Ok(RunFinished {
+        retval @ SupportedFunctionReturnValue::ExecutionFailure(_) => Ok(RunFinished {
             retval,
             version,
             http_client_traces,
@@ -427,8 +427,8 @@ fn transform_to_append_finished(
                 retval, version, ..
             }) => (retval, version, None),
             Err((fatal_error, version)) => {
-                let retval = SupportedFunctionReturnValue::ExecutionError(
-                    FinishedExecutionError::from(&fatal_error),
+                let retval = SupportedFunctionReturnValue::ExecutionFailure(
+                    FinishedExecutionFailure::from(&fatal_error),
                 );
                 (retval, version, Some(fatal_error))
             }
@@ -2719,7 +2719,8 @@ mod tests {
             &log.responses[0].event.event.event,
             JoinSetResponse::ChildExecutionFinished { result, .. } => result
         );
-        let err = assert_matches!(result, SupportedFunctionReturnValue::ExecutionError(err) => err);
+        let err =
+            assert_matches!(result, SupportedFunctionReturnValue::ExecutionFailure(err) => err);
         assert_matches!(err.kind, ExecutionFailureKind::Cancelled);
 
         drop(db_connection);

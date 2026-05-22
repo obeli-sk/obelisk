@@ -969,11 +969,42 @@ fn grpc_result_to_json(value: grpc::grpc_gen::SupportedFunctionResult) -> serde_
             json!({ "err": err })
         }
         Some(grpc::grpc_gen::supported_function_result::Value::ExecutionFailure(failure)) => {
-            json!({ "execution_error": {
-                "kind": failure.kind,
-                "reason": failure.reason,
-                "detail": failure.detail,
-            }})
+            #[derive(serde::Serialize)]
+            struct ExecutionFailure {
+                kind: String,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                reason: Option<String>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                detail: Option<String>,
+            }
+            #[derive(serde::Serialize)]
+            struct ExecutionFailureWrapper {
+                execution_failure: ExecutionFailure,
+            }
+
+            let kind = grpc::grpc_gen::ExecutionFailureKind::try_from(failure.kind)
+                .expect("execution failure kind must be valid");
+            let kind = match kind {
+                grpc::grpc_gen::ExecutionFailureKind::Unspecified => {
+                    panic!("execution failure kind must not be unspecified")
+                }
+                grpc::grpc_gen::ExecutionFailureKind::TimedOut => "timed_out",
+                grpc::grpc_gen::ExecutionFailureKind::NondeterminismDetected => {
+                    "nondeterminism_detected"
+                }
+                grpc::grpc_gen::ExecutionFailureKind::OutOfFuel => "out_of_fuel",
+                grpc::grpc_gen::ExecutionFailureKind::Cancelled => "cancelled",
+                grpc::grpc_gen::ExecutionFailureKind::Uncategorized => "uncategorized",
+            }
+            .to_string();
+            serde_json::to_value(&ExecutionFailureWrapper {
+                execution_failure: ExecutionFailure {
+                    kind,
+                    reason: failure.reason,
+                    detail: failure.detail,
+                },
+            })
+            .unwrap()
         }
         None => panic!("SupportedFunctionResult value must be set"),
     }
@@ -1831,9 +1862,15 @@ async fn replay_failed_js_workflow_then_advance(client: TestExecutionClient, add
         .step_execution_until_finished(&server, REPLAY_FAILED_FFQN, vec![])
         .await;
     assert_eq!(stepped.steps, 1);
-    assert!(
-        stepped.retval["execution_error"].is_object(),
-        "expected execution_error in retval, got: {}",
+    assert_eq!(
+        json!(
+            {
+                "execution_failure":{
+                    "kind":"uncategorized",
+                    "reason":"value does not type check - failed to type check the ok variant value `\"not-a-number\"` as type u32 - invalid type: string \"not-a-number\", expected value matching \"u32\" at line 1 column 14"
+                }
+            }
+        ),
         stepped.retval
     );
     server.shutdown().await;

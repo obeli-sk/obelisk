@@ -330,7 +330,7 @@ message SupportedFunctionResult {
         google.protobuf.Any return_value = 1;
     }
 
-    // FinishedExecutionError
+    // FinishedExecutionFailure
     message ExecutionFailure {
         ExecutionFailureKind kind = 1;
         optional string reason = 2;

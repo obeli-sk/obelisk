@@ -48,14 +48,14 @@ pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
     thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[error("{kind}")]
-pub struct FinishedExecutionError {
+pub struct FinishedExecutionFailure {
     pub kind: ExecutionFailureKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
-impl FinishedExecutionError {
+impl FinishedExecutionFailure {
     #[must_use]
     pub fn as_pending_state_finished_error(&self) -> PendingStateFinishedError {
         PendingStateFinishedError::ExecutionFailure(self.kind)
@@ -663,7 +663,7 @@ impl From<TypeWrapperTopLevel> for TypeWrapper {
 pub enum SupportedFunctionReturnValue {
     Ok(Option<WastValWithType>),
     Err(Option<WastValWithType>),
-    ExecutionError(FinishedExecutionError),
+    ExecutionFailure(FinishedExecutionFailure),
 }
 impl Display for SupportedFunctionReturnValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -845,7 +845,7 @@ impl SupportedFunctionReturnValue {
             SupportedFunctionReturnValue::Ok(Some(v)) => Ok(Some(Box::new(v.value))),
             SupportedFunctionReturnValue::Err(None) => Err(None),
             SupportedFunctionReturnValue::Err(Some(v)) => Err(Some(Box::new(v.value))),
-            SupportedFunctionReturnValue::ExecutionError(_) => {
+            SupportedFunctionReturnValue::ExecutionFailure(_) => {
                 Err(Self::execution_error_to_wast_val_err(&get_return_type()))
             }
         }
@@ -886,7 +886,7 @@ impl SupportedFunctionReturnValue {
             SupportedFunctionReturnValue::Err(_) => {
                 PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error)
             }
-            SupportedFunctionReturnValue::ExecutionError(err) => {
+            SupportedFunctionReturnValue::ExecutionFailure(err) => {
                 PendingStateFinishedResultKind::Err(err.as_pending_state_finished_error())
             }
         }

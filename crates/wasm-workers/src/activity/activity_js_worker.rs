@@ -269,7 +269,7 @@ impl Worker for ActivityJsWorker {
                 }
             }
 
-            retval @ SupportedFunctionReturnValue::ExecutionError(_) => {
+            retval @ SupportedFunctionReturnValue::ExecutionFailure(_) => {
                 Ok(WorkerResultOk::RunFinished(RunFinished {
                     retval,
                     version,
