@@ -486,12 +486,21 @@
               "help": "Send only the first N captured writes from replay to advance"
             },
             {
-              "name": "--pause-submitted",
+              "name": "--pause-all",
+              "short": "p",
+              "help": "Pause both replayed child executions and delay requests when applying the advance"
+            },
+            {
+              "name": "--pause-submitted-executions",
               "help": "Rewrite replayed submitted executions so they are created paused when advance is applied"
             },
             {
+              "name": "--pause-delays",
+              "help": "Rewrite replayed delay requests so they are created paused when advance is applied"
+            },
+            {
               "name": "--force",
-              "help": "Advance even if replay failed with an error, persisting the execution error"
+              "help": "Advance even if replay finishes with an execution failure, persisting it"
             }
           ],
           "positionals": [

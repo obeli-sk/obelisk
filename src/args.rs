@@ -664,10 +664,16 @@ pub(crate) enum Execution {
         /// Send only the first N captured writes from replay to advance.
         #[arg(long)]
         trim: Option<usize>,
+        /// Pause both replayed child executions and delay requests when applying the advance.
+        #[arg(short = 'p', long = "pause-all", visible_alias = "pause")]
+        pause_all: bool,
         /// Rewrite replayed submitted executions so they are created paused when advance is applied.
         #[arg(long)]
-        pause_submitted: bool,
-        /// Advance even if replay failed with an error, persisting the execution error.
+        pause_submitted_executions: bool,
+        /// Rewrite replayed delay requests so they are created paused when advance is applied.
+        #[arg(long)]
+        pause_delays: bool,
+        /// Advance even if replay finishes with an execution failure, persisting it.
         #[arg(long)]
         force: bool,
     },
