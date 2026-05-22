@@ -222,10 +222,13 @@ impl args::Execution {
                 execution_id,
                 json,
                 trim,
+                pause_all,
                 pause_submitted_executions,
                 pause_delays,
                 force,
             } => {
+                let pause_submitted_executions = pause_all || pause_submitted_executions;
+                let pause_delays = pause_all || pause_delays;
                 advance(
                     &api_url,
                     execution_id,
