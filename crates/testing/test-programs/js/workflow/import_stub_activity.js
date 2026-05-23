@@ -6,6 +6,6 @@ export default function call_stub(id) {
     const js = obelisk.createJoinSet();
     const execId = myStubSubmit(js, id);
     myStubStub(execId, { 'ok': 'stub-ok' });
-    const [, result] = myStubAwaitNext(js);
-    return result.val;
+    const result = myStubAwaitNext(js);
+    return result;
 }

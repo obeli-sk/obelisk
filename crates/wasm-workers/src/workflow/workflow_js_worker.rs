@@ -1241,7 +1241,7 @@ mod tests {
             if (response1.type === 'execution') {
                 const result = obelisk.getResult(response1.id);
                 console.log('Got fibo result:', JSON.stringify(result));
-                fiboResult = result.ok;
+                fiboResult = result;
                 loser = delayId;
             } else {
                 loser = execId;
@@ -1654,7 +1654,7 @@ mod tests {
         let result = harness.get_result_json().await;
         assert_eq!(json!("execution"), result["responseType"]);
         assert_eq!(json!(true), result["responseOk"]);
-        assert_eq!(json!("stubbed-result-42"), result["result"]["ok"]);
+        assert_eq!(json!("stubbed-result-42"), result["result"]);
         drop(harness);
         db_close.close().await;
     }
@@ -1673,8 +1673,13 @@ mod tests {
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'err': null}); // result<string> has no error type
             const response = js.joinNext();
-            const result = obelisk.getResult(execId);
-            return JSON.stringify({ responseOk: response.ok, result: result });
+            let caughtErr = 'none';
+            try {
+                obelisk.getResult(execId);
+            } catch (e) {
+                caughtErr = e.message;
+            }
+            return JSON.stringify({ responseOk: response.ok, caughtErr: caughtErr });
         }";
 
         let harness =
@@ -1684,7 +1689,7 @@ mod tests {
 
         let result = harness.get_result_json().await;
         assert_eq!(json!(false), result["responseOk"]);
-        assert_eq!(json!(null), result["result"]["err"]);
+        assert_eq!(json!("child execution failed"), result["caughtErr"]);
         drop(harness);
         db_close.close().await;
     }
@@ -1749,7 +1754,7 @@ mod tests {
 
         let result = harness.get_result_json().await;
         assert_eq!(json!(true), result["responseOk"]);
-        assert_eq!(json!("same-value"), result["result"]["ok"]);
+        assert_eq!(json!("same-value"), result["result"]);
         drop(harness);
         db_close.close().await;
     }
@@ -1779,7 +1784,7 @@ mod tests {
 
         let result = harness.get_result_json().await;
         assert_eq!(json!(true), result["responseOk"]);
-        assert_eq!(json!(null), result["result"]["ok"]);
+        assert_eq!(json!(null), result["result"]);
         drop(harness);
         db_close.close().await;
     }
@@ -1830,7 +1835,7 @@ mod tests {
             "Expected 'Conflict' in error, got: {error_msg}"
         );
         assert_eq!(json!(true), result["responseOk"]);
-        assert_eq!(json!("first-value"), result["result"]["ok"]);
+        assert_eq!(json!("first-value"), result["result"]);
         drop(harness);
         db_close.close().await;
     }
@@ -2399,7 +2404,7 @@ mod tests {
             obelisk.stub(execId, { 'ok': 'hello' });
             const response = js.joinNext();
             if (!response.ok) throw 'stub failed';
-            return obelisk.getResult(execId).ok;
+            return obelisk.getResult(execId);
         }";
 
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "call-stub");
@@ -2540,7 +2545,7 @@ mod tests {
             obelisk.stub(execId, { 'ok': 'hello' });
             const response = js.joinNext();
             if (!response.ok) throw 'stub failed';
-            return obelisk.getResult(execId).ok;
+            return obelisk.getResult(execId);
         }";
 
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "call-stub");

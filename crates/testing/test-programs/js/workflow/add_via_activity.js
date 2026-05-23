@@ -9,7 +9,7 @@ export default function add_via_activity(a, b) {
     }
     const result = obelisk.getResult(response.id);
     console.log('Got result:', JSON.stringify(result));
-    return result.ok;
+    return result;
 }
 
 function createJoinSet() {
