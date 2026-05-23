@@ -269,7 +269,7 @@ derive_more = { version = "2.1.1", features = [
 ] }
 derive-where = "1.6.1"
 directories = "6.0"
-divan = { version = "4.6", package = "codspeed-divan-compat" }
+divan = { version = "4.7", package = "codspeed-divan-compat" }
 docker_credential = "1.4.0"
 futures = { version = "0.3.32", default-features = false }
 futures-concurrency = "7.7.1"
@@ -318,7 +318,7 @@ schemars = { version = "1.2.1", features = ["indexmap2", "chrono04"] }
 secrecy = "0.10.3"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.149", features = ["preserve_order"] }
+serde_json = { version = "1.0.150", features = ["preserve_order"] }
 serde_with = "3.20.0"
 hmac = "0.12.1"
 sha2 = "0.10.9"
