@@ -42,7 +42,7 @@ use std::{path::PathBuf, time::Duration};
 use test_utils::sanitize_json;
 use tokio::{sync::watch, task::JoinHandle};
 use tokio_stream::StreamExt;
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 
 #[cfg(test)]
 mod populate_js_codegen_cache {
@@ -552,6 +552,18 @@ impl TestServer {
             .await
             .unwrap();
 
+        let base_url = format!("http://{ip}:{API_PORT}");
+        let client = reqwest::Client::new();
+        if client
+            .get(format!("{base_url}/v1/functions"))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .is_ok()
+        {
+            panic!("{base_url} is reachable before server started");
+        }
+
         let server_handle = tokio::spawn(async move {
             Box::pin(run_internal(
                 config,
@@ -563,9 +575,7 @@ impl TestServer {
             ))
             .await
         });
-
-        let base_url = format!("http://{ip}:{API_PORT}");
-        let client = reqwest::Client::new();
+        debug!("Spawned server task");
 
         // Poll until the server is ready.
         loop {
@@ -582,6 +592,7 @@ impl TestServer {
             if let Ok(resp) = resp
                 && resp.status().is_success()
             {
+                debug!("Pinging server OK");
                 break;
             }
             debug!("Pinging sever failed");
