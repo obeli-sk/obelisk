@@ -60,7 +60,7 @@
 //! ```js
 //! // Synchronous call - blocks until completion
 //! const result = obelisk.call("ns:pkg/ifc.func", [arg1, arg2]);
-//! // result = { ok: value } or { err: value }
+//! // Returns ok value, throws err value
 //! ```
 //!
 //! ## Check Execution Status
@@ -74,11 +74,11 @@
 //! ```js
 //! // Blocking - waits until execution completes
 //! const result = obelisk.get(execId);
-//! // result = { ok/err: value }
+//! // Returns ok value, throws err value
 //!
 //! // Non-blocking - returns immediately
 //! const result = obelisk.tryGet(execId);
-//! // result = `{ pending: true }` or `{ ok/err: value }`
+//! // Returns ok value, throws err value, returns undefined if not finished yet.
 //! ```
 //!
 //! ## Environment Variables
@@ -463,6 +463,23 @@ fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
     WasmBacktrace { frames }
 }
 
+/// Unwrap a `Result<Option<String>, Option<String>>` into a JS value:
+/// returns the ok value, throws the err value.
+/// Matches the semantics of direct call proxies.
+fn unwrap_result(
+    inner_result: Result<Option<String>, Option<String>>,
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    match inner_result {
+        Ok(Some(json_str)) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
+        Ok(None) => Ok(JsValue::null()),
+        Err(Some(err_str)) => Err(JsNativeError::error().with_message(err_str).into()),
+        Err(None) => Err(JsNativeError::error()
+            .with_message("child execution failed")
+            .into()),
+    }
+}
+
 /// Set up the global `obelisk` object with webhook support functions.
 fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     let obelisk = new_object(context);
@@ -624,7 +641,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // obelisk.get(executionId) - blocking get
+    // obelisk.get(executionId) - blocking get, returns ok value, throws err value
     let get_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let exec_id_str = args
             .get_or_undefined(0)
@@ -636,26 +653,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
         let backtrace = capture_backtrace(ctx);
         match webhook_support::get(&exec_id, Some(&backtrace)) {
-            Ok(inner_result) => {
-                let result_obj = new_object(ctx);
-                match inner_result {
-                    Ok(Some(json_str)) => {
-                        let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
-                        result_obj.set(js_string!("ok"), parsed, false, ctx)?;
-                    }
-                    Ok(None) => {
-                        result_obj.set(js_string!("ok"), JsValue::null(), false, ctx)?;
-                    }
-                    Err(Some(err_str)) => {
-                        let parsed = ctx.eval(Source::from_bytes(&format!("({})", err_str)))?;
-                        result_obj.set(js_string!("err"), parsed, false, ctx)?;
-                    }
-                    Err(None) => {
-                        result_obj.set(js_string!("err"), JsValue::null(), false, ctx)?;
-                    }
-                }
-                Ok(result_obj.into())
-            }
+            Ok(inner_result) => unwrap_result(inner_result, ctx),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("get failed: {:?}", e))
                 .into()),
@@ -669,6 +667,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     )?;
 
     // obelisk.tryGet(executionId) - non-blocking get
+    // Returns ok value, throws err value, returns undefined if not finished yet
     let try_get_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let exec_id_str = args
             .get_or_undefined(0)
@@ -680,31 +679,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
         let backtrace = capture_backtrace(ctx);
         match webhook_support::try_get(&exec_id, Some(&backtrace)) {
-            Ok(inner_result) => {
-                let result_obj = new_object(ctx);
-                match inner_result {
-                    Ok(Some(json_str)) => {
-                        let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
-                        result_obj.set(js_string!("ok"), parsed, false, ctx)?;
-                    }
-                    Ok(None) => {
-                        result_obj.set(js_string!("ok"), JsValue::null(), false, ctx)?;
-                    }
-                    Err(Some(err_str)) => {
-                        let parsed = ctx.eval(Source::from_bytes(&format!("({})", err_str)))?;
-                        result_obj.set(js_string!("err"), parsed, false, ctx)?;
-                    }
-                    Err(None) => {
-                        result_obj.set(js_string!("err"), JsValue::null(), false, ctx)?;
-                    }
-                }
-                Ok(result_obj.into())
-            }
-            Err(webhook_support::TryGetError::NotFinishedYet) => {
-                let result_obj = new_object(ctx);
-                result_obj.set(js_string!("pending"), JsValue::from(true), false, ctx)?;
-                Ok(result_obj.into())
-            }
+            Ok(inner_result) => unwrap_result(inner_result, ctx),
+            Err(webhook_support::TryGetError::NotFinishedYet) => Ok(JsValue::undefined()),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("tryGet failed: {:?}", e))
                 .into()),

@@ -5,5 +5,5 @@ export default function call_stub(id) {
     console.log("stubbed id", execId);
     obelisk.stub(execId, { 'ok': 'stub-ok' });
     js.joinNext();
-    return obelisk.getResult(execId).ok;
+    return obelisk.getResult(execId);
 }

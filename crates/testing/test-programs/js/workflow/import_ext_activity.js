@@ -4,7 +4,7 @@ import { addSubmit, addAwaitNext } from 'testing:integration-obelisk-ext/activit
 export default function add_via_activity(a, b) {
     const js = obelisk.createJoinSet();
     addSubmit(js, a, b);
-    const [execId, result] = addAwaitNext(js);
-    console.log('Got execId:', execId, 'result:', JSON.stringify(result));
-    return result.val;
+    const result = addAwaitNext(js);
+    console.log('Got execId:', js.lastId, 'result:', JSON.stringify(result));
+    return result;
 }

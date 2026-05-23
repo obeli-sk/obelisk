@@ -3427,7 +3427,7 @@ pub(crate) mod tests {
                     const execId = obelisk.executionIdGenerate();
                     obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10]);
                     const result = obelisk.tryGet(execId);
-                    return Response.json({ result });
+                    return Response.json({ pending: result === undefined });
                 }
             "#;
 
@@ -3438,8 +3438,8 @@ pub(crate) mod tests {
             assert_eq!(resp.status().as_u16(), 200);
             let body: serde_json::Value = resp.json().await.unwrap();
 
-            // Should return pending since activity hasn't run yet
-            assert_eq!(body["result"]["pending"], serde_json::json!(true));
+            // Should return undefined since activity hasn't run yet
+            assert_eq!(body["pending"], serde_json::json!(true));
         }
 
         #[tokio::test]
