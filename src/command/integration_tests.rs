@@ -436,6 +436,7 @@ echo "line1" >&2
 sleep 0.1
 echo "line2" >&2
 '''
+env_vars = ["PATH"] # for sleep
 
 [[activity_stub]]
 ffqn = "testing:integration/stubs.my-stub"
@@ -3282,6 +3283,7 @@ async fn activity_exec_stream_logs() {
     let server = TestServer::start(test_addr!(61)).await;
     let exec_id = server.generate_execution_id().await;
 
+    info!("About to submit the execution");
     let resp = server
         .submit_follow_with_id(
             &exec_id,
@@ -3290,20 +3292,30 @@ async fn activity_exec_stream_logs() {
         )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
+
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": null }));
 
-    // Allow log forwarding to flush.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let logs = server.get_logs(&exec_id).await;
-
-    // Filter for stderr stream entries.
-    let stderr_entries: Vec<&Value> = logs
-        .as_array()
-        .expect("logs must be an array")
-        .iter()
-        .filter(|entry| entry["type"] == "stream" && entry["stream_type"] == "stderr")
-        .collect();
+    // FIXME: Make accepting logs deterministic
+    let stderr_entries = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let logs = server.get_logs(&exec_id).await;
+            debug!("Fetched logs: {logs:?}");
+            let stderr_entries: Vec<Value> = logs
+                .as_array()
+                .expect("logs must be an array")
+                .iter()
+                .filter(|entry| entry["type"] == "stream" && entry["stream_type"] == "stderr")
+                .cloned()
+                .collect();
+            if stderr_entries.len() >= 2 {
+                break stderr_entries;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for stderr stream entries");
 
     // Streaming must produce at least 2 separate stderr entries (one per echo).
     assert!(
