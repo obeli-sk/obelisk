@@ -42,7 +42,7 @@ use std::{path::PathBuf, time::Duration};
 use test_utils::sanitize_json;
 use tokio::{sync::watch, task::JoinHandle};
 use tokio_stream::StreamExt;
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 
 #[cfg(test)]
 mod populate_js_codegen_cache {
@@ -299,6 +299,15 @@ params = [
 return_type = "result<string, string>"
 
 [[workflow_js]]
+name = "test_join_next_try_semantics_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/join_next_try_semantics.js"
+ffqn = "testing:integration/workflow-join-next-try-semantics.join-next-try-semantics"
+params = [
+  {{ name = "id", type = "u64" }},
+]
+return_type = "result<string, string>"
+
+[[workflow_js]]
 name = "test_math_random_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/math_random.js"
 ffqn = "testing:integration/workflow-math-random.math-random"
@@ -427,6 +436,7 @@ echo "line1" >&2
 sleep 0.1
 echo "line2" >&2
 '''
+env_vars = ["PATH"] # for sleep
 
 [[activity_stub]]
 ffqn = "testing:integration/stubs.my-stub"
@@ -543,6 +553,18 @@ impl TestServer {
             .await
             .unwrap();
 
+        let base_url = format!("http://{ip}:{API_PORT}");
+        let client = reqwest::Client::new();
+        if client
+            .get(format!("{base_url}/v1/functions"))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .is_ok()
+        {
+            panic!("{base_url} is reachable before server started");
+        }
+
         let server_handle = tokio::spawn(async move {
             Box::pin(run_internal(
                 config,
@@ -554,9 +576,7 @@ impl TestServer {
             ))
             .await
         });
-
-        let base_url = format!("http://{ip}:{API_PORT}");
-        let client = reqwest::Client::new();
+        debug!("Spawned server task");
 
         // Poll until the server is ready.
         loop {
@@ -573,6 +593,7 @@ impl TestServer {
             if let Ok(resp) = resp
                 && resp.status().is_success()
             {
+                debug!("Pinging server OK");
                 break;
             }
             debug!("Pinging sever failed");
@@ -2077,6 +2098,22 @@ async fn submit_workflow_with_import_stub() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn submit_workflow_with_join_next_try_semantics() {
+    let server = TestServer::start(test_addr!(77)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/workflow-join-next-try-semantics.join-next-try-semantics",
+            vec![json!(42u64)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": "stub-ok" }));
+
+    server.shutdown().await;
+}
+
 // ---- Execution listing ----
 
 #[tokio::test]
@@ -3246,6 +3283,7 @@ async fn activity_exec_stream_logs() {
     let server = TestServer::start(test_addr!(61)).await;
     let exec_id = server.generate_execution_id().await;
 
+    info!("About to submit the execution");
     let resp = server
         .submit_follow_with_id(
             &exec_id,
@@ -3254,20 +3292,30 @@ async fn activity_exec_stream_logs() {
         )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
+
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": null }));
 
-    // Allow log forwarding to flush.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let logs = server.get_logs(&exec_id).await;
-
-    // Filter for stderr stream entries.
-    let stderr_entries: Vec<&Value> = logs
-        .as_array()
-        .expect("logs must be an array")
-        .iter()
-        .filter(|entry| entry["type"] == "stream" && entry["stream_type"] == "stderr")
-        .collect();
+    // FIXME: Make accepting logs deterministic
+    let stderr_entries = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let logs = server.get_logs(&exec_id).await;
+            debug!("Fetched logs: {logs:?}");
+            let stderr_entries: Vec<Value> = logs
+                .as_array()
+                .expect("logs must be an array")
+                .iter()
+                .filter(|entry| entry["type"] == "stream" && entry["stream_type"] == "stderr")
+                .cloned()
+                .collect();
+            if stderr_entries.len() >= 2 {
+                break stderr_entries;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for stderr stream entries");
 
     // Streaming must produce at least 2 separate stderr entries (one per echo).
     assert!(

@@ -40,7 +40,9 @@
 //!
 //! // Non-blocking variant:
 //! const tryResponse = js.joinNextTry();
-//! // Same as joinNext(), or { status: "allProcessed"|"pending" }
+//! // undefined if no child finished yet
+//! // otherwise returns the child ok value, or throws on err
+//! // throws obelisk.JoinSetExhaustedError when the join set is exhausted
 //!
 //! // Get the actual result value (returns ok value, throws err value)
 //! const result = obelisk.getResult(execId);
@@ -471,6 +473,32 @@ fn unwrap_result(
         Err(None) => Err(JsNativeError::error()
             .with_message("child execution failed")
             .into()),
+    }
+}
+
+fn new_join_set_exhausted_error(ctx: &mut Context) -> JsError {
+    let message = "JoinSetEmpty: all responses processed";
+    let fallback = || JsNativeError::error().with_message(message).into();
+
+    let err = (|| -> JsResult<JsError> {
+        let global = ctx.global_object();
+        let obelisk = global
+            .get(js_string!("obelisk"), ctx)?
+            .as_object()
+            .ok_or_else(|| JsNativeError::error().with_message("global obelisk object missing"))?;
+        let ctor = obelisk
+            .get(js_string!("JoinSetExhaustedError"), ctx)?
+            .as_object()
+            .ok_or_else(|| {
+                JsNativeError::error().with_message("obelisk.JoinSetExhaustedError missing")
+            })?;
+        let err_obj = ctor.construct(&[JsValue::from(js_string!(message))], None, ctx)?;
+        Ok(JsError::from_opaque(err_obj.into()))
+    })();
+
+    match err {
+        Ok(err) => err,
+        Err(_) => fallback(),
     }
 }
 
@@ -1051,6 +1079,15 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
     // Set obelisk as global
     context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
+    context.eval(Source::from_bytes(
+        "obelisk.JoinSetExhaustedError = class JoinSetExhaustedError extends Error {\n\
+            constructor(message) {\n\
+                super(message);\n\
+                this.name = 'JoinSetExhaustedError';\n\
+                this.code = 'OBELISK_JOIN_SET_EXHAUSTED';\n\
+            }\n\
+        };",
+    ))?;
 
     Ok(())
 }
@@ -1294,59 +1331,30 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
         let join_result = with_join_set(idx, |js| join_next_try_bt(js, Some(&backtrace)))?;
 
         match join_result {
-            Ok((response_id, result)) => {
-                let result_obj = new_object(ctx);
-
-                match response_id {
-                    ResponseId::ExecutionId(exec_id) => {
-                        result_obj.set(js_string!("type"), js_string!("execution"), false, ctx)?;
-                        result_obj.set(
-                            js_string!("id"),
-                            js_string!(exec_id.id.clone()),
-                            false,
-                            ctx,
-                        )?;
-                        result_obj.set(js_string!("ok"), result.is_ok(), false, ctx)?;
-                        this_obj.set(js_string!("lastId"), js_string!(exec_id.id), false, ctx)?;
-                    }
-                    ResponseId::DelayId(delay_id) => {
-                        result_obj.set(js_string!("type"), js_string!("delay"), false, ctx)?;
-                        result_obj.set(
-                            js_string!("id"),
-                            js_string!(delay_id.id.clone()),
-                            false,
-                            ctx,
-                        )?;
-                        this_obj.set(js_string!("lastId"), js_string!(delay_id.id), false, ctx)?;
-                        match result {
-                            Ok(()) => {
-                                result_obj.set(js_string!("ok"), true, false, ctx)?;
-                            }
-                            Err(()) => {
-                                result_obj.set(js_string!("ok"), false, false, ctx)?;
-                                result_obj.set(
-                                    js_string!("error"),
-                                    js_string!("cancelled"),
-                                    false,
-                                    ctx,
-                                )?;
-                            }
-                        }
-                    }
+            Ok((ResponseId::ExecutionId(exec_id), _)) => {
+                this_obj.set(
+                    js_string!("lastId"),
+                    js_string!(exec_id.id.as_str()),
+                    false,
+                    ctx,
+                )?;
+                let get_result = get_result_json_bt(&exec_id, Some(&backtrace));
+                match get_result {
+                    Ok(inner_result) => unwrap_result(inner_result, ctx),
+                    Err(e) => Err(JsNativeError::error()
+                        .with_message(format!("get result failed: {:?}", e))
+                        .into()),
                 }
-
-                Ok(result_obj.into())
             }
-            Err(JoinNextTryError::AllProcessed) => {
-                let result_obj = new_object(ctx);
-                result_obj.set(js_string!("status"), js_string!("allProcessed"), false, ctx)?;
-                Ok(result_obj.into())
+            Ok((ResponseId::DelayId(delay_id), result)) => {
+                this_obj.set(js_string!("lastId"), js_string!(delay_id.id), false, ctx)?;
+                match result {
+                    Ok(()) => Ok(JsValue::null()),
+                    Err(()) => Err(JsNativeError::error().with_message("cancelled").into()),
+                }
             }
-            Err(JoinNextTryError::Pending) => {
-                let result_obj = new_object(ctx);
-                result_obj.set(js_string!("status"), js_string!("pending"), false, ctx)?;
-                Ok(result_obj.into())
-            }
+            Err(JoinNextTryError::AllProcessed) => Err(new_join_set_exhausted_error(ctx)),
+            Err(JoinNextTryError::Pending) => Ok(JsValue::undefined()),
         }
     });
     obj.set(

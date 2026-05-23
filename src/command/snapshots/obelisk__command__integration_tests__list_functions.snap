@@ -106,6 +106,9 @@ expression: functions
     "ffqn": "testing:integration/workflow-call-stub.call-stub"
   },
   {
+    "ffqn": "testing:integration/workflow-join-next-try-semantics.join-next-try-semantics"
+  },
+  {
     "ffqn": "testing:integration/workflow-math-random.math-random"
   },
   {
