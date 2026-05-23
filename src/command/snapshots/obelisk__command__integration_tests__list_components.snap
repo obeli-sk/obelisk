@@ -314,6 +314,13 @@ expression: components
   {
     "component_id": {
       "component_type": "workflow",
+      "name": "test_join_next_try_semantics_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
       "name": "test_make_record_workflow",
       "component_digest": "sha256:<REDACTED>"
     }

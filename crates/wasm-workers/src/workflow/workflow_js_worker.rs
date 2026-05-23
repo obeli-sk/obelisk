@@ -1135,12 +1135,17 @@ mod tests {
             const js = obelisk.createJoinSet();
             const delayId = js.submitDelay({ milliseconds: 10 });
             obelisk.sleep({ milliseconds: 20 });
-            const response = js.joinNextTry();
-            const afterResponse = js.joinNextTry();
+            const response = js.joinNextTry(); // First joinNextTry must succeed
+            let afterErrorCode = null;
+            try {
+                js.joinNextTry(); // Second joinNextTry must fail
+                throw 'unreachable';
+            } catch (e) {
+                afterErrorCode = e.code ?? null;
+            }
             return JSON.stringify({
-                responseType: response.type,
-                responseOk: response.ok,
-                afterStatus: afterResponse.status
+                responseIsNull: response === null,
+                afterErrorCode
             });
         }";
 
@@ -1151,9 +1156,11 @@ mod tests {
         harness.tick().await; // completes
 
         let result = harness.get_result_json().await;
-        assert_eq!(json!("delay"), result["responseType"]);
-        assert_eq!(json!(true), result["responseOk"]);
-        assert_eq!(json!("allProcessed"), result["afterStatus"]);
+        assert_eq!(json!(true), result["responseIsNull"]);
+        assert_eq!(
+            json!("OBELISK_JOIN_SET_EXHAUSTED"),
+            result["afterErrorCode"]
+        );
         drop(harness);
         db_close.close().await;
     }
@@ -1214,9 +1221,15 @@ mod tests {
             const js2 = obelisk.createJoinSet({ name: 'my-named-set' });
             console.log('Created named join set:', js2.id());
 
-            /* Test joinNextTry on empty join set - should return allProcessed */
-            const tryEmpty = js2.joinNextTry();
-            console.log('joinNextTry on empty:', JSON.stringify(tryEmpty));
+            /* Test joinNextTry on empty join set - should throw JoinSetExhaustedError */
+            let tryEmptyErrorCode = null;
+            try {
+                js2.joinNextTry();
+                throw 'unreachable';
+            } catch (e) {
+                tryEmptyErrorCode = e.code ?? null;
+            }
+            console.log('joinNextTry on empty error code:', tryEmptyErrorCode);
 
             /* Submit fibo(10) activity call */
             const fiboFfqn = 'testing:fibo/fibo.fibo';
@@ -1227,7 +1240,7 @@ mod tests {
             const delayId = js1.submitDelay({ milliseconds: 100 });
             console.log('Submitted delay, delayId:', delayId);
 
-            /* Test joinNextTry before any response is ready - should return pending */
+            /* Test joinNextTry before any response is ready - should return undefined */
             const tryPending = js1.joinNextTry();
             console.log('joinNextTry pending:', JSON.stringify(tryPending));
 
@@ -1258,8 +1271,8 @@ mod tests {
                 fiboResult: fiboResult,
                 response1Type: response1.type,
                 loser,
-                joinNextTryEmpty: tryEmpty.status,
-                joinNextTryPending: tryPending.status
+                joinNextTryEmptyErrorCode: tryEmptyErrorCode,
+                joinNextTryPendingIsUndefined: tryPending === undefined
             });
         }";
 
@@ -1399,14 +1412,14 @@ mod tests {
             "random string length should be in range [5, 10)"
         );
         assert_eq!(
-            json!("allProcessed"),
-            result["joinNextTryEmpty"],
-            "joinNextTry on empty join set should return allProcessed"
+            json!("OBELISK_JOIN_SET_EXHAUSTED"),
+            result["joinNextTryEmptyErrorCode"],
+            "joinNextTry on empty join set should throw JoinSetExhaustedError"
         );
         assert_eq!(
-            json!("pending"),
-            result["joinNextTryPending"],
-            "joinNextTry before response ready should return pending"
+            json!(true),
+            result["joinNextTryPendingIsUndefined"],
+            "joinNextTry before response ready should return undefined"
         );
         if activity_should_win {
             assert_eq!(

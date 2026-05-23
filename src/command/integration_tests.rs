@@ -299,6 +299,15 @@ params = [
 return_type = "result<string, string>"
 
 [[workflow_js]]
+name = "test_join_next_try_semantics_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/join_next_try_semantics.js"
+ffqn = "testing:integration/workflow-join-next-try-semantics.join-next-try-semantics"
+params = [
+  {{ name = "id", type = "u64" }},
+]
+return_type = "result<string, string>"
+
+[[workflow_js]]
 name = "test_math_random_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/math_random.js"
 ffqn = "testing:integration/workflow-math-random.math-random"
@@ -2067,6 +2076,22 @@ async fn submit_workflow_with_import_stub() {
     let resp = server
         .submit_follow(
             "testing:integration/workflow-import-stub-activity.call-stub",
+            vec![json!(42u64)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": "stub-ok" }));
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn submit_workflow_with_join_next_try_semantics() {
+    let server = TestServer::start(test_addr!(77)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/workflow-join-next-try-semantics.join-next-try-semantics",
             vec![json!(42u64)],
         )
         .await;
