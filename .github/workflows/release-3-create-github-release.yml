@@ -13,14 +13,14 @@ on:
         required: false
         type: string
       skip_latest:
-        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        description: "skip_latest: Tag latest will be pushed to Docker Hub unless skip_latest=true"
         required: true
         type: boolean
         default: false
   workflow_call:
     inputs:
       skip_latest:
-        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        description: "skip_latest: Tag latest will be pushed to Docker Hub unless skip_latest=true"
         required: true
         type: boolean
         default: false

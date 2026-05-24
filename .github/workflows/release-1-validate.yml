@@ -17,7 +17,7 @@ on:
         required: false
         default: ""
       skip_latest:
-        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        description: "skip_latest: Tag latest will be pushed to Docker Hub unless skip_latest=true"
         required: true
         type: boolean
   workflow_call:
@@ -33,7 +33,7 @@ on:
         required: false
         default: ""
       skip_latest:
-        description: "skip_latest: Tag latest will be pushed unless skip_latest=true"
+        description: "skip_latest: Tag latest will be pushed to Docker Hub unless skip_latest=true"
         required: true
         type: boolean
 
