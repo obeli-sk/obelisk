@@ -3296,7 +3296,6 @@ async fn activity_exec_stream_logs() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": null }));
 
-    // FIXME: Make accepting logs deterministic
     let stderr_entries = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let logs = server.get_logs(&exec_id).await;
@@ -3317,10 +3316,11 @@ async fn activity_exec_stream_logs() {
     .await
     .expect("timed out waiting for stderr stream entries");
 
-    // Streaming must produce at least 2 separate stderr entries (one per echo).
-    assert!(
-        stderr_entries.len() >= 2,
-        "expected at least 2 stderr stream entries, got {}: {stderr_entries:?}",
+    // Streaming must produce 2 separate stderr entries (one per echo).
+    assert_eq!(
+        2,
+        stderr_entries.len(),
+        "expected 2 stderr stream entries, got {}: {stderr_entries:?}",
         stderr_entries.len(),
     );
     server.shutdown().await;
