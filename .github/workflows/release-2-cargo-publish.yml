@@ -82,6 +82,7 @@ jobs:
 
   call_child:
     needs: cargo-publish
+    if: ${{ !contains(inputs.extra-args, '--dry-run') }}
     uses: ./.github/workflows/release-3-create-github-release.yml
     secrets: inherit
     with:
