@@ -1,7 +1,9 @@
 name: release-1-validate
 
 permissions:
-  contents: read
+  attestations: write
+  contents: write
+  id-token: write
 
 on:
   workflow_dispatch:
