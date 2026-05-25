@@ -1584,7 +1584,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3156,9 +3156,9 @@ dependencies = [
  "hashbrown 0.16.1",
  "obeli-sk-concepts",
  "obeli-sk-db-common",
+ "obeli-sk-refinery",
  "obeli-sk-val-json",
  "rand 0.9.4",
- "refinery",
  "secrecy",
  "sha2 0.10.9",
  "strum 0.28.0",
@@ -3182,9 +3182,9 @@ dependencies = [
  "itertools",
  "obeli-sk-concepts",
  "obeli-sk-db-common",
+ "obeli-sk-refinery",
  "obeli-sk-val-json",
  "rand 0.9.4",
- "refinery",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3248,6 +3248,52 @@ dependencies = [
  "tonic-prost-build",
  "tracing",
  "tracing-opentelemetry",
+]
+
+[[package]]
+name = "obeli-sk-refinery"
+version = "0.9.0-obeli-sk.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fcaa6703a225d6cf2977ed29308df38e1873001f2c2926dd7d351a343f3b30f"
+dependencies = [
+ "obeli-sk-refinery-core",
+ "obeli-sk-refinery-macros",
+]
+
+[[package]]
+name = "obeli-sk-refinery-core"
+version = "0.9.0-obeli-sk.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3795f9ae2a378e768447a9ccd3c29009bb2f8d8a98ec328eef8ea74c1566d59"
+dependencies = [
+ "async-trait",
+ "cfg-if",
+ "log",
+ "regex",
+ "rusqlite",
+ "rustls",
+ "rustls-native-certs",
+ "siphasher",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
+ "url",
+ "walkdir",
+]
+
+[[package]]
+name = "obeli-sk-refinery-macros"
+version = "0.9.0-obeli-sk.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b521d097d72ef77e963bc607de5be4e24e2c9aec450b1526734258aba1c852c"
+dependencies = [
+ "obeli-sk-refinery-core",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn",
 ]
 
 [[package]]
@@ -4264,49 +4310,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "refinery"
-version = "0.9.0"
-source = "git+https://github.com/rust-db/refinery.git?rev=14354f54c51a07c9615a78d6432861e0ef7a2db3#14354f54c51a07c9615a78d6432861e0ef7a2db3"
-dependencies = [
- "refinery-core",
- "refinery-macros",
-]
-
-[[package]]
-name = "refinery-core"
-version = "0.9.0"
-source = "git+https://github.com/rust-db/refinery.git?rev=14354f54c51a07c9615a78d6432861e0ef7a2db3#14354f54c51a07c9615a78d6432861e0ef7a2db3"
-dependencies = [
- "async-trait",
- "cfg-if",
- "log",
- "regex",
- "rusqlite",
- "rustls",
- "rustls-native-certs",
- "siphasher",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tokio-postgres",
- "tokio-postgres-rustls",
- "url",
- "walkdir",
-]
-
-[[package]]
-name = "refinery-macros"
-version = "0.9.0"
-source = "git+https://github.com/rust-db/refinery.git?rev=14354f54c51a07c9615a78d6432861e0ef7a2db3#14354f54c51a07c9615a78d6432861e0ef7a2db3"
-dependencies = [
- "proc-macro2",
- "quote",
- "refinery-core",
- "regex",
- "syn",
-]
-
-[[package]]
 name = "regalloc2"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4533,7 +4536,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4600,7 +4603,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5155,7 +5158,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7018,7 +7021,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
