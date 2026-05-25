@@ -1,5 +1,5 @@
+use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
-use crate::args::{Args, Generate};
 use crate::command::server::{
     PrepareDirsParams, VerifyParams, create_engines, deployment_compile_link,
     deployment_verify_config, prepare_dirs, server_verify,
@@ -13,7 +13,6 @@ use crate::config::toml::{
 use crate::init::{self};
 use crate::project_dirs;
 use anyhow::Context;
-use clap::{Arg, ArgAction, Command, CommandFactory, ValueHint};
 use concepts::{ComponentType, ExecutionId, PackageIfcFns, PkgFqn, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::{HashMap, HashSet};
@@ -281,13 +280,13 @@ struct CliArgAcceptsSchema {
 
 #[cfg(debug_assertions)]
 fn generate_cli_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
-    let command = Args::command();
+    let command = <crate::args::Args as clap::CommandFactory>::command();
     let schema = command_to_schema(&command);
     write_json(output, &schema)
 }
 
 #[cfg(debug_assertions)]
-fn command_to_schema(command: &Command) -> CliCommandSchema {
+fn command_to_schema(command: &clap::Command) -> CliCommandSchema {
     let mut options = Vec::new();
     let mut positionals = Vec::new();
     for arg in command.get_arguments() {
@@ -312,7 +311,7 @@ fn command_to_schema(command: &Command) -> CliCommandSchema {
 }
 
 #[cfg(debug_assertions)]
-fn arg_to_schema(arg: &Arg) -> CliArgSchema {
+fn arg_to_schema(arg: &clap::Arg) -> CliArgSchema {
     CliArgSchema {
         name: arg_name(arg),
         short: arg.get_short(),
@@ -324,7 +323,7 @@ fn arg_to_schema(arg: &Arg) -> CliArgSchema {
 }
 
 #[cfg(debug_assertions)]
-fn command_about(command: &Command) -> Option<String> {
+fn command_about(command: &clap::Command) -> Option<String> {
     command
         .get_about()
         .map(ToString::to_string)
@@ -332,14 +331,14 @@ fn command_about(command: &Command) -> Option<String> {
 }
 
 #[cfg(debug_assertions)]
-fn arg_help(arg: &Arg) -> Option<String> {
+fn arg_help(arg: &clap::Arg) -> Option<String> {
     arg.get_help()
         .map(ToString::to_string)
         .filter(|help| !help.trim().is_empty())
 }
 
 #[cfg(debug_assertions)]
-fn arg_name(arg: &Arg) -> String {
+fn arg_name(arg: &clap::Arg) -> String {
     if let Some(long) = arg.get_long() {
         format!("--{long}")
     } else {
@@ -348,7 +347,7 @@ fn arg_name(arg: &Arg) -> String {
 }
 
 #[cfg(debug_assertions)]
-fn arg_value_name(arg: &Arg) -> Option<String> {
+fn arg_value_name(arg: &clap::Arg) -> Option<String> {
     arg.get_num_args()
         .filter(clap::builder::ValueRange::takes_values)
         .and_then(|_| arg.get_value_names())
@@ -357,7 +356,7 @@ fn arg_value_name(arg: &Arg) -> Option<String> {
 }
 
 #[cfg(debug_assertions)]
-fn arg_accepts(arg: &Arg) -> Option<CliArgAcceptsSchema> {
+fn arg_accepts(arg: &clap::Arg) -> Option<CliArgAcceptsSchema> {
     let choices: Vec<String> = arg
         .get_possible_values()
         .into_iter()
@@ -374,7 +373,10 @@ fn arg_accepts(arg: &Arg) -> Option<CliArgAcceptsSchema> {
 
     let path = matches!(
         arg.get_value_hint(),
-        ValueHint::AnyPath | ValueHint::FilePath | ValueHint::DirPath | ValueHint::ExecutablePath
+        clap::ValueHint::AnyPath
+            | clap::ValueHint::FilePath
+            | clap::ValueHint::DirPath
+            | clap::ValueHint::ExecutablePath
     )
     .then_some(true);
 
@@ -386,10 +388,10 @@ fn arg_accepts(arg: &Arg) -> Option<CliArgAcceptsSchema> {
 }
 
 #[cfg(debug_assertions)]
-fn skip_arg(arg: &Arg) -> bool {
+fn skip_arg(arg: &clap::Arg) -> bool {
     matches!(
         arg.get_action(),
-        ArgAction::Help | ArgAction::HelpShort | ArgAction::HelpLong
+        clap::ArgAction::Help | clap::ArgAction::HelpShort | clap::ArgAction::HelpLong
     )
 }
 
