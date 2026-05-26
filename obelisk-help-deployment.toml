@@ -113,13 +113,15 @@
 ### and the result is read from stdout (exit 0 → ok, non-zero → err).
 # [[activity_exec]]
 # name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
-## Program specification: exactly one of `inline` or `include`.
+## Program specification: exactly one of `inline`, `include`, or `oci`.
 ## `inline`: script content embedded in the TOML. Written to a temp file at each execution. Supports `${DEPLOYMENT_DIR}/` prefix.
 # program.inline = '''#!/usr/bin/env bash
 # echo "\"hello\""
 # '''
 ## `include`: file path read at deploy time and converted to `inline`, making deployment self-contained. Supports `${DEPLOYMENT_DIR}/` prefix.
 # program.include = "${DEPLOYMENT_DIR}/scripts/my-script.sh"
+## `oci`: OCI registry reference. Script is pulled from the exec layer and resolved to `inline` at deploy time. Written by `obelisk component add`.
+# program.oci = "oci://docker.io/repo/image:tag@sha256:..."
 # ffqn = "namespace:package/interface.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).

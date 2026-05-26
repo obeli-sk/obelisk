@@ -653,8 +653,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "program": {
-          "description": "Inline script content. `Include` is resolved before canonicalization.",
-          "type": "string"
+          "$ref": "#/$defs/ExecProgramCanonical"
         },
         "ffqn": {
           "type": "string"
@@ -733,6 +732,43 @@
         "logs_store_min_level",
         "env_vars",
         "max_output_bytes"
+      ]
+    },
+    "ExecProgramCanonical": {
+      "description": "Canonical form of the exec program source.\n`Include` is resolved to `Inline` before canonicalization.\n`Oci` is preserved so deployments can migrate between machines.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "inline": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "inline"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "oci": {
+              "type": "object",
+              "properties": {
+                "image": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "image"
+              ]
+            }
+          },
+          "required": [
+            "oci"
+          ],
+          "additionalProperties": false
+        }
       ]
     },
     "ExecSecretsToml": {

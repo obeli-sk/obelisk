@@ -5,6 +5,7 @@ use crate::config::env_var::{
     EnvVarMissing, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
 };
 use crate::config::toml::cron::CronComponentConfigToml;
+use crate::config::wasm_cache_metadata_dir;
 use crate::oci;
 use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
@@ -34,6 +35,7 @@ use std::{
 };
 use tracing::{debug, instrument, warn};
 use utils::wasm_tools::WasmComponent;
+use wasm_workers::activity::activity_exec_worker::ExecProgram;
 use wasm_workers::cron::cron_worker::CronOrOnce;
 use wasm_workers::http_hooks::ConfigSectionHint;
 use wasm_workers::http_request_policy::HostPatternError;
@@ -1724,6 +1726,10 @@ pub(crate) enum ExecProgramToml {
     /// Supports `${DEPLOYMENT_DIR}/` prefix.
     #[serde(rename = "include")]
     Include(String),
+    /// OCI reference. Script is pulled from the exec layer and resolved to `inline`
+    /// at canonicalization time. Written by `obelisk component add`.
+    #[serde(rename = "oci")]
+    Oci(String),
 }
 
 /// Secret entry: resolved from environment variables at startup.
@@ -1756,7 +1762,7 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.
     #[serde(default)]
     pub(crate) name: Option<ConfigName>,
-    /// Program specification. Exactly one of `inline` or `include`.
+    /// Program specification. Exactly one of `inline`, `include`, or `oci`.
     pub(crate) program: ExecProgramToml,
     #[schemars(with = "String")]
     pub(crate) ffqn: FunctionFqn,
@@ -1795,13 +1801,67 @@ pub(crate) struct ActivityExecComponentConfigToml {
     pub(crate) secrets: Option<ExecSecretsToml>,
 }
 
+/// Canonical form of the exec program source.
+/// `Include` is resolved to `Inline` before canonicalization.
+/// `Oci` is preserved so deployments can migrate between machines.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ExecProgramCanonical {
+    Inline(String),
+    Oci { image: String },
+}
+
+pub(crate) struct ResolvedExecProgram {
+    pub(crate) program: ExecProgram,
+    pub(crate) source_bytes: Vec<u8>,
+}
+
+fn parse_exec_program_oci_reference(image: &str) -> anyhow::Result<oci_client::Reference> {
+    let image = image.strip_prefix(OCI_SCHEMA_PREFIX).ok_or_else(|| {
+        anyhow!("invalid OCI reference `{image}`: missing `{OCI_SCHEMA_PREFIX}` prefix")
+    })?;
+    oci_client::Reference::from_str(image)
+        .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))
+}
+
+impl ExecProgramCanonical {
+    /// Resolve the canonical program to a form the worker can execute.
+    /// `Inline` stays as-is; `Oci` is pulled to the cache and returns a file path.
+    pub(crate) async fn resolve(
+        &self,
+        wasm_cache_dir: &std::path::Path,
+    ) -> anyhow::Result<ResolvedExecProgram> {
+        match self {
+            Self::Inline(content) => Ok(ResolvedExecProgram {
+                program: ExecProgram::Inline(content.clone()),
+                source_bytes: content.as_bytes().to_vec(),
+            }),
+            Self::Oci { image } => {
+                let oci_ref = parse_exec_program_oci_reference(image)?;
+                let exec_cache_dir = wasm_cache_dir.join("exec");
+                tokio::fs::create_dir_all(&exec_cache_dir).await?;
+                let metadata_dir = wasm_cache_metadata_dir(wasm_cache_dir);
+                let result =
+                    crate::oci::pull_exec_to_cache(&oci_ref, &exec_cache_dir, &metadata_dir)
+                        .await?;
+                let source_bytes = tokio::fs::read(&result.exec_path).await.with_context(|| {
+                    format!("cannot read cached exec file {:?}", result.exec_path)
+                })?;
+                Ok(ResolvedExecProgram {
+                    program: ExecProgram::CachedFile(result.exec_path),
+                    source_bytes,
+                })
+            }
+        }
+    }
+}
+
 /// Canonical form of `ActivityExecComponentConfigToml`.
 #[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityExecComponentConfigCanonical {
     pub(crate) name: ConfigName,
-    /// Inline script content. `Include` is resolved before canonicalization.
-    pub(crate) program: String,
+    pub(crate) program: ExecProgramCanonical,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<JsParamToml>,
     pub(crate) return_type: Option<String>,
@@ -1821,6 +1881,7 @@ impl ActivityExecComponentConfigCanonical {
     #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
     pub(crate) fn fetch_and_verify(
         self,
+        resolved_program: ResolvedExecProgram,
         ignore_missing_env_vars: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<ActivityExecConfigVerified, anyhow::Error> {
@@ -1852,11 +1913,10 @@ impl ActivityExecComponentConfigCanonical {
                  `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
             ),
         };
-        let program_bytes = self.program.clone();
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_exec:");
-            hasher.update(program_bytes.as_bytes());
+            hasher.update(&resolved_program.source_bytes);
             hasher.update(self.ffqn.to_string().as_bytes());
             for p in &parsed_params {
                 hasher.update(p.wit_type.as_ref().as_bytes());
@@ -1899,7 +1959,7 @@ impl ActivityExecComponentConfigCanonical {
             retry_exp_backoff: self.retry_exp_backoff.into(),
         };
         Ok(ActivityExecConfigVerified {
-            program: self.program,
+            program: resolved_program.program,
             ffqn: self.ffqn,
             params: parsed_params,
             return_type,
@@ -1928,8 +1988,7 @@ pub(crate) struct ResolvedExecSecrets {
 
 #[derive(Debug)]
 pub(crate) struct ActivityExecConfigVerified {
-    /// Inline script content.
-    pub(crate) program: String,
+    pub(crate) program: wasm_workers::activity::activity_exec_worker::ExecProgram,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
@@ -2167,7 +2226,7 @@ impl JsLocationCanonical {
                     .with_context(|| {
                         format!("cannot create JS cache directory {js_cache_dir:?}")
                     })?;
-                let metadata_dir = wasm_cache_dir.join("metadata");
+                let metadata_dir = wasm_cache_metadata_dir(wasm_cache_dir);
                 tokio::fs::create_dir_all(&metadata_dir)
                     .await
                     .with_context(|| {
@@ -2643,15 +2702,22 @@ async fn resolve_local_refs_to_canonical(
     let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
     for (a, name) in deployment.activities_exec {
         let program = match a.program {
-            ExecProgramToml::Inline(script) => script,
+            ExecProgramToml::Inline(script) => ExecProgramCanonical::Inline(script),
             ExecProgramToml::Include(path) => {
                 let full_path = PathBuf::from(path);
                 if !full_path.exists() {
                     bail!("include file does not exist: {full_path:?}");
                 }
-                tokio::fs::read_to_string(&full_path)
+                let content = tokio::fs::read_to_string(&full_path)
                     .await
-                    .with_context(|| format!("cannot read include file {full_path:?}"))?
+                    .with_context(|| format!("cannot read include file {full_path:?}"))?;
+                ExecProgramCanonical::Inline(content)
+            }
+            ExecProgramToml::Oci(ref_str) => {
+                let oci_ref = parse_exec_program_oci_reference(&ref_str)?;
+                ExecProgramCanonical::Oci {
+                    image: oci_ref.whole(),
+                }
             }
         };
         activities_exec.push(ActivityExecComponentConfigCanonical {
@@ -4047,12 +4113,14 @@ name = "my_stub"
     }
 
     mod activity_exec {
+        use wasm_workers::activity::activity_exec_worker::ExecProgram;
+
         use super::super::*;
 
         fn exec_config_with_secret(value: &str) -> ActivityExecComponentConfigCanonical {
             ActivityExecComponentConfigCanonical {
                 name: ConfigName::new(StrVariant::from("exec-test")).unwrap(),
-                program: "#!/usr/bin/env bash\necho null\n".into(),
+                program: ExecProgramCanonical::Inline("#!/usr/bin/env bash\necho null\n".into()),
                 ffqn: "testing:integration/exec-secret.expose".parse().unwrap(),
                 params: vec![],
                 return_type: Some("result<string, string>".into()),
@@ -4074,11 +4142,40 @@ name = "my_stub"
             }
         }
 
+        fn exec_config_with_program(
+            program: ExecProgramCanonical,
+        ) -> ActivityExecComponentConfigCanonical {
+            ActivityExecComponentConfigCanonical {
+                name: ConfigName::new(StrVariant::from("exec-test")).unwrap(),
+                program,
+                ffqn: "testing:integration/exec-secret.expose".parse().unwrap(),
+                params: vec![],
+                return_type: Some("result<string, string>".into()),
+                component_digest: None,
+                exec: ExecConfigToml::default(),
+                max_retries: default_max_retries(),
+                retry_exp_backoff: default_retry_exp_backoff(),
+                forward_stdout: ComponentStdOutputToml::default(),
+                forward_stderr: ComponentStdOutputToml::default(),
+                logs_store_min_level: LogLevelToml::default(),
+                env_vars: vec![],
+                max_output_bytes: default_max_output_bytes(),
+                secrets: None,
+            }
+        }
+
         #[test]
         fn fetch_and_verify_activity_exec_secret_fails_when_missing_and_not_ignored() {
             let config = exec_config_with_secret("${MISSING_EXEC_SECRET}");
             let error = config
-                .fetch_and_verify(false, None)
+                .fetch_and_verify(
+                    ResolvedExecProgram {
+                        program: ExecProgram::Inline("#!/usr/bin/env bash\necho null\n".into()),
+                        source_bytes: b"#!/usr/bin/env bash\necho null\n".to_vec(),
+                    },
+                    false,
+                    None,
+                )
                 .unwrap_err()
                 .to_string();
             assert!(
@@ -4094,8 +4191,67 @@ name = "my_stub"
         #[test]
         fn fetch_and_verify_activity_exec_secret_is_skipped_when_missing_and_ignored() {
             let config = exec_config_with_secret("${MISSING_EXEC_SECRET}");
-            let verified = config.fetch_and_verify(true, None).unwrap();
+            let verified = config
+                .fetch_and_verify(
+                    ResolvedExecProgram {
+                        program: ExecProgram::Inline("#!/usr/bin/env bash\necho null\n".into()),
+                        source_bytes: b"#!/usr/bin/env bash\necho null\n".to_vec(),
+                    },
+                    true,
+                    None,
+                )
+                .unwrap();
             assert!(verified.secrets.is_none());
+        }
+
+        #[test]
+        fn fetch_and_verify_activity_exec_hashes_resolved_source_not_oci_reference() {
+            let source = b"#!/usr/bin/env bash\necho null\n".to_vec();
+            let inline = exec_config_with_program(ExecProgramCanonical::Inline(
+                String::from_utf8(source.clone()).unwrap(),
+            ));
+            let oci = exec_config_with_program(ExecProgramCanonical::Oci {
+                image: "registry.example.com/ns/exec:latest".into(),
+            });
+
+            let inline_verified = inline
+                .fetch_and_verify(
+                    ResolvedExecProgram {
+                        program: ExecProgram::Inline(String::from_utf8(source.clone()).unwrap()),
+                        source_bytes: source.clone(),
+                    },
+                    true,
+                    None,
+                )
+                .unwrap();
+            let oci_verified = oci
+                .fetch_and_verify(
+                    ResolvedExecProgram {
+                        program: ExecProgram::CachedFile(std::path::PathBuf::from(
+                            "/tmp/fake-exec-script.sh",
+                        )),
+                        source_bytes: source,
+                    },
+                    true,
+                    None,
+                )
+                .unwrap();
+
+            assert_eq!(inline_verified.component_id, oci_verified.component_id);
+        }
+
+        #[test]
+        fn exec_program_oci_reference_requires_prefixed_input() {
+            let reference =
+                parse_exec_program_oci_reference("oci://docker.io/library/example:latest").unwrap();
+            assert_eq!(reference.whole(), "docker.io/library/example:latest");
+            let error = parse_exec_program_oci_reference("docker.io/library/example:latest")
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("missing `oci://` prefix"),
+                "unexpected error: {error}"
+            );
         }
     }
 }

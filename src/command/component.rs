@@ -8,8 +8,10 @@ use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::DeploymentTomlValidated;
 use crate::config::toml::DurationConfig;
+use crate::config::toml::ExecProgramToml;
 use crate::config::toml::JsLocationToml;
 use crate::config::toml::OCI_SCHEMA_PREFIX;
+use crate::config::wasm_cache_metadata_dir;
 use crate::get_fn_repository_client;
 use crate::oci;
 use crate::oci::ComponentMetadataAnnotation;
@@ -69,6 +71,10 @@ enum ComponentPushData {
     },
     Js {
         path: PathBuf,
+        metadata: ComponentMetadataAnnotation,
+    },
+    Exec {
+        script: String,
         metadata: ComponentMetadataAnnotation,
     },
 }
@@ -195,8 +201,36 @@ fn find_component_for_push(
                 },
             })
         }
-        other @ (TomlComponentType::ActivityExec
-        | TomlComponentType::ActivityExternal
+        TomlComponentType::ActivityExec => {
+            let (cfg, _) = deployment
+                .activities_exec
+                .iter()
+                .find(|(_, n)| n.to_string() == name)
+                .expect("name is in map so it must be in the list");
+            let script = match &cfg.program {
+                ExecProgramToml::Inline(s) => s.clone(),
+                ExecProgramToml::Include(path) => std::fs::read_to_string(path)
+                    .with_context(|| format!("cannot read include file {path:?}"))?,
+                ExecProgramToml::Oci(_) => {
+                    bail!(
+                        "component '{name}' uses OCI source, only local programs are supported for push"
+                    );
+                }
+            };
+            Ok(ComponentPushData::Exec {
+                script,
+                metadata: ComponentMetadataAnnotation::ActivityExec {
+                    env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
+                    lock_duration: Some(cfg.exec.lock_expiry),
+                    ffqn: cfg.ffqn.clone(),
+                    params: cfg.params.clone(),
+                    return_type: cfg.return_type.clone(),
+                    max_output_bytes: cfg.max_output_bytes,
+                    secrets: cfg.secrets.clone(),
+                },
+            })
+        }
+        other @ (TomlComponentType::ActivityExternal
         | TomlComponentType::ActivityStub
         | TomlComponentType::Cron) => {
             bail!("component type `{other}` does not support push")
@@ -221,6 +255,9 @@ async fn push_component(
     match find_component_for_push(&validated, component_name)? {
         ComponentPushData::Wasm { path, metadata } => oci::push(path, reference, &metadata).await,
         ComponentPushData::Js { path, metadata } => oci::push_js(path, reference, &metadata).await,
+        ComponentPushData::Exec { script, metadata } => {
+            oci::push_exec(script, reference, &metadata).await
+        }
     }
 }
 
@@ -279,7 +316,7 @@ async fn add_component_from_oci(
             .wasm_global_config
             .get_wasm_cache_directory(&config_holder.path_prefixes)
             .await?;
-        let metadata_dir = wasm_cache_dir.join("metadata");
+        let metadata_dir = wasm_cache_metadata_dir(&wasm_cache_dir);
         tokio::fs::create_dir_all(&metadata_dir)
             .await
             .with_context(|| format!("cannot create metadata directory {metadata_dir:?}"))?;
@@ -312,10 +349,23 @@ async fn add_component_from_oci(
                 info!("Fetched OCI image, manifest_digest: {manifest_digest}");
                 Some(manifest_digest)
             }
-            TomlComponentType::ActivityExec
-            | TomlComponentType::ActivityExternal
-            | TomlComponentType::ActivityStub => {
-                bail!("exec, external, and stub activity types cannot be pushed to an oci registry")
+            TomlComponentType::ActivityExec => {
+                let exec_cache_dir = wasm_cache_dir.join("exec");
+                tokio::fs::create_dir_all(&exec_cache_dir)
+                    .await
+                    .with_context(|| {
+                        format!("cannot create exec cache directory {exec_cache_dir:?}")
+                    })?;
+                let oci::ExecCacheResult {
+                    manifest_digest, ..
+                } = oci::pull_exec_to_cache(&oci_ref, &exec_cache_dir, &metadata_dir)
+                    .await
+                    .context("failed to pull exec OCI image")?;
+                info!("Fetched exec OCI image, manifest_digest: {manifest_digest}");
+                Some(manifest_digest)
+            }
+            TomlComponentType::ActivityExternal | TomlComponentType::ActivityStub => {
+                bail!("external and stub activity types cannot be pushed to an oci registry")
             }
             TomlComponentType::Cron => {
                 bail!("cron type cannot be pushed to an oci registry")
@@ -388,6 +438,55 @@ fn build_component_table(
 
     let mut t = Table::new();
     t["name"] = value(name);
+
+    // ActivityExec uses `program.oci` instead of `location`.
+    if let ComponentMetadataAnnotation::ActivityExec {
+        env_vars,
+        lock_duration,
+        ffqn,
+        params,
+        return_type,
+        max_output_bytes,
+        secrets,
+    } = metadata
+    {
+        let mut program_tbl = Table::new();
+        program_tbl.set_dotted(true);
+        program_tbl.insert("oci", value(location_raw));
+        t.insert("program", Item::Table(program_tbl));
+        t["ffqn"] = value(ffqn.to_string());
+        write_params(&mut t, params);
+        if let Some(rt) = return_type {
+            t["return_type"] = value(rt.clone());
+        }
+        if !env_vars.is_empty() {
+            let mut arr = toml_edit::Array::new();
+            for v in env_vars {
+                arr.push(v.clone());
+            }
+            t["env_vars"] = Item::Value(toml_edit::Value::Array(arr));
+        }
+        t["max_output_bytes"] = value(i64::try_from(*max_output_bytes).unwrap_or(i64::MAX));
+        if let Some(secrets) = secrets
+            && !secrets.env_vars.is_empty()
+        {
+            let mut secrets_tbl = Table::new();
+            let mut arr = toml_edit::Array::new();
+            for s in &secrets.env_vars {
+                let mut inline = toml_edit::InlineTable::new();
+                inline.insert("name", s.name.clone().into());
+                inline.insert("value", s.value.clone().into());
+                arr.push(toml_edit::Value::InlineTable(inline));
+            }
+            secrets_tbl["env_vars"] = Item::Value(toml_edit::Value::Array(arr));
+            t.insert("secrets", Item::Table(secrets_tbl));
+        }
+        if let Some(duration) = lock_duration {
+            write_lock_expiry(&mut t, *duration);
+        }
+        return t;
+    }
+
     t["location"] = value(location_raw);
 
     // Extract fields from the enum variant.
@@ -438,25 +537,15 @@ fn build_component_table(
             env_vars,
             allowed_hosts,
         } => (Some(env_vars), Some(allowed_hosts), None, None, true),
+        ComponentMetadataAnnotation::ActivityExec { .. } => {
+            unreachable!("handled by early return above")
+        }
     };
 
     // ffqn/params/return_type (JS activities and workflows)
     if let Some((ffqn, params, return_type)) = ffqn_params_rt {
         t["ffqn"] = value(ffqn.to_string());
-        if !params.is_empty() {
-            let mut arr = toml_edit::Array::new();
-            for p in params {
-                let mut inline = toml_edit::InlineTable::new();
-                inline.insert("name", p.name.clone().into());
-                inline.insert("type", p.wit_type.clone().into());
-                let mut v = toml_edit::Value::InlineTable(inline);
-                v.decor_mut().set_prefix("\n  ");
-                arr.push_formatted(v);
-            }
-            arr.set_trailing("\n");
-            arr.set_trailing_comma(true);
-            t["params"] = Item::Value(toml_edit::Value::Array(arr));
-        }
+        write_params(&mut t, params);
         if let Some(rt) = return_type {
             t["return_type"] = value(rt.clone());
         }
@@ -532,22 +621,45 @@ fn build_component_table(
 
     // Write as a dotted key: exec.lock_expiry.<unit> = N
     if let Some(duration) = lock_duration {
-        let (unit, n) = match duration {
-            DurationConfig::Milliseconds(n) => ("milliseconds", n),
-            DurationConfig::Seconds(n) => ("seconds", n),
-            DurationConfig::Minutes(n) => ("minutes", n),
-            DurationConfig::Hours(n) => ("hours", n),
-        };
-        let mut lock_expiry_tbl = Table::new();
-        lock_expiry_tbl.set_dotted(true);
-        lock_expiry_tbl.insert(unit, value(i64::try_from(n).unwrap_or(i64::MAX)));
-        let mut exec_tbl = Table::new();
-        exec_tbl.set_dotted(true);
-        exec_tbl.insert("lock_expiry", Item::Table(lock_expiry_tbl));
-        t.insert("exec", Item::Table(exec_tbl));
+        write_lock_expiry(&mut t, duration);
     }
 
     t
+}
+
+fn write_params(t: &mut toml_edit::Table, params: &[crate::config::toml::JsParamToml]) {
+    use toml_edit::Item;
+    if !params.is_empty() {
+        let mut arr = toml_edit::Array::new();
+        for p in params {
+            let mut inline = toml_edit::InlineTable::new();
+            inline.insert("name", p.name.clone().into());
+            inline.insert("type", p.wit_type.clone().into());
+            let mut v = toml_edit::Value::InlineTable(inline);
+            v.decor_mut().set_prefix("\n  ");
+            arr.push_formatted(v);
+        }
+        arr.set_trailing("\n");
+        arr.set_trailing_comma(true);
+        t["params"] = Item::Value(toml_edit::Value::Array(arr));
+    }
+}
+
+fn write_lock_expiry(t: &mut toml_edit::Table, duration: DurationConfig) {
+    use toml_edit::{Item, Table, value};
+    let (unit, n) = match duration {
+        DurationConfig::Milliseconds(n) => ("milliseconds", n),
+        DurationConfig::Seconds(n) => ("seconds", n),
+        DurationConfig::Minutes(n) => ("minutes", n),
+        DurationConfig::Hours(n) => ("hours", n),
+    };
+    let mut lock_expiry_tbl = Table::new();
+    lock_expiry_tbl.set_dotted(true);
+    lock_expiry_tbl.insert(unit, value(i64::try_from(n).unwrap_or(i64::MAX)));
+    let mut exec_tbl = Table::new();
+    exec_tbl.set_dotted(true);
+    exec_tbl.insert("lock_expiry", Item::Table(lock_expiry_tbl));
+    t.insert("exec", Item::Table(exec_tbl));
 }
 
 fn serialize_methods_input(methods: &crate::config::toml::MethodsInput) -> toml_edit::Item {

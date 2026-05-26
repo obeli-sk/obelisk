@@ -669,7 +669,7 @@
           "default": null
         },
         "program": {
-          "description": "Program specification. Exactly one of `inline` or `include`.",
+          "description": "Program specification. Exactly one of `inline`, `include`, or `oci`.",
           "$ref": "#/$defs/ExecProgramToml"
         },
         "ffqn": {
@@ -796,6 +796,19 @@
           },
           "required": [
             "include"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "OCI reference. Script is pulled from the exec layer and resolved to `inline`\nat canonicalization time. Written by `obelisk component add`.",
+          "type": "object",
+          "properties": {
+            "oci": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "oci"
           ],
           "additionalProperties": false
         }
