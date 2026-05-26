@@ -8,7 +8,6 @@ use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::DeploymentTomlValidated;
 use crate::config::toml::DurationConfig;
-use crate::config::toml::ExecProgramToml;
 use crate::config::toml::JsLocationToml;
 use crate::config::toml::OCI_SCHEMA_PREFIX;
 use crate::config::wasm_cache_metadata_dir;
@@ -207,14 +206,17 @@ fn find_component_for_push(
                 .iter()
                 .find(|(_, n)| n.to_string() == name)
                 .expect("name is in map so it must be in the list");
-            let script = match &cfg.program {
-                ExecProgramToml::Inline(s) => s.clone(),
-                ExecProgramToml::Include(path) => std::fs::read_to_string(path)
-                    .with_context(|| format!("cannot read include file {path:?}"))?,
-                ExecProgramToml::Oci(_) => {
+            let script = match (&cfg.location, &cfg.content) {
+                (None, Some(content)) => content.clone(),
+                (Some(JsLocationToml::Path(path)), None) => std::fs::read_to_string(path)
+                    .with_context(|| format!("cannot read exec file {path:?}"))?,
+                (Some(JsLocationToml::Oci(_)), None) => {
                     bail!(
-                        "component '{name}' uses OCI source, only local programs are supported for push"
+                        "component '{name}' uses OCI source, only local sources are supported for push"
                     );
+                }
+                (None, None) | (Some(_), Some(_)) => {
+                    bail!("component '{name}' must set exactly one of `location` or `content`");
                 }
             };
             Ok(ComponentPushData::Exec {
@@ -307,7 +309,7 @@ async fn add_component_from_oci(
     let toml_component_type = component_metadata_annotation.component_type();
 
     // For locked images, also pull the blob and record the pinned manifest digest.
-    let oci_manifest_digest_if_locked = if locked {
+    let (oci_manifest_digest_if_locked, exec_content_digest_if_locked) = if locked {
         let project_dirs = project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
@@ -337,7 +339,7 @@ async fn add_component_from_oci(
                     .await
                     .context("failed to pull JS OCI image")?;
                 info!("Fetched JS OCI image, manifest_digest: {manifest_digest}");
-                Some(manifest_digest)
+                (Some(manifest_digest), None)
             }
             TomlComponentType::ActivityWasm
             | TomlComponentType::WorkflowWasm
@@ -347,7 +349,7 @@ async fn add_component_from_oci(
                         .await
                         .context("failed to pull OCI image")?;
                 info!("Fetched OCI image, manifest_digest: {manifest_digest}");
-                Some(manifest_digest)
+                (Some(manifest_digest), None)
             }
             TomlComponentType::ActivityExec => {
                 let exec_cache_dir = wasm_cache_dir.join("exec");
@@ -357,12 +359,14 @@ async fn add_component_from_oci(
                         format!("cannot create exec cache directory {exec_cache_dir:?}")
                     })?;
                 let oci::ExecCacheResult {
-                    manifest_digest, ..
+                    content_digest,
+                    manifest_digest,
+                    ..
                 } = oci::pull_exec_to_cache(&oci_ref, &exec_cache_dir, &metadata_dir)
                     .await
                     .context("failed to pull exec OCI image")?;
                 info!("Fetched exec OCI image, manifest_digest: {manifest_digest}");
-                Some(manifest_digest)
+                (Some(manifest_digest), Some(content_digest))
             }
             TomlComponentType::ActivityExternal | TomlComponentType::ActivityStub => {
                 bail!("external and stub activity types cannot be pushed to an oci registry")
@@ -372,7 +376,7 @@ async fn add_component_from_oci(
             }
         }
     } else {
-        None
+        (None, None)
     };
 
     let location_raw = if let Some(actual_digest) = oci_manifest_digest_if_locked {
@@ -413,12 +417,17 @@ async fn add_component_from_oci(
         }) {
             // Update existing
             table["location"] = value(location_raw);
-            // Remove stale content_digest if present from a previous version
-            table.remove("content_digest");
+            if let Some(content_digest) = exec_content_digest_if_locked.as_ref() {
+                table["content_digest"] = value(content_digest.to_string());
+            } else {
+                table.remove("content_digest");
+            }
+            table.remove("content");
         } else {
             components.push(build_component_table(
                 &name,
                 &location_raw,
+                exec_content_digest_if_locked.as_ref(),
                 &component_metadata_annotation,
             ));
         }
@@ -432,6 +441,7 @@ async fn add_component_from_oci(
 fn build_component_table(
     name: &str,
     location_raw: &str,
+    content_digest: Option<&concepts::ContentDigest>,
     metadata: &ComponentMetadataAnnotation,
 ) -> toml_edit::Table {
     use toml_edit::{Item, Table, value};
@@ -439,7 +449,6 @@ fn build_component_table(
     let mut t = Table::new();
     t["name"] = value(name);
 
-    // ActivityExec uses `program.oci` instead of `location`.
     if let ComponentMetadataAnnotation::ActivityExec {
         env_vars,
         lock_duration,
@@ -450,10 +459,10 @@ fn build_component_table(
         secrets,
     } = metadata
     {
-        let mut program_tbl = Table::new();
-        program_tbl.set_dotted(true);
-        program_tbl.insert("oci", value(location_raw));
-        t.insert("program", Item::Table(program_tbl));
+        t["location"] = value(location_raw);
+        if let Some(content_digest) = content_digest {
+            t["content_digest"] = value(content_digest.to_string());
+        }
         t["ffqn"] = value(ffqn.to_string());
         write_params(&mut t, params);
         if let Some(rt) = return_type {
@@ -778,6 +787,7 @@ mod tests {
         let table = build_component_table(
             "my_activity",
             "oci://registry.example.com/repo/my-activity:latest",
+            None,
             &metadata,
         );
 
@@ -815,6 +825,7 @@ mod tests {
         let table = build_component_table(
             "my_webhook",
             "oci://registry.example.com/repo/webhook:v1",
+            None,
             &metadata,
         );
 
@@ -853,6 +864,7 @@ mod tests {
         let table = build_component_table(
             "my_js_activity",
             "oci://registry.example.com/repo/js-activity:v1",
+            None,
             &metadata,
         );
 
@@ -888,5 +900,61 @@ mod tests {
         assert_eq!(act.params[0].wit_type, "string");
         assert_eq!(act.env_vars.len(), 1);
         assert!(matches!(act.exec.lock_expiry, DurationConfig::Seconds(10)));
+    }
+
+    #[test]
+    fn build_and_parse_activity_exec_toml() {
+        use crate::config::toml::JsParamToml;
+        use concepts::{ContentDigest, FunctionFqn};
+
+        let metadata = ComponentMetadataAnnotation::ActivityExec {
+            env_vars: vec!["PATH".to_string()],
+            lock_duration: Some(DurationConfig::Seconds(3)),
+            ffqn: FunctionFqn::new_arc("my-pkg:my-iface/my-ifc".into(), "my-fn".into()),
+            params: vec![JsParamToml {
+                name: "input".to_string(),
+                wit_type: "string".to_string(),
+            }],
+            return_type: Some("result<string>".to_string()),
+            max_output_bytes: 1024,
+            secrets: None,
+        };
+        let content_digest: ContentDigest =
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                .parse()
+                .unwrap();
+        let table = build_component_table(
+            "my_exec_activity",
+            "oci://registry.example.com/repo/exec-activity:v1",
+            Some(&content_digest),
+            &metadata,
+        );
+
+        let mut doc = toml_edit::DocumentMut::new();
+        let mut aot = toml_edit::ArrayOfTables::new();
+        aot.push(table);
+        doc.insert("activity_exec", toml_edit::Item::ArrayOfTables(aot));
+
+        let toml_str = doc.to_string();
+        assert!(
+            toml_str.contains("content_digest = \"sha256:1111111111111111111111111111111111111111111111111111111111111111\""),
+            "unexpected content digest format:\n{toml_str}"
+        );
+        let parsed: crate::config::toml::DeploymentToml =
+            toml::from_str(&toml_str).expect("generated TOML must parse");
+
+        assert_eq!(parsed.activities_exec.len(), 1);
+        let act = &parsed.activities_exec[0];
+        assert_eq!(
+            act.name.as_ref().expect("name set").to_string(),
+            "my_exec_activity"
+        );
+        assert!(matches!(act.location, Some(JsLocationToml::Oci(_))));
+        assert!(act.content.is_none());
+        assert_eq!(act.content_digest, Some(content_digest));
+        assert_eq!(act.ffqn.to_string(), "my-pkg:my-iface/my-ifc.my-fn");
+        assert_eq!(act.params.len(), 1);
+        assert_eq!(act.max_output_bytes, 1024);
+        assert!(matches!(act.exec.lock_expiry, DurationConfig::Seconds(3)));
     }
 }

@@ -652,8 +652,14 @@
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
-        "program": {
-          "$ref": "#/$defs/ExecProgramCanonical"
+        "source": {
+          "$ref": "#/$defs/ExecSourceCanonical"
+        },
+        "content_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "ffqn": {
           "type": "string"
@@ -721,7 +727,7 @@
       "additionalProperties": false,
       "required": [
         "name",
-        "program",
+        "source",
         "ffqn",
         "params",
         "exec",
@@ -734,18 +740,18 @@
         "max_output_bytes"
       ]
     },
-    "ExecProgramCanonical": {
-      "description": "Canonical form of the exec program source.\n`Include` is resolved to `Inline` before canonicalization.\n`Oci` is preserved so deployments can migrate between machines.",
+    "ExecSourceCanonical": {
+      "description": "Canonical exec source.\nLocal file paths are resolved to `content` before canonicalization.",
       "oneOf": [
         {
           "type": "object",
           "properties": {
-            "inline": {
+            "content": {
               "type": "string"
             }
           },
           "required": [
-            "inline"
+            "content"
           ],
           "additionalProperties": false
         },

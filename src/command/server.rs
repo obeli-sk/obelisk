@@ -2452,7 +2452,7 @@ impl DeploymentVerified {
 
                 let mut activities_exec_verified = Vec::with_capacity(deployment.activities_exec.len());
                 for exec in deployment.activities_exec {
-                    let resolved_program = exec.program.resolve(&wasm_cache_dir).await?;
+                    let resolved_program = exec.resolve(&wasm_cache_dir).await?;
                     activities_exec_verified.push(
                         exec.fetch_and_verify(
                             resolved_program,

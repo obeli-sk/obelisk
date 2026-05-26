@@ -668,9 +668,33 @@
           ],
           "default": null
         },
-        "program": {
-          "description": "Program specification. Exactly one of `inline`, `include`, or `oci`.",
-          "$ref": "#/$defs/ExecProgramToml"
+        "location": {
+          "description": "Location of the exec script.\nSupports local file paths and OCI registry references (`oci://...`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsLocationToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "Inline script content embedded in the TOML.\nExactly one of `location` or `content` must be set.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content_digest": {
+          "description": "Content digest of the exec script.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "ffqn": {
           "type": "string"
@@ -766,52 +790,7 @@
       },
       "additionalProperties": false,
       "required": [
-        "program",
         "ffqn"
-      ]
-    },
-    "ExecProgramToml": {
-      "description": "Program specification for exec activities (TOML input form).",
-      "oneOf": [
-        {
-          "description": "Inline script content. Written to a temp file at each execution.\nActivity params are appended as args.",
-          "type": "object",
-          "properties": {
-            "inline": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "inline"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "description": "File path to include. Resolved to `inline` at canonicalization time.\nSupports `${DEPLOYMENT_DIR}/` prefix.",
-          "type": "object",
-          "properties": {
-            "include": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "include"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "description": "OCI reference. Script is pulled from the exec layer and resolved to `inline`\nat canonicalization time. Written by `obelisk component add`.",
-          "type": "object",
-          "properties": {
-            "oci": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "oci"
-          ],
-          "additionalProperties": false
-        }
       ]
     },
     "ExecSecretsToml": {

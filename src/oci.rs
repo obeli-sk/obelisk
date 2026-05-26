@@ -115,6 +115,7 @@ pub(crate) struct JsCacheResult {
 }
 
 pub(crate) struct ExecCacheResult {
+    pub(crate) content_digest: ContentDigest,
     pub(crate) exec_path: PathBuf,
     pub(crate) manifest_digest: String,
 }
@@ -335,6 +336,7 @@ pub(crate) async fn pull_exec_to_cache(
         && let Ok(()) = verify_cached_file(&exec_path, &content_digest).await
     {
         return Ok(ExecCacheResult {
+            content_digest,
             exec_path,
             manifest_digest: manifest_digest.to_string(),
         });
@@ -375,6 +377,7 @@ pub(crate) async fn pull_exec_to_cache(
     let exec_path = content_digest_to_exec_file(exec_cache_dir, &content_digest);
     if let Ok(()) = verify_cached_file(&exec_path, &content_digest).await {
         return Ok(ExecCacheResult {
+            content_digest,
             exec_path,
             manifest_digest,
         });
@@ -399,6 +402,7 @@ pub(crate) async fn pull_exec_to_cache(
     }
 
     Ok(ExecCacheResult {
+        content_digest,
         exec_path,
         manifest_digest,
     })
