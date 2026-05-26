@@ -340,7 +340,7 @@ return_type = "result<string, string>"
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-add.add"
-program.external = ["{ws}/crates/testing/test-programs/exec/add.sh"]
+program.include = "{ws}/crates/testing/test-programs/exec/add.sh"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
@@ -350,15 +350,6 @@ return_type = "result<u32, string>"
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-include"
 program.include = "{ws}/crates/testing/test-programs/exec/greet.sh"
-params = [
-  {{ name = "name", type = "string" }},
-]
-return_type = "result<string, string>"
-env_vars = ["PATH"] # for jq
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-greet.greet-external"
-program.external = ["{ws}/crates/testing/test-programs/exec/greet.sh"]
 params = [
   {{ name = "name", type = "string" }},
 ]
@@ -402,19 +393,23 @@ return_type = "result<record {{ name: string, count: u32 }}, string>"
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-stdin.expose-secrets"
-program.external = ["{ws}/crates/testing/test-programs/exec/expose-secrets.sh"]
+program.include = "{ws}/crates/testing/test-programs/exec/expose-secrets.sh"
 return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
 [activity_exec.secrets]
 env_vars = [{{ name = "MY_SECRET", value = "s3cret_value" }}]
 
 [[activity_exec]]
-program.external = ["true"]
+program.inline = '''#!/bin/sh
+true
+'''
 ffqn = "testing:integration/exec-void.void-ok"
 return_type = "result"
 
 [[activity_exec]]
-program.external = ["false"]
+program.inline = '''#!/bin/sh
+false
+'''
 ffqn = "testing:integration/exec-void.void-err"
 
 [[activity_exec]]
@@ -3155,11 +3150,6 @@ async fn activity_exec_add() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": 8 }));
     server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_greet_external() {
-    activity_exec_greet(test_addr!(51), "external").await;
 }
 
 #[tokio::test]

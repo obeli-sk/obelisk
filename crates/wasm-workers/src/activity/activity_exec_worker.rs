@@ -24,18 +24,10 @@ use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 use utils::wasm_tools::WasmComponent;
 
-/// Configuration for an exec activity program.
-#[derive(Debug, Clone)]
-pub enum ExecProgram {
-    /// Explicit argv. First element is executable, rest are fixed args.
-    External(Vec<String>),
-    /// Inline script content. Written to a temp file at each execution.
-    Inline(String),
-}
-
 /// Compiled exec activity. No WASM engine needed.
 pub struct ActivityExecWorkerCompiled {
-    program: ExecProgram,
+    /// Inline script content. Written to a temp file at each execution.
+    program: String,
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
@@ -52,7 +44,7 @@ pub struct ActivityExecWorkerCompiled {
 impl ActivityExecWorkerCompiled {
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        program: ExecProgram,
+        program: String,
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
@@ -135,7 +127,8 @@ impl ActivityExecWorkerCompiled {
 }
 
 pub struct ActivityExecWorker {
-    program: ExecProgram,
+    /// Inline script content. Written to a temp file at each execution.
+    program: String,
     #[allow(dead_code)]
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
@@ -201,57 +194,37 @@ impl Worker for ActivityExecWorker {
         let version = ctx.version.clone();
 
         let mut param_args: Vec<String> = Vec::new();
-        let _temp_file_guard: Option<tempfile::TempPath>;
-        let mut cmd = match &self.program {
-            ExecProgram::External(argv) => {
-                let Some((cmd, specified_args)) = argv.split_first() else {
-                    return Err(WorkerError::FatalError(
-                        FatalError::CannotInstantiate {
-                            reason: "external program argv is empty".to_string(),
-                            detail: None,
-                        },
-                        version,
-                    ));
-                };
-                param_args.extend_from_slice(specified_args); // Execution args come afterwards.
-                tokio::process::Command::new(cmd)
-            }
-            ExecProgram::Inline(script) => {
-                // Write script to temp file preserving shebang.
-                let mut builder = tempfile::Builder::new();
-                builder.prefix("obelisk-exec-");
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    // Apply 0o755 permissions to the builder
-                    builder.permissions(std::fs::Permissions::from_mode(0o755));
-                }
+        // Write script to temp file preserving shebang.
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("obelisk-exec-");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o755));
+        }
 
-                let mut tmp = builder.tempfile().map_err(|e| {
-                    WorkerError::FatalError(
-                        FatalError::CannotInstantiate {
-                            reason: "failed to create temp file for inline script".to_string(),
-                            detail: Some(e.to_string()),
-                        },
-                        version.clone(),
-                    )
-                })?;
-                use std::io::Write;
-                tmp.write_all(script.as_bytes()).map_err(|e| {
-                    WorkerError::FatalError(
-                        FatalError::CannotInstantiate {
-                            reason: "failed to write inline script".to_string(),
-                            detail: Some(e.to_string()),
-                        },
-                        version.clone(),
-                    )
-                })?;
-                let temp_path = tmp.into_temp_path(); // Close the file handle.
-                let cmd = tokio::process::Command::new(&temp_path);
-                _temp_file_guard = Some(temp_path);
-                cmd
-            }
-        };
+        let mut tmp = builder.tempfile().map_err(|e| {
+            WorkerError::FatalError(
+                FatalError::CannotInstantiate {
+                    reason: "failed to create temp file for inline script".to_string(),
+                    detail: Some(e.to_string()),
+                },
+                version.clone(),
+            )
+        })?;
+        use std::io::Write;
+        tmp.write_all(self.program.as_bytes()).map_err(|e| {
+            WorkerError::FatalError(
+                FatalError::CannotInstantiate {
+                    reason: "failed to write inline script".to_string(),
+                    detail: Some(e.to_string()),
+                },
+                version.clone(),
+            )
+        })?;
+        let temp_path = tmp.into_temp_path(); // Close the file handle.
+        let mut cmd = tokio::process::Command::new(&temp_path);
+        let _temp_file_guard = temp_path;
 
         {
             // Serialize each user parameter as a JSON string for command-line args.

@@ -1719,11 +1719,6 @@ impl ActivityJsConfigVerified {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) enum ExecProgramToml {
-    /// Explicit argv. The first element is the executable; remaining elements are fixed arguments.
-    /// Activity params are JSON-serialized and appended as trailing args.
-    /// Does not support `${DEPLOYMENT_DIR}/` prefix.
-    #[serde(rename = "external")]
-    External(Vec<String>),
     /// Inline script content. Written to a temp file at each execution.
     /// Activity params are appended as args.
     #[serde(rename = "inline")]
@@ -1732,17 +1727,6 @@ pub(crate) enum ExecProgramToml {
     /// Supports `${DEPLOYMENT_DIR}/` prefix.
     #[serde(rename = "include")]
     Include(String),
-}
-
-/// Program specification for exec activities (canonical/wire form).
-/// `Include` has been resolved to `Inline`.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) enum ExecProgramCanonical {
-    #[serde(rename = "external")]
-    External(Vec<String>),
-    #[serde(rename = "inline")]
-    Inline(String),
 }
 
 /// Secret entry: resolved from environment variables at startup.
@@ -1775,7 +1759,7 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.
     #[serde(default)]
     pub(crate) name: Option<ConfigName>,
-    /// Program specification. Exactly one of `external`, `inline`, or `include`.
+    /// Program specification. Exactly one of `inline` or `include`.
     pub(crate) program: ExecProgramToml,
     #[schemars(with = "String")]
     pub(crate) ffqn: FunctionFqn,
@@ -1823,7 +1807,8 @@ pub(crate) struct ActivityExecComponentConfigToml {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityExecComponentConfigCanonical {
     pub(crate) name: ConfigName,
-    pub(crate) program: ExecProgramCanonical,
+    /// Inline script content. `Include` is resolved before canonicalization.
+    pub(crate) program: String,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<JsParamToml>,
     pub(crate) return_type: Option<String>,
@@ -1875,10 +1860,7 @@ impl ActivityExecComponentConfigCanonical {
                  `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
             ),
         };
-        let program_bytes = match &self.program {
-            ExecProgramCanonical::External(argv) => argv.join("\0"),
-            ExecProgramCanonical::Inline(script) => script.clone(),
-        };
+        let program_bytes = self.program.clone();
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_exec:");
@@ -1955,7 +1937,8 @@ pub(crate) struct ResolvedExecSecrets {
 
 #[derive(Debug)]
 pub(crate) struct ActivityExecConfigVerified {
-    pub(crate) program: ExecProgramCanonical,
+    /// Inline script content.
+    pub(crate) program: String,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
@@ -2670,17 +2653,15 @@ async fn resolve_local_refs_to_canonical(
     let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
     for (a, name) in deployment.activities_exec {
         let program = match a.program {
-            ExecProgramToml::External(argv) => ExecProgramCanonical::External(argv),
-            ExecProgramToml::Inline(script) => ExecProgramCanonical::Inline(script),
+            ExecProgramToml::Inline(script) => script,
             ExecProgramToml::Include(path) => {
                 let full_path = PathBuf::from(path);
                 if !full_path.exists() {
                     bail!("include file does not exist: {full_path:?}");
                 }
-                let content = tokio::fs::read_to_string(&full_path)
+                tokio::fs::read_to_string(&full_path)
                     .await
-                    .with_context(|| format!("cannot read include file {full_path:?}"))?;
-                ExecProgramCanonical::Inline(content)
+                    .with_context(|| format!("cannot read include file {full_path:?}"))?
             }
         };
         activities_exec.push(ActivityExecComponentConfigCanonical {
@@ -4082,7 +4063,7 @@ name = "my_stub"
         fn exec_config_with_secret(value: &str) -> ActivityExecComponentConfigCanonical {
             ActivityExecComponentConfigCanonical {
                 name: ConfigName::new(StrVariant::from("exec-test")).unwrap(),
-                program: ExecProgramCanonical::Inline("#!/usr/bin/env bash\necho null\n".into()),
+                program: "#!/usr/bin/env bash\necho null\n".into(),
                 ffqn: "testing:integration/exec-secret.expose".parse().unwrap(),
                 params: vec![],
                 return_type: Some("result<string, string>".into()),

@@ -669,7 +669,7 @@
           "default": null
         },
         "program": {
-          "description": "Program specification. Exactly one of `external`, `inline`, or `include`.",
+          "description": "Program specification. Exactly one of `inline` or `include`.",
           "$ref": "#/$defs/ExecProgramToml"
         },
         "ffqn": {
@@ -781,22 +781,6 @@
     "ExecProgramToml": {
       "description": "Program specification for exec activities (TOML input form).",
       "oneOf": [
-        {
-          "description": "Explicit argv. The first element is the executable; remaining elements are fixed arguments.\nActivity params are JSON-serialized and appended as trailing args.\nDoes not support `${DEPLOYMENT_DIR}/` prefix.",
-          "type": "object",
-          "properties": {
-            "external": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "required": [
-            "external"
-          ],
-          "additionalProperties": false
-        },
         {
           "description": "Inline script content. Written to a temp file at each execution.\nActivity params are appended as args.",
           "type": "object",

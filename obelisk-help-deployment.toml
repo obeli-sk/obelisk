@@ -113,9 +113,7 @@
 ### and the result is read from stdout (exit 0 → ok, non-zero → err).
 # [[activity_exec]]
 # name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
-## Program specification: exactly one of `external`, `inline`, or `include`.
-## `external`: explicit argv — first element is the executable, rest are fixed arguments. Does not support `${DEPLOYMENT_DIR}/` prefix.
-# program.external = ["/usr/bin/my-tool", "--flag"]
+## Program specification: exactly one of `inline` or `include`.
 ## `inline`: script content embedded in the TOML. Written to a temp file at each execution. Supports `${DEPLOYMENT_DIR}/` prefix.
 # program.inline = '''#!/usr/bin/env bash
 # echo "\"hello\""

@@ -3159,13 +3159,7 @@ fn prespawn_activity_exec(
     let component_id = activity_exec.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
 
-    use crate::config::toml::ExecProgramCanonical;
-    use wasm_workers::activity::activity_exec_worker::ExecProgram;
-
-    let program = match activity_exec.program {
-        ExecProgramCanonical::External(argv) => ExecProgram::External(argv),
-        ExecProgramCanonical::Inline(script) => ExecProgram::Inline(script),
-    };
+    let program = activity_exec.program;
 
     // Compute stdin_content from resolved secrets.
     // Secrets are serialized as a JSON object and piped to the child's stdin.

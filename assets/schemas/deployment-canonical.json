@@ -653,7 +653,8 @@
           "$ref": "#/$defs/ConfigName"
         },
         "program": {
-          "$ref": "#/$defs/ExecProgramCanonical"
+          "description": "Inline script content. `Include` is resolved before canonicalization.",
+          "type": "string"
         },
         "ffqn": {
           "type": "string"
@@ -738,38 +739,6 @@
         "logs_store_min_level",
         "env_vars",
         "max_output_bytes"
-      ]
-    },
-    "ExecProgramCanonical": {
-      "description": "Program specification for exec activities (canonical/wire form).\n`Include` has been resolved to `Inline`.",
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "external": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "required": [
-            "external"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "inline": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "inline"
-          ],
-          "additionalProperties": false
-        }
       ]
     },
     "ExecSecretsToml": {

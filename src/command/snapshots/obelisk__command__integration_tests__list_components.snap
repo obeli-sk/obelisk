@@ -34,13 +34,6 @@ expression: components
   {
     "component_id": {
       "component_type": "activity",
-      "name": "exec-greet.greet-external",
-      "component_digest": "sha256:<REDACTED>"
-    }
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
       "name": "exec-greet.greet-include",
       "component_digest": "sha256:<REDACTED>"
     }
