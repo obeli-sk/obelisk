@@ -7,3 +7,4 @@ scripts/update-toml-schema.sh
 scripts/update-openapi-schema.sh
 scripts/update-db-schema.sh
 scripts/update-cli-schema.sh
+scripts/update-schema-oci-metadata-annotation.sh

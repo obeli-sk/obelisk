@@ -12,6 +12,7 @@ use oci_client::{
     manifest::{OciDescriptor, OciImageManifest},
 };
 use oci_wasm::{ToConfig, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -42,7 +43,7 @@ struct LayerWithAnnotations {
 
 /// OCI manifest annotation carrying all component metadata.
 /// Each variant carries exactly the fields that apply to that component type.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 #[serde(tag = "component_type")]
 pub enum ComponentMetadataAnnotation {
     #[serde(rename = "activity_wasm")]

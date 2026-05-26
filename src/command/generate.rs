@@ -41,6 +41,10 @@ impl Generate {
             Generate::OpenApiSchema { output } => generate_openapi_schema(output),
             #[cfg(debug_assertions)]
             Generate::CliSchema { output } => generate_cli_schema(output),
+            #[cfg(debug_assertions)]
+            Generate::ComponentMetadataAnnotationSchema { output } => {
+                generate_component_metadata_annotation_schema(output)
+            }
             Generate::ServerConfig {
                 json,
                 output,
@@ -235,6 +239,13 @@ pub(crate) fn generate_openapi_schema(output: Option<PathBuf>) -> Result<(), any
         println!();
     }
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn generate_component_metadata_annotation_schema(
+    output: Option<PathBuf>,
+) -> Result<(), anyhow::Error> {
+    write_schema::<crate::oci::ComponentMetadataAnnotation>(output)
 }
 
 #[cfg(debug_assertions)]

@@ -1,0 +1,491 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ComponentMetadataAnnotation",
+  "description": "OCI manifest annotation carrying all component metadata.\nEach variant carries exactly the fields that apply to that component type.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          }
+        },
+        "lock_duration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "component_type": {
+          "type": "string",
+          "const": "activity_wasm"
+        }
+      },
+      "required": [
+        "component_type",
+        "env_vars",
+        "allowed_hosts"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          }
+        },
+        "lock_duration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          },
+          "default": []
+        },
+        "return_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "component_type": {
+          "type": "string",
+          "const": "activity_js"
+        }
+      },
+      "required": [
+        "component_type",
+        "env_vars",
+        "allowed_hosts",
+        "ffqn"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "component_type": {
+          "type": "string",
+          "const": "workflow_wasm"
+        }
+      },
+      "required": [
+        "component_type"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "lock_duration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          },
+          "default": []
+        },
+        "return_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "component_type": {
+          "type": "string",
+          "const": "workflow_js"
+        }
+      },
+      "required": [
+        "component_type",
+        "ffqn"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lock_duration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsParamToml"
+          },
+          "default": []
+        },
+        "return_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "secrets": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecSecretsToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "component_type": {
+          "type": "string",
+          "const": "activity_exec"
+        }
+      },
+      "required": [
+        "component_type",
+        "env_vars",
+        "ffqn",
+        "max_output_bytes"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          }
+        },
+        "component_type": {
+          "type": "string",
+          "const": "webhook_endpoint_wasm"
+        }
+      },
+      "required": [
+        "component_type",
+        "env_vars",
+        "allowed_hosts"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          }
+        },
+        "component_type": {
+          "type": "string",
+          "const": "webhook_endpoint_js"
+        }
+      },
+      "required": [
+        "component_type",
+        "env_vars",
+        "allowed_hosts"
+      ]
+    }
+  ],
+  "$defs": {
+    "AllowedHostToml": {
+      "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.",
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`).",
+          "type": "string"
+        },
+        "methods": {
+          "description": "Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = \"*\"` or `methods = [\"*\"]` to allow all methods.\n- `methods = [\"GET\", \"POST\"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MethodsInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "secrets": {
+          "description": "Optional secrets for this host.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AllowedHostSecretsToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern"
+      ]
+    },
+    "MethodsInput": {
+      "description": "Input for method restrictions in TOML configuration.\nSupports both `methods = \"*\"` and `methods = [\"GET\", \"POST\"]` syntax.",
+      "anyOf": [
+        {
+          "description": "All methods allowed (from `methods = \"*\"`).",
+          "$ref": "#/$defs/MethodsInputStar"
+        },
+        {
+          "description": "Specific methods list (from `methods = [\"GET\", \"POST\"]`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "MethodsInputStar": {
+      "type": "null"
+    },
+    "AllowedHostSecretsToml": {
+      "description": "Secrets configuration for an allowed host.",
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "description": "Env vars using the same syntax as top-level `env_vars`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          }
+        },
+        "replace_in": {
+          "description": "Where in the request to perform replacement.\nDefault: empty (no replacement — deny by default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReplaceIn"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "env_vars"
+      ]
+    },
+    "EnvVarConfig": {
+      "anyOf": [
+        {
+          "description": "Forward from host: `\"KEY\"`",
+          "type": "string"
+        },
+        {
+          "description": "Set to value: `{key = \"KEY\", value = \"foo\"}` (supports `${VAR}` interpolation)",
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "key",
+            "value"
+          ]
+        }
+      ]
+    },
+    "ReplaceIn": {
+      "description": "Where in the outgoing request placeholders are replaced.",
+      "type": "string",
+      "enum": [
+        "headers",
+        "body",
+        "params"
+      ]
+    },
+    "DurationConfig": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "milliseconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "milliseconds"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "seconds"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "minutes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "minutes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hours": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "hours"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "JsParamToml": {
+      "description": "A parameter declaration for a JS activity function.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Parameter name (used in WIT metadata).\nStored in kebab-case for WIT compatibility.",
+          "type": "string"
+        },
+        "type": {
+          "description": "WIT type string, e.g. `string`, `u32`, `list<string>`, `option<u64>`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "ExecSecretsToml": {
+      "description": "Secrets configuration for exec activities.",
+      "type": "object",
+      "properties": {
+        "env_vars": {
+          "description": "Secret entries resolved from environment variables.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SecretEnvVarToml"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "SecretEnvVarToml": {
+      "description": "Secret entry: resolved from environment variables at startup.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name used to reference this secret in the `secrets.stdin` function.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value supporting `${VAR}` interpolation from host environment.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    }
+  }
+}
