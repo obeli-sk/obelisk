@@ -348,9 +348,6 @@ impl DeploymentToml {
             if let ExecProgramToml::Include(p) = &mut c.program {
                 Self::expand_deployment_dir(p, false, deployment_dir);
             }
-            if let Some(cwd) = &mut c.cwd {
-                Self::expand_deployment_dir(cwd, true, deployment_dir);
-            }
         }
         for c in &mut self.workflows {
             expand_loc(&mut c.common.location);
@@ -1788,10 +1785,6 @@ pub(crate) struct ActivityExecComponentConfigToml {
     pub(crate) logs_store_min_level: LogLevelToml,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
-    /// Working directory for the child process. Supports `${DEPLOYMENT_DIR}` expansion.
-    /// Defaults to the server's working directory.
-    #[serde(default)]
-    pub(crate) cwd: Option<String>,
     /// Maximum bytes collected from stdout to form the response.
     /// Exceeding the limit fails the execution.
     /// Not used when `return_type` is result (default), since the response carries no data.
@@ -1820,7 +1813,6 @@ pub(crate) struct ActivityExecComponentConfigCanonical {
     pub(crate) forward_stderr: ComponentStdOutputToml,
     pub(crate) logs_store_min_level: LogLevelToml,
     pub(crate) env_vars: Vec<EnvVarConfig>,
-    pub(crate) cwd: Option<String>, // Must be resolved.
     pub(crate) max_output_bytes: u64,
     pub(crate) secrets: Option<ExecSecretsToml>,
 }
@@ -1912,7 +1904,6 @@ impl ActivityExecComponentConfigCanonical {
             params: parsed_params,
             return_type,
             env_vars,
-            cwd: self.cwd,
             max_output_bytes: self.max_output_bytes,
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
@@ -1943,7 +1934,6 @@ pub(crate) struct ActivityExecConfigVerified {
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
     pub(crate) env_vars: Arc<[EnvVar]>,
-    pub(crate) cwd: Option<String>,
     pub(crate) max_output_bytes: u64,
     pub(crate) forward_stdout: Option<StdOutputConfig>,
     pub(crate) forward_stderr: Option<StdOutputConfig>,
@@ -2678,7 +2668,6 @@ async fn resolve_local_refs_to_canonical(
             forward_stderr: a.forward_stderr,
             logs_store_min_level: a.logs_store_min_level,
             env_vars: a.env_vars,
-            cwd: a.cwd,
             max_output_bytes: a.max_output_bytes,
             secrets: a.secrets,
         });
@@ -4075,7 +4064,6 @@ name = "my_stub"
                 forward_stderr: ComponentStdOutputToml::default(),
                 logs_store_min_level: LogLevelToml::default(),
                 env_vars: vec![],
-                cwd: None,
                 max_output_bytes: default_max_output_bytes(),
                 secrets: Some(ExecSecretsToml {
                     env_vars: vec![SecretEnvVarToml {

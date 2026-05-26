@@ -142,9 +142,6 @@
 ## Environment variables: same syntax as activity_wasm. Default is empty, not even `PATH` is exposed from the host.
 ## When explicitly set, only the listed vars are exposed (env is cleared first).
 # env_vars = ["PATH", {key = "MY_VAR", value = "my_value"}] # Values support interpolation.
-## Working directory for the child process. Supports `${DEPLOYMENT_DIR}/` prefix interpolation.
-## Defaults to the server's working directory.
-# cwd = "${DEPLOYMENT_DIR}/workdir"
 ## Maximum bytes collected from stdout to form the response.
 ## Exceeding the limit fails the execution.
 ## Not used when return_type is result (default), since the response carries no data.

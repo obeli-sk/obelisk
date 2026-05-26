@@ -744,14 +744,6 @@
           },
           "default": []
         },
-        "cwd": {
-          "description": "Working directory for the child process. Supports `${DEPLOYMENT_DIR}` expansion.\nDefaults to the server's working directory.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
         "max_output_bytes": {
           "description": "Maximum bytes collected from stdout to form the response.\nExceeding the limit fails the execution.\nNot used when `return_type` is result (default), since the response carries no data.",
           "type": "integer",

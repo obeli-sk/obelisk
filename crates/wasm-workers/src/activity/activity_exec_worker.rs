@@ -32,7 +32,6 @@ pub struct ActivityExecWorkerCompiled {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     env_vars: Arc<[EnvVar]>,
-    cwd: Option<String>,
     max_output_bytes: u64,
     forward_stdout: Option<StdOutputConfig>,
     forward_stderr: Option<StdOutputConfig>,
@@ -49,7 +48,6 @@ impl ActivityExecWorkerCompiled {
         user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
         env_vars: Arc<[EnvVar]>,
-        cwd: Option<String>,
         max_output_bytes: u64,
         forward_stdout: Option<StdOutputConfig>,
         forward_stderr: Option<StdOutputConfig>,
@@ -68,7 +66,6 @@ impl ActivityExecWorkerCompiled {
             user_params,
             user_return_type,
             env_vars,
-            cwd,
             max_output_bytes,
             forward_stdout,
             forward_stderr,
@@ -115,7 +112,6 @@ impl ActivityExecWorkerCompiled {
             user_params: self.user_params,
             user_return_type: self.user_return_type,
             env_vars: self.env_vars,
-            cwd: self.cwd,
             max_output_bytes: self.max_output_bytes,
             forward_stdout: stdout_config,
             forward_stderr: stderr_config,
@@ -134,7 +130,6 @@ pub struct ActivityExecWorker {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     env_vars: Arc<[EnvVar]>,
-    cwd: Option<String>,
     max_output_bytes: u64,
     forward_stdout: Option<StdOutputConfigWithSender>,
     forward_stderr: Option<StdOutputConfigWithSender>,
@@ -247,11 +242,6 @@ impl Worker for ActivityExecWorker {
         cmd.env_clear();
         for env_var in self.env_vars.iter() {
             cmd.env(&env_var.key, &env_var.val);
-        }
-
-        // Set cwd if configured.
-        if let Some(cwd) = &self.cwd {
-            cmd.current_dir(cwd);
         }
 
         // Process group and kill_on_drop.

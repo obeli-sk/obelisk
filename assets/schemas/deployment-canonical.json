@@ -703,12 +703,6 @@
             "$ref": "#/$defs/EnvVarConfig"
           }
         },
-        "cwd": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "max_output_bytes": {
           "type": "integer",
           "format": "uint64",

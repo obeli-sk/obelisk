@@ -3181,7 +3181,6 @@ fn prespawn_activity_exec(
         activity_exec.params,
         activity_exec.return_type,
         activity_exec.env_vars,
-        activity_exec.cwd,
         activity_exec.max_output_bytes,
         activity_exec.forward_stdout,
         activity_exec.forward_stderr,
