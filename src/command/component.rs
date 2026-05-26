@@ -13,7 +13,6 @@ use crate::config::toml::OCI_SCHEMA_PREFIX;
 use crate::get_fn_repository_client;
 use crate::oci;
 use crate::oci::ComponentMetadataAnnotation;
-use crate::oci::JsWitConfigAnnotation;
 use crate::project_dirs;
 use anyhow::Context;
 use anyhow::bail;
@@ -65,20 +64,12 @@ impl args::Component {
 
 enum ComponentPushData {
     Wasm {
-        component_type: TomlComponentType,
         path: PathBuf,
-        env_vars: Vec<String>,
-        allowed_hosts: Vec<crate::config::toml::AllowedHostToml>,
-        lock_duration: Option<DurationConfig>,
+        metadata: ComponentMetadataAnnotation,
     },
     Js {
-        component_type: TomlComponentType,
         path: PathBuf,
-        /// `ffqn/params/return_type` config. None for `webhook_endpoint_js`.
-        js_config: Option<JsWitConfigAnnotation>,
-        env_vars: Vec<String>,
-        allowed_hosts: Vec<crate::config::toml::AllowedHostToml>,
-        lock_duration: Option<DurationConfig>,
+        metadata: ComponentMetadataAnnotation,
     },
 }
 
@@ -105,11 +96,12 @@ fn find_component_for_push(
                 bail!("component '{name}' uses OCI, only local paths are supported for push");
             };
             Ok(ComponentPushData::Wasm {
-                component_type,
                 path: PathBuf::from(path),
-                env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
-                allowed_hosts: cfg.allowed_hosts.clone(),
-                lock_duration: Some(cfg.exec.lock_expiry),
+                metadata: ComponentMetadataAnnotation::ActivityWasm {
+                    env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
+                    allowed_hosts: cfg.allowed_hosts.clone(),
+                    lock_duration: Some(cfg.exec.lock_expiry),
+                },
             })
         }
         TomlComponentType::WebhookEndpointWasm => {
@@ -123,11 +115,11 @@ fn find_component_for_push(
                 bail!("component '{name}' uses OCI, only local paths are supported for push");
             };
             Ok(ComponentPushData::Wasm {
-                component_type,
                 path: PathBuf::from(path),
-                env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
-                allowed_hosts: cfg.allowed_hosts.clone(),
-                lock_duration: None,
+                metadata: ComponentMetadataAnnotation::WebhookEndpointWasm {
+                    env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
+                    allowed_hosts: cfg.allowed_hosts.clone(),
+                },
             })
         }
         TomlComponentType::WorkflowWasm => {
@@ -141,11 +133,8 @@ fn find_component_for_push(
                 bail!("component '{name}' uses OCI, only local paths are supported for push");
             };
             Ok(ComponentPushData::Wasm {
-                component_type,
                 path: PathBuf::from(path),
-                env_vars: Vec::new(),
-                allowed_hosts: vec![],
-                lock_duration: None,
+                metadata: ComponentMetadataAnnotation::WorkflowWasm {},
             })
         }
         TomlComponentType::ActivityJs => {
@@ -158,16 +147,15 @@ fn find_component_for_push(
                 bail!("component '{name}' uses OCI, only local paths are supported for push");
             };
             Ok(ComponentPushData::Js {
-                component_type,
                 path: PathBuf::from(path),
-                js_config: Some(JsWitConfigAnnotation {
+                metadata: ComponentMetadataAnnotation::ActivityJs {
+                    env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
+                    allowed_hosts: cfg.allowed_hosts.clone(),
+                    lock_duration: Some(cfg.exec.lock_expiry),
                     ffqn: cfg.ffqn.clone(),
                     params: cfg.params.clone(),
                     return_type: cfg.return_type.clone(),
-                }),
-                env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
-                allowed_hosts: cfg.allowed_hosts.clone(),
-                lock_duration: Some(cfg.exec.lock_expiry),
+                },
             })
         }
         TomlComponentType::WorkflowJs => {
@@ -180,16 +168,13 @@ fn find_component_for_push(
                 bail!("component '{name}' uses OCI, only local paths are supported for push");
             };
             Ok(ComponentPushData::Js {
-                component_type,
                 path: PathBuf::from(path),
-                js_config: Some(JsWitConfigAnnotation {
+                metadata: ComponentMetadataAnnotation::WorkflowJs {
+                    lock_duration: Some(cfg.exec.lock_expiry),
                     ffqn: cfg.ffqn.clone(),
                     params: cfg.params.clone(),
                     return_type: cfg.return_type.clone(),
-                }),
-                env_vars: Vec::new(),
-                allowed_hosts: vec![],
-                lock_duration: Some(cfg.exec.lock_expiry),
+                },
             })
         }
         TomlComponentType::WebhookEndpointJs => {
@@ -203,12 +188,11 @@ fn find_component_for_push(
                 bail!("component '{name}' uses OCI, only local paths are supported for push");
             };
             Ok(ComponentPushData::Js {
-                component_type,
                 path: PathBuf::from(path),
-                js_config: None,
-                env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
-                allowed_hosts: cfg.allowed_hosts.clone(),
-                lock_duration: None,
+                metadata: ComponentMetadataAnnotation::WebhookEndpointJs {
+                    env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
+                    allowed_hosts: cfg.allowed_hosts.clone(),
+                },
             })
         }
         other @ (TomlComponentType::ActivityExec
@@ -235,37 +219,8 @@ async fn push_component(
     let validated =
         crate::config::config_holder::load_deployment_validated(deployment_path).await?;
     match find_component_for_push(&validated, component_name)? {
-        ComponentPushData::Wasm {
-            component_type,
-            path,
-            env_vars,
-            allowed_hosts,
-            lock_duration,
-        } => {
-            let metadata = ComponentMetadataAnnotation {
-                component_type,
-                env_vars,
-                allowed_hosts,
-                lock_duration,
-            };
-            oci::push(path, reference, &metadata).await
-        }
-        ComponentPushData::Js {
-            component_type,
-            path,
-            js_config,
-            env_vars,
-            allowed_hosts,
-            lock_duration,
-        } => {
-            let metadata = ComponentMetadataAnnotation {
-                component_type,
-                env_vars,
-                allowed_hosts,
-                lock_duration,
-            };
-            oci::push_js(path, reference, &metadata, js_config.as_ref()).await
-        }
+        ComponentPushData::Wasm { path, metadata } => oci::push(path, reference, &metadata).await,
+        ComponentPushData::Js { path, metadata } => oci::push_js(path, reference, &metadata).await,
     }
 }
 
@@ -306,16 +261,16 @@ async fn add_component_from_oci(
     };
 
     // Fetch metadata to determine component type (always needed).
-    let (component_metadata_annotation, js_config_annotation) = oci::pull_metadata(&oci_ref)
+    let component_metadata_annotation: ComponentMetadataAnnotation = oci::pull_metadata(&oci_ref)
         .await
-        .context("failed to fetch OCI image metadata")?;
-    let component_metadata_annotation: ComponentMetadataAnnotation = component_metadata_annotation.context(
-        "cannot determine component type: OCI image was pushed without metadata (use a newer `obelisk component push`)",
-    )?;
-    let toml_component_type = component_metadata_annotation.component_type;
+        .context("failed to fetch OCI image metadata")?
+        .context(
+            "cannot determine component type: OCI image was pushed without metadata (use a newer `obelisk component push`)",
+        )?;
+    let toml_component_type = component_metadata_annotation.component_type();
 
     // For locked images, also pull the blob and record the pinned manifest digest.
-    let (oci_manifest_digest_if_locked, js_config_annotation) = if locked {
+    let oci_manifest_digest_if_locked = if locked {
         let project_dirs = project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
@@ -340,14 +295,12 @@ async fn add_component_from_oci(
                         format!("cannot create JS cache directory {js_cache_dir:?}")
                     })?;
                 let oci::JsCacheResult {
-                    manifest_digest,
-                    js_config: js_config2,
-                    ..
+                    manifest_digest, ..
                 } = oci::pull_js_to_cache(&oci_ref, &js_cache_dir, &metadata_dir)
                     .await
                     .context("failed to pull JS OCI image")?;
                 info!("Fetched JS OCI image, manifest_digest: {manifest_digest}");
-                (Some(manifest_digest), js_config2.or(js_config_annotation))
+                Some(manifest_digest)
             }
             TomlComponentType::ActivityWasm
             | TomlComponentType::WorkflowWasm
@@ -357,7 +310,7 @@ async fn add_component_from_oci(
                         .await
                         .context("failed to pull OCI image")?;
                 info!("Fetched OCI image, manifest_digest: {manifest_digest}");
-                (Some(manifest_digest), None)
+                Some(manifest_digest)
             }
             TomlComponentType::ActivityExec
             | TomlComponentType::ActivityExternal
@@ -369,7 +322,7 @@ async fn add_component_from_oci(
             }
         }
     } else {
-        (None, js_config_annotation)
+        None
     };
 
     let location_raw = if let Some(actual_digest) = oci_manifest_digest_if_locked {
@@ -417,7 +370,6 @@ async fn add_component_from_oci(
                 &name,
                 &location_raw,
                 &component_metadata_annotation,
-                js_config_annotation.as_ref(),
             ));
         }
         format!("{prefix}{doc}")
@@ -431,7 +383,6 @@ fn build_component_table(
     name: &str,
     location_raw: &str,
     metadata: &ComponentMetadataAnnotation,
-    js_config: Option<&JsWitConfigAnnotation>,
 ) -> toml_edit::Table {
     use toml_edit::{Item, Table, value};
 
@@ -439,12 +390,62 @@ fn build_component_table(
     t["name"] = value(name);
     t["location"] = value(location_raw);
 
-    // JS-specific fields
-    if let Some(js) = js_config {
-        t["ffqn"] = value(js.ffqn.to_string());
-        if !js.params.is_empty() {
+    // Extract fields from the enum variant.
+    let (env_vars, allowed_hosts, lock_duration, ffqn_params_rt, is_webhook) = match metadata {
+        ComponentMetadataAnnotation::ActivityWasm {
+            env_vars,
+            allowed_hosts,
+            lock_duration,
+        } => (
+            Some(env_vars),
+            Some(allowed_hosts),
+            *lock_duration,
+            None,
+            false,
+        ),
+        ComponentMetadataAnnotation::ActivityJs {
+            env_vars,
+            allowed_hosts,
+            lock_duration,
+            ffqn,
+            params,
+            return_type,
+        } => (
+            Some(env_vars),
+            Some(allowed_hosts),
+            *lock_duration,
+            Some((ffqn, params, return_type)),
+            false,
+        ),
+        ComponentMetadataAnnotation::WorkflowWasm {} => (None, None, None, None, false),
+        ComponentMetadataAnnotation::WorkflowJs {
+            lock_duration,
+            ffqn,
+            params,
+            return_type,
+        } => (
+            None,
+            None,
+            *lock_duration,
+            Some((ffqn, params, return_type)),
+            false,
+        ),
+        ComponentMetadataAnnotation::WebhookEndpointWasm {
+            env_vars,
+            allowed_hosts,
+        }
+        | ComponentMetadataAnnotation::WebhookEndpointJs {
+            env_vars,
+            allowed_hosts,
+        } => (Some(env_vars), Some(allowed_hosts), None, None, true),
+    };
+
+    // ffqn/params/return_type (JS activities and workflows)
+    if let Some((ffqn, params, return_type)) = ffqn_params_rt {
+        t["ffqn"] = value(ffqn.to_string());
+        if !params.is_empty() {
             let mut arr = toml_edit::Array::new();
-            for p in &js.params {
+            for p in params {
                 let mut inline = toml_edit::InlineTable::new();
                 inline.insert("name", p.name.clone().into());
                 inline.insert("type", p.wit_type.clone().into());
@@ -456,22 +457,26 @@ fn build_component_table(
             arr.set_trailing_comma(true);
             t["params"] = Item::Value(toml_edit::Value::Array(arr));
         }
-        if let Some(ref rt) = js.return_type {
+        if let Some(rt) = return_type {
             t["return_type"] = value(rt.clone());
         }
     }
 
-    if !metadata.env_vars.is_empty() {
+    if let Some(env_vars) = env_vars
+        && !env_vars.is_empty()
+    {
         let mut arr = toml_edit::Array::new();
-        for v in &metadata.env_vars {
+        for v in env_vars {
             arr.push(v.clone());
         }
         t["env_vars"] = Item::Value(toml_edit::Value::Array(arr));
     }
 
-    if !metadata.allowed_hosts.is_empty() {
+    if let Some(allowed_hosts) = allowed_hosts
+        && !allowed_hosts.is_empty()
+    {
         let mut host_array = toml_edit::ArrayOfTables::new();
-        for host in &metadata.allowed_hosts {
+        for host in allowed_hosts {
             let mut host_table = Table::new();
             host_table["pattern"] = value(&host.pattern);
             if let Some(ref methods) = host.methods {
@@ -521,15 +526,12 @@ fn build_component_table(
     }
 
     // Webhook requires a `routes` field; write an empty array as a placeholder
-    if matches!(
-        metadata.component_type,
-        TomlComponentType::WebhookEndpointWasm | TomlComponentType::WebhookEndpointJs
-    ) {
+    if is_webhook {
         t["routes"] = Item::Value(toml_edit::Value::Array(toml_edit::Array::new()));
     }
 
     // Write as a dotted key: exec.lock_expiry.<unit> = N
-    if let Some(duration) = metadata.lock_duration {
+    if let Some(duration) = lock_duration {
         let (unit, n) = match duration {
             DurationConfig::Milliseconds(n) => ("milliseconds", n),
             DurationConfig::Seconds(n) => ("seconds", n),
@@ -641,8 +643,7 @@ mod tests {
     use crate::oci::ComponentMetadataAnnotation;
 
     fn make_metadata_activity() -> ComponentMetadataAnnotation {
-        ComponentMetadataAnnotation {
-            component_type: TomlComponentType::ActivityWasm,
+        ComponentMetadataAnnotation::ActivityWasm {
             env_vars: vec!["API_KEY".to_string(), "BASE_URL".to_string()],
             allowed_hosts: vec![AllowedHostToml {
                 pattern: "api.example.com".to_string(),
@@ -666,7 +667,6 @@ mod tests {
             "my_activity",
             "oci://registry.example.com/repo/my-activity:latest",
             &metadata,
-            None,
         );
 
         // Wrap in an [[activity_wasm]] array-of-tables document and parse
@@ -696,17 +696,14 @@ mod tests {
 
     #[test]
     fn build_and_parse_webhook_toml() {
-        let metadata = ComponentMetadataAnnotation {
-            component_type: TomlComponentType::WebhookEndpointWasm,
+        let metadata = ComponentMetadataAnnotation::WebhookEndpointWasm {
             env_vars: vec!["TOKEN".to_string()],
             allowed_hosts: vec![],
-            lock_duration: None,
         };
         let table = build_component_table(
             "my_webhook",
             "oci://registry.example.com/repo/webhook:v1",
             &metadata,
-            None,
         );
 
         let mut doc = toml_edit::DocumentMut::new();
@@ -730,13 +727,10 @@ mod tests {
         use crate::config::toml::JsParamToml;
         use concepts::FunctionFqn;
 
-        let metadata = ComponentMetadataAnnotation {
-            component_type: TomlComponentType::ActivityJs,
+        let metadata = ComponentMetadataAnnotation::ActivityJs {
             env_vars: vec!["API_KEY".to_string()],
             allowed_hosts: vec![],
             lock_duration: Some(DurationConfig::Seconds(10)),
-        };
-        let js_config = JsWitConfigAnnotation {
             ffqn: FunctionFqn::new_arc("my-pkg:my-iface/my-ifc".into(), "my-fn".into()),
             params: vec![JsParamToml {
                 name: "input".to_string(),
@@ -748,7 +742,6 @@ mod tests {
             "my_js_activity",
             "oci://registry.example.com/repo/js-activity:v1",
             &metadata,
-            Some(&js_config),
         );
 
         let mut doc = toml_edit::DocumentMut::new();

@@ -2,8 +2,7 @@ use crate::args::TomlComponentType;
 use crate::config::toml::{AllowedHostToml, DurationConfig, JsParamToml, OCI_SCHEMA_PREFIX};
 use crate::config::{content_digest_to_js_file, content_digest_to_wasm_file};
 use anyhow::{Context, bail, ensure};
-use concepts::FunctionFqn;
-use concepts::{ContentDigest, component_id::Digest};
+use concepts::{ContentDigest, FunctionFqn, component_id::Digest};
 use futures_util::TryFutureExt;
 use oci_client::{
     Reference,
@@ -24,10 +23,8 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, warn};
 use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
 
-pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:0.1.0";
-pub const ACTIVITY_JS_CONFIG_ANNOTATION_KEY: &str = "obelisk.activity_js_config:0.1.0";
+pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:0.2.0";
 pub const JS_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.js.v0+javascript";
-const JS_CONFIG_MEDIA_TYPE: &str = "application/vnd.obelisk.js.config.v0+json";
 
 struct LayerWithAnnotations {
     layer_content_digest: ContentDigest,
@@ -36,29 +33,65 @@ struct LayerWithAnnotations {
     manifest_annotations: Option<BTreeMap<String, String>>,
 }
 
+/// OCI manifest annotation carrying all component metadata.
+/// Each variant carries exactly the fields that apply to that component type.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ComponentMetadataAnnotation {
-    pub component_type: TomlComponentType,
-    pub env_vars: Vec<String>,
-    pub allowed_hosts: Vec<AllowedHostToml>,
-    pub lock_duration: Option<DurationConfig>,
+#[serde(tag = "component_type")]
+pub enum ComponentMetadataAnnotation {
+    #[serde(rename = "activity_wasm")]
+    ActivityWasm {
+        env_vars: Vec<String>,
+        allowed_hosts: Vec<AllowedHostToml>,
+        lock_duration: Option<DurationConfig>,
+    },
+    #[serde(rename = "activity_js")]
+    ActivityJs {
+        env_vars: Vec<String>,
+        allowed_hosts: Vec<AllowedHostToml>,
+        lock_duration: Option<DurationConfig>,
+        ffqn: FunctionFqn,
+        #[serde(default)]
+        params: Vec<JsParamToml>,
+        return_type: Option<String>,
+    },
+    #[serde(rename = "workflow_wasm")]
+    WorkflowWasm {},
+    #[serde(rename = "workflow_js")]
+    WorkflowJs {
+        lock_duration: Option<DurationConfig>,
+        ffqn: FunctionFqn,
+        #[serde(default)]
+        params: Vec<JsParamToml>,
+        return_type: Option<String>,
+    },
+    #[serde(rename = "webhook_endpoint_wasm")]
+    WebhookEndpointWasm {
+        env_vars: Vec<String>,
+        allowed_hosts: Vec<AllowedHostToml>,
+    },
+    #[serde(rename = "webhook_endpoint_js")]
+    WebhookEndpointJs {
+        env_vars: Vec<String>,
+        allowed_hosts: Vec<AllowedHostToml>,
+    },
 }
 
-/// JS-specific configuration stored as an OCI manifest annotation.
-/// Contains the information needed to reconstruct the WIT interface for a JS activity or workflow.
-/// Not present for webhook JS components (no function signature).
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsWitConfigAnnotation {
-    pub ffqn: FunctionFqn,
-    #[serde(default)]
-    pub params: Vec<JsParamToml>,
-    pub return_type: Option<String>,
+impl ComponentMetadataAnnotation {
+    pub fn component_type(&self) -> TomlComponentType {
+        match self {
+            Self::ActivityWasm { .. } => TomlComponentType::ActivityWasm,
+            Self::ActivityJs { .. } => TomlComponentType::ActivityJs,
+            Self::WorkflowWasm { .. } => TomlComponentType::WorkflowWasm,
+            Self::WorkflowJs { .. } => TomlComponentType::WorkflowJs,
+            Self::WebhookEndpointWasm { .. } => TomlComponentType::WebhookEndpointWasm,
+            Self::WebhookEndpointJs { .. } => TomlComponentType::WebhookEndpointJs,
+        }
+    }
 }
 
 pub(crate) struct JsCacheResult {
     pub(crate) js_path: PathBuf,
     pub(crate) manifest_digest: String,
-    pub(crate) js_config: Option<JsWitConfigAnnotation>,
 }
 
 const OCI_CLIENT_RETRIES: u64 = 10;
@@ -194,7 +227,6 @@ pub(crate) async fn pull_js_to_cache(
         return Ok(JsCacheResult {
             js_path,
             manifest_digest: manifest_digest.to_string(),
-            js_config: None,
         });
     }
 
@@ -230,14 +262,11 @@ pub(crate) async fn pull_js_to_cache(
     debug!("Writing JS digest {content_digest} to metadata file {metadata_file:?}");
     tokio::fs::write(&metadata_file, content_digest.to_string()).await?;
 
-    let js_config = extract_js_config(manifest.annotations.as_ref());
-
     let js_path = content_digest_to_js_file(js_cache_dir, &content_digest);
     if let Ok(()) = verify_cached_file(&js_path, &content_digest).await {
         return Ok(JsCacheResult {
             js_path,
             manifest_digest,
-            js_config,
         });
     }
 
@@ -255,22 +284,14 @@ pub(crate) async fn pull_js_to_cache(
     Ok(JsCacheResult {
         js_path,
         manifest_digest,
-        js_config,
     })
 }
 
 /// Pull only the manifest/config to extract metadata, without downloading the blob.
 /// Works for both WASM and JS OCI images.
-/// Returns `(component_metadata, js_config)`.
 pub(crate) async fn pull_metadata(
     image: &Reference,
-) -> Result<
-    (
-        Option<ComponentMetadataAnnotation>,
-        Option<JsWitConfigAnnotation>,
-    ),
-    anyhow::Error,
-> {
+) -> Result<Option<ComponentMetadataAnnotation>, anyhow::Error> {
     let auth = get_oci_auth(image)?;
     let raw_client = oci_client::Client::default();
     info!("Fetching metadata");
@@ -280,9 +301,7 @@ pub(crate) async fn pull_metadata(
         "calling pull_manifest_and_config",
     )
     .await?;
-    let comp_metadata = extract_component_metadata(manifest.annotations.as_ref());
-    let js_config = extract_js_config(manifest.annotations.as_ref());
-    Ok((comp_metadata, js_config))
+    Ok(extract_component_metadata(manifest.annotations.as_ref()))
 }
 
 fn extract_component_metadata(
@@ -290,14 +309,6 @@ fn extract_component_metadata(
 ) -> Option<ComponentMetadataAnnotation> {
     annotations
         .and_then(|m| m.get(METADATA_ANNOTATION_KEY))
-        .and_then(|json| serde_json::from_str(json).ok())
-}
-
-fn extract_js_config(
-    annotations: Option<&BTreeMap<String, String>>,
-) -> Option<JsWitConfigAnnotation> {
-    annotations
-        .and_then(|m| m.get(ACTIVITY_JS_CONFIG_ANNOTATION_KEY))
         .and_then(|json| serde_json::from_str(json).ok())
 }
 
@@ -370,13 +381,10 @@ pub(crate) async fn push(
 }
 
 /// Push a JS source file to an OCI registry.
-/// `js_config` is `Some` for `activity_js` and `workflow_js` (carries `ffqn/params/return_type`),
-/// and `None` for `webhook_endpoint_js` (no function signature).
 pub(crate) async fn push_js(
     js_path: PathBuf,
     reference: &Reference,
     metadata: &ComponentMetadataAnnotation,
-    js_config: Option<&JsWitConfigAnnotation>,
 ) -> Result<(), anyhow::Error> {
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
@@ -394,21 +402,14 @@ pub(crate) async fn push_js(
     // Minimal empty config blob
     let config = oci_client::client::Config {
         data: b"{}".as_slice().into(),
-        media_type: JS_CONFIG_MEDIA_TYPE.to_string(),
+        media_type: "application/vnd.obelisk.js.config.v0+json".to_string(),
         annotations: None,
     };
 
-    let mut annotations = BTreeMap::new();
-    annotations.insert(
+    let annotations = BTreeMap::from([(
         METADATA_ANNOTATION_KEY.to_string(),
         serde_json::to_string(metadata)?,
-    );
-    if let Some(js) = js_config {
-        annotations.insert(
-            ACTIVITY_JS_CONFIG_ANNOTATION_KEY.to_string(),
-            serde_json::to_string(js)?,
-        );
-    }
+    )]);
 
     let layers = vec![layer];
     let mut manifest = OciImageManifest::build(&layers, &config, Some(annotations));
