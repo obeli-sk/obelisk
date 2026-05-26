@@ -1392,9 +1392,9 @@ enum RetVal {
     /// Successful result value
     #[schema(value_type = Option<Object>)]
     Ok(Option<WastVal>),
-    /// Error result (WIT result's err variant)
+    /// Error result (WIT result's error variant)
     #[schema(value_type = Option<Object>)]
-    Err(Option<WastVal>),
+    Error(Option<WastVal>),
     /// Execution failed
     #[schema(value_type = Object)]
     ExecutionFailure(FinishedExecutionFailure),
@@ -1406,7 +1406,7 @@ impl From<SupportedFunctionReturnValue> for RetVal {
                 RetVal::Ok(val_with_type.map(|it| it.value))
             }
             SupportedFunctionReturnValue::Err(val_with_type) => {
-                RetVal::Err(val_with_type.map(|it| it.value))
+                RetVal::Error(val_with_type.map(|it| it.value))
             }
             SupportedFunctionReturnValue::ExecutionFailure(err) => RetVal::ExecutionFailure(err),
         }

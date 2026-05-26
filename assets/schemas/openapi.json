@@ -2525,17 +2525,17 @@
           },
           {
             "type": "object",
-            "description": "Error result (WIT result's err variant)",
+            "description": "Error result (WIT result's error variant)",
             "required": [
-              "err"
+              "error"
             ],
             "properties": {
-              "err": {
+              "error": {
                 "type": [
                   "object",
                   "null"
                 ],
-                "description": "Error result (WIT result's err variant)"
+                "description": "Error result (WIT result's error variant)"
               }
             }
           },
