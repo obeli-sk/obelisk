@@ -668,9 +668,33 @@
           ],
           "default": null
         },
-        "program": {
-          "description": "Program specification. Exactly one of `external`, `inline`, or `include`.",
-          "$ref": "#/$defs/ExecProgramToml"
+        "location": {
+          "description": "Location of the exec script.\nSupports local file paths and OCI registry references (`oci://...`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsLocationToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "Inline script content embedded in the TOML.\nExactly one of `location` or `content` must be set.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content_digest": {
+          "description": "Content digest of the exec script.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "ffqn": {
           "type": "string"
@@ -744,14 +768,6 @@
           },
           "default": []
         },
-        "cwd": {
-          "description": "Working directory for the child process. Supports `${DEPLOYMENT_DIR}` expansion.\nDefaults to the server's working directory.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
         "max_output_bytes": {
           "description": "Maximum bytes collected from stdout to form the response.\nExceeding the limit fails the execution.\nNot used when `return_type` is result (default), since the response carries no data.",
           "type": "integer",
@@ -774,55 +790,7 @@
       },
       "additionalProperties": false,
       "required": [
-        "program",
         "ffqn"
-      ]
-    },
-    "ExecProgramToml": {
-      "description": "Program specification for exec activities (TOML input form).",
-      "oneOf": [
-        {
-          "description": "Explicit argv. The first element is the executable; remaining elements are fixed arguments.\nActivity params are JSON-serialized and appended as trailing args.\nDoes not support `${DEPLOYMENT_DIR}/` prefix.",
-          "type": "object",
-          "properties": {
-            "external": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "required": [
-            "external"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "description": "Inline script content. Written to a temp file at each execution.\nActivity params are appended as args.",
-          "type": "object",
-          "properties": {
-            "inline": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "inline"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "description": "File path to include. Resolved to `inline` at canonicalization time.\nSupports `${DEPLOYMENT_DIR}/` prefix.",
-          "type": "object",
-          "properties": {
-            "include": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "include"
-          ],
-          "additionalProperties": false
-        }
       ]
     },
     "ExecSecretsToml": {

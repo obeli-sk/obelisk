@@ -18,19 +18,20 @@ use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
 use secrecy::{ExposeSecret, SecretString};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 use utils::wasm_tools::WasmComponent;
 
-/// Configuration for an exec activity program.
-#[derive(Debug, Clone)]
+/// How the exec activity program is provided to the worker.
+#[derive(Debug)]
 pub enum ExecProgram {
-    /// Explicit argv. First element is executable, rest are fixed args.
-    External(Vec<String>),
     /// Inline script content. Written to a temp file at each execution.
     Inline(String),
+    /// Path to an immutable cached script file (from OCI). Executed directly.
+    CachedFile(PathBuf),
 }
 
 /// Compiled exec activity. No WASM engine needed.
@@ -40,7 +41,6 @@ pub struct ActivityExecWorkerCompiled {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     env_vars: Arc<[EnvVar]>,
-    cwd: Option<String>,
     max_output_bytes: u64,
     forward_stdout: Option<StdOutputConfig>,
     forward_stderr: Option<StdOutputConfig>,
@@ -57,7 +57,6 @@ impl ActivityExecWorkerCompiled {
         user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
         env_vars: Arc<[EnvVar]>,
-        cwd: Option<String>,
         max_output_bytes: u64,
         forward_stdout: Option<StdOutputConfig>,
         forward_stderr: Option<StdOutputConfig>,
@@ -76,7 +75,6 @@ impl ActivityExecWorkerCompiled {
             user_params,
             user_return_type,
             env_vars,
-            cwd,
             max_output_bytes,
             forward_stdout,
             forward_stderr,
@@ -123,7 +121,6 @@ impl ActivityExecWorkerCompiled {
             user_params: self.user_params,
             user_return_type: self.user_return_type,
             env_vars: self.env_vars,
-            cwd: self.cwd,
             max_output_bytes: self.max_output_bytes,
             forward_stdout: stdout_config,
             forward_stderr: stderr_config,
@@ -141,7 +138,6 @@ pub struct ActivityExecWorker {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     env_vars: Arc<[EnvVar]>,
-    cwd: Option<String>,
     max_output_bytes: u64,
     forward_stdout: Option<StdOutputConfigWithSender>,
     forward_stderr: Option<StdOutputConfigWithSender>,
@@ -201,32 +197,20 @@ impl Worker for ActivityExecWorker {
         let version = ctx.version.clone();
 
         let mut param_args: Vec<String> = Vec::new();
-        let _temp_file_guard: Option<tempfile::TempPath>;
+
+        // Build the command depending on program source.
+        // For inline scripts, write to a temp file each execution.
+        // For cached files (from OCI), execute the immutable file directly.
+        let _temp_file_guard;
         let mut cmd = match &self.program {
-            ExecProgram::External(argv) => {
-                let Some((cmd, specified_args)) = argv.split_first() else {
-                    return Err(WorkerError::FatalError(
-                        FatalError::CannotInstantiate {
-                            reason: "external program argv is empty".to_string(),
-                            detail: None,
-                        },
-                        version,
-                    ));
-                };
-                param_args.extend_from_slice(specified_args); // Execution args come afterwards.
-                tokio::process::Command::new(cmd)
-            }
-            ExecProgram::Inline(script) => {
-                // Write script to temp file preserving shebang.
+            ExecProgram::Inline(content) => {
                 let mut builder = tempfile::Builder::new();
                 builder.prefix("obelisk-exec-");
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    // Apply 0o755 permissions to the builder
                     builder.permissions(std::fs::Permissions::from_mode(0o755));
                 }
-
                 let mut tmp = builder.tempfile().map_err(|e| {
                     WorkerError::FatalError(
                         FatalError::CannotInstantiate {
@@ -237,7 +221,7 @@ impl Worker for ActivityExecWorker {
                     )
                 })?;
                 use std::io::Write;
-                tmp.write_all(script.as_bytes()).map_err(|e| {
+                tmp.write_all(content.as_bytes()).map_err(|e| {
                     WorkerError::FatalError(
                         FatalError::CannotInstantiate {
                             reason: "failed to write inline script".to_string(),
@@ -246,10 +230,14 @@ impl Worker for ActivityExecWorker {
                         version.clone(),
                     )
                 })?;
-                let temp_path = tmp.into_temp_path(); // Close the file handle.
+                let temp_path = tmp.into_temp_path();
                 let cmd = tokio::process::Command::new(&temp_path);
                 _temp_file_guard = Some(temp_path);
                 cmd
+            }
+            ExecProgram::CachedFile(path) => {
+                _temp_file_guard = None;
+                tokio::process::Command::new(path)
             }
         };
 
@@ -274,11 +262,6 @@ impl Worker for ActivityExecWorker {
         cmd.env_clear();
         for env_var in self.env_vars.iter() {
             cmd.env(&env_var.key, &env_var.val);
-        }
-
-        // Set cwd if configured.
-        if let Some(cwd) = &self.cwd {
-            cmd.current_dir(cwd);
         }
 
         // Process group and kill_on_drop.

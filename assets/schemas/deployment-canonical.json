@@ -652,8 +652,14 @@
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
-        "program": {
-          "$ref": "#/$defs/ExecProgramCanonical"
+        "source": {
+          "$ref": "#/$defs/ExecSourceCanonical"
+        },
+        "content_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "ffqn": {
           "type": "string"
@@ -702,12 +708,6 @@
             "$ref": "#/$defs/EnvVarConfig"
           }
         },
-        "cwd": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "max_output_bytes": {
           "type": "integer",
           "format": "uint64",
@@ -727,7 +727,7 @@
       "additionalProperties": false,
       "required": [
         "name",
-        "program",
+        "source",
         "ffqn",
         "params",
         "exec",
@@ -740,33 +740,38 @@
         "max_output_bytes"
       ]
     },
-    "ExecProgramCanonical": {
-      "description": "Program specification for exec activities (canonical/wire form).\n`Include` has been resolved to `Inline`.",
+    "ExecSourceCanonical": {
+      "description": "Canonical exec source.\nLocal file paths are resolved to `content` before canonicalization.",
       "oneOf": [
         {
           "type": "object",
           "properties": {
-            "external": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
+            "content": {
+              "type": "string"
             }
           },
           "required": [
-            "external"
+            "content"
           ],
           "additionalProperties": false
         },
         {
           "type": "object",
           "properties": {
-            "inline": {
-              "type": "string"
+            "oci": {
+              "type": "object",
+              "properties": {
+                "image": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "image"
+              ]
             }
           },
           "required": [
-            "inline"
+            "oci"
           ],
           "additionalProperties": false
         }

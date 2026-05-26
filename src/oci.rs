@@ -1,9 +1,10 @@
 use crate::args::TomlComponentType;
-use crate::config::toml::{AllowedHostToml, DurationConfig, JsParamToml, OCI_SCHEMA_PREFIX};
+use crate::config::toml::{
+    AllowedHostToml, DurationConfig, ExecSecretsToml, JsParamToml, OCI_SCHEMA_PREFIX,
+};
 use crate::config::{content_digest_to_js_file, content_digest_to_wasm_file};
 use anyhow::{Context, bail, ensure};
-use concepts::FunctionFqn;
-use concepts::{ContentDigest, component_id::Digest};
+use concepts::{ContentDigest, FunctionFqn, component_id::Digest};
 use futures_util::TryFutureExt;
 use oci_client::{
     Reference,
@@ -11,6 +12,7 @@ use oci_client::{
     manifest::{OciDescriptor, OciImageManifest},
 };
 use oci_wasm::{ToConfig, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -24,10 +26,13 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, warn};
 use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
 
-pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:0.1.0";
-pub const ACTIVITY_JS_CONFIG_ANNOTATION_KEY: &str = "obelisk.activity_js_config:0.1.0";
+pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:0.2.0";
+/// Media type for the single OCI layer of a JS component image.
+/// The layer contains the UTF-8 JavaScript source code (the `.js` file content).
 pub const JS_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.js.v0+javascript";
-const JS_CONFIG_MEDIA_TYPE: &str = "application/vnd.obelisk.js.config.v0+json";
+/// Media type for the single OCI layer of an exec activity image.
+/// The layer contains the UTF-8 script source (the `inline` content, including the shebang line).
+pub const EXEC_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.exec.v0";
 
 struct LayerWithAnnotations {
     layer_content_digest: ContentDigest,
@@ -36,29 +41,84 @@ struct LayerWithAnnotations {
     manifest_annotations: Option<BTreeMap<String, String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ComponentMetadataAnnotation {
-    pub component_type: TomlComponentType,
-    pub env_vars: Vec<String>,
-    pub allowed_hosts: Vec<AllowedHostToml>,
-    pub lock_duration: Option<DurationConfig>,
+/// OCI manifest annotation carrying all component metadata.
+/// Each variant carries exactly the fields that apply to that component type.
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[serde(tag = "component_type")]
+pub enum ComponentMetadataAnnotation {
+    #[serde(rename = "activity_wasm")]
+    ActivityWasm {
+        env_vars: Vec<String>,
+        allowed_hosts: Vec<AllowedHostToml>,
+        lock_duration: Option<DurationConfig>,
+    },
+    #[serde(rename = "activity_js")]
+    ActivityJs {
+        env_vars: Vec<String>,
+        allowed_hosts: Vec<AllowedHostToml>,
+        lock_duration: Option<DurationConfig>,
+        ffqn: FunctionFqn,
+        #[serde(default)]
+        params: Vec<JsParamToml>,
+        return_type: Option<String>,
+    },
+    #[serde(rename = "workflow_wasm")]
+    WorkflowWasm {},
+    #[serde(rename = "workflow_js")]
+    WorkflowJs {
+        lock_duration: Option<DurationConfig>,
+        ffqn: FunctionFqn,
+        #[serde(default)]
+        params: Vec<JsParamToml>,
+        return_type: Option<String>,
+    },
+    #[serde(rename = "activity_exec")]
+    ActivityExec {
+        env_vars: Vec<String>,
+        lock_duration: Option<DurationConfig>,
+        ffqn: FunctionFqn,
+        #[serde(default)]
+        params: Vec<JsParamToml>,
+        return_type: Option<String>,
+        max_output_bytes: u64,
+        #[serde(default)]
+        secrets: Option<ExecSecretsToml>,
+    },
+    #[serde(rename = "webhook_endpoint_wasm")]
+    WebhookEndpointWasm {
+        env_vars: Vec<String>,
+        allowed_hosts: Vec<AllowedHostToml>,
+    },
+    #[serde(rename = "webhook_endpoint_js")]
+    WebhookEndpointJs {
+        env_vars: Vec<String>,
+        allowed_hosts: Vec<AllowedHostToml>,
+    },
 }
 
-/// JS-specific configuration stored as an OCI manifest annotation.
-/// Contains the information needed to reconstruct the WIT interface for a JS activity or workflow.
-/// Not present for webhook JS components (no function signature).
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsWitConfigAnnotation {
-    pub ffqn: FunctionFqn,
-    #[serde(default)]
-    pub params: Vec<JsParamToml>,
-    pub return_type: Option<String>,
+impl ComponentMetadataAnnotation {
+    pub fn component_type(&self) -> TomlComponentType {
+        match self {
+            Self::ActivityWasm { .. } => TomlComponentType::ActivityWasm,
+            Self::ActivityJs { .. } => TomlComponentType::ActivityJs,
+            Self::ActivityExec { .. } => TomlComponentType::ActivityExec,
+            Self::WorkflowWasm { .. } => TomlComponentType::WorkflowWasm,
+            Self::WorkflowJs { .. } => TomlComponentType::WorkflowJs,
+            Self::WebhookEndpointWasm { .. } => TomlComponentType::WebhookEndpointWasm,
+            Self::WebhookEndpointJs { .. } => TomlComponentType::WebhookEndpointJs,
+        }
+    }
 }
 
 pub(crate) struct JsCacheResult {
     pub(crate) js_path: PathBuf,
     pub(crate) manifest_digest: String,
-    pub(crate) js_config: Option<JsWitConfigAnnotation>,
+}
+
+pub(crate) struct ExecCacheResult {
+    pub(crate) content_digest: ContentDigest,
+    pub(crate) exec_path: PathBuf,
+    pub(crate) manifest_digest: String,
 }
 
 const OCI_CLIENT_RETRIES: u64 = 10;
@@ -194,7 +254,6 @@ pub(crate) async fn pull_js_to_cache(
         return Ok(JsCacheResult {
             js_path,
             manifest_digest: manifest_digest.to_string(),
-            js_config: None,
         });
     }
 
@@ -230,14 +289,11 @@ pub(crate) async fn pull_js_to_cache(
     debug!("Writing JS digest {content_digest} to metadata file {metadata_file:?}");
     tokio::fs::write(&metadata_file, content_digest.to_string()).await?;
 
-    let js_config = extract_js_config(manifest.annotations.as_ref());
-
     let js_path = content_digest_to_js_file(js_cache_dir, &content_digest);
     if let Ok(()) = verify_cached_file(&js_path, &content_digest).await {
         return Ok(JsCacheResult {
             js_path,
             manifest_digest,
-            js_config,
         });
     }
 
@@ -255,22 +311,109 @@ pub(crate) async fn pull_js_to_cache(
     Ok(JsCacheResult {
         js_path,
         manifest_digest,
-        js_config,
+    })
+}
+
+/// Pull an exec script image from OCI to the local exec cache directory.
+/// Sets executable permissions on the cached file.
+#[instrument(skip_all, fields(image = image.to_string()) err)]
+pub(crate) async fn pull_exec_to_cache(
+    image: &Reference,
+    exec_cache_dir: &Path,
+    metadata_dir: &Path,
+) -> Result<ExecCacheResult, anyhow::Error> {
+    use crate::config::content_digest_to_exec_file;
+
+    let auth = get_oci_auth(image)?;
+    let raw_client = oci_client::Client::default();
+
+    // Happy path: manifest digest → content digest → cached file
+    if let Some(manifest_digest) = image.digest()
+        && let Ok(meta_digest) = Digest::from_str(manifest_digest)
+        && let metadata_file = digest_to_metadata_file(metadata_dir, &meta_digest)
+        && let Ok(content) = tokio::fs::read_to_string(&metadata_file).await
+        && let Ok(content_digest) = ContentDigest::from_str(&content)
+        && let exec_path = content_digest_to_exec_file(exec_cache_dir, &content_digest)
+        && let Ok(()) = verify_cached_file(&exec_path, &content_digest).await
+    {
+        return Ok(ExecCacheResult {
+            content_digest,
+            exec_path,
+            manifest_digest: manifest_digest.to_string(),
+        });
+    }
+
+    info!("Fetching exec metadata");
+    let (manifest, manifest_digest, _config_str) = retry(
+        || raw_client.pull_manifest_and_config(image, &auth),
+        OCI_CLIENT_RETRIES,
+        "calling pull_manifest_and_config for exec",
+    )
+    .await?;
+
+    if let Some(specified) = image.digest() {
+        ensure!(
+            specified == manifest_digest,
+            "manifest digest specified in {image} must be respected by the oci client, got {manifest_digest}"
+        );
+    }
+
+    let layer = manifest
+        .layers
+        .into_iter()
+        .next()
+        .context("exec OCI image must have exactly one layer")?;
+    ensure!(
+        layer.media_type == EXEC_LAYER_MEDIA_TYPE,
+        "expected exec layer media type {EXEC_LAYER_MEDIA_TYPE}, got {}",
+        layer.media_type
+    );
+    let content_digest =
+        ContentDigest::from_str(&layer.digest).context("exec layer digest must be well-formed")?;
+
+    let metadata_file = digest_to_metadata_file(metadata_dir, &Digest::from_str(&manifest_digest)?);
+    debug!("Writing exec digest {content_digest} to metadata file {metadata_file:?}");
+    tokio::fs::write(&metadata_file, content_digest.to_string()).await?;
+
+    let exec_path = content_digest_to_exec_file(exec_cache_dir, &content_digest);
+    if let Ok(()) = verify_cached_file(&exec_path, &content_digest).await {
+        return Ok(ExecCacheResult {
+            content_digest,
+            exec_path,
+            manifest_digest,
+        });
+    }
+
+    info!("Pulling exec script to {exec_path:?}");
+    let layer_desc = OciDescriptor {
+        digest: layer.digest,
+        size: layer.size,
+        media_type: layer.media_type,
+        ..Default::default()
+    };
+    pull_blob_to_file(&raw_client, image, &exec_path, &layer_desc, &content_digest)
+        .await
+        .with_context(|| format!("Unable to pull exec image {image}"))?;
+
+    // Set executable permissions on the cached file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&exec_path, std::fs::Permissions::from_mode(0o755)).await?;
+    }
+
+    Ok(ExecCacheResult {
+        content_digest,
+        exec_path,
+        manifest_digest,
     })
 }
 
 /// Pull only the manifest/config to extract metadata, without downloading the blob.
 /// Works for both WASM and JS OCI images.
-/// Returns `(component_metadata, js_config)`.
 pub(crate) async fn pull_metadata(
     image: &Reference,
-) -> Result<
-    (
-        Option<ComponentMetadataAnnotation>,
-        Option<JsWitConfigAnnotation>,
-    ),
-    anyhow::Error,
-> {
+) -> Result<Option<ComponentMetadataAnnotation>, anyhow::Error> {
     let auth = get_oci_auth(image)?;
     let raw_client = oci_client::Client::default();
     info!("Fetching metadata");
@@ -280,9 +423,7 @@ pub(crate) async fn pull_metadata(
         "calling pull_manifest_and_config",
     )
     .await?;
-    let comp_metadata = extract_component_metadata(manifest.annotations.as_ref());
-    let js_config = extract_js_config(manifest.annotations.as_ref());
-    Ok((comp_metadata, js_config))
+    Ok(extract_component_metadata(manifest.annotations.as_ref()))
 }
 
 fn extract_component_metadata(
@@ -290,14 +431,6 @@ fn extract_component_metadata(
 ) -> Option<ComponentMetadataAnnotation> {
     annotations
         .and_then(|m| m.get(METADATA_ANNOTATION_KEY))
-        .and_then(|json| serde_json::from_str(json).ok())
-}
-
-fn extract_js_config(
-    annotations: Option<&BTreeMap<String, String>>,
-) -> Option<JsWitConfigAnnotation> {
-    annotations
-        .and_then(|m| m.get(ACTIVITY_JS_CONFIG_ANNOTATION_KEY))
         .and_then(|json| serde_json::from_str(json).ok())
 }
 
@@ -370,13 +503,10 @@ pub(crate) async fn push(
 }
 
 /// Push a JS source file to an OCI registry.
-/// `js_config` is `Some` for `activity_js` and `workflow_js` (carries `ffqn/params/return_type`),
-/// and `None` for `webhook_endpoint_js` (no function signature).
 pub(crate) async fn push_js(
     js_path: PathBuf,
     reference: &Reference,
     metadata: &ComponentMetadataAnnotation,
-    js_config: Option<&JsWitConfigAnnotation>,
 ) -> Result<(), anyhow::Error> {
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
@@ -394,21 +524,14 @@ pub(crate) async fn push_js(
     // Minimal empty config blob
     let config = oci_client::client::Config {
         data: b"{}".as_slice().into(),
-        media_type: JS_CONFIG_MEDIA_TYPE.to_string(),
+        media_type: "application/vnd.obelisk.js.config.v0+json".to_string(),
         annotations: None,
     };
 
-    let mut annotations = BTreeMap::new();
-    annotations.insert(
+    let annotations = BTreeMap::from([(
         METADATA_ANNOTATION_KEY.to_string(),
         serde_json::to_string(metadata)?,
-    );
-    if let Some(js) = js_config {
-        annotations.insert(
-            ACTIVITY_JS_CONFIG_ANNOTATION_KEY.to_string(),
-            serde_json::to_string(js)?,
-        );
-    }
+    )]);
 
     let layers = vec![layer];
     let mut manifest = OciImageManifest::build(&layers, &config, Some(annotations));
@@ -432,6 +555,63 @@ pub(crate) async fn push_js(
     )
     .await
     .context("Unable to push JS image")?;
+
+    if let Some(digest) = resp.manifest_url.rsplit("manifests/sha256:").next() {
+        println!("{OCI_SCHEMA_PREFIX}{reference}@sha256:{digest}");
+    } else {
+        println!("{OCI_SCHEMA_PREFIX}{reference}");
+    }
+    Ok(())
+}
+
+/// Push an exec activity script to an OCI registry.
+pub(crate) async fn push_exec(
+    script: String,
+    reference: &Reference,
+    metadata: &ComponentMetadataAnnotation,
+) -> Result<(), anyhow::Error> {
+    if reference.digest().is_some() {
+        bail!("cannot push a digest reference");
+    }
+
+    let layer = oci_client::client::ImageLayer::new(
+        script.into_bytes(),
+        EXEC_LAYER_MEDIA_TYPE.to_string(),
+        None,
+    );
+
+    let config = oci_client::client::Config {
+        data: b"{}".as_slice().into(),
+        media_type: "application/vnd.obelisk.exec.config.v0+json".to_string(),
+        annotations: None,
+    };
+
+    let annotations = BTreeMap::from([(
+        METADATA_ANNOTATION_KEY.to_string(),
+        serde_json::to_string(metadata)?,
+    )]);
+
+    let layers = vec![layer];
+    let mut manifest = OciImageManifest::build(&layers, &config, Some(annotations));
+    manifest.media_type = Some("application/vnd.oci.image.manifest.v1+json".to_string());
+
+    let auth = get_oci_auth(reference)?;
+    let raw_client = oci_client::Client::default();
+    let resp = retry(
+        || {
+            raw_client.push(
+                reference,
+                &layers,
+                config.clone(),
+                &auth,
+                Some(manifest.clone()),
+            )
+        },
+        OCI_CLIENT_RETRIES,
+        "pushing exec image",
+    )
+    .await
+    .context("Unable to push exec image")?;
 
     if let Some(digest) = resp.manifest_url.rsplit("manifests/sha256:").next() {
         println!("{OCI_SCHEMA_PREFIX}{reference}@sha256:{digest}");

@@ -812,6 +812,19 @@
           ]
         },
         {
+          "name": "component-metadata-annotation-schema",
+          "about": "Generate the OCI component metadata annotation schema in JSON Schema format",
+          "positionals": [
+            {
+              "name": "output",
+              "help": "Filename to write the schema to, defaults to <stdout>",
+              "accepts": {
+                "path": true
+              }
+            }
+          ]
+        },
+        {
           "name": "wit-extensions",
           "about": "Generate extension WIT files that are automatically implemented by Obelisk based on the exported interfaces of the component (e.g. `-schedule`, `-await-next` variants)",
           "options": [

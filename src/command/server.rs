@@ -33,6 +33,7 @@ use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::config::toml::webhook::WebhookWasmComponentConfigVerified;
 use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
+use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
 use crate::project_dirs;
@@ -591,7 +592,7 @@ pub(crate) async fn prepare_dirs(
     tokio::fs::create_dir_all(&wasm_cache_dir)
         .await
         .with_context(|| format!("cannot create wasm cache directory {wasm_cache_dir:?}"))?;
-    let metadata_dir = wasm_cache_dir.join("metadata");
+    let metadata_dir = wasm_cache_metadata_dir(&wasm_cache_dir);
     tokio::fs::create_dir_all(&metadata_dir)
         .await
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
@@ -2451,8 +2452,10 @@ impl DeploymentVerified {
 
                 let mut activities_exec_verified = Vec::with_capacity(deployment.activities_exec.len());
                 for exec in deployment.activities_exec {
+                    let resolved_program = exec.resolve(&wasm_cache_dir).await?;
                     activities_exec_verified.push(
                         exec.fetch_and_verify(
+                            resolved_program,
                             ignore_missing_env_vars,
                             global_executor_instance_limiter.clone(),
                         )?
@@ -3159,13 +3162,7 @@ fn prespawn_activity_exec(
     let component_id = activity_exec.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
 
-    use crate::config::toml::ExecProgramCanonical;
-    use wasm_workers::activity::activity_exec_worker::ExecProgram;
-
-    let program = match activity_exec.program {
-        ExecProgramCanonical::External(argv) => ExecProgram::External(argv),
-        ExecProgramCanonical::Inline(script) => ExecProgram::Inline(script),
-    };
+    let program = activity_exec.program;
 
     // Compute stdin_content from resolved secrets.
     // Secrets are serialized as a JSON object and piped to the child's stdin.
@@ -3187,7 +3184,6 @@ fn prespawn_activity_exec(
         activity_exec.params,
         activity_exec.return_type,
         activity_exec.env_vars,
-        activity_exec.cwd,
         activity_exec.max_output_bytes,
         activity_exec.forward_stdout,
         activity_exec.forward_stderr,

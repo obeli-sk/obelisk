@@ -113,15 +113,17 @@
 ### and the result is read from stdout (exit 0 → ok, non-zero → err).
 # [[activity_exec]]
 # name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
-## Program specification: exactly one of `external`, `inline`, or `include`.
-## `external`: explicit argv — first element is the executable, rest are fixed arguments. Does not support `${DEPLOYMENT_DIR}/` prefix.
-# program.external = ["/usr/bin/my-tool", "--flag"]
-## `inline`: script content embedded in the TOML. Written to a temp file at each execution. Supports `${DEPLOYMENT_DIR}/` prefix.
-# program.inline = '''#!/usr/bin/env bash
+## Source specification: exactly one of `location` or `content`.
+## `content`: script content embedded in the TOML. Written to a temp file at each execution.
+# content = '''#!/usr/bin/env bash
 # echo "\"hello\""
 # '''
-## `include`: file path read at deploy time and converted to `inline`, making deployment self-contained. Supports `${DEPLOYMENT_DIR}/` prefix.
-# program.include = "${DEPLOYMENT_DIR}/scripts/my-script.sh"
+## `location`: local file path or OCI registry reference. Local files are read at deploy time and converted to `content`, making deployment self-contained.
+# location = "${DEPLOYMENT_DIR}/scripts/my-script.sh"
+## `location` may also be an OCI reference. Script is pulled from the exec layer and resolved at deploy time. Written by `obelisk component add`.
+# location = "oci://docker.io/repo/image:tag@sha256:..."
+## Optional content digest of the exec script. Useful for verifying OCI-backed or local script contents.
+# content_digest = "sha256:..."
 # ffqn = "namespace:package/interface.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
@@ -144,9 +146,6 @@
 ## Environment variables: same syntax as activity_wasm. Default is empty, not even `PATH` is exposed from the host.
 ## When explicitly set, only the listed vars are exposed (env is cleared first).
 # env_vars = ["PATH", {key = "MY_VAR", value = "my_value"}] # Values support interpolation.
-## Working directory for the child process. Supports `${DEPLOYMENT_DIR}/` prefix interpolation.
-## Defaults to the server's working directory.
-# cwd = "${DEPLOYMENT_DIR}/workdir"
 ## Maximum bytes collected from stdout to form the response.
 ## Exceeding the limit fails the execution.
 ## Not used when return_type is result (default), since the response carries no data.

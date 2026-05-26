@@ -199,6 +199,12 @@ pub(crate) enum Generate {
         /// Filename to write the schema to, defaults to <stdout>.
         output: Option<PathBuf>,
     },
+    /// Generate the OCI component metadata annotation schema in JSON Schema format.
+    #[cfg(debug_assertions)]
+    ComponentMetadataAnnotationSchema {
+        /// Filename to write the schema to, defaults to <stdout>.
+        output: Option<PathBuf>,
+    },
     /// Generate extension WIT files that are automatically implemented by Obelisk
     /// based on the exported interfaces of the component (e.g. `-schedule`, `-await-next` variants).
     WitExtensions {

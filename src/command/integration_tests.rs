@@ -340,7 +340,7 @@ return_type = "result<string, string>"
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-add.add"
-program.external = ["{ws}/crates/testing/test-programs/exec/add.sh"]
+location = "{ws}/crates/testing/test-programs/exec/add.sh"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
@@ -349,16 +349,7 @@ return_type = "result<u32, string>"
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-include"
-program.include = "{ws}/crates/testing/test-programs/exec/greet.sh"
-params = [
-  {{ name = "name", type = "string" }},
-]
-return_type = "result<string, string>"
-env_vars = ["PATH"] # for jq
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-greet.greet-external"
-program.external = ["{ws}/crates/testing/test-programs/exec/greet.sh"]
+location = "{ws}/crates/testing/test-programs/exec/greet.sh"
 params = [
   {{ name = "name", type = "string" }},
 ]
@@ -367,7 +358,7 @@ env_vars = ["PATH"] # for jq
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-inline"
-program.inline = '''
+content = '''
 #!/usr/bin/env bash
 set -exuo pipefail
 raw=$(echo $1 | jq -r .)
@@ -381,13 +372,13 @@ env_vars = ["PATH"] # for jq
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-env.read-env"
-program.include = "{ws}/crates/testing/test-programs/exec/read-env.sh"
+location = "{ws}/crates/testing/test-programs/exec/read-env.sh"
 return_type = "result<string, string>"
 env_vars = [{{key = "MY_VAR", value = "hello_from_exec_env"}}]
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-error.fail"
-program.inline = '''#!/usr/bin/env bash
+content = '''#!/usr/bin/env bash
 echo '"something went wrong"'
 exit 1
 '''
@@ -395,31 +386,35 @@ return_type = "result<string, string>"
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-record.make-record"
-program.inline = '''#!/usr/bin/env bash
+content = '''#!/usr/bin/env bash
 printf '{{"name": "Alice", "count": 42}}'
 '''
 return_type = "result<record {{ name: string, count: u32 }}, string>"
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-stdin.expose-secrets"
-program.external = ["{ws}/crates/testing/test-programs/exec/expose-secrets.sh"]
+location = "{ws}/crates/testing/test-programs/exec/expose-secrets.sh"
 return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
 [activity_exec.secrets]
 env_vars = [{{ name = "MY_SECRET", value = "s3cret_value" }}]
 
 [[activity_exec]]
-program.external = ["true"]
+content = '''#!/bin/sh
+true
+'''
 ffqn = "testing:integration/exec-void.void-ok"
 return_type = "result"
 
 [[activity_exec]]
-program.external = ["false"]
+content = '''#!/bin/sh
+false
+'''
 ffqn = "testing:integration/exec-void.void-err"
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-args.echo-args"
-program.inline = '''#!/usr/bin/env bash
+content = '''#!/usr/bin/env bash
 # Receives two u32 params as JSON args: $1 and $2
 printf '{{"a": %s, "b": %s}}' "$1" "$2"
 '''
@@ -431,7 +426,7 @@ return_type = "result<record {{ a: u32, b: u32 }}, string>"
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-stream.stream-test"
-program.inline = '''#!/usr/bin/env bash
+content = '''#!/usr/bin/env bash
 echo "line1" >&2
 sleep 0.1
 echo "line2" >&2
@@ -3155,11 +3150,6 @@ async fn activity_exec_add() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": 8 }));
     server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_greet_external() {
-    activity_exec_greet(test_addr!(51), "external").await;
 }
 
 #[tokio::test]

@@ -37,9 +37,6 @@ expression: functions
     "ffqn": "testing:integration/exec-greet.greet-include"
   },
   {
-    "ffqn": "testing:integration/exec-greet.greet-external"
-  },
-  {
     "ffqn": "testing:integration/exec-greet.greet-inline"
   },
   {

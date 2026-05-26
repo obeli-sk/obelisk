@@ -41,6 +41,10 @@ impl Generate {
             Generate::OpenApiSchema { output } => generate_openapi_schema(output),
             #[cfg(debug_assertions)]
             Generate::CliSchema { output } => generate_cli_schema(output),
+            #[cfg(debug_assertions)]
+            Generate::ComponentMetadataAnnotationSchema { output } => {
+                generate_component_metadata_annotation_schema(output)
+            }
             Generate::ServerConfig {
                 json,
                 output,
@@ -235,6 +239,13 @@ pub(crate) fn generate_openapi_schema(output: Option<PathBuf>) -> Result<(), any
         println!();
     }
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn generate_component_metadata_annotation_schema(
+    output: Option<PathBuf>,
+) -> Result<(), anyhow::Error> {
+    write_schema::<crate::oci::ComponentMetadataAnnotation>(output)
 }
 
 #[cfg(debug_assertions)]
@@ -662,7 +673,7 @@ async fn generate_wit_deps(
     //
     // * WASM components — parse their per-component `wit` text and
     //   walk the package graph via `wit_printer::process_pkg_with_deps`.
-    // * Synthesized-WIT components (JS, inline stubs) — collect their `PackageIfcFns` and feed
+    // * Synthesized-WIT components (JS, inline stubs, exec activities) — collect their `PackageIfcFns` and feed
     //   them through `wit::build_wit_deps_map`, which rebuilds a `Resolve` from `TypeWrapper`s.
     //
     // Sharing of `ifc_fqn` between WASM and synthesized-WIT components is rejected at registry
@@ -675,35 +686,45 @@ async fn generate_wit_deps(
         .into_iter()
         .filter(|component| {
             !skipped_oci_component_names.contains(component.component_id.name.as_ref())
+                && match component.component_id.component_type {
+                    ComponentType::Activity
+                    | ComponentType::ActivityStub
+                    | ComponentType::Workflow => true,
+                    ComponentType::WebhookEndpoint | ComponentType::Cron => {
+                        // ignored - nothing depends on them
+                        false
+                    }
+                }
         })
     {
-        if let Some(importable) = &component.workflow_or_activity_config {
-            match component.wit_origin {
-                WitOrigin::Synthesized => {
-                    synthesized_exports.extend(importable.exports_hierarchy_ext.iter().cloned());
-                }
-                WitOrigin::Wasm => {
-                    let requested_pkgs: Vec<PkgFqn> = importable
-                        .exports_hierarchy_ext
-                        .iter()
-                        .map(|ifc_fns| ifc_fns.ifc_fqn.pkg_fqn_name())
-                        .collect::<hashbrown::HashSet<_>>()
-                        .into_iter()
-                        .collect();
-                    crate::wit_printer::process_pkg_with_deps(
-                        &component.wit,
-                        &requested_pkgs,
-                        &mut pkg_to_wit,
-                    )
-                    .with_context(|| {
-                        format!(
-                            "cannot extract WIT packages from {}",
-                            component.component_id
-                        )
-                    })?;
-                }
+        let Some(importable) = &component.workflow_or_activity_config else {
+            unreachable!("webhooks and crons are filtered out");
+        };
+        match component.wit_origin {
+            WitOrigin::Synthesized => {
+                synthesized_exports.extend(importable.exports_hierarchy_ext.iter().cloned());
             }
-        } // webhooks are ignored, nothing depends on them
+            WitOrigin::Wasm => {
+                let requested_pkgs: Vec<PkgFqn> = importable
+                    .exports_hierarchy_ext
+                    .iter()
+                    .map(|ifc_fns| ifc_fns.ifc_fqn.pkg_fqn_name())
+                    .collect::<hashbrown::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                crate::wit_printer::process_pkg_with_deps(
+                    &component.wit,
+                    &requested_pkgs,
+                    &mut pkg_to_wit,
+                )
+                .with_context(|| {
+                    format!(
+                        "cannot extract WIT packages from {}",
+                        component.component_id
+                    )
+                })?;
+            }
+        }
     }
     if !synthesized_exports.is_empty() {
         let synthesized_map = wit::build_wit_deps_map(&synthesized_exports)?;
