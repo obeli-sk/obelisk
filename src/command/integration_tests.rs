@@ -2192,7 +2192,7 @@ async fn activity_js_fetch_denied() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    let err = body["err"].as_str().expect("expected err field");
+    let err = body["error"].as_str().expect("expected error field");
     assert!(
         err.contains("HttpRequestDenied"),
         "Expected error to contain 'HttpRequestDenied', got: {err}"
@@ -2258,8 +2258,8 @@ async fn activity_js_throw_null_void_err() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    // `throw null` with void err channel → Err(None) → {"err": null}
-    assert_eq!(body, json!({ "err": null }));
+    // `throw null` with void err channel → Err(None) → {"error": null}
+    assert_eq!(body, json!({ "error": null }));
     server.shutdown().await;
 }
 
@@ -2274,7 +2274,7 @@ async fn activity_js_variant_err_throw() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "err": "not_found" }));
+    assert_eq!(body, json!({ "error": "not_found" }));
     server.shutdown().await;
 }
 
@@ -2304,7 +2304,7 @@ async fn workflow_js_rich_return_type() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "err": "not_found" }));
+    assert_eq!(body, json!({ "error": "not_found" }));
 
     // err: null (void err channel — result<string>)
     let resp = server
@@ -2312,7 +2312,7 @@ async fn workflow_js_rich_return_type() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "err": null }));
+    assert_eq!(body, json!({ "error": null }));
     server.shutdown().await;
 }
 
@@ -3223,7 +3223,7 @@ async fn activity_exec_void_err() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "err": null }));
+    assert_eq!(body, json!({ "error": null }));
     server.shutdown().await;
 }
 
@@ -3264,7 +3264,7 @@ async fn activity_exec_error_exit() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "err": "something went wrong" }));
+    assert_eq!(body, json!({ "error": "something went wrong" }));
     server.shutdown().await;
 }
 
