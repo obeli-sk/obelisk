@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
-use tracing::{Instrument, debug, info_span, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 pub const CANCEL_RETRIES: u8 = 5;
 
@@ -122,6 +122,7 @@ impl CancelRegistry {
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
+        info!(%execution_id, "Cancelling activity");
         let outcome = db_connection
             .cancel_activity_with_retries(execution_id, cancelled_at)
             .await?;

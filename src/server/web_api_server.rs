@@ -673,6 +673,7 @@ async fn execution_pause(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
+    info!("Pausing execution");
     let conn = state
         .db_pool
         .external_api_conn()
@@ -712,6 +713,7 @@ async fn execution_unpause(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
+    info!("Unpausing execution");
     let conn = state
         .db_pool
         .external_api_conn()

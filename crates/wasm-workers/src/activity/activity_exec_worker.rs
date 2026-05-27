@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 use utils::wasm_tools::WasmComponent;
 
 /// How the exec activity program is provided to the worker.
@@ -325,7 +325,7 @@ impl Worker for ActivityExecWorker {
         let result = tokio::select! {
             biased;
             signal = cancel_token => {
-                info!("Activity run interrupted, DB must have been updated");
+                debug!("Activity run interrupted, DB must have been updated");
                 // Kill the child once the DB state has already been updated elsewhere.
                 let _ = child.kill().await;
                 assert!(

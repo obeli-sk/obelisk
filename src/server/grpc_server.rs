@@ -1232,7 +1232,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         }))
     }
 
-    #[instrument(skip_all, fields(execution_id, delay_id))]
+    #[instrument(skip_all, fields(execution_id))]
     async fn pause_execution(
         &self,
         request: tonic::Request<grpc_gen::PauseExecutionRequest>,
@@ -1244,6 +1244,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        info!("Pausing execution");
         let conn = self
             .db_pool
             .external_api_conn()
@@ -1258,7 +1259,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         Ok(tonic::Response::new(grpc_gen::PauseExecutionResponse {}))
     }
 
-    #[instrument(skip_all, fields(execution_id, delay_id))]
+    #[instrument(skip_all, fields(execution_id))]
     async fn unpause_execution(
         &self,
         request: tonic::Request<grpc_gen::UnpauseExecutionRequest>,
@@ -1271,6 +1272,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        info!("Unpausing execution");
         self.db_pool
             .external_api_conn()
             .await

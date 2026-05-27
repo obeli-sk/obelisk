@@ -20,7 +20,7 @@ use itertools::Itertools;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{info, trace};
+use tracing::{debug, info, trace};
 use utils::wasm_tools::ExIm;
 use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
 use wasmtime::{Engine, component::Val};
@@ -256,7 +256,7 @@ impl Worker for ActivityWorker {
                     cancel_res.is_ok(),
                     "cancel registry must be dropped only after executor task handles have closed and in-progress workers have finished"
                 );
-                info!("Activity run interrupted, DB must have been updated");
+                debug!("Activity run interrupted, DB must have been updated");
                 return WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
             }
         }
