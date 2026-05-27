@@ -163,6 +163,17 @@ impl ExecutionJournal {
         }
 
         match &event {
+            ExecutionRequest::Paused if matches!(self.pending_state, PendingState::Locked(_)) => {
+                return Err(DbErrorWriteNonRetriable::IllegalState {
+                    reason:
+                        "cannot append Paused event when execution is locked; use pause_execution"
+                            .into(),
+                    context: tracing_error::SpanTrace::capture(),
+                    source: None,
+                    loc: std::panic::Location::caller(),
+                }
+                .into());
+            }
             ExecutionRequest::Paused if self.pending_state.is_paused() => {
                 return Err(DbErrorWriteNonRetriable::IllegalState {
                     reason: "cannot pause, execution is already paused".into(),
@@ -341,9 +352,8 @@ impl ExecutionJournal {
             });
         }
 
-        // Find the underlying state (ignoring Paused/Unpaused for now), store it in
-        // `PendingStatePaused` independent of whether the execution is actually paused.
-        let underlying_state: PendingStatePaused = self
+        // Find the underlying state, ignoring Paused/Unpaused events for now.
+        let underlying_state: PendingState = self
             .execution_events
             .iter()
             .enumerate()
@@ -353,7 +363,7 @@ impl ExecutionJournal {
                     unreachable!("finished state was already handled above")
                 }
                 ExecutionRequest::Created { scheduled_at, .. } => {
-                    Some(PendingStatePaused::PendingAt(PendingStatePendingAt {
+                    Some(PendingState::PendingAt(PendingStatePendingAt {
                         scheduled_at: *scheduled_at,
                         last_lock: None,
                     }))
@@ -366,7 +376,7 @@ impl ExecutionJournal {
                     component_id: _,
                     deployment_id: _,
                     retry_config: _,
-                }) => Some(PendingStatePaused::Locked(PendingStateLocked {
+                }) => Some(PendingState::Locked(PendingStateLocked {
                     locked_by: LockedBy {
                         executor_id: *executor_id,
                         run_id: *run_id,
@@ -385,7 +395,7 @@ impl ExecutionJournal {
                 | ExecutionRequest::Unlocked {
                     backoff_expires_at: expires_at,
                     ..
-                } => Some(PendingStatePaused::PendingAt(PendingStatePendingAt {
+                } => Some(PendingState::PendingAt(PendingStatePendingAt {
                     scheduled_at: *expires_at,
                     last_lock: self.find_last_lock().map(LockedBy::from),
                 })),
@@ -428,13 +438,13 @@ impl ExecutionJournal {
                     if let Some(nth_created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
                         let scheduled_at = max(*lock_expires_at, *nth_created_at);
-                        Some(PendingStatePaused::PendingAt(PendingStatePendingAt {
+                        Some(PendingState::PendingAt(PendingStatePendingAt {
                             scheduled_at,
                             last_lock: self.find_last_lock().map(LockedBy::from),
                         }))
                     } else {
                         // Still waiting for response
-                        Some(PendingStatePaused::BlockedByJoinSet(
+                        Some(PendingState::BlockedByJoinSet(
                             PendingStateBlockedByJoinSet {
                                 join_set_id: expected_join_set_id.clone(),
                                 lock_expires_at: *lock_expires_at,
@@ -500,21 +510,26 @@ impl ExecutionJournal {
 
         // Check if execution is finished (overrides paused state)
 
-        {
-            if is_paused {
-                PendingState::Paused(underlying_state)
-            } else {
-                // Convert PendingStatePaused to PendingState
-                match underlying_state {
-                    PendingStatePaused::Locked(locked) => PendingState::Locked(locked),
-                    PendingStatePaused::PendingAt(pending_at) => {
-                        PendingState::PendingAt(pending_at)
-                    }
-                    PendingStatePaused::BlockedByJoinSet(blocked) => {
-                        PendingState::BlockedByJoinSet(blocked)
-                    }
+        if is_paused {
+            match underlying_state {
+                PendingState::PendingAt(pending_at) => {
+                    PendingState::Paused(PendingStatePaused::PendingAt(pending_at))
+                }
+                PendingState::BlockedByJoinSet(blocked) => {
+                    PendingState::Paused(PendingStatePaused::BlockedByJoinSet(blocked))
+                }
+                PendingState::Locked(_) => {
+                    panic!("invalid state: execution cannot be both paused and locked")
+                }
+                PendingState::Paused(_) => {
+                    unreachable!("underlying state must ignore paused markers")
+                }
+                PendingState::Finished(_) => {
+                    unreachable!("finished state was already handled above")
                 }
             }
+        } else {
+            underlying_state
         }
     }
 

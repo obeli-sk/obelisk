@@ -1424,6 +1424,8 @@ pub trait DbExternalApi: DbConnection {
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead>;
 
     /// Pause an execution. Only pending executions can be paused.
+    /// If the execution is currently locked, implementations must release the lock first
+    /// and then record the paused state.
     async fn pause_execution(
         &self,
         execution_id: &ExecutionId,
@@ -2277,10 +2279,6 @@ impl From<PendingState> for PendingStateMergedPause {
             },
 
             PendingState::Paused(paused) => match paused {
-                PendingStatePaused::Locked(s) => PendingStateMergedPause::Locked {
-                    state: s,
-                    paused: true,
-                },
                 PendingStatePaused::PendingAt(s) => PendingStateMergedPause::PendingAt {
                     state: s,
                     paused: true,
@@ -2324,10 +2322,10 @@ pub struct PendingStateBlockedByJoinSet {
 }
 
 /// State of execution before it was paused.
+///
+/// Pausing a locked execution must first append `Unlocked` and only then `Paused`.
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub enum PendingStatePaused {
-    #[display("Locked({_0})")]
-    Locked(PendingStateLocked),
     #[display("PendingAt({_0})")]
     PendingAt(PendingStatePendingAt),
     #[display("BlockedByJoinSet({_0})")]

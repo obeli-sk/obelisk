@@ -311,42 +311,6 @@ impl CombinedState {
                     },
                 )),
             },
-            // Paused - Locked
-            CombinedStateDTO {
-                execution_id,
-                created_at,
-                first_scheduled_at,
-                state,
-                ffqn,
-                component_digest,
-                component_type,
-                deployment_id,
-                pending_expires_finished: lock_expires_at,
-                last_lock_version: Some(_),
-                executor_id: Some(executor_id),
-                run_id: Some(run_id),
-                join_set_id: None,
-                join_set_closing: None,
-                result_kind: None,
-                is_paused: true,
-            } if state == STATE_LOCKED => ExecutionWithState {
-                component_digest,
-                component_type,
-                deployment_id,
-                execution_id,
-                ffqn,
-                created_at,
-                first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStatePaused::Locked(
-                    PendingStateLocked {
-                        locked_by: LockedBy {
-                            executor_id,
-                            run_id,
-                        },
-                        lock_expires_at,
-                    },
-                )),
-            },
             // Paused - BlockedByJoinSet
             CombinedStateDTO {
                 execution_id,

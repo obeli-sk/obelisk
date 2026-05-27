@@ -2272,7 +2272,7 @@ async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn paused_locked_execution_should_not_be_reported_as_expired(database: Database) {
+async fn cannot_append_paused_to_locked_execution(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -2307,8 +2307,7 @@ async fn paused_locked_execution_should_not_be_reported_as_expired(database: Dat
     )
     .await;
 
-    // Simulate a legacy/manual pause that preserves the underlying Locked state.
-    db_connection
+    let err = db_connection
         .append(
             execution_id.clone(),
             Version::new(2),
@@ -2318,14 +2317,12 @@ async fn paused_locked_execution_should_not_be_reported_as_expired(database: Dat
             },
         )
         .await
-        .unwrap();
-
-    sim_clock.move_time_forward(Duration::from_secs(31));
-    let expired = db_connection
-        .get_expired_timers(sim_clock.now())
-        .await
-        .unwrap();
-    assert!(expired.is_empty(), "{expired:?}");
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!(
+        "cannot append Paused event when execution is locked; use pause_execution",
+        reason.as_ref()
+    );
 
     drop(db_connection);
     db_close.close().await;
@@ -2460,6 +2457,21 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
                             result: Ok(()),
                         },
                     },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unlocked {
+                    backoff_expires_at: sim_clock.now(),
+                    reason: StrVariant::Static("paused"),
                 },
             },
         )
