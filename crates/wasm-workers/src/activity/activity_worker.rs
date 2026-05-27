@@ -250,12 +250,10 @@ impl Worker for ActivityWorker {
                     version,
                 });
             }
-            cancel_res = cancelation_token => {
+            _signal = cancelation_token => {
+                // Either paused or cancelled by CancelRegistry, or timed out by `expired_timers_watcher`
+                // and Sender removed from CancelRegistry using its watcher.
                 // TODO: Add http traces
-                assert!(
-                    cancel_res.is_ok(),
-                    "cancel registry must be dropped only after executor task handles have closed and in-progress workers have finished"
-                );
                 debug!("Activity run interrupted, DB must have been updated");
                 return WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
             }

@@ -324,14 +324,12 @@ impl Worker for ActivityExecWorker {
         };
         let result = tokio::select! {
             biased;
-            signal = cancel_token => {
+            _signal = cancel_token => {
+                // Either paused or cancelled by CancelRegistry, or timed out by `expired_timers_watcher`
+                // and Sender removed from CancelRegistry using its watcher.
                 debug!("Activity run interrupted, DB must have been updated");
                 // Kill the child once the DB state has already been updated elsewhere.
                 let _ = child.kill().await;
-                assert!(
-                    signal.is_ok(),
-                    "cancel registry must be dropped only after executor task handles have closed and in-progress workers have finished"
-                );
                 return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
             }
             result = async {
