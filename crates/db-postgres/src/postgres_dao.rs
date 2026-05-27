@@ -3747,7 +3747,7 @@ impl DbConnection for PostgresConnection {
             &format!(
                 "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id \
                  FROM t_state \
-                 WHERE pending_expires_finished <= $1 AND state = '{STATE_LOCKED}'"
+                 WHERE pending_expires_finished <= $1 AND state = '{STATE_LOCKED}' AND NOT is_paused"
             ),
             &[&at]
         ).await?;
@@ -4510,17 +4510,37 @@ impl DbExternalApi for PostgresConnection {
         let combined_state = get_combined_state(&tx, execution_id).await?;
         let appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Pausing with {appending_version}");
-        let (next_version, _) = append(
+        let next_version = if matches!(
+            combined_state.execution_with_state.pending_state,
+            PendingState::Locked(_)
+        ) {
+            let (next_version, _notifier) = append(
+                &tx,
+                execution_id,
+                AppendRequest {
+                    created_at: paused_at,
+                    event: ExecutionRequest::Unlocked {
+                        backoff_expires_at: paused_at,
+                        reason: StrVariant::Static("paused"),
+                    },
+                },
+                appending_version,
+            )
+            .await?;
+            next_version
+        } else {
+            appending_version
+        };
+        let (next_version, _notifier) = append(
             &tx,
             execution_id,
             AppendRequest {
                 created_at: paused_at,
                 event: ExecutionRequest::Paused,
             },
-            appending_version,
+            next_version,
         )
         .await?;
-
         tx.commit().await?;
         Ok(next_version)
     }

@@ -365,6 +365,7 @@ pub enum ExecutionRequest {
     /// - executor is running out of resources like [`WorkerError::LimitReached`]
     /// - workflow made progress but then its lock expired.
     /// - executor is being closed (shutdown or hot redeploy requested)
+    /// - activity is paused
     #[display("Unlocked(`{backoff_expires_at}`)")]
     Unlocked {
         backoff_expires_at: DateTime<Utc>,
