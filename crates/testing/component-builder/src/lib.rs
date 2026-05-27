@@ -1,5 +1,7 @@
 use cargo_metadata::camino::Utf8Path;
+use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -110,6 +112,107 @@ fn get_out_dir() -> PathBuf {
     PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR environment variable must be set"))
 }
 
+fn collect_files(dir: &Path, out: &mut BTreeSet<PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_files(&path, out);
+            } else {
+                out.insert(path);
+            }
+        }
+    }
+}
+
+fn hash_directory_contents(hasher: &mut Sha256, dir: &Path, base: &Path) {
+    let mut files = BTreeSet::new();
+    collect_files(dir, &mut files);
+    for file_path in &files {
+        let rel = file_path.strip_prefix(base).unwrap_or(file_path);
+        hasher.update(rel.to_string_lossy().as_bytes());
+        hasher.update(b"\x00");
+        hasher.update(std::fs::read(file_path).unwrap());
+        hasher.update(b"\x00");
+    }
+}
+
+fn compute_inputs_hash(
+    meta: &cargo_metadata::Metadata,
+    package: &cargo_metadata::Package,
+    target_triple: &str,
+    profile: &str,
+    rust_flags: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+
+    // Build config
+    hasher.update(target_triple.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update(profile.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update(rust_flags.as_bytes());
+    hasher.update(b"\x00");
+
+    // Builder crate version — invalidates cache when the builder itself changes
+    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+    hasher.update(b"\x00");
+
+    // Cargo.lock — covers all transitive dependency versions
+    let lock_path = meta.workspace_root.join("Cargo.lock");
+    if lock_path.exists() {
+        hasher.update(std::fs::read(lock_path.as_std_path()).unwrap());
+    }
+    hasher.update(b"\x00");
+
+    let pkg_root = package.manifest_path.parent().unwrap();
+
+    // Package Cargo.toml
+    hasher.update(std::fs::read(package.manifest_path.as_std_path()).unwrap());
+    hasher.update(b"\x00");
+
+    // Source files
+    for src_path in package.targets.iter().map(|t| t.src_path.parent().unwrap()) {
+        hash_directory_contents(&mut hasher, src_path.as_std_path(), pkg_root.as_std_path());
+    }
+
+    // WIT files
+    let wit_path = pkg_root.join("wit");
+    if wit_path.exists() && wit_path.is_dir() {
+        hash_directory_contents(&mut hasher, wit_path.as_std_path(), pkg_root.as_std_path());
+    }
+
+    // build.rs of the target package (not the builder)
+    let build_rs = pkg_root.join("build.rs");
+    if build_rs.exists() {
+        hasher.update(b"build.rs\x00");
+        hasher.update(std::fs::read(build_rs.as_std_path()).unwrap());
+        hasher.update(b"\x00");
+    }
+
+    let result = hasher.finalize();
+    use std::fmt::Write;
+    result[..8]
+        .iter()
+        .fold(String::with_capacity(16), |mut s, b| {
+            write!(s, "{b:02x}").unwrap();
+            s
+        })
+}
+
+fn cleanup_old_hashed_files(dir: &Path, name_snake_case: &str) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if file_name.starts_with(&format!("{name_snake_case}_")) && file_name.ends_with(".wasm")
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
 fn build_internal(
     target_tripple: &str,
     component_type: ComponentType,
@@ -118,19 +221,8 @@ fn build_internal(
     let dst_target_dir = conf.custom_dst_target_dir.unwrap_or_else(get_target_dir);
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm_path = run_cargo_build(
-        &dst_target_dir,
-        pkg_name,
-        target_tripple,
-        &conf.profile,
-        &conf.rust_flags,
-    );
-    if std::env::var("RUST_LOG").is_ok() {
-        println!("cargo:warning=Built `{pkg_name}` - {wasm_path:?}");
-    }
 
-    generate_code(&wasm_path, pkg_name, component_type);
-
+    // Run cargo_metadata early — needed for hash computation
     let meta = cargo_metadata::MetadataCommand::new().exec().unwrap();
     let package = meta
         .packages
@@ -138,6 +230,22 @@ fn build_internal(
         .find(|p| p.name.as_str() == pkg_name)
         .unwrap_or_else(|| panic!("package `{pkg_name}` must exist"));
 
+    let wasm_path = run_cargo_build(
+        &dst_target_dir,
+        pkg_name,
+        target_tripple,
+        &conf.profile,
+        &conf.rust_flags,
+        &meta,
+        package,
+    );
+    if std::env::var("RUST_LOG").is_ok() {
+        println!("cargo:warning=Built `{pkg_name}` - {wasm_path:?}");
+    }
+
+    generate_code(&wasm_path, pkg_name, component_type);
+
+    // Register rerun-if-changed dependencies
     add_dependency(&package.manifest_path); // Cargo.toml
     for src_path in package
         .targets
@@ -149,6 +257,10 @@ fn build_internal(
     let wit_path = &package.manifest_path.parent().unwrap().join("wit");
     if wit_path.exists() && wit_path.is_dir() {
         add_dependency(wit_path);
+    }
+    let lock_path = meta.workspace_root.join("Cargo.lock");
+    if lock_path.exists() {
+        add_dependency(&lock_path);
     }
     wasm_path
 }
@@ -263,8 +375,31 @@ fn run_cargo_build(
     tripple: &str,
     profile: &str,
     rust_flags: &str,
+    meta: &cargo_metadata::Metadata,
+    package: &cargo_metadata::Package,
 ) -> PathBuf {
-    // rustflags = ['--cfg', 'getrandom_backend="custom"']
+    let name_snake_case = to_snake_case(name);
+    let output_dir = dst_target_dir.join(tripple).join(profile);
+    let hash = compute_inputs_hash(meta, package, tripple, profile, rust_flags);
+    let needs_component_transform = is_transformation_to_wasm_component_needed(tripple);
+
+    // Determine the final cached path
+    let cached_path = if needs_component_transform {
+        output_dir.join(format!("{name_snake_case}_{hash}_component.wasm"))
+    } else {
+        output_dir.join(format!("{name_snake_case}_{hash}.wasm"))
+    };
+
+    // Cache hit — skip cargo build entirely
+    if cached_path.exists() {
+        println!("cargo:warning=Cache hit for `{name}` ({hash})");
+        return cached_path;
+    }
+
+    // Cache miss — clean up old hashed files
+    cleanup_old_hashed_files(&output_dir, &name_snake_case);
+
+    // Run cargo build
     let mut cmd = Command::new("cargo");
     cmd.arg("build")
         .arg(format!("--profile={profile}"))
@@ -277,39 +412,41 @@ fn run_cargo_build(
         .env_remove("CLIPPY_ARGS"); // do not pass clippy parameters
     let status = cmd.status().unwrap();
     assert!(status.success());
-    let name_snake_case = to_snake_case(name);
-    let target = dst_target_dir
+
+    let cargo_output = dst_target_dir
         .join(tripple)
         .join(profile)
         .join(format!("{name_snake_case}.wasm"));
-    assert!(target.exists(), "Target path must exist: {target:?}");
-    if is_transformation_to_wasm_component_needed(tripple) {
-        let target_transformed = dst_target_dir
-            .join(tripple)
-            .join(profile)
-            .join(format!("{name_snake_case}_component.wasm"));
+    assert!(
+        cargo_output.exists(),
+        "Target path must exist: {cargo_output:?}"
+    );
+
+    if needs_component_transform {
+        // Run wasm-tools component new directly to the hashed name
         let mut cmd = Command::new("wasm-tools");
         cmd.arg("component")
             .arg("new")
             .arg(
-                target
+                cargo_output
                     .to_str()
                     .expect("only utf-8 encoded paths are supported"),
             )
             .arg("--output")
             .arg(
-                target_transformed
+                cached_path
                     .to_str()
                     .expect("only utf-8 encoded paths are supported"),
             );
         let status = cmd.status().unwrap();
         assert!(status.success());
-        assert!(
-            target_transformed.exists(),
-            "Transformed target path must exist: {target_transformed:?}"
-        );
-        target_transformed
     } else {
-        target
+        std::fs::copy(&cargo_output, &cached_path).unwrap();
     }
+
+    assert!(
+        cached_path.exists(),
+        "Cached path must exist: {cached_path:?}"
+    );
+    cached_path
 }

@@ -16,6 +16,7 @@ utils = { workspace = true, optional = true }
 
 cargo_metadata.workspace = true
 indexmap = { workspace = true, optional = true }
+sha2.workspace = true
 
 [features]
 genrs = ["dep:concepts", "dep:utils", "dep:indexmap"]
