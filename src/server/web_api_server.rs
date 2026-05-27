@@ -3846,9 +3846,9 @@ mod tests {
     use super::format_execution_status_text;
     use chrono::{DateTime, Utc};
     use concepts::{
-        ExecutionFailureKind,
+        ExecutionFailureKind, SupportedFunctionReturnValue,
         storage::{
-            PendingState, PendingStateFinished, PendingStateFinishedError,
+            ExecutionRequest, PendingState, PendingStateFinished, PendingStateFinishedError,
             PendingStateFinishedResultKind,
         },
     };
@@ -3885,6 +3885,32 @@ mod tests {
                     ),
                 ),
             })),
+            "Finished: Execution failure (Uncategorized)"
+        );
+    }
+
+    #[test]
+    fn finished_event_display_is_explicit() {
+        assert_eq!(
+            ExecutionRequest::Finished {
+                retval: SupportedFunctionReturnValue::Err(None),
+                http_client_traces: None,
+            }
+            .to_string(),
+            "Finished: Error"
+        );
+        assert_eq!(
+            ExecutionRequest::Finished {
+                retval: SupportedFunctionReturnValue::ExecutionFailure(
+                    concepts::FinishedExecutionFailure {
+                        kind: ExecutionFailureKind::Uncategorized,
+                        reason: None,
+                        detail: None,
+                    },
+                ),
+                http_client_traces: None,
+            }
+            .to_string(),
             "Finished: Execution failure (Uncategorized)"
         );
     }

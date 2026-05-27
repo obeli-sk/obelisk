@@ -391,7 +391,7 @@ pub enum ExecutionRequest {
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
     // Created by the executor holding the lock.
-    #[display("Finished")]
+    #[display("Finished: {retval}")]
     Finished {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = crate::SUPPORTED_RETURN_VALUE_OK_EMPTY))]
         retval: SupportedFunctionReturnValue,
@@ -2238,7 +2238,7 @@ pub enum PendingState {
     #[display("Paused({_0})")]
     Paused(PendingStatePaused),
 
-    #[display("Finished({_0})")]
+    #[display("Finished: {_0}")]
     Finished(PendingStateFinished),
 }
 
@@ -2357,7 +2357,7 @@ pub struct PendingStateFinished {
 impl Display for PendingStateFinished {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.result_kind {
-            PendingStateFinishedResultKind::Ok => write!(f, "ok"),
+            PendingStateFinishedResultKind::Ok => write!(f, "OK"),
             PendingStateFinishedResultKind::Err(err) => write!(f, "{err}"),
         }
     }
@@ -2398,9 +2398,9 @@ impl From<&SupportedFunctionReturnValue> for PendingStateFinishedResultKind {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PendingStateFinishedError {
-    #[display("{_0}")]
+    #[display("Execution failure ({_0})")]
     ExecutionFailure(ExecutionFailureKind),
-    #[display("completed with an error")]
+    #[display("Error")]
     Error,
 }
 
