@@ -252,9 +252,12 @@ impl Worker for ActivityWorker {
             }
             cancel_res = cancelation_token => {
                 // TODO: Add http traces
-                info!("Activity cancelled");
-                assert!(cancel_res.is_ok(), "only closed channels are dropped");
-                return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, version));
+                assert!(
+                    cancel_res.is_ok(),
+                    "cancel registry must be dropped only after executor task handles have closed and in-progress workers have finished"
+                );
+                info!("Activity run interrupted, DB must have been updated");
+                return WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
             }
         }
     }

@@ -1244,13 +1244,17 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
-        self.db_pool
+        let conn = self
+            .db_pool
             .external_api_conn()
             .await
-            .map_err(map_to_status)?
-            .pause_execution(&execution_id, executed_at)
+            .map_err(map_to_status)?;
+        conn.pause_execution(&execution_id, executed_at)
             .await
             .to_status()?;
+        // No need to distinguish between component types, only activities are tracked in the cancel registry.
+        self.cancel_registry
+            .interrupt_running_activity(&execution_id);
         Ok(tonic::Response::new(grpc_gen::PauseExecutionResponse {}))
     }
 

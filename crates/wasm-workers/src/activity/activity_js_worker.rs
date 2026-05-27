@@ -7,7 +7,6 @@
 use super::activity_worker::{ActivityWorker, ActivityWorkerCompiled};
 use super::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
-use assert_matches::assert_matches;
 use async_trait::async_trait;
 use concepts::storage::LogInfoAppendRow;
 use concepts::{
@@ -161,8 +160,16 @@ impl Worker for ActivityJsWorker {
         let inner_worker_ok = self.inner.run(ctx).await?;
         debug!("Activity worker returned {inner_worker_ok:?}");
 
-        let (retval, version, http_client_traces) = assert_matches!(inner_worker_ok, WorkerResultOk::RunFinished(RunFinished { retval, version,  http_client_traces })
-            => (retval, version,  http_client_traces), "activity_js_runtime runs in ActivityWorker");
+        let (retval, version, http_client_traces) = match inner_worker_ok {
+            WorkerResultOk::DbUpdatedByWorkerOrWatcher => {
+                return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
+            }
+            WorkerResultOk::RunFinished(RunFinished {
+                retval,
+                version,
+                http_client_traces,
+            }) => (retval, version, http_client_traces),
+        };
 
         match retval {
             SupportedFunctionReturnValue::Ok(Some(WastValWithType {

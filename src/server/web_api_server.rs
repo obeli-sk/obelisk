@@ -682,6 +682,10 @@ async fn execution_pause(
     conn.pause_execution(&execution_id, paused_at)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
+    // No need to distinguish between component types, only activities are tracked in the cancel registry.
+    state
+        .cancel_registry
+        .interrupt_running_activity(&execution_id);
     Ok(HttpResponse {
         status: StatusCode::OK,
         message: "paused".to_string(),
