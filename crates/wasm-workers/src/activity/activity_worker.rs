@@ -20,7 +20,7 @@ use itertools::Itertools;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{info, trace};
+use tracing::{debug, info, trace};
 use utils::wasm_tools::ExIm;
 use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
 use wasmtime::{Engine, component::Val};
@@ -250,11 +250,12 @@ impl Worker for ActivityWorker {
                     version,
                 });
             }
-            cancel_res = cancelation_token => {
+            _signal = cancelation_token => {
+                // Either paused or cancelled by CancelRegistry, or timed out by `expired_timers_watcher`
+                // and Sender removed from CancelRegistry using its watcher.
                 // TODO: Add http traces
-                info!("Activity cancelled");
-                assert!(cancel_res.is_ok(), "only closed channels are dropped");
-                return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, version));
+                debug!("Activity run interrupted, DB must have been updated");
+                return WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
             }
         }
     }

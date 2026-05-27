@@ -9,14 +9,16 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
-use tracing::{Instrument, debug, info_span, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 pub const CANCEL_RETRIES: u8 = 5;
 
 #[derive(Clone)]
 /// All currently running activities in this process.
 /// Activity worker tasks register themselves and listen on cancellation token.
-/// RPCs can trigger `cancel` which writes the new state to db and triggers the cancellation token.
+/// RPCs and workflow worker can trigger `cancel_activity`
+/// which writes the new state to db (no matter whether registered or not)
+/// and triggers the cancellation token.
 pub struct CancelRegistry {
     tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, oneshot::Sender<()>>>>,
 }
@@ -101,14 +103,9 @@ impl CancelRegistry {
         receiver
     }
 
-    /// It is the responsibility of the caller to check that the execution belongs to an activity!
-    pub async fn cancel_activity(
-        &self,
-        db_connection: &dyn DbConnection,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        // Sending the signal is best effort, the activity might be locked but the token might not be obtained yet.
+    /// Best-effort local interrupt for an activity currently running in this process.
+    /// Unlike `cancel_activity`, this does not write terminal cancellation state to the DB.
+    pub fn interrupt_running_activity(&self, execution_id: &ExecutionId) {
         let sender = {
             let mut guard = self.tokens.lock().unwrap();
             guard.remove(execution_id)
@@ -116,9 +113,24 @@ impl CancelRegistry {
         if let Some(sender) = sender {
             let _ = sender.send(());
         }
-        db_connection
+    }
+
+    /// It is the responsibility of the caller to check that the execution belongs to an activity!
+    pub async fn cancel_activity(
+        &self,
+        db_connection: &dyn DbConnection,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        info!(%execution_id, "Cancelling activity");
+        let outcome = db_connection
             .cancel_activity_with_retries(execution_id, cancelled_at)
-            .await
+            .await?;
+        if outcome == CancelOutcome::Cancelled {
+            // Sending the signal is best effort, the activity might not be registered yet.
+            self.interrupt_running_activity(execution_id);
+        }
+        Ok(outcome)
     }
 }
 

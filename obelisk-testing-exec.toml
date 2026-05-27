@@ -1,6 +1,6 @@
 [[activity_exec]]
 ffqn = "testing:integration/exec-stream.stream-test"
-program.inline = '''#!/usr/bin/env bash
+content = '''#!/usr/bin/env bash
 set -exuo pipefail
 
 echo "line1" >&2
@@ -11,7 +11,7 @@ env_vars = ["PATH"] # for sleep
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-include"
-program.include = "${DEPLOYMENT_DIR}/crates/testing/test-programs/exec/greet.sh"
+location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/exec/greet.sh"
 params = [
   { name = "name", type = "string" },
 ]
@@ -20,7 +20,7 @@ env_vars = ["PATH"] # for jq
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-inline"
-program.inline = '''
+content = '''
 #!/usr/bin/env bash
 set -exuo pipefail
 raw=$(echo $1 | jq -r .)
@@ -31,3 +31,18 @@ params = [
 ]
 return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
+
+
+[[activity_exec]]
+ffqn = "testing:integration/exec-busy.busy"
+content = '''
+#!/usr/bin/env bash
+i=0
+while true; do
+    if (( i % 1000000 == 0 )); then
+        echo "$i"
+    fi
+    ((i++))
+done
+'''
+exec.lock_expiry.seconds = 10

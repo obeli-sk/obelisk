@@ -324,13 +324,13 @@ impl Worker for ActivityExecWorker {
         };
         let result = tokio::select! {
             biased;
-            _ = cancel_token => {
-                // Kill the child on cancellation.
+            _signal = cancel_token => {
+                // Either paused or cancelled by CancelRegistry, or timed out by `expired_timers_watcher`
+                // and Sender removed from CancelRegistry using its watcher.
+                debug!("Activity run interrupted, DB must have been updated");
+                // Kill the child once the DB state has already been updated elsewhere.
                 let _ = child.kill().await;
-                return Err(WorkerError::FatalError(
-                    FatalError::Cancelled,
-                    version,
-                ));
+                return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
             }
             result = async {
                 // Read stdout/stderr concurrently, streaming to log forwarder as chunks arrive.

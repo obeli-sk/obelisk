@@ -526,16 +526,7 @@ impl ExecTask {
             Some(append) => {
                 trace!("Appending {append:?}");
                 let db_exec = db_pool.db_exec_conn().await?;
-                match append {
-                    AppendOrCancel::Cancel {
-                        execution_id,
-                        cancelled_at,
-                    } => db_exec
-                        .cancel_activity_with_retries(&execution_id, cancelled_at)
-                        .await
-                        .map(|_| ()),
-                    AppendOrCancel::Other(append) => append.append(db_exec.as_ref()).await,
-                }
+                append.append(db_exec.as_ref()).await
             }
             None => Ok(()),
         }
@@ -550,7 +541,7 @@ impl ExecTask {
         parent: Option<(ExecutionId, JoinSetId)>,
         can_be_retried: Option<Duration>,
         unlock_expiry_on_limit_reached: Duration,
-    ) -> Result<Option<AppendOrCancel>, DbErrorWrite> {
+    ) -> Result<Option<Append>, DbErrorWrite> {
         Ok(match worker_result {
             WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
                 retval: ref retval @ SupportedFunctionReturnValue::Err(ref result_err),
@@ -574,7 +565,7 @@ impl ExecTask {
                     detail: Some(detail),
                     http_client_traces,
                 };
-                Some(AppendOrCancel::Other(Append {
+                Some(Append {
                     created_at: result_obtained_at,
                     primary_event: AppendRequest {
                         created_at: result_obtained_at,
@@ -583,7 +574,7 @@ impl ExecTask {
                     execution_id,
                     version,
                     child_finished: None,
-                }))
+                })
             }
 
             WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
@@ -608,13 +599,13 @@ impl ExecTask {
                     },
                 };
 
-                Some(AppendOrCancel::Other(Append {
+                Some(Append {
                     created_at: result_obtained_at,
                     primary_event,
                     execution_id,
                     version,
                     child_finished,
-                }))
+                })
             }
 
             WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher) => None,
@@ -746,11 +737,9 @@ impl ExecTask {
                         )
                     }
                     WorkerError::FatalError(FatalError::Cancelled, _version) => {
-                        // use more optimized `cancel` to avoid polluting the logs with errors on a race.
-                        return Ok(Some(AppendOrCancel::Cancel {
-                            execution_id,
-                            cancelled_at: result_obtained_at,
-                        }));
+                        unreachable!(
+                            "activity workers must return DbUpdatedByWorkerOrWatcher, cancellation append happens in CancelRegistry::cancel_activity"
+                        )
                     }
                     WorkerError::FatalError(fatal_error, version) => {
                         warn!("Fatal worker error - {fatal_error:?}");
@@ -775,7 +764,7 @@ impl ExecTask {
                         )
                     }
                 };
-                Some(AppendOrCancel::Other(Append {
+                Some(Append {
                     created_at: result_obtained_at,
                     primary_event: AppendRequest {
                         created_at: result_obtained_at,
@@ -784,7 +773,7 @@ impl ExecTask {
                     execution_id,
                     version,
                     child_finished,
-                }))
+                })
             }
         })
     }
@@ -795,16 +784,6 @@ pub(crate) struct ChildFinishedResponse {
     pub(crate) parent_execution_id: ExecutionId,
     pub(crate) parent_join_set: JoinSetId,
     pub(crate) result: SupportedFunctionReturnValue,
-}
-
-#[derive(Debug, Clone)]
-#[expect(clippy::large_enum_variant)]
-pub(crate) enum AppendOrCancel {
-    Cancel {
-        execution_id: ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    },
-    Other(Append),
 }
 
 #[derive(Debug, Clone)]
