@@ -147,7 +147,7 @@
           "additionalProperties": false
         },
         {
-          "description": "Returns execution to [`PendingState::PendingAt`] state at the specified time.\nThis can happen when:\n- executor is running out of resources like [`WorkerError::LimitReached`]\n- workflow made progress but then its lock expired.\n- executor is being closed (shutdown or hot redeploy requested)",
+          "description": "Returns execution to [`PendingState::PendingAt`] state at the specified time.\nThis can happen when:\n- executor is running out of resources like [`WorkerError::LimitReached`]\n- workflow made progress but then its lock expired.\n- executor is being closed (shutdown or hot redeploy requested)\n- activity is paused",
           "type": "object",
           "properties": {
             "unlocked": {
@@ -1521,7 +1521,7 @@
           ]
         },
         {
-          "description": "State of execution before it was paused.",
+          "description": "State of execution before it was paused.\n\nPausing a locked execution must first append `Unlocked` and only then `Paused`.",
           "type": "object",
           "properties": {
             "status": {
@@ -1530,17 +1530,6 @@
             }
           },
           "oneOf": [
-            {
-              "type": "object",
-              "properties": {
-                "Locked": {
-                  "$ref": "#/$defs/PendingStateLocked"
-                }
-              },
-              "required": [
-                "Locked"
-              ]
-            },
             {
               "type": "object",
               "properties": {

@@ -2060,6 +2060,17 @@ async fn append(
                 PendingState::Finished { .. } => {
                     unreachable!("handled above");
                 }
+                PendingState::Locked(..) => {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason:
+                            "cannot append Paused event when execution is locked; use pause_execution"
+                                .into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    }
+                    .into());
+                }
                 PendingState::Paused(..) => {
                     return Err(DbErrorWriteNonRetriable::IllegalState {
                         reason: "cannot pause, execution is already paused".into(),
@@ -3745,7 +3756,7 @@ impl DbConnection for PostgresConnection {
         // Expired Locks
         let rows = tx.query(
             &format!(
-                "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id \
+                "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id, is_paused \
                  FROM t_state \
                  WHERE pending_expires_finished <= $1 AND state = '{STATE_LOCKED}'"
             ),
@@ -3753,9 +3764,14 @@ impl DbConnection for PostgresConnection {
         ).await?;
 
         for row in rows {
-            let unpack = || -> Result<ExpiredTimer, DbErrorGeneric> {
+            let unpack = || -> Result<Option<ExpiredTimer>, DbErrorGeneric> {
                 let execution_id: String = get(&row, "execution_id")?;
                 let execution_id = ExecutionId::from_str(&execution_id)?;
+                let is_paused: bool = get(&row, "is_paused")?;
+                if is_paused {
+                    error!(%execution_id, "encountered invalid paused locked execution while scanning expired locks");
+                    return Ok(None);
+                }
                 let last_lock_version: i64 = get(&row, "last_lock_version")?;
                 let last_lock_version = Version::try_from(last_lock_version)?;
 
@@ -3780,7 +3796,7 @@ impl DbConnection for PostgresConnection {
                 let run_id: String = get(&row, "run_id")?;
                 let run_id = RunId::from_str(&run_id)?;
 
-                Ok(ExpiredTimer::Lock(ExpiredLock {
+                Ok(Some(ExpiredTimer::Lock(ExpiredLock {
                     execution_id,
                     locked_at_version: last_lock_version,
                     next_version: corresponding_version.increment(),
@@ -3791,11 +3807,12 @@ impl DbConnection for PostgresConnection {
                         executor_id,
                         run_id,
                     },
-                }))
+                })))
             };
 
             match unpack() {
-                Ok(timer) => expired_timers.push(timer),
+                Ok(Some(timer)) => expired_timers.push(timer),
+                Ok(None) => {}
                 Err(err) => warn!("Skipping corrupted row in get_expired_timers (locks): {err:?}"),
             }
         }
@@ -4510,17 +4527,37 @@ impl DbExternalApi for PostgresConnection {
         let combined_state = get_combined_state(&tx, execution_id).await?;
         let appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Pausing with {appending_version}");
-        let (next_version, _) = append(
+        let next_version = if matches!(
+            combined_state.execution_with_state.pending_state,
+            PendingState::Locked(_)
+        ) {
+            let (next_version, _notifier) = append(
+                &tx,
+                execution_id,
+                AppendRequest {
+                    created_at: paused_at,
+                    event: ExecutionRequest::Unlocked {
+                        backoff_expires_at: paused_at,
+                        reason: StrVariant::Static("paused"),
+                    },
+                },
+                appending_version,
+            )
+            .await?;
+            next_version
+        } else {
+            appending_version
+        };
+        let (next_version, _notifier) = append(
             &tx,
             execution_id,
             AppendRequest {
                 created_at: paused_at,
                 event: ExecutionRequest::Paused,
             },
-            appending_version,
+            next_version,
         )
         .await?;
-
         tx.commit().await?;
         Ok(next_version)
     }

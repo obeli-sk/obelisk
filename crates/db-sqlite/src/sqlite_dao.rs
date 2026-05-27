@@ -2079,6 +2079,17 @@ impl SqlitePool {
                     PendingState::Finished { .. } => {
                         unreachable!("handled above");
                     }
+                    PendingState::Locked(..) => {
+                        return Err(DbErrorWriteNonRetriable::IllegalState {
+                            reason:
+                                "cannot append Paused event when execution is locked; use pause_execution"
+                                    .into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        }
+                        .into());
+                    }
                     PendingState::Paused(..) => {
                         return Err(DbErrorWriteNonRetriable::IllegalState {
                             reason: "cannot pause, execution is already paused".into(),
@@ -3355,14 +3366,34 @@ impl SqlitePool {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         let appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Pausing with {appending_version}");
-        let (next_version, _) = Self::append(
+        let next_version = if matches!(
+            combined_state.execution_with_state.pending_state,
+            PendingState::Locked(_)
+        ) {
+            let (next_version, _notifier) = Self::append(
+                tx,
+                execution_id,
+                AppendRequest {
+                    created_at: paused_at,
+                    event: ExecutionRequest::Unlocked {
+                        backoff_expires_at: paused_at,
+                        reason: StrVariant::Static("paused"),
+                    },
+                },
+                appending_version,
+            )?;
+            next_version
+        } else {
+            appending_version
+        };
+        let (next_version, _notifier) = Self::append(
             tx,
             execution_id,
             AppendRequest {
                 created_at: paused_at,
                 event: ExecutionRequest::Paused,
             },
-            appending_version,
+            next_version,
         )?;
         Ok(next_version)
     }
@@ -4784,7 +4815,7 @@ impl DbConnection for SqlitePool {
                 // Extend with expired locks
                 let expired = conn.prepare(&format!(r#"
                     SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis,
-                    executor_id, run_id
+                    executor_id, run_id, is_paused
                     FROM t_state
                     WHERE pending_expires_finished <= :at AND state = "{STATE_LOCKED}"
                     "#
@@ -4796,6 +4827,11 @@ impl DbConnection for SqlitePool {
                         },
                         |row| {
                             let execution_id = row.get("execution_id")?;
+                            let is_paused: bool = row.get("is_paused")?;
+                            if is_paused {
+                                error!(%execution_id, "encountered invalid paused locked execution while scanning expired locks");
+                                return Ok(None);
+                            }
                             let locked_at_version = Version::new(row.get("last_lock_version")?);
                             let next_version = Version::new(row.get("corresponding_version")?).increment();
                             let intermittent_event_count = row.get("intermittent_event_count")?;
@@ -4812,11 +4848,11 @@ impl DbConnection for SqlitePool {
                                 retry_exp_backoff: Duration::from_millis(retry_exp_backoff_millis),
                                 locked_by: LockedBy { executor_id, run_id },
                             };
-                            Ok(ExpiredTimer::Lock(lock))
+                            Ok(Some(ExpiredTimer::Lock(lock)))
                         }
                     )?
                     .collect::<Result<Vec<_>, _>>()?;
-                expired_timers.extend(expired);
+                expired_timers.extend(expired.into_iter().flatten());
                 if !expired_timers.is_empty() {
                     debug!("get_expired_timers found {expired_timers:?}");
                 }

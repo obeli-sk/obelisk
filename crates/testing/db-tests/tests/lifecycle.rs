@@ -2178,14 +2178,18 @@ async fn pause_finished_execution_should_fail(database: Database) {
     db_close.close().await;
 }
 
-#[expand_enum_database]
 #[rstest]
+#[case(Database::Sqlite)]
+#[case(Database::Postgres)]
 #[tokio::test]
-async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Database) {
+async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
+    #[case] database: Database,
+) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection().await.unwrap();
+    let db_external = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     // Create with current scheduled time (ready to run)
@@ -2224,8 +2228,86 @@ async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Da
     let (found_locked_by, found_lock_expires_at) = assert_matches!(log.pending_state,
         PendingState::Locked(PendingStateLocked{ locked_by, lock_expires_at }) => (locked_by, lock_expires_at));
     assert_eq!(lock_expires_at, found_lock_expires_at);
-    // Pause the locked execution
+    let paused_at = sim_clock.now();
+    // Pause the locked execution through the public API.
+    db_external
+        .pause_execution(&execution_id, paused_at)
+        .await
+        .unwrap();
+
+    // Verify the lock was released before the execution was paused.
+    let log = db_connection.get(&execution_id).await.unwrap();
+    let paused_pending_at = assert_matches!(log.pending_state,
+        PendingState::Paused(PendingStatePaused::PendingAt(PendingStatePendingAt { scheduled_at, last_lock })) => (scheduled_at, last_lock));
+    assert_eq!(paused_at, paused_pending_at.0);
+    assert_eq!(Some(found_locked_by.clone()), paused_pending_at.1);
+    let (backoff_expires_at, reason) = assert_matches!(
+        &log.events[2].event,
+        ExecutionRequest::Unlocked {
+            backoff_expires_at,
+            reason,
+        } => (*backoff_expires_at, reason)
+    );
+    assert_eq!(paused_at, backoff_expires_at);
+    assert_eq!("paused", reason.as_ref());
+    assert_matches!(log.events[3].event, ExecutionRequest::Paused);
+
+    // Unpause and verify it returns to pending state instead of reviving the old lock.
+    db_external
+        .unpause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    let pending_at = assert_matches!(log.pending_state,
+        PendingState::PendingAt(PendingStatePendingAt { scheduled_at, last_lock }) => (scheduled_at, last_lock));
+    assert_eq!(paused_at, pending_at.0);
+    assert_eq!(Some(found_locked_by), pending_at.1);
+
+    drop(db_connection);
+    drop(db_external);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_append_paused_to_locked_execution(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
     db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+
+    let lock_expires_at = sim_clock.now() + Duration::from_secs(30);
+    lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        lock_expires_at,
+        RunId::generate(),
+    )
+    .await;
+
+    let err = db_connection
         .append(
             execution_id.clone(),
             Version::new(2),
@@ -2235,31 +2317,12 @@ async fn pause_and_unpause_locked_execution_should_return_to_locked(database: Da
             },
         )
         .await
-        .unwrap();
-
-    // Verify state is paused
-    let log = db_connection.get(&execution_id).await.unwrap();
-    assert_matches!(log.pending_state, PendingState::Paused(..));
-
-    // Unpause and verify it returns to the same state as before pausing.
-    db_connection
-        .append(
-            execution_id.clone(),
-            Version::new(3),
-            AppendRequest {
-                created_at: sim_clock.now(),
-                event: ExecutionRequest::Unpaused,
-            },
-        )
-        .await
-        .unwrap();
-
-    // Since lock_expires_at is in the future, it should be preserved
-    let log = db_connection.get(&execution_id).await.unwrap();
-    let (found_locked_by_2, found_lock_expires_at_2) = assert_matches!(log.pending_state,
-        PendingState::Locked(PendingStateLocked{ locked_by, lock_expires_at }) => (locked_by, lock_expires_at));
-    assert_eq!(lock_expires_at, found_lock_expires_at_2);
-    assert_eq!(found_locked_by, found_locked_by_2);
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!(
+        "cannot append Paused event when execution is locked; use pause_execution",
+        reason.as_ref()
+    );
 
     drop(db_connection);
     db_close.close().await;
@@ -2394,6 +2457,21 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
                             result: Ok(()),
                         },
                     },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unlocked {
+                    backoff_expires_at: sim_clock.now(),
+                    reason: StrVariant::Static("paused"),
                 },
             },
         )
