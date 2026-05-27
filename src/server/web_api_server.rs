@@ -29,8 +29,9 @@ use concepts::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, ExecutionEvent, ExecutionListPagination,
         ExecutionRequest, ExecutionWithState, FunctionNameFilter, ListExecutionsFilter,
-        LogInfoAppendRow, Pagination, PendingState, ResponseCursor, ResponseWithCursor,
-        TimeoutOutcome, Version, VersionType,
+        LogInfoAppendRow, Pagination, PendingState, PendingStateFinishedError,
+        PendingStateFinishedResultKind, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
+        Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -1287,8 +1288,32 @@ async fn execution_status_get(
             StatusCode::OK,
             &ExecutionWithStateSer::from(execution_with_state),
         ),
-        AcceptHeader::Text => execution_with_state.to_string().into_response(),
+        AcceptHeader::Text => {
+            format_execution_status_text(&execution_with_state.pending_state).into_response()
+        }
     })
+}
+
+fn format_execution_status_text(pending_state: &PendingState) -> String {
+    match pending_state {
+        PendingState::Locked(_) => "Locked".to_string(),
+        PendingState::PendingAt(pending) => format!("Pending at {}", pending.scheduled_at),
+        PendingState::BlockedByJoinSet(blocked) => format!(
+            "Blocked by {}{}",
+            blocked.join_set_id,
+            if blocked.closing { " (closing)" } else { "" }
+        ),
+        PendingState::Paused(_) => "Paused".to_string(),
+        PendingState::Finished(finished) => match finished.result_kind {
+            PendingStateFinishedResultKind::Ok => "Finished: OK".to_string(),
+            PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error) => {
+                "Finished: Error".to_string()
+            }
+            PendingStateFinishedResultKind::Err(PendingStateFinishedError::ExecutionFailure(
+                kind,
+            )) => format!("Finished: Execution failure ({kind})"),
+        },
+    }
 }
 
 /// Payload for stubbing an execution result
@@ -3813,5 +3838,84 @@ impl From<ErrorWrapper<SubmitError>> for HttpResponse {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_execution_status_text;
+    use chrono::{DateTime, Utc};
+    use concepts::{
+        ExecutionFailureKind, SupportedFunctionReturnValue,
+        storage::{
+            ExecutionRequest, PendingState, PendingStateFinished, PendingStateFinishedError,
+            PendingStateFinishedResultKind,
+        },
+    };
+
+    #[test]
+    fn text_status_for_finished_ok_and_error_is_explicit() {
+        assert_eq!(
+            format_execution_status_text(&PendingState::Finished(PendingStateFinished {
+                version: 1,
+                finished_at: parse_dt("2026-01-01T00:00:00Z"),
+                result_kind: PendingStateFinishedResultKind::Ok,
+            })),
+            "Finished: OK"
+        );
+        assert_eq!(
+            format_execution_status_text(&PendingState::Finished(PendingStateFinished {
+                version: 1,
+                finished_at: parse_dt("2026-01-01T00:00:00Z"),
+                result_kind: PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error),
+            })),
+            "Finished: Error"
+        );
+    }
+
+    #[test]
+    fn text_status_for_finished_execution_failure_is_explicit() {
+        assert_eq!(
+            format_execution_status_text(&PendingState::Finished(PendingStateFinished {
+                version: 1,
+                finished_at: parse_dt("2026-01-01T00:00:00Z"),
+                result_kind: PendingStateFinishedResultKind::Err(
+                    PendingStateFinishedError::ExecutionFailure(
+                        ExecutionFailureKind::Uncategorized,
+                    ),
+                ),
+            })),
+            "Finished: Execution failure (Uncategorized)"
+        );
+    }
+
+    #[test]
+    fn finished_event_display_is_explicit() {
+        assert_eq!(
+            ExecutionRequest::Finished {
+                retval: SupportedFunctionReturnValue::Err(None),
+                http_client_traces: None,
+            }
+            .to_string(),
+            "Finished: Error"
+        );
+        assert_eq!(
+            ExecutionRequest::Finished {
+                retval: SupportedFunctionReturnValue::ExecutionFailure(
+                    concepts::FinishedExecutionFailure {
+                        kind: ExecutionFailureKind::Uncategorized,
+                        reason: None,
+                        detail: None,
+                    },
+                ),
+                http_client_traces: None,
+            }
+            .to_string(),
+            "Finished: Execution failure (Uncategorized)"
+        );
+    }
+
+    fn parse_dt(value: &str) -> DateTime<Utc> {
+        value.parse().unwrap()
     }
 }

@@ -503,12 +503,35 @@ fn format_pending_status(pending_status: grpc_gen::ExecutionStatus) -> String {
                 closing = if closing { " (closing)" } else { "" }
             )
         }
-        Status::Finished(Finished { .. }) => {
-            // the final result will be sent in the next message, since we set `send_finished_status` to true.
-            "Finished".to_string()
+        Status::Finished(Finished { result_kind, .. }) => {
+            // The final result will be sent in the next message for `GetMode::Result`,
+            // but status mode still needs to distinguish success from failure.
+            format_finished_status(result_kind)
         }
         Status::Paused(grpc_gen::execution_status::Paused {}) => "Paused".to_string(),
         illegal @ Status::BlockedByJoinSet(_) => panic!("illegal state {illegal:?}"),
+    }
+}
+
+fn format_finished_status(result_kind: Option<grpc_gen::ResultKind>) -> String {
+    match result_kind.and_then(format_finished_result_kind) {
+        Some(result_kind) => format!("Finished: {result_kind}"),
+        None => "Finished".to_string(),
+    }
+}
+
+fn format_finished_result_kind(result_kind: grpc_gen::ResultKind) -> Option<String> {
+    use grpc_gen::result_kind::Value;
+
+    match result_kind.value {
+        Some(Value::Ok(_)) => Some("OK".to_string()),
+        Some(Value::Error(_)) => Some("Error".to_string()),
+        Some(Value::ExecutionFailureKind(kind)) => {
+            let kind = grpc_gen::ExecutionFailureKind::try_from(kind).ok()?;
+            let kind = ExecutionFailureKind::try_from(kind).ok()?;
+            Some(format!("Execution failure ({kind})"))
+        }
+        None => None,
     }
 }
 
@@ -991,10 +1014,12 @@ async fn advance(
 #[cfg(test)]
 mod tests {
     use super::{
-        execution_status_json_is_finished, pause_delays_in_replay, pause_submitted_in_replay,
+        execution_status_json_is_finished, format_finished_result_kind, format_finished_status,
+        pause_delays_in_replay, pause_submitted_in_replay,
     };
     use crate::server::web_api_server::{AdvanceRequestSer, CapturedWriteSer};
     use chrono::{DateTime, Utc};
+    use grpc::grpc_gen;
     use serde_json::json;
 
     #[test]
@@ -1009,6 +1034,53 @@ mod tests {
                 "status": "locked"
             }
         })));
+    }
+
+    #[test]
+    fn finished_status_includes_success_and_error_kind() {
+        assert_eq!(
+            format_finished_status(Some(grpc_gen::ResultKind {
+                value: Some(grpc_gen::result_kind::Value::Ok(
+                    grpc_gen::result_kind::Ok {},
+                )),
+            })),
+            "Finished: OK"
+        );
+        assert_eq!(
+            format_finished_status(Some(grpc_gen::ResultKind {
+                value: Some(grpc_gen::result_kind::Value::Error(
+                    grpc_gen::result_kind::Error {},
+                )),
+            })),
+            "Finished: Error"
+        );
+    }
+
+    #[test]
+    fn finished_status_includes_execution_failure_kind() {
+        assert_eq!(
+            format_finished_result_kind(grpc_gen::ResultKind {
+                value: Some(grpc_gen::result_kind::Value::ExecutionFailureKind(
+                    grpc_gen::ExecutionFailureKind::TimedOut.into(),
+                )),
+            }),
+            Some("Execution failure (TimedOut)".to_string())
+        );
+    }
+
+    #[test]
+    fn finished_status_falls_back_to_plain_finished_for_missing_or_unknown_result_kind() {
+        assert_eq!(format_finished_status(None), "Finished");
+        assert_eq!(
+            format_finished_status(Some(grpc_gen::ResultKind { value: None })),
+            "Finished"
+        );
+        assert_eq!(
+            format_finished_status(Some(grpc_gen::ResultKind {
+                value: Some(grpc_gen::result_kind::Value::ExecutionFailureKind(999)),
+            })),
+            "Finished"
+        );
     }
 
     #[test]
