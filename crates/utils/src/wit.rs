@@ -1000,7 +1000,7 @@ impl Display for OutputToString {
 
 #[cfg(test)]
 mod tests {
-    use crate::{wasm_tools::WasmComponent, wit::OutputToString};
+    use crate::{wasm_tools::WasmComponent, wasm_tools::strip_wasm_hash, wit::OutputToString};
     use concepts::ComponentType;
     use rstest::rstest;
     use std::path::PathBuf;
@@ -1052,7 +1052,7 @@ mod tests {
 
         let component = WasmComponent::new(wasm_path, component_type).unwrap();
         let wasm_path = PathBuf::from(wasm_path);
-        let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
+        let wasm_file = strip_wasm_hash(&wasm_path.file_name().unwrap().to_string_lossy());
         let wit = component.wit();
         // Verify that the generated WIT parses.
         let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit).unwrap();

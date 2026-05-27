@@ -3536,6 +3536,7 @@ dependencies = [
  "indexmap 2.14.0",
  "obeli-sk-concepts",
  "obeli-sk-utils",
+ "sha2 0.10.9",
 ]
 
 [[package]]

@@ -1062,9 +1062,26 @@ fn populate_ifcs_with_compatible_fns(
     Ok(vec)
 }
 
+/// Strip the content hash from a WASM filename for use in snapshot names.
+/// e.g. `test_programs_fibo_workflow_53ce9157236ba9d9_component.wasm` →
+///      `test_programs_fibo_workflow_component.wasm`
+#[cfg(test)]
+pub(crate) fn strip_wasm_hash(filename: &str) -> String {
+    let mut result = filename.to_string();
+    if let Some(pos) = result.find('_').and_then(|_| {
+        result
+            .as_bytes()
+            .windows(17)
+            .position(|w| w[0] == b'_' && w[1..].iter().all(u8::is_ascii_hexdigit))
+    }) {
+        result.replace_range(pos..pos + 17, "");
+    }
+    result
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::populate_ifcs_with_compatible_fns;
+    use super::{populate_ifcs_with_compatible_fns, strip_wasm_hash};
     use crate::wasm_tools::{ExOrIm, ProcessingKind, WasmComponent, world_interfaces};
     use concepts::ComponentType;
     use rstest::rstest;
@@ -1088,7 +1105,7 @@ pub(crate) mod tests {
         test_utils::set_up();
 
         let wasm_path = PathBuf::from(wasm_path);
-        let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
+        let wasm_file = strip_wasm_hash(&wasm_path.file_name().unwrap().to_string_lossy());
         let component = WasmComponent::new(&wasm_path, ComponentType::Workflow).unwrap();
         match exim {
             ExIm::Exports => {
@@ -1122,7 +1139,7 @@ pub(crate) mod tests {
     fn test_params(#[values(true, false)] exports: bool) {
         let wasm_path =
             PathBuf::from(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW);
-        let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
+        let wasm_file = strip_wasm_hash(&wasm_path.file_name().unwrap().to_string_lossy());
         let file = std::fs::File::open(&wasm_path).unwrap();
         let decoded = wit_parser::decoding::decode_reader(file).unwrap();
         let DecodedWasm::Component(resolve, world_id) = decoded else {
