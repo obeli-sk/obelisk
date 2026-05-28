@@ -394,7 +394,7 @@ wstd = "0.6.5"
 opentelemetry = "0.31.0"
 opentelemetry-http = "0.31.0"
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.1", default-features = false, features = [
+opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
     "tls",
     "tls-roots",
     "grpc-tonic",
