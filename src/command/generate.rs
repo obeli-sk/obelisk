@@ -577,7 +577,7 @@ async fn generate_wit_deps(
         // When `--external-only` is set, build the set of component names that have an OCI location.
         // Local components will be skipped during WIT extraction.
         let mut skipped_names: HashSet<String> = HashSet::new();
-        for c in &deployment.inner.activities_wasm {
+        for c in &deployment.activities_wasm {
             if matches!(c.common.location, ComponentLocationToml::Path(_)) {
                 skipped_names.insert(c.common.name.to_string());
             }
@@ -607,7 +607,7 @@ async fn generate_wit_deps(
                 skipped_names.insert(name.to_string());
             }
         }
-        for c in &deployment.inner.workflows {
+        for c in &deployment.workflows_wasm {
             if matches!(c.common.location, ComponentLocationToml::Path(_)) {
                 skipped_names.insert(c.common.name.to_string());
             }

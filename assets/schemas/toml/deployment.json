@@ -1167,7 +1167,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths.",
+          "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
           "anyOf": [
             {
               "$ref": "#/$defs/JsLocationToml"

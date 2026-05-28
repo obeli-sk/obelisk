@@ -34,7 +34,7 @@
         "$ref": "#/$defs/ActivityExecComponentConfigCanonical"
       }
     },
-    "workflows": {
+    "workflows_wasm": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/WorkflowWasmComponentConfigCanonical"
@@ -46,7 +46,7 @@
         "$ref": "#/$defs/WorkflowJsComponentConfigCanonical"
       }
     },
-    "webhooks": {
+    "webhooks_wasm": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/WebhookWasmComponentConfigCanonical"
@@ -72,9 +72,9 @@
     "activities_external",
     "activities_js",
     "activities_exec",
-    "workflows",
+    "workflows_wasm",
     "workflows_js",
-    "webhooks",
+    "webhooks_wasm",
     "webhooks_js"
   ],
   "$defs": {
