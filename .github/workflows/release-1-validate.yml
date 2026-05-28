@@ -90,6 +90,7 @@ jobs:
 
       - name: Validate Nix dev build
         run: nix build .#obeliskLibcNixDev
+        if: ${{ !contains(inputs.extra-args, '--no-verify') }}
 
   call_child:
     needs: validate
