@@ -92,3 +92,16 @@ jobs:
 
       - name: cargo clippy
         run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings
+
+  nix-dev-build:
+    name: nix build obeliskLibcNixDev
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build nix dev package
+        run: nix build .#obeliskLibcNixDev

@@ -64,6 +64,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - part: cargo-hash
+            artifact: pr-fix-cargo-hash
+            commit_message: "chore: Update cargoHash"
+            needs_postgres: "false"
+            needs_rust_cache: "false"
           - part: schemas
             artifact: pr-fix-schemas
             commit_message: "chore: Update schemas"
@@ -130,6 +135,47 @@ jobs:
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
         run: |
           case "${{ matrix.part }}" in
+            cargo-hash)
+              python3 - <<'PY'
+              import re
+              from pathlib import Path
+              path = Path("flake.nix")
+              text = path.read_text()
+              new_text, count = re.subn(r'cargoHash = .*?;', 'cargoHash = pkgs.lib.fakeHash;', text, count=1)
+              if count != 1:
+                  raise SystemExit(f"expected one cargoHash assignment in {path}, found {count}")
+              path.write_text(new_text)
+              PY
+
+              set +e
+              nix build -L .#obeliskLibcNixDev > /tmp/cargo-hash.log 2>&1
+              status=$?
+              set -e
+
+              if [ "$status" -eq 0 ]; then
+                echo "::error::Expected fake cargoHash build to fail with a hash mismatch."
+                exit 1
+              fi
+
+              computed_hash="$(sed -n 's/.*got:[[:space:]]*\\(sha256-[A-Za-z0-9+/=]*\\).*/\\1/p' /tmp/cargo-hash.log | tail -n1)"
+              if [ -z "$computed_hash" ]; then
+                cat /tmp/cargo-hash.log
+                echo "::error::Could not extract computed cargoHash from nix build output."
+                exit 1
+              fi
+
+              python3 - "$computed_hash" <<'PY'
+              import re
+              import sys
+              from pathlib import Path
+              path = Path("flake.nix")
+              text = path.read_text()
+              new_text, count = re.subn(r'cargoHash = .*?;', f'cargoHash = "{sys.argv[1]}";', text, count=1)
+              if count != 1:
+                  raise SystemExit(f"expected one cargoHash assignment in {path}, found {count}")
+              path.write_text(new_text)
+              PY
+              ;;
             schemas)
               nix develop --command scripts/update-schemas.sh
               ;;
@@ -188,7 +234,7 @@ jobs:
 
       - name: Apply patches
         run: |
-          for part in schemas snapshots clippy; do
+          for part in cargo-hash schemas snapshots clippy; do
             patch_file="/tmp/pr-fix-artifacts/pr-fix-${part}/update.patch"
             if [ ! -f "${patch_file}" ]; then
               echo "No patch for ${part}"
