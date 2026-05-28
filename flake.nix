@@ -15,22 +15,6 @@
         let
           overlays = [
             (import rust-overlay)
-            (
-              final: prev: {
-                rustPlatform = prev.rustPlatform // {
-                  importCargoLock =
-                    args:
-                    prev.rustPlatform.importCargoLock (
-                      args
-                      // {
-                        extraRegistries = (args.extraRegistries or { }) // {
-                          "https://github.com/rust-lang/crates.io-index" = "https://static.crates.io/crates";
-                        };
-                      }
-                    );
-                };
-              }
-            )
           ];
 
           pkgs = import nixpkgs {
