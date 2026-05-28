@@ -86,6 +86,11 @@ jobs:
             crates/webhook-js-runtime \
             assets/webhook-js-runtime-version.txt
 
+      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
+
+      - name: Validate Nix dev build
+        run: nix build .#obeliskLibcNixDev
+
   call_child:
     needs: validate
     uses: ./.github/workflows/release-2-cargo-publish.yml
