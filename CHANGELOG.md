@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.1](https://github.com/obeli-sk/obelisk/compare/v0.38.0...v0.38.1)
+
+### Fixed
+
+- Use fetchCargoVendor for Nix cargo deps - ([1ec52d0](https://github.com/obeli-sk/obelisk/commit/1ec52d067855ac8485da7ad2674e00bb41342234))
+
+### Changed
+
+- *(toml)* Make `cancel_watcher` mandatory, removing `enabled` property - ([a30ef54](https://github.com/obeli-sk/obelisk/commit/a30ef54d451ce2467ec822e9e360ea51e53d1d02))
+
+
 ## [0.38.0](https://github.com/obeli-sk/obelisk/compare/v0.37.7...v0.38.0)
 
 This release adds stepwise execution debugging and recovery with `execution replay` / `execution advance`,

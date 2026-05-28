@@ -105,7 +105,7 @@
                 pname = "obelisk";
                 inherit version;
                 src = ./.;
-                cargoHash = "sha256-2mTU74CWlXvS7ctdcZzvY/cQuomRGnbp1jv1Y2D8WGw=";
+                cargoHash = "sha256-3F2uq7QysY6z6GM7UI3u8L4aFG8IY2yMI/EFQurKMBo=";
 
                 nativeBuildInputs = with pkgs; [
                   (rust-bin.fromRustupToolchainFile rustToolchainToml)
