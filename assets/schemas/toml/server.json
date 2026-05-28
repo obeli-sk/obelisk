@@ -581,10 +581,6 @@
     "CancelWatcherTomlConfig": {
       "type": "object",
       "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
         "tick_sleep": {
           "$ref": "#/$defs/DurationConfig",
           "default": {

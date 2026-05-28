@@ -1816,13 +1816,8 @@ async fn spawn_tasks_and_threads(
         None
     };
 
-    let cancel_watcher = if cancel_watcher.enabled {
-        Some(
-            cancel_registry.spawn_cancel_watcher(db_pool.clone(), cancel_watcher.tick_sleep.into()),
-        )
-    } else {
-        None
-    };
+    let cancel_watcher =
+        cancel_registry.spawn_cancel_watcher(db_pool.clone(), cancel_watcher.tick_sleep.into());
 
     server_compiled_linked
         .create_missing_cron_seeds(&db_pool, deployment_id)
@@ -1901,13 +1896,11 @@ async fn spawn_tasks_and_threads(
 struct ServerInit {
     server_verified: ServerVerified,
     deployment_ctx: DeploymentContextHandle,
-    // deployment_id: DeploymentId,
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
     engines: Engines,
-    // exec_join_handles: Vec<ExecutorTaskHandle>,
     timers_watcher: Option<AbortOnDropHandle>,
-    cancel_watcher: Option<AbortOnDropHandle>,
+    cancel_watcher: AbortOnDropHandle,
     http_servers_handles: Vec<AbortOnDropHandle>,
     epoch_ticker: EpochTicker,
     log_db_forarder: AbortOnDropHandle,
