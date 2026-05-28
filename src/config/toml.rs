@@ -116,7 +116,7 @@ impl DeploymentToml {
         deployment_dir: &std::path::Path,
     ) -> Result<DeploymentTomlValidated, anyhow::Error> {
         self.expand_deployment_dir_prefix(deployment_dir);
-        // Resolve optional names from FFQN and drain vectors out of `self`.
+
         let activities_js = Self::resolve_names(std::mem::take(&mut self.activities_js))?;
         let activities_exec = Self::resolve_names(std::mem::take(&mut self.activities_exec))?;
         let activities_stub = Self::resolve_stub_names(std::mem::take(&mut self.activities_stub))?;
@@ -342,7 +342,7 @@ impl DeploymentToml {
             }
         }
         for c in &mut self.activities_js {
-            if let JsLocationToml::Path(p) = &mut c.location {
+            if let Some(JsLocationToml::Path(p)) = &mut c.location {
                 Self::expand_deployment_dir(p, false, deployment_dir);
             }
         }
@@ -356,7 +356,7 @@ impl DeploymentToml {
             expand_backtrace(&mut c.backtrace);
         }
         for c in &mut self.workflows_js {
-            if let JsLocationToml::Path(p) = &mut c.location {
+            if let Some(JsLocationToml::Path(p)) = &mut c.location {
                 Self::expand_deployment_dir(p, false, deployment_dir);
             }
         }
@@ -365,7 +365,7 @@ impl DeploymentToml {
             expand_backtrace(&mut c.backtrace);
         }
         for c in &mut self.webhooks_js {
-            if let JsLocationToml::Path(p) = &mut c.location {
+            if let Some(JsLocationToml::Path(p)) = &mut c.location {
                 Self::expand_deployment_dir(p, false, deployment_dir);
             }
         }
@@ -1609,7 +1609,12 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) name: Option<ConfigName>,
     /// Location of the JavaScript source file.
     /// Supports local file paths and OCI registry references (`oci://...`).
-    pub(crate) location: JsLocationToml,
+    #[serde(default)]
+    pub(crate) location: Option<JsLocationToml>,
+    /// Inline JavaScript source embedded in the TOML.
+    /// Exactly one of `location` or `content` must be set.
+    #[serde(default)]
+    pub(crate) content: Option<String>,
     /// Content digest of the JS source file.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
@@ -2023,7 +2028,12 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) name: Option<ConfigName>,
     /// Location of the JavaScript source file.
     /// Supports local file paths and OCI registry references (`oci://...`).
-    pub(crate) location: JsLocationToml,
+    #[serde(default)]
+    pub(crate) location: Option<JsLocationToml>,
+    /// Inline JavaScript source embedded in the TOML.
+    /// Exactly one of `location` or `content` must be set.
+    #[serde(default)]
+    pub(crate) content: Option<String>,
     /// Content digest of the JS source file.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
@@ -2623,8 +2633,8 @@ async fn resolve_local_refs_to_canonical(
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
     for (a, name) in deployment.activities_js {
         activities_js.push(ActivityJsComponentConfigCanonical {
+            location: resolve_js_toml_to_canonical(a.location, a.content, name.to_string()).await?,
             name,
-            location: resolve_js_to_canonical(&a.location).await?,
             content_digest: a.content_digest,
             component_digest: a.component_digest,
             ffqn: a.ffqn,
@@ -2660,8 +2670,8 @@ async fn resolve_local_refs_to_canonical(
     let mut workflows_js = Vec::with_capacity(deployment.workflows_js.len());
     for (w, name) in deployment.workflows_js {
         workflows_js.push(WorkflowJsComponentConfigCanonical {
+            location: resolve_js_toml_to_canonical(w.location, w.content, name.to_string()).await?,
             name,
-            location: resolve_js_to_canonical(&w.location).await?,
             content_digest: w.content_digest,
             component_digest: w.component_digest,
             ffqn: w.ffqn,
@@ -2693,8 +2703,9 @@ async fn resolve_local_refs_to_canonical(
     let mut webhooks_js = Vec::with_capacity(deployment_inner.webhooks_js.len());
     for w in deployment_inner.webhooks_js {
         webhooks_js.push(webhook::WebhookJsComponentConfigCanonical {
+            location: resolve_js_toml_to_canonical(w.location, w.content, w.name.to_string())
+                .await?,
             name: w.name,
-            location: resolve_js_to_canonical(&w.location).await?,
             content_digest: w.content_digest,
             http_server: w.http_server,
             routes: w.routes,
@@ -2799,15 +2810,23 @@ async fn resolve_local_refs_to_canonical(
     })
 }
 
-async fn resolve_js_to_canonical(location: &JsLocationToml) -> anyhow::Result<JsLocationCanonical> {
-    match location {
-        JsLocationToml::Path(path) => {
-            let file_name = std::path::Path::new(path)
+async fn resolve_js_toml_to_canonical(
+    location: Option<JsLocationToml>,
+    content: Option<String>,
+    default_file_stem: String,
+) -> anyhow::Result<JsLocationCanonical> {
+    match (location, content) {
+        (None, Some(content)) => Ok(JsLocationCanonical::Content {
+            content,
+            file_name: format!("{default_file_stem}.js"),
+        }),
+        (Some(JsLocationToml::Path(path)), None) => {
+            let file_name = std::path::Path::new(&path)
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or(path)
+                .unwrap_or(&path)
                 .to_string();
-            let full_path = PathBuf::from(path);
+            let full_path = PathBuf::from(&path);
             if !full_path.exists() {
                 bail!("file does not exist: {full_path:?}");
             }
@@ -2816,9 +2835,12 @@ async fn resolve_js_to_canonical(location: &JsLocationToml) -> anyhow::Result<Js
                 .with_context(|| format!("cannot read JS file {full_path:?}"))?;
             Ok(JsLocationCanonical::Content { content, file_name })
         }
-        JsLocationToml::Oci(reference) => Ok(JsLocationCanonical::Oci {
+        (Some(JsLocationToml::Oci(reference)), None) => Ok(JsLocationCanonical::Oci {
             image: reference.whole(),
         }),
+        (None, None) | (Some(_), Some(_)) => {
+            bail!("exactly one of `location` or `content` must be set for JS components")
+        }
     }
 }
 
@@ -3303,8 +3325,13 @@ pub(crate) mod webhook {
     pub(crate) struct WebhookJsComponentConfigToml {
         pub(crate) name: ConfigName,
         /// Location of the JavaScript source file.
-        /// Supports local file paths.
-        pub(crate) location: JsLocationToml,
+        /// Supports local file paths and OCI registry references (`oci://...`).
+        #[serde(default)]
+        pub(crate) location: Option<JsLocationToml>,
+        /// Inline JavaScript source embedded in the TOML.
+        /// Exactly one of `location` or `content` must be set.
+        #[serde(default)]
+        pub(crate) content: Option<String>,
         /// Content digest of the JS source file.
         #[serde(default)]
         #[schemars(with = "Option<String>")]

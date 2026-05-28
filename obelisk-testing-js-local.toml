@@ -1,5 +1,9 @@
 [[activity_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/add.js"
+content = '''
+export default function add(a, b) {
+    return a + b;
+}
+'''
 ffqn = "testing:integration/activity.add"
 params = [
   { name = "a", type = "u32" },
@@ -9,7 +13,15 @@ max_retries = 0
 return_type = "result<u32>"
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/add_via_activity.js"
+content = '''
+import * as activity from 'testing:integration/activity';
+
+export default function call_activity(a, b) {
+    const result = activity.add(a, b);
+    console.log('Got result:', result);
+    return result;
+}
+'''
 ffqn = "testing:integration/workflow-add-via-activity.add-via-activity"
 params = [
   { name = "a", type = "u32" },
@@ -99,7 +111,16 @@ return_type = "result<string, string>"
 
 [[webhook_endpoint_js]]
 name = "webhook_js_hello"
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/hello.js"
+content = '''
+export default function handle(request) {
+    console.info("hello request", request);
+    const execId = obelisk.executionIdCurrent();
+    return new Response("Hello from JS webhook!", {
+        status: 200,
+        headers: { "content-type": "text/plain", "x-execution-id": execId },
+    });
+}
+'''
 routes = [{ methods = ["GET"], route = "/hello" }]
 
 [[webhook_endpoint_js]]
