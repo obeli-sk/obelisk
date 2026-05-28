@@ -7,11 +7,14 @@ on:
         description: "The ref (branch or SHA) to obtain the tag"
         required: false
         type: string
-  workflow_run:
-    workflows:
-      - release-4-push-docker-image
-    types:
-      - completed
+        default: "latest"
+  workflow_call:
+    inputs:
+      ref:
+        description: "The ref (branch or SHA) to obtain the tag"
+        required: false
+        type: string
+        default: "latest"
 
 defaults:
   run:
@@ -21,7 +24,6 @@ jobs:
   verify-docker-image:
     name: verify-${{ matrix.image_tag }}
     runs-on: ubuntu-24.04
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -32,8 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          # Use the ref if provided, otherwise obtain the parent workflow branch, defaults to main.
-          ref: ${{ github.event.inputs.ref || github.event.workflow_run.head_branch }}
+          ref: ${{ inputs.ref }}
 
       - id: git-info
         run: |
