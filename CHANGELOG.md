@@ -6,6 +6,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0](https://github.com/obeli-sk/obelisk/compare/v0.37.7...v0.38.0)
+
+This release adds stepwise execution debugging and recovery with `execution replay` / `execution advance`,
+including support for creating paused executions and pausing delays or submitted child executions while advancing.
+
+This release also adds first-class native executable activities in `deployment.toml`:
+
+```toml
+[[activity_exec]]
+ffqn = "myapp:ops/tasks.run"
+location = "${DEPLOYMENT_DIR}/scripts/run-task.sh"
+params = [{ name = "name", type = "string" }]
+return_type = "result<string, string>"
+env_vars = ["PATH", { key = "MODE", value = "prod" }]
+
+[activity_exec.secrets]
+env_vars = [{ name = "API_TOKEN", value = "${HOST_API_TOKEN}" }]
+```
+Result of exec activity execution is read from the process's stdout, which must be encoded as JSON.
+Both stdout and stderr are collected and can be viewed using `obelisk execution logs`.
+Because of this change, the more limited preopened-directory/process support has been removed from WASM activities.
+
+Deployment configuration is broader and more self-contained: JavaScript components can now use inline `content` or
+OCI-backed `location`s.
+It also includes several user-visible CLI and API changes, including `execution status` / `execution result`,
+more detailed failure reporting and logs, and breaking
+protocol/storage changes such as the new `AdvanceExecution` RPC, schema migrations.
+
+
+### Added
+
+- *(activity)* Interrupt activities in `pause` RPC - ([62d1d76](https://github.com/obeli-sk/obelisk/commit/62d1d76fbec8f830654da344c3d5ac18e8fe9691))
+- *(activity_exec)* Stream std streams, only apply limit to stdout - ([b5450d0](https://github.com/obeli-sk/obelisk/commit/b5450d0a3bb7c3bac37c6169b76f900c15a4ddf0))
+- *(advance)* Allow changing the paused state of created executions - ([8b17890](https://github.com/obeli-sk/obelisk/commit/8b1789049c3c190819b6adebe3b70b7df3b084d0))
+- *(advance)* Allow sending trimmed events - ([df52922](https://github.com/obeli-sk/obelisk/commit/df5292220c0deb7ea3b5a58a4208c2b5ab8f6c31))
+- *(cli)* Show std streams in `execution logs` unless disabled - ([ecd0e63](https://github.com/obeli-sk/obelisk/commit/ecd0e639ab4ed5249757c7124a9654e7e292e568))
+- *(exec,oci,toml)* Add OCI support for exec activities - ([81734de](https://github.com/obeli-sk/obelisk/commit/81734de2317563d8c870b257d47d705b320048d9))
+- *(grpc)* [**breaking**] Implement `AdvanceExecution` RPC - ([8ce19f5](https://github.com/obeli-sk/obelisk/commit/8ce19f59e1a306e03d111b29db6e13d5f2d94ad0))
+- *(grpc,webapi)* Add `version` to replay response - ([d65aa44](https://github.com/obeli-sk/obelisk/commit/d65aa44b64e7931a6dd1499d23df2712a5f4ff92))
+- *(grpc,webapi)* Extend replay response with next events and return value - ([9be37fd](https://github.com/obeli-sk/obelisk/commit/9be37fd8044dfeb0e0f46082ade99a85ac173d09))
+- *(grpc,webapi,cli)* Allow creation of paused executions - ([3a91e1b](https://github.com/obeli-sk/obelisk/commit/3a91e1bc567cf53c0b89312d40f8d391ae517e06))
+- *(grpc,webapi,cli,db)* [**breaking**] Allow pausing and unpausing of delay requests - ([47296ef](https://github.com/obeli-sk/obelisk/commit/47296ef0b5f822d005a169983f31d9639857b8d2))
+- *(pg,sqlite)* Persist component metadada per deployment - ([e2db54a](https://github.com/obeli-sk/obelisk/commit/e2db54af8f687519b59d28d2848066765c68ba64))
+- *(toml)* Allow `content` for JS components - ([c1e2c0b](https://github.com/obeli-sk/obelisk/commit/c1e2c0b7515cee92446ca4b585b8542058ad62bd))
+- *(toml)* Add optional per-executor task limiter - ([63b8b0b](https://github.com/obeli-sk/obelisk/commit/63b8b0bd8ed90b1810a60b84f518ce002de58d45))
+- *(webapi,cli)* Add `replay`, `advance` - ([35233a3](https://github.com/obeli-sk/obelisk/commit/35233a3eb9c9c6751ce226272a2eba114df30b7c))
+- *(webhook-js)* Add support for direct and `-schedule` imports - ([e178a0b](https://github.com/obeli-sk/obelisk/commit/e178a0b9ecd75be9349f22be8e0aed4170e9bd3c))
+- *(wit,workflow_js)* Add `sleep-named-bt`, allowing to pass name to `sleep` - ([6772e8e](https://github.com/obeli-sk/obelisk/commit/6772e8ecbec0f2f672299372612bd77bfe0e0558))
+- *(workflow-js)* Add stub imports - ([38d6511](https://github.com/obeli-sk/obelisk/commit/38d6511ca2c1f5a16411ed8588eef3f153f82e6a))
+- *(workflow-js)* Add support for workflow extension imports - ([8d2b7a9](https://github.com/obeli-sk/obelisk/commit/8d2b7a914f231dc6cb3c81a60d150accae334e11))
+- *(workflow-js)* Add support for `-schedule` imports - ([f8f1832](https://github.com/obeli-sk/obelisk/commit/f8f1832fbd9c7b77041ccf1050cf9167be86879e))
+- *(workflow-js)* Enable star imports - ([c055875](https://github.com/obeli-sk/obelisk/commit/c055875500b5f54060840c44a3be9b1fc258ab38))
+- *(workflow-js)* Add support for idiomatic direct child call - ([e919857](https://github.com/obeli-sk/obelisk/commit/e91985711056e07f30e43c0209b1d767e44a0163))
+- *(workflow-js)* Add `obelisk.executionIdCurrent()` - ([7d923ff](https://github.com/obeli-sk/obelisk/commit/7d923ff3d57d373039a43c3733ef2812a3d7500c))
+- Implement `activity_exec` - ([1604d1a](https://github.com/obeli-sk/obelisk/commit/1604d1a1e4be6324da8163089d5854a33aa8e5eb))
+- *(db)* [**breaking**] Manage database schemas using Refinery - ([d85cfdf](https://github.com/obeli-sk/obelisk/commit/d85cfdf4324638835f57124cdf6a86617757bc10))
+- *(workflow)* Add `fn advance` - ([f8db923](https://github.com/obeli-sk/obelisk/commit/f8db92365a5cf0dcf0f895391e914b134931fa33))
+
+### Fixed
+- *(cli,js,exec)* Handle multiple functions of same interface in `wit-deps` - ([c80af7b](https://github.com/obeli-sk/obelisk/commit/c80af7b1b3e3bdb1d14fb011b5ce939362e93083))
+
+### Changed
+
+- *(advance)* Capture and send app logs - ([5186c87](https://github.com/obeli-sk/obelisk/commit/5186c877fc2517f31ade8e65ea2fca82189acf06))
+- *(advance)* Apply cancellations during `advance` - ([c8f91c5](https://github.com/obeli-sk/obelisk/commit/c8f91c583131661a0796dee543e1be377971b463))
+- *(ci)* Add `--json` flag to `generate` subcommands - ([a358a95](https://github.com/obeli-sk/obelisk/commit/a358a95032aeb1e4babcbdff1a11517c3d4520c6))
+- *(cli)* Show execution errors and failures in `execution status` - ([210a49c](https://github.com/obeli-sk/obelisk/commit/210a49c1326c563c1d59bb8cc586175017a42f6e))
+- *(cli)* Add `--pause-all` to `execution advance` - ([044bcdd](https://github.com/obeli-sk/obelisk/commit/044bcddaa8b0018ccaaa575277b5fe689d5c22ac))
+- *(cli)* Add `--pause-delays` flag to `execution advance` - ([69ac356](https://github.com/obeli-sk/obelisk/commit/69ac356c525f64f73b4787e92a3219108bcac01b))
+- *(cli)* Let `generate prompt` accept unquoted arguments - ([f57d4d7](https://github.com/obeli-sk/obelisk/commit/f57d4d745c0dd05b2cfa39f9dfcd15a44aea9ead))
+- *(cli)* Simplify `generate prompt` - ([fbc4af2](https://github.com/obeli-sk/obelisk/commit/fbc4af2dd237eba65c120a8a843e712a4e9d9cbb))
+- *(cli)* Use `DeploymentId` for `deployment show` - ([561e443](https://github.com/obeli-sk/obelisk/commit/561e4432df0b638038a62eb4676d1fbb887426f1))
+- *(cli)* Make all flags use snake_case, placeholders all caps - ([8f7f36f](https://github.com/obeli-sk/obelisk/commit/8f7f36f4a2be4e81f4cee1993b14c79ddb50eebb))
+- *(cli)* [**breaking**] Unify `generate` overwrite flags under `--force` - ([f8b1a30](https://github.com/obeli-sk/obelisk/commit/f8b1a301c9fcf97d5e285b091fa7ceb7cc8ac0e3))
+- *(cli)* Split `execution get` to `status` and `result` - ([1420a6a](https://github.com/obeli-sk/obelisk/commit/1420a6ab3766b56701572cba73a0e93e42f39e7c))
+- *(cli)* Add `--trim` option to `execution advance` - ([c5b9d8c](https://github.com/obeli-sk/obelisk/commit/c5b9d8c90ad8593190eebec0fd3626e8d559cad9))
+- *(cli)* Fix pagination parsing when plaintext logs contain `\n` - ([dd57bfa](https://github.com/obeli-sk/obelisk/commit/dd57bfac7d83580bcadcd956299921eee4dfb451))
+- *(db)* [**breaking**] Add `_wasm` suffixes to workflows and webhooks, simplify uniquensss checks - ([065656e](https://github.com/obeli-sk/obelisk/commit/065656e263e1575ebc89e5f593a16598dd787cb0))
+- *(db)* [**breaking**] Rename execution error to execution failure - ([e7ef62d](https://github.com/obeli-sk/obelisk/commit/e7ef62d9959b19747c47c4fcc26bdbf09052d70f))
+- *(db)* Remove `PendingStatePaused::Locked` - ([4fe1e73](https://github.com/obeli-sk/obelisk/commit/4fe1e73af3452eb4fef4184f7e73ff8927d5e14a))
+- *(db)* Append `Unlocked` on pausing a locked exe, ignore `Paused(Locked)` in `get_expired_timers` - ([c6aab25](https://github.com/obeli-sk/obelisk/commit/c6aab25af9d9903205545337e46661749691ee26))
+- *(db)* Fix paused execution creation - ([49b7c49](https://github.com/obeli-sk/obelisk/commit/49b7c49403e93a508cb123cf05a3aefe8430262c))
+- *(exec)* Rename `task_limiter` to `task_limiter_global` - ([276ff7f](https://github.com/obeli-sk/obelisk/commit/276ff7fceb89dd13640db28a105f46d9f99268c5))
+- *(exec)* Remove exposing `PATH` when `env_vars` is empty - ([3de69a2](https://github.com/obeli-sk/obelisk/commit/3de69a27b01715f23c0c5bd58c9cf06659776589))
+- *(grpc)* Add `ExecutionFunctionFilter` to fix searching by package with version - ([3e59cab](https://github.com/obeli-sk/obelisk/commit/3e59cabc66ccfbac852c00d95edbe419b2f16a5a))
+- *(grpc)* Make it no-op when a delay is already (un)paused - ([a4874e6](https://github.com/obeli-sk/obelisk/commit/a4874e65a4861aedb597f1d54cb3d26ef51ad4bb))
+- *(grpc)* Split `Cancel` to `CancelActivity` and `CancelDelay` - ([d758da4](https://github.com/obeli-sk/obelisk/commit/d758da451a873dcbe7202dd3c691a04656cab2c7))
+- *(grpc)* Send `finished_result` in `AdvanceExecutionResponse` - ([3902070](https://github.com/obeli-sk/obelisk/commit/3902070dea6d799eb74d05d6abca1088105ec0f1))
+- *(grpc,webapi)* Add optional `deployment_id` to the WIT query - ([8f1c6ca](https://github.com/obeli-sk/obelisk/commit/8f1c6ca54400a207c7f01cc519e0043f6d9c05ac))
+- *(grpc,webapi)* Collect backtraces for captured `AppendStubResponse` - ([8c0e4b6](https://github.com/obeli-sk/obelisk/commit/8c0e4b639a5534bf6a96a27918351ad1814c0cf3))
+- *(grpc,webapi)* Expose captured writes in replay failed error - ([eb2e43d](https://github.com/obeli-sk/obelisk/commit/eb2e43dcfc630562453d1a0e70a46fc407231877))
+- *(grpc,webapi)* Send finished events, remove retval and version from replay response - ([b0d7e42](https://github.com/obeli-sk/obelisk/commit/b0d7e423c3f76fecce9e2278ec38d03f8149ef85))
+- *(js)* [**breaking**] Unify JS result APIs — return ok value, throw err value - ([89968e9](https://github.com/obeli-sk/obelisk/commit/89968e9ea9b5b3d4f699b28292c4cc059b8fa949))
+- *(js,exec)* Make unit type accept any response - ([068eb4c](https://github.com/obeli-sk/obelisk/commit/068eb4c83ed8bed530b5404b16d16737f9ba3a7d))
+- *(replay)* Send captured writes to persist execution errors in `ReplayError::ReplayFailed` - ([04f4343](https://github.com/obeli-sk/obelisk/commit/04f4343167b362571ca52c54e6c4fa364caa4511))
+- *(replay)* Capture and persist `FatalError`s as execution errors - ([da5bca4](https://github.com/obeli-sk/obelisk/commit/da5bca4e0772a58affe0c912b3d13f53494c8b82))
+- *(replay)* Capture WASM backtrace - ([4c6d2bf](https://github.com/obeli-sk/obelisk/commit/4c6d2bf347531e01069b3b2391c5dee427eb80b5))
+- *(replay)* Do not append `Finished` event on `ReplayKind::Finished` - ([3348e75](https://github.com/obeli-sk/obelisk/commit/3348e75f2b54826ac3593e95d5970a2afb5e2822))
+- *(replay)* Interrupt replay in `get_stub_create_request` instead of flush - ([f0a35a8](https://github.com/obeli-sk/obelisk/commit/f0a35a869f3ae6505f9f1ccf7c250bfe383e1744))
+- *(toml)* Honor `--missing-env-vars` when verifying exec with secrets - ([6589a78](https://github.com/obeli-sk/obelisk/commit/6589a78e553d6c886aca93ccf8f213596dc6c3ef))
+- *(toml)* Make names optional for inline stub and external activities - ([2a6cab8](https://github.com/obeli-sk/obelisk/commit/2a6cab8a7991fe13a42fb3142fd322ddd0b1298d))
+- *(toml)* Make name optional for `workflow_js`,`activity_js`,`activity_exec` - ([203ec9a](https://github.com/obeli-sk/obelisk/commit/203ec9a63b65fc0cac425ec49fc9ac3a221885c3))
+- *(webapi)* Show error / execution failure in `/events` - ([8249a1c](https://github.com/obeli-sk/obelisk/commit/8249a1cf02f88b7a49afaa8fcfb8e378abcece24))
+- *(webapi)* Show error / failure in plaintext execution status response - ([1b23900](https://github.com/obeli-sk/obelisk/commit/1b2390071b2ae149d19dfc6388ba06e84f58b675))
+- *(webapi)* [**breaking**] Use `error` instead of `err` for retval - ([0adaef6](https://github.com/obeli-sk/obelisk/commit/0adaef6b80bfa6f96b8a8c61c00925b0e652df28))
+- *(webhook)* Gracefully shutdown connection on hot redeply - ([9f6041f](https://github.com/obeli-sk/obelisk/commit/9f6041ff4824530a7aee668bf68ea1b73c208847))
+- *(wit)* Bump `obelisk_webhook` to 5.2.0, add `execution-id-current` - ([6a46e14](https://github.com/obeli-sk/obelisk/commit/6a46e149b62f3bc7339cdc76d5c7d8a708cd91a2))
+- *(wit)* Bump `workflow-support` to 5.1.0 - ([2302566](https://github.com/obeli-sk/obelisk/commit/23025664081747ea4e763a1ae6038718c2b7209e))
+- *(workflow-js)* Make `joinNextTry` idiomatic - ([1026d31](https://github.com/obeli-sk/obelisk/commit/1026d31965e6fad234afe7e07a0024c1b9b6e617))
+- *(workflow-js,replay)* Transform `AppendFinished` to user specified type - ([ecf16cd](https://github.com/obeli-sk/obelisk/commit/ecf16cd5108e4dcd45615034b0195e73149e3e5b))
+- Drop `Option` from `ExecutionMetadata` - ([ffdc544](https://github.com/obeli-sk/obelisk/commit/ffdc5441973b060f526cee9c1a51ea787463b885))
+
+### Removed
+
+- *(activity_wasm)* [**breaking**] Remove preopened dir and process API - ([33ab372](https://github.com/obeli-sk/obelisk/commit/33ab37259c4976d11881bc44e513ee3490d8820b))
+
+
 ## [0.37.7](https://github.com/obeli-sk/obelisk/compare/v0.37.6...v0.37.7)
 
 ### Added
