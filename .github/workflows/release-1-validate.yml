@@ -14,7 +14,7 @@ on:
         type: string
         default: "latest"
       extra-args:
-        description: "Extra args to be used with cargo publish e.g. --no-verify"
+        description: "Extra args to be used with cargo publish e.g. `--dry-run` or `--no-verify`"
         type: string
         required: false
         default: ""
@@ -30,7 +30,7 @@ on:
         type: string
         default: "latest"
       extra-args:
-        description: "Extra args to be used with cargo publish e.g. --no-verify"
+        description: "Extra args to be used with cargo publish e.g. `--dry-run` or `--no-verify`"
         type: string
         required: false
         default: ""
