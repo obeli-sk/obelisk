@@ -552,7 +552,23 @@
         },
         "location": {
           "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
-          "$ref": "#/$defs/JsLocationToml"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsLocationToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "Inline JavaScript source embedded in the TOML.\nExactly one of `location` or `content` must be set.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "content_digest": {
           "description": "Content digest of the JS source file.",
@@ -645,7 +661,6 @@
       },
       "additionalProperties": false,
       "required": [
-        "location",
         "ffqn"
       ]
     },
@@ -965,7 +980,23 @@
         },
         "location": {
           "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
-          "$ref": "#/$defs/JsLocationToml"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsLocationToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "Inline JavaScript source embedded in the TOML.\nExactly one of `location` or `content` must be set.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "content_digest": {
           "description": "Content digest of the JS source file.",
@@ -1037,7 +1068,6 @@
       },
       "additionalProperties": false,
       "required": [
-        "location",
         "ffqn"
       ]
     },
@@ -1137,8 +1167,24 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "description": "Location of the JavaScript source file.\nSupports local file paths.",
-          "$ref": "#/$defs/JsLocationToml"
+          "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsLocationToml"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "description": "Inline JavaScript source embedded in the TOML.\nExactly one of `location` or `content` must be set.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "content_digest": {
           "description": "Content digest of the JS source file.",
@@ -1191,7 +1237,6 @@
       "additionalProperties": false,
       "required": [
         "name",
-        "location",
         "routes"
       ]
     },

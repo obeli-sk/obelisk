@@ -502,18 +502,15 @@ pub(crate) async fn push(
     Ok(())
 }
 
-/// Push a JS source file to an OCI registry.
+/// Push a JS source string to an OCI registry.
 pub(crate) async fn push_js(
-    js_path: PathBuf,
+    js_source: String,
     reference: &Reference,
     metadata: &ComponentMetadataAnnotation,
 ) -> Result<(), anyhow::Error> {
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
     }
-    let js_source = tokio::fs::read_to_string(&js_path)
-        .await
-        .with_context(|| format!("cannot read JS file {js_path:?}"))?;
 
     let layer = oci_client::client::ImageLayer::new(
         js_source.into_bytes(),

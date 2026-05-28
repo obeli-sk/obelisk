@@ -577,7 +577,7 @@ async fn generate_wit_deps(
         // When `--external-only` is set, build the set of component names that have an OCI location.
         // Local components will be skipped during WIT extraction.
         let mut skipped_names: HashSet<String> = HashSet::new();
-        for c in &deployment.inner.activities_wasm {
+        for c in &deployment.activities_wasm {
             if matches!(c.common.location, ComponentLocationToml::Path(_)) {
                 skipped_names.insert(c.common.name.to_string());
             }
@@ -597,25 +597,27 @@ async fn generate_wit_deps(
             }
         }
         for (c, name) in &deployment.activities_js {
-            if matches!(c.location, JsLocationToml::Path(_)) {
+            if c.content.is_some() || matches!(c.location, Some(JsLocationToml::Path(_))) {
                 skipped_names.insert(name.to_string());
             }
         }
-        // Exec activities are always local — skip them from WIT generation.
-        for (_, name) in &deployment.activities_exec {
-            skipped_names.insert(name.to_string());
+        for (config, name) in &deployment.activities_exec {
+            if config.content.is_some() || matches!(config.location, Some(JsLocationToml::Path(_)))
+            {
+                skipped_names.insert(name.to_string());
+            }
         }
-        for c in &deployment.inner.workflows {
+        for c in &deployment.workflows_wasm {
             if matches!(c.common.location, ComponentLocationToml::Path(_)) {
                 skipped_names.insert(c.common.name.to_string());
             }
         }
         for (c, name) in &deployment.workflows_js {
-            if matches!(c.location, JsLocationToml::Path(_)) {
+            if c.content.is_some() || matches!(c.location, Some(JsLocationToml::Path(_))) {
                 skipped_names.insert(name.to_string());
             }
         }
-        // webhooks are skipped in any case
+        // webhooks are skipped in any case - nothing can depend on their WIT definition
         skipped_names
     } else {
         HashSet::new()

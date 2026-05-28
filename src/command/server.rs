@@ -2169,7 +2169,7 @@ impl DeploymentVerified {
         if let Some(api_listening_addr) = api_addr_if_webui_enabled {
             let target_url = format!("http://{api_listening_addr}");
             deployment
-                .webhooks
+                .webhooks_wasm
                 .push(webhook::WebhookWasmComponentConfigCanonical {
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
@@ -2199,7 +2199,7 @@ impl DeploymentVerified {
             let mut remaining_server_names_to_webhook_names = {
                 let mut map: hashbrown::HashMap<ConfigName, Vec<ConfigName>> =
                     hashbrown::HashMap::default();
-                for webhook in &deployment.webhooks {
+                for webhook in &deployment.webhooks_wasm {
                     map.entry(webhook.http_server.clone())
                         .or_default()
                         .push(webhook.common.name.clone());
@@ -2282,7 +2282,7 @@ impl DeploymentVerified {
             .collect::<Vec<_>>();
 
         let workflows = deployment
-            .workflows
+            .workflows_wasm
             .into_iter()
             .map(|workflow| {
                 tokio::spawn(
@@ -2300,7 +2300,7 @@ impl DeploymentVerified {
             })
             .collect::<Vec<_>>();
         let webhooks_wasm_by_names = deployment
-            .webhooks
+            .webhooks_wasm
             .into_iter()
             .map(|webhook| {
                 tokio::spawn({
@@ -3857,7 +3857,7 @@ mod tests {
                 .parse()
                 .unwrap();
         deployment.activities_wasm[0].component_digest = Some(shared_digest.clone());
-        deployment.workflows[0].component_digest = Some(shared_digest);
+        deployment.workflows_wasm[0].component_digest = Some(shared_digest);
 
         let prepared_dirs = prepare_dirs(
             &config,

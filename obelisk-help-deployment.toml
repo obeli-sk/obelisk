@@ -72,10 +72,17 @@
 ### JavaScript Activity components configuration
 # [[activity_js]]
 # name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
-## Location of the JavaScript source file.
-## Supports local file paths.
-## OCI references are NOT supported for JS activities.
+## Source specification: exactly one of `location` or `content`.
+## `content`: JavaScript source embedded directly in the TOML.
+# content = '''
+# export default function hello(name) {
+#   return `Hello, ${name}!`;
+# }
+# '''
+## `location`: local path or OCI reference for the JavaScript source file.
+## Supports local file paths and `oci://...` references.
 # location = "path/to/source.js"
+# location = "oci://docker.io/repo/image:tag"
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
@@ -237,10 +244,17 @@
 ### JavaScript Workflow components configuration
 # [[workflow_js]]
 # name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
-## Location of the JavaScript source file.
-## Supports local file paths.
-## OCI references are NOT supported for JS workflows.
+## Source specification: exactly one of `location` or `content`.
+## `content`: JavaScript source embedded directly in the TOML.
+# content = '''
+# export default function run() {
+#   return "ok";
+# }
+# '''
+## `location`: local path or OCI reference for the JavaScript source file.
+## Supports local file paths and `oci://...` references.
 # location = "path/to/workflow.js"
+# location = "oci://docker.io/repo/image:tag"
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
 ## Custom parameters. If omitted, defaults to no parameters.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
@@ -306,10 +320,17 @@
 ### JavaScript Webhook Endpoint components configuration
 # [[webhook_endpoint_js]]
 # name = "name"                              # Required. Component name.
-## Location of the JavaScript source file.
-## Supports local file paths.
-## OCI references are NOT supported for JS webhook endpoints.
+## Source specification: exactly one of `location` or `content`.
+## `content`: JavaScript source embedded directly in the TOML.
+# content = '''
+# export default function handle() {
+#   return new Response("ok");
+# }
+# '''
+## `location`: local path or OCI reference for the JavaScript source file.
+## Supports local file paths and `oci://...` references.
 # location = "path/to/webhook.js"
+# location = "oci://docker.io/repo/image:tag"
 # http_server = "external"                   # link to a `http_server`'s name (built-in default, or one defined in server.toml)
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]  # Required. See Routes section above.
 ## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".

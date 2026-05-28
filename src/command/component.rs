@@ -63,13 +63,14 @@ impl args::Component {
     }
 }
 
+#[derive(Debug)]
 enum ComponentPushData {
     Wasm {
         path: PathBuf,
         metadata: ComponentMetadataAnnotation,
     },
     Js {
-        path: PathBuf,
+        source: String,
         metadata: ComponentMetadataAnnotation,
     },
     Exec {
@@ -84,7 +85,7 @@ fn find_component_for_push(
     name: &str,
 ) -> anyhow::Result<ComponentPushData> {
     let component_type = deployment
-        .component_type_by_name
+        .component_names_to_types
         .get(name)
         .copied()
         .with_context(|| format!("component '{name}' not found in deployment TOML"))?;
@@ -92,7 +93,6 @@ fn find_component_for_push(
     match component_type {
         TomlComponentType::ActivityWasm => {
             let cfg = deployment
-                .inner
                 .activities_wasm
                 .iter()
                 .find(|c| c.common.name.to_string() == name)
@@ -111,8 +111,7 @@ fn find_component_for_push(
         }
         TomlComponentType::WebhookEndpointWasm => {
             let cfg = deployment
-                .inner
-                .webhooks
+                .webhooks_wasm
                 .iter()
                 .find(|c| c.common.name.to_string() == name)
                 .expect("name is in map so it must be in the list");
@@ -129,8 +128,7 @@ fn find_component_for_push(
         }
         TomlComponentType::WorkflowWasm => {
             let cfg = deployment
-                .inner
-                .workflows
+                .workflows_wasm
                 .iter()
                 .find(|c| c.common.name.to_string() == name)
                 .expect("name is in map so it must be in the list");
@@ -148,11 +146,21 @@ fn find_component_for_push(
                 .iter()
                 .find(|(_, n)| n.to_string() == name)
                 .expect("name is in map so it must be in the list");
-            let JsLocationToml::Path(ref path) = cfg.location else {
-                bail!("component '{name}' uses OCI, only local paths are supported for push");
+            let source = match (&cfg.location, &cfg.content) {
+                (None, Some(content)) => content.clone(),
+                (Some(JsLocationToml::Path(path)), None) => std::fs::read_to_string(path)
+                    .with_context(|| format!("cannot read JS file {path:?}"))?,
+                (Some(JsLocationToml::Oci(_)), None) => {
+                    bail!(
+                        "component '{name}' uses OCI source, only local sources are supported for push"
+                    );
+                }
+                (None, None) | (Some(_), Some(_)) => {
+                    bail!("component '{name}' must set exactly one of `location` or `content`");
+                }
             };
             Ok(ComponentPushData::Js {
-                path: PathBuf::from(path),
+                source,
                 metadata: ComponentMetadataAnnotation::ActivityJs {
                     env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
                     allowed_hosts: cfg.allowed_hosts.clone(),
@@ -169,11 +177,21 @@ fn find_component_for_push(
                 .iter()
                 .find(|(_, n)| n.to_string() == name)
                 .expect("name is in map so it must be in the list");
-            let JsLocationToml::Path(ref path) = cfg.location else {
-                bail!("component '{name}' uses OCI, only local paths are supported for push");
+            let source = match (&cfg.location, &cfg.content) {
+                (None, Some(content)) => content.clone(),
+                (Some(JsLocationToml::Path(path)), None) => std::fs::read_to_string(path)
+                    .with_context(|| format!("cannot read JS file {path:?}"))?,
+                (Some(JsLocationToml::Oci(_)), None) => {
+                    bail!(
+                        "component '{name}' uses OCI source, only local sources are supported for push"
+                    );
+                }
+                (None, None) | (Some(_), Some(_)) => {
+                    bail!("component '{name}' must set exactly one of `location` or `content`");
+                }
             };
             Ok(ComponentPushData::Js {
-                path: PathBuf::from(path),
+                source,
                 metadata: ComponentMetadataAnnotation::WorkflowJs {
                     lock_duration: Some(cfg.exec.lock_expiry),
                     ffqn: cfg.ffqn.clone(),
@@ -184,16 +202,25 @@ fn find_component_for_push(
         }
         TomlComponentType::WebhookEndpointJs => {
             let cfg = deployment
-                .inner
                 .webhooks_js
                 .iter()
                 .find(|c| c.name.to_string() == name)
                 .expect("name is in map so it must be in the list");
-            let JsLocationToml::Path(ref path) = cfg.location else {
-                bail!("component '{name}' uses OCI, only local paths are supported for push");
+            let source = match (&cfg.location, &cfg.content) {
+                (None, Some(content)) => content.clone(),
+                (Some(JsLocationToml::Path(path)), None) => std::fs::read_to_string(path)
+                    .with_context(|| format!("cannot read JS file {path:?}"))?,
+                (Some(JsLocationToml::Oci(_)), None) => {
+                    bail!(
+                        "component '{name}' uses OCI source, only local sources are supported for push"
+                    );
+                }
+                (None, None) | (Some(_), Some(_)) => {
+                    bail!("component '{name}' must set exactly one of `location` or `content`");
+                }
             };
             Ok(ComponentPushData::Js {
-                path: PathBuf::from(path),
+                source,
                 metadata: ComponentMetadataAnnotation::WebhookEndpointJs {
                     env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
                     allowed_hosts: cfg.allowed_hosts.clone(),
@@ -256,7 +283,9 @@ async fn push_component(
         crate::config::config_holder::load_deployment_validated(deployment_path).await?;
     match find_component_for_push(&validated, component_name)? {
         ComponentPushData::Wasm { path, metadata } => oci::push(path, reference, &metadata).await,
-        ComponentPushData::Js { path, metadata } => oci::push_js(path, reference, &metadata).await,
+        ComponentPushData::Js { source, metadata } => {
+            oci::push_js(source, reference, &metadata).await
+        }
         ComponentPushData::Exec { script, metadata } => {
             oci::push_exec(script, reference, &metadata).await
         }
@@ -838,8 +867,8 @@ mod tests {
         let parsed: crate::config::toml::DeploymentToml =
             toml::from_str(&toml_str).expect("generated TOML must parse");
 
-        assert_eq!(parsed.webhooks.len(), 1);
-        let wh = &parsed.webhooks[0];
+        assert_eq!(parsed.webhooks_wasm.len(), 1);
+        let wh = &parsed.webhooks_wasm[0];
         assert_eq!(wh.common.name.to_string(), "my_webhook");
         assert_eq!(wh.env_vars.len(), 1);
         assert_eq!(wh.allowed_hosts.len(), 0);
