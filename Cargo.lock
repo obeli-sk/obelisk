@@ -3346,7 +3346,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-error",
- "wasmparser 0.248.0",
+ "wasmparser 0.250.0",
  "wit-component 0.248.0",
  "wit-parser 0.248.0",
 ]
@@ -6495,8 +6495,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071d99cdfb8111603ed05500506c3298a940b58d609dd0259d3981785dd33556"
 dependencies = [
  "bitflags",
+ "hashbrown 0.17.1",
  "indexmap 2.14.0",
  "semver",
+ "serde",
 ]
 
 [[package]]
