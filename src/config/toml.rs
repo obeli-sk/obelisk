@@ -715,15 +715,12 @@ impl Default for TimersWatcherTomlConfig {
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CancelWatcherTomlConfig {
-    #[serde(default = "default_cancel_watcher_enabled")]
-    pub(crate) enabled: bool,
     #[serde(default = "default_cancel_watcher_tick_sleep")]
     pub(crate) tick_sleep: DurationConfig,
 }
 impl Default for CancelWatcherTomlConfig {
     fn default() -> Self {
         Self {
-            enabled: default_cancel_watcher_enabled(),
             tick_sleep: default_cancel_watcher_tick_sleep(),
         }
     }
@@ -3781,9 +3778,6 @@ fn default_timers_watcher_tick_sleep() -> DurationConfig {
     DurationConfig::Milliseconds(100)
 }
 
-fn default_cancel_watcher_enabled() -> bool {
-    true
-}
 fn default_cancel_watcher_tick_sleep() -> DurationConfig {
     DurationConfig::Seconds(1)
 }
