@@ -62,31 +62,29 @@ fn i64_to_f32_lossless(val: i64) -> Option<f32> {
     (round_trip == i128::from(val)).then_some(f)
 }
 
-// f64 → integer: returns the integer value iff `val` is finite, whole-number,
+const JS_MAX_SAFE_INTEGER_F64: f64 = 9_007_199_254_740_991.0;
+
+// f64 -> integer: returns the integer value iff `val` is finite, whole-number,
 // non-negative (for u64) / negative (for i64), and fits losslessly in the
-// target integer. Routing the float through u128 / i128 first avoids the
-// saturation false-positive of a direct `val as u64`, where `(2^64 as u64) as
-// f64 == 2^64` falsely confirms the round-trip even though the value didn't
-// fit. `try_from` to the narrower type then does the lossless range check.
+// target integer. serde_json has already rounded the source decimal by the time
+// it calls `visit_f64`, so values outside JS's safe integer range are rejected
+// even if the rounded f64 itself happens to be exactly integral.
 #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::float_cmp)]
 fn f64_to_u64_exact(val: f64) -> Option<u64> {
-    if !val.is_finite() || val < 0.0 || val != val.trunc() {
+    if !val.is_finite() || !(0.0..=JS_MAX_SAFE_INTEGER_F64).contains(&val) || val != val.trunc()
+    {
         return None;
     }
-    // `as u128` is exact for any non-negative whole-number f64 < 2^128, and
-    // saturates to u128::MAX above that; either way `u64::try_from` filters
-    // anything outside u64's range.
     let big = val as u128;
     u64::try_from(big).ok()
 }
 
 #[expect(clippy::cast_possible_truncation, clippy::float_cmp)]
 fn f64_to_i64_exact(val: f64) -> Option<i64> {
-    if !val.is_finite() || val >= 0.0 || val != val.trunc() {
+    if !val.is_finite() || !(-JS_MAX_SAFE_INTEGER_F64..0.0).contains(&val) || val != val.trunc()
+    {
         return None;
     }
-    // Symmetric: `as i128` is exact for whole-number f64 within i128's range
-    // and saturates outside it; `i64::try_from` enforces the narrower bound.
     let big = val as i128;
     i64::try_from(big).ok()
 }
@@ -922,8 +920,10 @@ mod tests {
 
     #[test]
     fn f32() {
-        let expected = WastVal::F32(-123.1_f32);
-        let input = "-123.1";
+        // -123.5 has finite binary fraction (`-0b1111011.1`) so it is exact in
+        // both f32 and f64 — round-trip passes.
+        let expected = WastVal::F32(-123.5_f32);
+        let input = "-123.5";
         let ty = TypeWrapper::F32;
         let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(input))
@@ -934,12 +934,36 @@ mod tests {
     #[test]
     fn f32_max() {
         let expected = WastVal::F32(f32::MAX);
-        let input = f32::MAX.to_string();
+        // Use the canonical f64-text of f32::MAX so the f64 parsed by serde
+        // equals `f64::from(f32::MAX)` exactly, allowing the round-trip
+        // through f32 to confirm losslessness.
+        let input = f64::from(f32::MAX).to_string();
         let ty = TypeWrapper::F32;
         let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn lossy_float_into_f32_fails() {
+        // 0.1 has different bit patterns in f64 and f32 (both inexact, but
+        // approximating to different precisions), so f64::from(0.1f32) ≠ 0.1f64.
+        let err = WastValDeserialize(&TypeWrapper::F32)
+            .deserialize(&mut serde_json::Deserializer::from_str("0.1"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: floating point `0.1`");
+    }
+
+    #[test]
+    fn whole_float_with_low_bits_into_f32_fails() {
+        // 2^24 + 1 = 16777217 is exactly representable in f64 but not f32
+        // (f32 mantissa is 24 bits). Same as the int → f32 case above, just
+        // via the float branch.
+        let err = WastValDeserialize(&TypeWrapper::F32)
+            .deserialize(&mut serde_json::Deserializer::from_str("16777217.0"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: floating point `16777217.0`");
     }
 
     #[test]
@@ -1158,16 +1182,36 @@ mod tests {
         let err = WastValDeserialize(&TypeWrapper::S64)
             .deserialize(&mut serde_json::Deserializer::from_str("9223372036854775808.0"))
             .unwrap_err();
-        assert_starts_with(&err, "invalid type: integer `9223372036854775808`");
+        assert_starts_with(&err, "invalid type: floating point `9.223372036854776e+18`");
     }
 
     #[test]
-    fn neg_pow2_63_float_into_s64() {
-        // i64::MIN = -2^63, exactly representable in f64 and exactly fits s64.
-        let actual = WastValDeserialize(&TypeWrapper::S64)
+    fn neg_pow2_63_float_into_s64_fails() {
+        // i64::MIN = -2^63 is exactly representable as f64, but JSON parsing
+        // has already rounded the decimal by `visit_f64`, so values outside
+        // the safe integer range must be rejected rather than guessed at.
+        let err = WastValDeserialize(&TypeWrapper::S64)
             .deserialize(&mut serde_json::Deserializer::from_str("-9223372036854775808.0"))
-            .unwrap();
-        assert_eq!(WastVal::S64(i64::MIN), actual);
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: floating point `-9.223372036854776e+18`");
+    }
+
+    #[test]
+    fn rounded_float_into_u64_fails() {
+        // serde_json rounds this to 9007199254740992.0 before visit_f64. Do
+        // not accept the rounded value as if the original decimal were exact.
+        let err = WastValDeserialize(&TypeWrapper::U64)
+            .deserialize(&mut serde_json::Deserializer::from_str("9007199254740993.0"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: floating point `900719925474099");
+    }
+
+    #[test]
+    fn rounded_float_into_s64_fails() {
+        let err = WastValDeserialize(&TypeWrapper::S64)
+            .deserialize(&mut serde_json::Deserializer::from_str("-9007199254740993.0"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: floating point `-900719925474099");
     }
 
     #[test]
