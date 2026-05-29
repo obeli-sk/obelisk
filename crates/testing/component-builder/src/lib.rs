@@ -1,4 +1,4 @@
-use cargo_metadata::camino::Utf8Path;
+use cargo_metadata::camino::{Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
@@ -40,7 +40,7 @@ impl BuildConfig {
 /// the `--target` directory to the output of [`get_target_dir`].
 #[expect(clippy::must_use_candidate)]
 pub fn build_activity(conf: BuildConfig) -> PathBuf {
-    build_internal(WASI_P2, ComponentType::Activity, conf)
+    build_internal(WASI_P2, ComponentType::Activity, conf).into_std_path_buf()
 }
 
 /// Build the parent webhook endpoint WASM component and place it into the `target` directory.
@@ -51,7 +51,7 @@ pub fn build_activity(conf: BuildConfig) -> PathBuf {
 /// the `--target` directory to the output of [`get_target_dir`].
 #[expect(clippy::must_use_candidate)]
 pub fn build_webhook_endpoint(conf: BuildConfig) -> PathBuf {
-    build_internal(WASI_P2, ComponentType::WebhookEndpoint, conf)
+    build_internal(WASI_P2, ComponentType::WebhookEndpoint, conf).into_std_path_buf()
 }
 
 /// Build the parent workflow WASM component and place it into the `target` directory.
@@ -62,7 +62,7 @@ pub fn build_webhook_endpoint(conf: BuildConfig) -> PathBuf {
 /// the `--target` directory to the output of [`get_target_dir`].
 #[expect(clippy::must_use_candidate)]
 pub fn build_workflow(conf: BuildConfig) -> PathBuf {
-    build_internal(WASM_CORE_MODULE, ComponentType::Workflow, conf)
+    build_internal(WASM_CORE_MODULE, ComponentType::Workflow, conf).into_std_path_buf()
 }
 
 /// Build a workflow that requires WASI P2 (e.g., due to embedded runtime like Boa JS).
@@ -71,7 +71,7 @@ pub fn build_workflow(conf: BuildConfig) -> PathBuf {
 /// use `wasm32-wasip2` target.
 #[expect(clippy::must_use_candidate)]
 pub fn build_workflow_wasi_p2(conf: BuildConfig) -> PathBuf {
-    build_internal(WASI_P2, ComponentType::Workflow, conf)
+    build_internal(WASI_P2, ComponentType::Workflow, conf).into_std_path_buf()
 }
 
 enum ComponentType {
@@ -132,7 +132,10 @@ fn hash_directory_contents(hasher: &mut Sha256, dir: &Path, base: &Path) {
         let rel = file_path.strip_prefix(base).unwrap_or(file_path);
         hasher.update(rel.to_string_lossy().as_bytes());
         hasher.update(b"\x00");
-        hasher.update(std::fs::read(file_path).unwrap());
+        hasher.update(
+            std::fs::read(file_path)
+                .unwrap_or_else(|e| panic!("cannot read {file_path:?} - {e:?}")),
+        );
         hasher.update(b"\x00");
     }
 }
@@ -217,7 +220,7 @@ fn build_internal(
     target_tripple: &str,
     component_type: ComponentType,
     conf: BuildConfig,
-) -> PathBuf {
+) -> Utf8PathBuf {
     let dst_target_dir = conf.custom_dst_target_dir.unwrap_or_else(get_target_dir);
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
@@ -239,11 +242,9 @@ fn build_internal(
         &meta,
         package,
     );
-    if std::env::var("RUST_LOG").is_ok() {
-        println!("cargo:warning=Built `{pkg_name}` - {wasm_path:?}");
-    }
+    println!("cargo:warning=Built `{pkg_name}` - {wasm_path:?}");
 
-    generate_code(&wasm_path, pkg_name, component_type);
+    generate_code(wasm_path.as_std_path(), pkg_name, component_type);
 
     // Register rerun-if-changed dependencies
     add_dependency(&package.manifest_path); // Cargo.toml
@@ -377,27 +378,39 @@ fn run_cargo_build(
     rust_flags: &str,
     meta: &cargo_metadata::Metadata,
     package: &cargo_metadata::Package,
-) -> PathBuf {
+) -> Utf8PathBuf {
     let name_snake_case = to_snake_case(name);
-    let output_dir = dst_target_dir.join(tripple).join(profile);
     let hash = compute_inputs_hash(meta, package, tripple, profile, rust_flags);
     let needs_component_transform = is_transformation_to_wasm_component_needed(tripple);
 
-    // Determine the final cached path
-    let cached_path = if needs_component_transform {
-        output_dir.join(format!("{name_snake_case}_{hash}_component.wasm"))
+    // Store hashed artifacts in target/wasm-cache/ so inner build dirs can be cleaned.
+    let cache_dir = get_target_dir().join("wasm-cache");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let (cached_path, symlink_path) = if needs_component_transform {
+        (
+            Utf8PathBuf::from_path_buf(
+                cache_dir.join(format!("{name_snake_case}_component_{hash}.wasm")),
+            )
+            .unwrap(),
+            Utf8PathBuf::from_path_buf(cache_dir.join(format!("{name_snake_case}_component.wasm")))
+                .unwrap(),
+        )
     } else {
-        output_dir.join(format!("{name_snake_case}_{hash}.wasm"))
+        (
+            Utf8PathBuf::from_path_buf(cache_dir.join(format!("{name_snake_case}_{hash}.wasm")))
+                .unwrap(),
+            Utf8PathBuf::from_path_buf(cache_dir.join(format!("{name_snake_case}.wasm"))).unwrap(),
+        )
     };
 
     // Cache hit — skip cargo build entirely
-    if cached_path.exists() {
+    if cached_path.exists() && symlink_path.exists() {
         println!("cargo:warning=Cache hit for `{name}` ({hash})");
         return cached_path;
     }
 
     // Cache miss — clean up old hashed files
-    cleanup_old_hashed_files(&output_dir, &name_snake_case);
+    cleanup_old_hashed_files(&cache_dir, &name_snake_case);
 
     // Run cargo build
     let mut cmd = Command::new("cargo");
@@ -406,7 +419,6 @@ fn run_cargo_build(
         .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", dst_target_dir)
-        .env("CARGO_PROFILE_RELEASE_DEBUG", "limited") // debug = 1, retain line numbers
         .env("RUSTFLAGS", rust_flags)
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env_remove("CLIPPY_ARGS"); // do not pass clippy parameters
@@ -433,11 +445,7 @@ fn run_cargo_build(
                     .expect("only utf-8 encoded paths are supported"),
             )
             .arg("--output")
-            .arg(
-                cached_path
-                    .to_str()
-                    .expect("only utf-8 encoded paths are supported"),
-            );
+            .arg(&cached_path);
         let status = cmd.status().unwrap();
         assert!(status.success());
     } else {
@@ -448,5 +456,14 @@ fn run_cargo_build(
         cached_path.exists(),
         "Cached path must exist: {cached_path:?}"
     );
+    if symlink_path.exists() {
+        std::fs::remove_file(&symlink_path).expect("cannot replace existing symlink");
+    }
+    #[cfg(unix)]
+    {
+        let src = cached_path.file_name().unwrap();
+        println!("cargo:warning=Adding `ln -s {src:?} {symlink_path:?}`");
+        std::os::unix::fs::symlink(src, &symlink_path).expect("cannot create symlink");
+    }
     cached_path
 }
