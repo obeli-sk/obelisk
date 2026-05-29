@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.38.2(https://github.com/obeli-sk/obelisk/compare/v0.38.1...v0.38.2)
+## [0.38.2](https://github.com/obeli-sk/obelisk/compare/v0.38.1...v0.38.2)
 
 ### Fixed
 
