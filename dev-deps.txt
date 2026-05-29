@@ -5,7 +5,7 @@ litecli litecli, version 1.17.1
 nixpkgs-fmt 1.3.0
 pkg-config 0.29.2
 libprotoc 34.1
-rustc 1.95.0 (59807616e 2026-04-14)
+rustc 1.96.0 (ac68faa20 2026-05-25)
 wasm-tools 1.249.0
 wasmtime 44.0.1
 cargo-zigbuild 0.22.3

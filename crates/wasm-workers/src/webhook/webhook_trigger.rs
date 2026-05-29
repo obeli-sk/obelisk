@@ -4,6 +4,9 @@ use crate::http_hooks::{HttpClientTracesContainer, HttpHooks};
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
 use crate::webhook::webhook_registry::WebhookStateWatcher;
 use crate::webhook::webhook_trigger::types::obelisk::types::join_set::JoinNextError;
+use crate::webhook::webhook_trigger::types::{
+    GetErrorTrappable, GetStatusErrorTrappable, ScheduleJsonErrorTrappable, TryGetErrorTrappable,
+};
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
@@ -82,48 +85,48 @@ pub(crate) mod types {
             "obelisk:types/join-set.join-set": concepts::JoinSetId,
         },
         trappable_error_type: {
-            "obelisk:types/execution.schedule-json-error" => crate::webhook::webhook_trigger::ScheduleJsonErrorTrappable,
-            "obelisk:webhook/webhook-support.get-error" => crate::webhook::webhook_trigger::GetErrorTrappable,
-            "obelisk:webhook/webhook-support.get-status-error" => crate::webhook::webhook_trigger::GetStatusErrorTrappable,
-            "obelisk:webhook/webhook-support.try-get-error" => crate::webhook::webhook_trigger::TryGetErrorTrappable,
+            "obelisk:types/execution.schedule-json-error" => crate::webhook::webhook_trigger::types::ScheduleJsonErrorTrappable,
+            "obelisk:webhook/webhook-support.get-error" => crate::webhook::webhook_trigger::types::GetErrorTrappable,
+            "obelisk:webhook/webhook-support.get-status-error" => crate::webhook::webhook_trigger::types::GetStatusErrorTrappable,
+            "obelisk:webhook/webhook-support.try-get-error" => crate::webhook::webhook_trigger::types::TryGetErrorTrappable,
         },
     });
-}
 
-/// Trappable wrapper for `ScheduleJsonError` - user errors vs infrastructure failures.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum ScheduleJsonErrorTrappable {
-    #[error(transparent)]
-    Normal(#[from] types::obelisk::types::execution::ScheduleJsonError),
-    #[error(transparent)]
-    Trap(#[from] wasmtime::Error),
-}
+    /// Trappable wrapper for `ScheduleJsonError` - user errors vs infrastructure failures.
+    #[derive(Debug, thiserror::Error)]
+    pub enum ScheduleJsonErrorTrappable {
+        #[error(transparent)]
+        Normal(#[from] obelisk::types::execution::ScheduleJsonError),
+        #[error(transparent)]
+        Trap(#[from] wasmtime::Error),
+    }
 
-/// Trappable wrapper for `GetError` - user errors vs infrastructure failures.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum GetErrorTrappable {
-    #[error(transparent)]
-    Normal(#[from] types::obelisk::webhook::webhook_support::GetError),
-    #[error(transparent)]
-    Trap(#[from] wasmtime::Error),
-}
+    /// Trappable wrapper for `GetError` - user errors vs infrastructure failures.
+    #[derive(Debug, thiserror::Error)]
+    pub enum GetErrorTrappable {
+        #[error(transparent)]
+        Normal(#[from] obelisk::webhook::webhook_support::GetError),
+        #[error(transparent)]
+        Trap(#[from] wasmtime::Error),
+    }
 
-/// Trappable wrapper for `GetStatusError` - user errors vs infrastructure failures.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum GetStatusErrorTrappable {
-    #[error(transparent)]
-    Normal(#[from] types::obelisk::webhook::webhook_support::GetStatusError),
-    #[error(transparent)]
-    Trap(#[from] wasmtime::Error),
-}
+    /// Trappable wrapper for `GetStatusError` - user errors vs infrastructure failures.
+    #[derive(Debug, thiserror::Error)]
+    pub enum GetStatusErrorTrappable {
+        #[error(transparent)]
+        Normal(#[from] obelisk::webhook::webhook_support::GetStatusError),
+        #[error(transparent)]
+        Trap(#[from] wasmtime::Error),
+    }
 
-/// Trappable wrapper for `TryGetError` - user errors vs infrastructure failures.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum TryGetErrorTrappable {
-    #[error(transparent)]
-    Normal(#[from] types::obelisk::webhook::webhook_support::TryGetError),
-    #[error(transparent)]
-    Trap(#[from] wasmtime::Error),
+    /// Trappable wrapper for `TryGetError` - user errors vs infrastructure failures.
+    #[derive(Debug, thiserror::Error)]
+    pub enum TryGetErrorTrappable {
+        #[error(transparent)]
+        Normal(#[from] obelisk::webhook::webhook_support::TryGetError),
+        #[error(transparent)]
+        Trap(#[from] wasmtime::Error),
+    }
 }
 
 // Conversions from webhook types to internal types
