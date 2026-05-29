@@ -23,7 +23,7 @@ use serde::{
 #[expect(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
+    clippy::cast_sign_loss
 )]
 fn u64_to_f64_lossless(val: u64) -> Option<f64> {
     let f = val as f64;
@@ -34,7 +34,7 @@ fn u64_to_f64_lossless(val: u64) -> Option<f64> {
 #[expect(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
+    clippy::cast_sign_loss
 )]
 fn u64_to_f32_lossless(val: u64) -> Option<f32> {
     let f = val as f32;
@@ -69,10 +69,13 @@ const JS_MAX_SAFE_INTEGER_F64: f64 = 9_007_199_254_740_991.0;
 // target integer. serde_json has already rounded the source decimal by the time
 // it calls `visit_f64`, so values outside JS's safe integer range are rejected
 // even if the rounded f64 itself happens to be exactly integral.
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::float_cmp)]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::float_cmp
+)]
 fn f64_to_u64_exact(val: f64) -> Option<u64> {
-    if !val.is_finite() || !(0.0..=JS_MAX_SAFE_INTEGER_F64).contains(&val) || val != val.trunc()
-    {
+    if !val.is_finite() || !(0.0..=JS_MAX_SAFE_INTEGER_F64).contains(&val) || val != val.trunc() {
         return None;
     }
     let big = val as u128;
@@ -81,8 +84,7 @@ fn f64_to_u64_exact(val: f64) -> Option<u64> {
 
 #[expect(clippy::cast_possible_truncation, clippy::float_cmp)]
 fn f64_to_i64_exact(val: f64) -> Option<i64> {
-    if !val.is_finite() || !(-JS_MAX_SAFE_INTEGER_F64..0.0).contains(&val) || val != val.trunc()
-    {
+    if !val.is_finite() || !(-JS_MAX_SAFE_INTEGER_F64..0.0).contains(&val) || val != val.trunc() {
         return None;
     }
     let big = val as i128;
@@ -1138,7 +1140,9 @@ mod tests {
         // cast back to u64 returns u64::MAX. The u128 round-trip catches this
         // false-positive.
         let err = WastValDeserialize(&TypeWrapper::F64)
-            .deserialize(&mut serde_json::Deserializer::from_str("18446744073709551615"))
+            .deserialize(&mut serde_json::Deserializer::from_str(
+                "18446744073709551615",
+            ))
             .unwrap_err();
         assert_starts_with(&err, "invalid type: integer `18446744073709551615`");
     }
@@ -1147,7 +1151,9 @@ mod tests {
     fn i64_min_into_f64() {
         // i64::MIN = -2^63, exactly representable in f64.
         let actual = WastValDeserialize(&TypeWrapper::F64)
-            .deserialize(&mut serde_json::Deserializer::from_str("-9223372036854775808"))
+            .deserialize(&mut serde_json::Deserializer::from_str(
+                "-9223372036854775808",
+            ))
             .unwrap();
         assert_eq!(WastVal::F64(-9_223_372_036_854_775_808.0), actual);
     }
@@ -1157,7 +1163,9 @@ mod tests {
         // i64::MAX = 2^63 - 1. `as f64` rounds up to 2^63, then saturating
         // cast back to i64 returns i64::MAX. i128 round-trip catches it.
         let err = WastValDeserialize(&TypeWrapper::F64)
-            .deserialize(&mut serde_json::Deserializer::from_str("9223372036854775807"))
+            .deserialize(&mut serde_json::Deserializer::from_str(
+                "9223372036854775807",
+            ))
             .unwrap_err();
         assert_starts_with(&err, "invalid type: integer `9223372036854775807`");
     }
@@ -1170,9 +1178,14 @@ mod tests {
     #[test]
     fn pow2_64_float_into_u64_fails() {
         let err = WastValDeserialize(&TypeWrapper::U64)
-            .deserialize(&mut serde_json::Deserializer::from_str("18446744073709551616.0"))
+            .deserialize(&mut serde_json::Deserializer::from_str(
+                "18446744073709551616.0",
+            ))
             .unwrap_err();
-        assert_starts_with(&err, "invalid type: floating point `1.8446744073709552e+19`");
+        assert_starts_with(
+            &err,
+            "invalid type: floating point `1.8446744073709552e+19`",
+        );
     }
 
     #[test]
@@ -1180,7 +1193,9 @@ mod tests {
         // i64::MAX + 1 as a float — must be refused for s64. Routes through
         // f64_to_u64_exact (2^63 fits in u64) → visit_u64 → try_from s64 fails.
         let err = WastValDeserialize(&TypeWrapper::S64)
-            .deserialize(&mut serde_json::Deserializer::from_str("9223372036854775808.0"))
+            .deserialize(&mut serde_json::Deserializer::from_str(
+                "9223372036854775808.0",
+            ))
             .unwrap_err();
         assert_starts_with(&err, "invalid type: floating point `9.223372036854776e+18`");
     }
@@ -1191,9 +1206,14 @@ mod tests {
         // has already rounded the decimal by `visit_f64`, so values outside
         // the safe integer range must be rejected rather than guessed at.
         let err = WastValDeserialize(&TypeWrapper::S64)
-            .deserialize(&mut serde_json::Deserializer::from_str("-9223372036854775808.0"))
+            .deserialize(&mut serde_json::Deserializer::from_str(
+                "-9223372036854775808.0",
+            ))
             .unwrap_err();
-        assert_starts_with(&err, "invalid type: floating point `-9.223372036854776e+18`");
+        assert_starts_with(
+            &err,
+            "invalid type: floating point `-9.223372036854776e+18`",
+        );
     }
 
     #[test]
@@ -1201,7 +1221,9 @@ mod tests {
         // serde_json rounds this to 9007199254740992.0 before visit_f64. Do
         // not accept the rounded value as if the original decimal were exact.
         let err = WastValDeserialize(&TypeWrapper::U64)
-            .deserialize(&mut serde_json::Deserializer::from_str("9007199254740993.0"))
+            .deserialize(&mut serde_json::Deserializer::from_str(
+                "9007199254740993.0",
+            ))
             .unwrap_err();
         assert_starts_with(&err, "invalid type: floating point `900719925474099");
     }
@@ -1209,7 +1231,9 @@ mod tests {
     #[test]
     fn rounded_float_into_s64_fails() {
         let err = WastValDeserialize(&TypeWrapper::S64)
-            .deserialize(&mut serde_json::Deserializer::from_str("-9007199254740993.0"))
+            .deserialize(&mut serde_json::Deserializer::from_str(
+                "-9007199254740993.0",
+            ))
             .unwrap_err();
         assert_starts_with(&err, "invalid type: floating point `-900719925474099");
     }
