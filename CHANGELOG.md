@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.2(https://github.com/obeli-sk/obelisk/compare/v0.38.1...v0.38.2)
+
+### Fixed
+
+- Make `generate wit-deps --skip-local` ignore broken local components - ([296ad6a](https://github.com/obeli-sk/obelisk/commit/296ad6a974741a38335b9d6df8acc05bfdb0fee4))
+- Reject rounded float integer conversions - ([a9b8b1f](https://github.com/obeli-sk/obelisk/commit/a9b8b1f5c46b529811043e776d431b7cd84ece42))
+- Accept lossless numeric conversions - ([695b8fc](https://github.com/obeli-sk/obelisk/commit/695b8fcad5778d92f35529ec4884321fcf559ad3))
+
+
 ## [0.38.1](https://github.com/obeli-sk/obelisk/compare/v0.38.0...v0.38.1)
 
 ### Fixed
