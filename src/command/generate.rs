@@ -8,7 +8,7 @@ use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{ConfigHolder, load_deployment_validated};
 use crate::config::toml::{
     ActivityExternalComponentConfigToml, ActivityStubComponentConfigToml, ComponentLocationToml,
-    JsLocationToml,
+    DeploymentTomlValidated, JsLocationToml,
 };
 use crate::init::{self};
 use crate::project_dirs;
@@ -571,57 +571,10 @@ async fn generate_wit_deps(
     force: bool,
     skip_local: bool,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
-    let deployment = load_deployment_validated(&deployment_toml).await?;
-
-    let skipped_oci_component_names: HashSet<String> = if skip_local {
-        // When `--external-only` is set, build the set of component names that have an OCI location.
-        // Local components will be skipped during WIT extraction.
-        let mut skipped_names: HashSet<String> = HashSet::new();
-        for c in &deployment.activities_wasm {
-            if matches!(c.common.location, ComponentLocationToml::Path(_)) {
-                skipped_names.insert(c.common.name.to_string());
-            }
-        }
-        for (c, name) in &deployment.activities_stub {
-            if let ActivityStubComponentConfigToml::File(f) = c
-                && matches!(f.common.location, ComponentLocationToml::Path(_))
-            {
-                skipped_names.insert(name.to_string());
-            }
-        }
-        for (c, name) in &deployment.activities_external {
-            if let ActivityExternalComponentConfigToml::File(f) = c
-                && matches!(f.common.location, ComponentLocationToml::Path(_))
-            {
-                skipped_names.insert(name.to_string());
-            }
-        }
-        for (c, name) in &deployment.activities_js {
-            if c.content.is_some() || matches!(c.location, Some(JsLocationToml::Path(_))) {
-                skipped_names.insert(name.to_string());
-            }
-        }
-        for (config, name) in &deployment.activities_exec {
-            if config.content.is_some() || matches!(config.location, Some(JsLocationToml::Path(_)))
-            {
-                skipped_names.insert(name.to_string());
-            }
-        }
-        for c in &deployment.workflows_wasm {
-            if matches!(c.common.location, ComponentLocationToml::Path(_)) {
-                skipped_names.insert(c.common.name.to_string());
-            }
-        }
-        for (c, name) in &deployment.workflows_js {
-            if c.content.is_some() || matches!(c.location, Some(JsLocationToml::Path(_))) {
-                skipped_names.insert(name.to_string());
-            }
-        }
-        // webhooks are skipped in any case - nothing can depend on their WIT definition
-        skipped_names
-    } else {
-        HashSet::new()
-    };
+    let deployment = filter_wit_deps_deployment(
+        load_deployment_validated(&deployment_toml).await?,
+        skip_local,
+    );
 
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
     let config = config_holder.load_config().await?;
@@ -682,23 +635,7 @@ async fn generate_wit_deps(
     // insertion time, so the two outputs can never collide on the same interface.
     let mut pkg_to_wit: HashMap<PkgFqn, String> = HashMap::new();
     let mut synthesized_exports: Vec<PackageIfcFns> = Vec::new();
-    for component in compiled_and_linked
-        .component_registry_ro
-        .list(true)
-        .into_iter()
-        .filter(|component| {
-            !skipped_oci_component_names.contains(component.component_id.name.as_ref())
-                && match component.component_id.component_type {
-                    ComponentType::Activity
-                    | ComponentType::ActivityStub
-                    | ComponentType::Workflow => true,
-                    ComponentType::WebhookEndpoint | ComponentType::Cron => {
-                        // ignored - nothing depends on them
-                        false
-                    }
-                }
-        })
-    {
+    for component in compiled_and_linked.component_registry_ro.list(true) {
         let Some(importable) = &component.workflow_or_activity_config else {
             unreachable!("webhooks and crons are filtered out");
         };
@@ -735,6 +672,92 @@ async fn generate_wit_deps(
         }
     }
     write_wit_deps(&pkg_to_wit, &output_directory, force).await
+}
+
+fn filter_wit_deps_deployment(
+    mut deployment: DeploymentTomlValidated,
+    skip_local: bool,
+) -> DeploymentTomlValidated {
+    if skip_local {
+        deployment
+            .activities_wasm
+            .retain(|c| matches!(c.common.location, ComponentLocationToml::Oci(_)));
+        deployment.activities_stub.retain(|(c, _)| match c {
+            ActivityStubComponentConfigToml::File(f) => {
+                matches!(f.common.location, ComponentLocationToml::Oci(_))
+            }
+            ActivityStubComponentConfigToml::Inline(_) => true,
+        });
+        deployment.activities_external.retain(|(c, _)| match c {
+            ActivityExternalComponentConfigToml::File(f) => {
+                matches!(f.common.location, ComponentLocationToml::Oci(_))
+            }
+            ActivityExternalComponentConfigToml::Inline(_) => true,
+        });
+        deployment.activities_js.retain(|(c, _)| {
+            c.content.is_none() && !matches!(c.location, Some(JsLocationToml::Path(_)))
+        });
+        deployment.activities_exec.retain(|(c, _)| {
+            c.content.is_none() && !matches!(c.location, Some(JsLocationToml::Path(_)))
+        });
+        deployment
+            .workflows_wasm
+            .retain(|c| matches!(c.common.location, ComponentLocationToml::Oci(_)));
+        deployment.workflows_js.retain(|(c, _)| {
+            c.content.is_none() && !matches!(c.location, Some(JsLocationToml::Path(_)))
+        });
+    }
+
+    deployment.webhooks_wasm.clear();
+    deployment.webhooks_js.clear();
+    deployment.crons.clear();
+
+    let remaining_names: HashSet<String> = deployment
+        .activities_wasm
+        .iter()
+        .map(|c| c.common.name.to_string())
+        .chain(
+            deployment
+                .activities_stub
+                .iter()
+                .map(|(_, name)| name.to_string()),
+        )
+        .chain(
+            deployment
+                .activities_external
+                .iter()
+                .map(|(_, name)| name.to_string()),
+        )
+        .chain(
+            deployment
+                .activities_js
+                .iter()
+                .map(|(_, name)| name.to_string()),
+        )
+        .chain(
+            deployment
+                .activities_exec
+                .iter()
+                .map(|(_, name)| name.to_string()),
+        )
+        .chain(
+            deployment
+                .workflows_wasm
+                .iter()
+                .map(|c| c.common.name.to_string()),
+        )
+        .chain(
+            deployment
+                .workflows_js
+                .iter()
+                .map(|(_, name)| name.to_string()),
+        )
+        .collect();
+    deployment
+        .component_names_to_types
+        .retain(|name, _| remaining_names.contains(name));
+
+    deployment
 }
 
 async fn write_wit_deps(
