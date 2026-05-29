@@ -8,7 +8,7 @@ use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{ConfigHolder, load_deployment_validated};
 use crate::config::toml::{
     ActivityExternalComponentConfigToml, ActivityStubComponentConfigToml, ComponentLocationToml,
-    DeploymentTomlValidated, JsLocationToml,
+    DeploymentTomlValidated, JsLocationToml, ServerConfigToml,
 };
 use crate::init::{self};
 use crate::project_dirs;
@@ -575,10 +575,9 @@ async fn generate_wit_deps(
         load_deployment_validated(&deployment_toml).await?,
         skip_local,
     );
-
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
-    let config = config_holder.load_config().await?;
-    let _guard = init::init(&config)?;
+    let mut server_config = ServerConfigToml::default();
+    server_config.webui.enabled = false;
+    let _guard = init::init(&server_config)?; // Configure logging
     let deployment = deployment
         .canonicalize()
         .await
@@ -594,15 +593,17 @@ async fn generate_wit_deps(
         suppress_type_checking_errors: true, // Just extracting WITs, not running components
         suppress_linking_errors: true,       // Just extracting WITs, not running components
     };
+
+    let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
     let prepared_dirs = prepare_dirs(
-        &config,
+        &server_config,
         &verify_params.dir_params,
         &config_holder.path_prefixes,
     )
     .await?;
-    let engines = create_engines(&config, &prepared_dirs)?;
+    let engines = create_engines(&server_config, &prepared_dirs)?;
 
-    let server_verified = Box::pin(server_verify(config, engines)).await?;
+    let server_verified = Box::pin(server_verify(server_config, engines)).await?;
     let deployment_verified = deployment_verify_config(
         &server_verified,
         &prepared_dirs,
@@ -637,7 +638,7 @@ async fn generate_wit_deps(
     let mut synthesized_exports: Vec<PackageIfcFns> = Vec::new();
     for component in compiled_and_linked.component_registry_ro.list(true) {
         let Some(importable) = &component.workflow_or_activity_config else {
-            unreachable!("webhooks and crons are filtered out");
+            unreachable!("webhooks and crons are filtered out, found {component:?}");
         };
         match component.wit_origin {
             WitOrigin::Synthesized => {
