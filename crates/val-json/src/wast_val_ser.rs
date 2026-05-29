@@ -9,6 +9,88 @@ use serde::{
     de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
 };
 
+// Lossless conversions between integer and floating-point representations.
+//
+// `std` provides `From` / `TryFrom` only for integer ↔ integer and a handful of
+// small-int → float pairs (e.g. `f64::from(u32)`). For u64/i64 ↔ f32/f64 and
+// f32/f64 → int there is no checked conversion in std, so we use `as`. The
+// helpers below confine those casts in one documented place and verify
+// losslessness via 128-bit round-trip (the 128-bit detour avoids the
+// saturation false-positive at u64::MAX / i64::MAX, where
+// `(int as float) as int` saturates back to a value that incidentally equals
+// the input).
+
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+)]
+fn u64_to_f64_lossless(val: u64) -> Option<f64> {
+    let f = val as f64;
+    let round_trip = f as u128;
+    (round_trip == u128::from(val)).then_some(f)
+}
+
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+)]
+fn u64_to_f32_lossless(val: u64) -> Option<f32> {
+    let f = val as f32;
+    if !f.is_finite() {
+        return None;
+    }
+    let round_trip = f as u128;
+    (round_trip == u128::from(val)).then_some(f)
+}
+
+#[expect(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn i64_to_f64_lossless(val: i64) -> Option<f64> {
+    let f = val as f64;
+    let round_trip = f as i128;
+    (round_trip == i128::from(val)).then_some(f)
+}
+
+#[expect(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn i64_to_f32_lossless(val: i64) -> Option<f32> {
+    let f = val as f32;
+    if !f.is_finite() {
+        return None;
+    }
+    let round_trip = f as i128;
+    (round_trip == i128::from(val)).then_some(f)
+}
+
+// f64 → integer: returns the integer value iff `val` is finite, whole-number,
+// non-negative (for u64) / negative (for i64), and fits losslessly in the
+// target integer. Routing the float through u128 / i128 first avoids the
+// saturation false-positive of a direct `val as u64`, where `(2^64 as u64) as
+// f64 == 2^64` falsely confirms the round-trip even though the value didn't
+// fit. `try_from` to the narrower type then does the lossless range check.
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::float_cmp)]
+fn f64_to_u64_exact(val: f64) -> Option<u64> {
+    if !val.is_finite() || val < 0.0 || val != val.trunc() {
+        return None;
+    }
+    // `as u128` is exact for any non-negative whole-number f64 < 2^128, and
+    // saturates to u128::MAX above that; either way `u64::try_from` filters
+    // anything outside u64's range.
+    let big = val as u128;
+    u64::try_from(big).ok()
+}
+
+#[expect(clippy::cast_possible_truncation, clippy::float_cmp)]
+fn f64_to_i64_exact(val: f64) -> Option<i64> {
+    if !val.is_finite() || val >= 0.0 || val != val.trunc() {
+        return None;
+    }
+    // Symmetric: `as i128` is exact for whole-number f64 within i128's range
+    // and saturates outside it; `i64::try_from` enforces the narrower bound.
+    let big = val as i128;
+    i64::try_from(big).ok()
+}
+
 impl Serialize for WastVal {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -229,6 +311,15 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                     i32::try_from(val).map(WastVal::S32).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::S64 {
                     i64::try_from(val).map(WastVal::S64).map_err(|_| ())
+                } else if *self.0 == TypeWrapper::F64 {
+                    // Accept ints for f64 only when the cast is lossless. Boa's
+                    // `to_json` sometimes tags whole-number Numbers as int32
+                    // even when the WIT field is float; reject when the f64
+                    // can't represent `val` exactly (val > 2^53 with non-zero
+                    // trailing bits).
+                    u64_to_f64_lossless(val).map(WastVal::F64).ok_or(())
+                } else if *self.0 == TypeWrapper::F32 {
+                    u64_to_f32_lossless(val).map(WastVal::F32).ok_or(())
                 } else {
                     Err(())
                 }
@@ -297,6 +388,10 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                     i32::try_from(val).map(WastVal::S32).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::U64 {
                     u64::try_from(val).map(WastVal::U64).map_err(|_| ())
+                } else if *self.0 == TypeWrapper::F64 {
+                    i64_to_f64_lossless(val).map(WastVal::F64).ok_or(())
+                } else if *self.0 == TypeWrapper::F32 {
+                    i64_to_f32_lossless(val).map(WastVal::F32).ok_or(())
                 } else {
                     Err(())
                 }
@@ -322,20 +417,50 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
                 E: Error,
             {
                 if *self.0 == TypeWrapper::F64 {
-                    Ok(WastVal::F64(val))
-                } else if *self.0 == TypeWrapper::F32 {
-                    // Warining: This might truncate the value.
+                    return Ok(WastVal::F64(val));
+                }
+                if *self.0 == TypeWrapper::F32 {
                     #[expect(clippy::cast_possible_truncation)]
                     let f32 = val as f32;
-                    // Fail on overflow.
-                    if val.is_finite() == f32.is_finite() {
+                    // Round-trip via the lossless f32 → f64 widening: `val`
+                    // fits in f32 iff the widened f32 equals the original.
+                    // Catches both overflow (val outside f32 range rounds to
+                    // ±INFINITY ≠ val) and mantissa loss (e.g. `0.1` whose
+                    // f64 and f32 bit patterns differ, or any whole number
+                    // above 2^24 with bits beyond f32's 24-bit mantissa).
+                    #[expect(clippy::float_cmp)]
+                    if f64::from(f32) == val {
                         return Ok(WastVal::F32(f32));
                     }
-                    Err(())
-                } else {
-                    Err(())
+                    return Err(Error::invalid_type(Unexpected::Float(val), &self));
                 }
-                .map_err(|()| Error::invalid_type(Unexpected::Float(val), &self))
+
+                // Accept whole-number f64 for integer WIT types. Boa's `to_json`
+                // tags any whole-number JS Number outside the int32 range as f64,
+                // so without this branch values like `9999999999` cannot reach
+                // an s64 field from JS. Route through the existing integer
+                // visitors so their per-type range checks (e.g. fitting into u8)
+                // apply unchanged.
+                let int_ty = matches!(
+                    *self.0,
+                    TypeWrapper::U8
+                        | TypeWrapper::U16
+                        | TypeWrapper::U32
+                        | TypeWrapper::U64
+                        | TypeWrapper::S8
+                        | TypeWrapper::S16
+                        | TypeWrapper::S32
+                        | TypeWrapper::S64
+                );
+                if int_ty {
+                    if let Some(u) = f64_to_u64_exact(val) {
+                        return self.visit_u64(u);
+                    }
+                    if let Some(i) = f64_to_i64_exact(val) {
+                        return self.visit_i64(i);
+                    }
+                }
+                Err(Error::invalid_type(Unexpected::Float(val), &self))
             }
 
             fn visit_char<E>(self, val: char) -> Result<Self::Value, E>
@@ -851,6 +976,208 @@ mod tests {
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap_err();
         assert_starts_with(&err, "number out of range");
+    }
+
+    // The next block of tests cover JS Number ↔ WIT numeric crossing: serde_json
+    // parses `42.0` (decimal present) as f64 and `42` (no decimal) as int. JS
+    // components reach us through Boa's `JsValue::to_json`, which preserves
+    // Boa's internal int32-vs-float tag — so a whole-number JS value above
+    // `2^31 - 1` arrives as `42.0` even when intended as an integer, and a
+    // small literal returned into an `f64` field arrives as `42`. Both must
+    // be accepted as long as the value losslessly fits the target type.
+
+    #[test]
+    fn whole_float_into_s32() {
+        let actual = WastValDeserialize(&TypeWrapper::S32)
+            .deserialize(&mut serde_json::Deserializer::from_str("42.0"))
+            .unwrap();
+        assert_eq!(WastVal::S32(42), actual);
+    }
+
+    #[test]
+    fn whole_float_into_u32() {
+        // 2^31 — out of int32 range, valid u32.
+        let actual = WastValDeserialize(&TypeWrapper::U32)
+            .deserialize(&mut serde_json::Deserializer::from_str("2147483648.0"))
+            .unwrap();
+        assert_eq!(WastVal::U32(2_147_483_648), actual);
+    }
+
+    #[test]
+    fn whole_float_into_s64() {
+        let actual = WastValDeserialize(&TypeWrapper::S64)
+            .deserialize(&mut serde_json::Deserializer::from_str("9999999999.0"))
+            .unwrap();
+        assert_eq!(WastVal::S64(9_999_999_999), actual);
+    }
+
+    #[test]
+    fn whole_float_negative_into_s32() {
+        let actual = WastValDeserialize(&TypeWrapper::S32)
+            .deserialize(&mut serde_json::Deserializer::from_str("-42.0"))
+            .unwrap();
+        assert_eq!(WastVal::S32(-42), actual);
+    }
+
+    #[test]
+    fn fractional_float_into_s32_still_fails() {
+        let err = WastValDeserialize(&TypeWrapper::S32)
+            .deserialize(&mut serde_json::Deserializer::from_str("42.5"))
+            .unwrap_err();
+        assert_starts_with(
+            &err,
+            "invalid type: floating point `42.5`, expected value matching \"s32\"",
+        );
+    }
+
+    #[test]
+    fn negative_float_into_u32_still_fails() {
+        let err = WastValDeserialize(&TypeWrapper::U32)
+            .deserialize(&mut serde_json::Deserializer::from_str("-1.0"))
+            .unwrap_err();
+        // Routes through visit_i64 (whole-number trunc), which rejects -1 as out-of-range for u32.
+        assert_starts_with(&err, "invalid type: integer `-1`");
+    }
+
+    #[test]
+    fn oversized_float_into_s8_still_fails() {
+        let err = WastValDeserialize(&TypeWrapper::S8)
+            .deserialize(&mut serde_json::Deserializer::from_str("1000.0"))
+            .unwrap_err();
+        // Routes through visit_u64 which rejects it as out-of-range for s8.
+        assert_starts_with(&err, "invalid type: integer `1000`");
+    }
+
+    #[test]
+    fn int_into_f64() {
+        let actual = WastValDeserialize(&TypeWrapper::F64)
+            .deserialize(&mut serde_json::Deserializer::from_str("42"))
+            .unwrap();
+        assert_eq!(WastVal::F64(42.0), actual);
+    }
+
+    #[test]
+    fn negative_int_into_f64() {
+        let actual = WastValDeserialize(&TypeWrapper::F64)
+            .deserialize(&mut serde_json::Deserializer::from_str("-42"))
+            .unwrap();
+        assert_eq!(WastVal::F64(-42.0), actual);
+    }
+
+    #[test]
+    fn int_into_f32() {
+        let actual = WastValDeserialize(&TypeWrapper::F32)
+            .deserialize(&mut serde_json::Deserializer::from_str("42"))
+            .unwrap();
+        assert_eq!(WastVal::F32(42.0), actual);
+    }
+
+    #[test]
+    fn large_int_into_f64() {
+        // Number.MAX_SAFE_INTEGER from JS.
+        let actual = WastValDeserialize(&TypeWrapper::F64)
+            .deserialize(&mut serde_json::Deserializer::from_str("9007199254740991"))
+            .unwrap();
+        assert_eq!(WastVal::F64(9_007_199_254_740_991.0), actual);
+    }
+
+    #[test]
+    fn lossy_int_into_f64_fails() {
+        // 2^53 + 1 cannot be represented in f64. Reject rather than silently round.
+        let err = WastValDeserialize(&TypeWrapper::F64)
+            .deserialize(&mut serde_json::Deserializer::from_str("9007199254740993"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: integer `9007199254740993`");
+    }
+
+    #[test]
+    fn lossy_int_into_f32_fails() {
+        // 2^24 + 1 cannot be represented in f32.
+        let err = WastValDeserialize(&TypeWrapper::F32)
+            .deserialize(&mut serde_json::Deserializer::from_str("16777217"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: integer `16777217`");
+    }
+
+    #[test]
+    fn lossless_pow2_int_into_f32() {
+        // 2^24 itself is exact in f32.
+        let actual = WastValDeserialize(&TypeWrapper::F32)
+            .deserialize(&mut serde_json::Deserializer::from_str("16777216"))
+            .unwrap();
+        assert_eq!(WastVal::F32(16_777_216.0), actual);
+    }
+
+    #[test]
+    fn u64_max_into_f64_fails() {
+        // u64::MAX = 2^64 - 1. `as f64` rounds up to 2^64, and the saturating
+        // cast back to u64 returns u64::MAX. The u128 round-trip catches this
+        // false-positive.
+        let err = WastValDeserialize(&TypeWrapper::F64)
+            .deserialize(&mut serde_json::Deserializer::from_str("18446744073709551615"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: integer `18446744073709551615`");
+    }
+
+    #[test]
+    fn i64_min_into_f64() {
+        // i64::MIN = -2^63, exactly representable in f64.
+        let actual = WastValDeserialize(&TypeWrapper::F64)
+            .deserialize(&mut serde_json::Deserializer::from_str("-9223372036854775808"))
+            .unwrap();
+        assert_eq!(WastVal::F64(-9_223_372_036_854_775_808.0), actual);
+    }
+
+    #[test]
+    fn i64_max_into_f64_fails() {
+        // i64::MAX = 2^63 - 1. `as f64` rounds up to 2^63, then saturating
+        // cast back to i64 returns i64::MAX. i128 round-trip catches it.
+        let err = WastValDeserialize(&TypeWrapper::F64)
+            .deserialize(&mut serde_json::Deserializer::from_str("9223372036854775807"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: integer `9223372036854775807`");
+    }
+
+    // The reverse-direction saturation case: input is `2^64` as a JSON float,
+    // serde reads it as f64, visit_f64 routes through f64_to_u64_exact. A
+    // naive `val as u64` would saturate to u64::MAX (= 2^64 - 1) and lie via
+    // the float round-trip (u64::MAX as f64 rounds back up to 2^64). Routing
+    // through u128 + try_from rejects cleanly.
+    #[test]
+    fn pow2_64_float_into_u64_fails() {
+        let err = WastValDeserialize(&TypeWrapper::U64)
+            .deserialize(&mut serde_json::Deserializer::from_str("18446744073709551616.0"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: floating point `1.8446744073709552e+19`");
+    }
+
+    #[test]
+    fn pow2_63_float_into_s64_fails() {
+        // i64::MAX + 1 as a float — must be refused for s64. Routes through
+        // f64_to_u64_exact (2^63 fits in u64) → visit_u64 → try_from s64 fails.
+        let err = WastValDeserialize(&TypeWrapper::S64)
+            .deserialize(&mut serde_json::Deserializer::from_str("9223372036854775808.0"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: integer `9223372036854775808`");
+    }
+
+    #[test]
+    fn neg_pow2_63_float_into_s64() {
+        // i64::MIN = -2^63, exactly representable in f64 and exactly fits s64.
+        let actual = WastValDeserialize(&TypeWrapper::S64)
+            .deserialize(&mut serde_json::Deserializer::from_str("-9223372036854775808.0"))
+            .unwrap();
+        assert_eq!(WastVal::S64(i64::MIN), actual);
+    }
+
+    #[test]
+    fn very_large_float_into_s64_fails() {
+        // f64 > i64::MAX by many orders of magnitude. f as i128 saturates,
+        // try_from rejects.
+        let err = WastValDeserialize(&TypeWrapper::S64)
+            .deserialize(&mut serde_json::Deserializer::from_str("1e30"))
+            .unwrap_err();
+        assert_starts_with(&err, "invalid type: floating point `1e+30`,");
     }
 
     #[test]
