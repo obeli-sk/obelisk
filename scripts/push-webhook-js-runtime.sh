@@ -21,7 +21,7 @@ if [ "$TAG" != "dry-run" ]; then
     cat > "$TMP_TOML" <<EOF
 [[webhook_endpoint_wasm]]
 name = "pushed"
-location = "$(pwd)/target/release_wasm_runtime/wasm32-wasip2/release_wasm_runtime/webhook_js_runtime.wasm"
+location = "$(pwd)/target/wasm-cache/webhook_js_runtime.wasm"
 routes = [""]
 EOF
     OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \

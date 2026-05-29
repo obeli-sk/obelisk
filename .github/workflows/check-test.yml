@@ -48,10 +48,14 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          cache-on-failure: true
-          key: ${{ matrix.report }}
+          path: |
+            target
+            test-codegen-cache
+          key: cargo-target-${{ matrix.report }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-${{ matrix.report }}-
 
       - name: Build tests
         run: nix develop --command cargo nextest run --workspace --no-run
@@ -65,6 +69,12 @@ jobs:
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
           CARGO_INSTA_TEST: true # reject unreferenced snapshots
+
+      # Reduce cache size — hashed WASMs are in target/wasm-cache/
+      - name: Clean build artifacts before caching
+        if: always()
+        run: |
+          rm -rf target/debug/incremental target/release_testprograms target/release_wasm_runtime
 
       # Report results
       - name: Rename test report

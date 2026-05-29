@@ -21,7 +21,7 @@ if [ "$TAG" != "dry-run" ]; then
     cat > "$TMP_TOML" <<EOF
 [[workflow_wasm]]
 name = "pushed"
-location = "$(pwd)/target/release_wasm_runtime/wasm32-unknown-unknown/release_wasm_runtime/workflow_js_runtime_component.wasm"
+location = "$(pwd)/target/wasm-cache/workflow_js_runtime_component.wasm"
 EOF
     OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \
         pushed "oci://docker.io/getobelisk/workflow-js-runtime:$TAG")
