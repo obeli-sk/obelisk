@@ -2,6 +2,7 @@ use cargo_metadata::camino::{Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
+    io::ErrorKind,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -456,14 +457,35 @@ fn run_cargo_build(
         cached_path.exists(),
         "Cached path must exist: {cached_path:?}"
     );
-    if symlink_path.exists() {
-        std::fs::remove_file(&symlink_path).expect("cannot replace existing symlink");
-    }
     #[cfg(unix)]
     {
         let src = cached_path.file_name().unwrap();
         println!("cargo:warning=Adding `ln -s {src:?} {symlink_path:?}`");
-        std::os::unix::fs::symlink(src, &symlink_path).expect("cannot create symlink");
+        replace_symlink(&symlink_path, src);
     }
     cached_path
+}
+
+#[cfg(unix)]
+fn replace_symlink(link: &Utf8Path, src: &str) {
+    let tmp_name = format!(
+        "{}.tmp.{}",
+        link.file_name().expect("symlink path must have a filename"),
+        std::process::id()
+    );
+    let tmp_link = link.with_file_name(tmp_name);
+
+    match std::os::unix::fs::symlink(src, &tmp_link) {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+            std::fs::remove_file(&tmp_link).expect("cannot remove stale temporary symlink");
+            std::os::unix::fs::symlink(src, &tmp_link).expect("cannot recreate temporary symlink");
+        }
+        Err(err) => panic!("cannot create temporary symlink: {err}"),
+    }
+
+    if let Err(err) = std::fs::rename(&tmp_link, link) {
+        let _ = std::fs::remove_file(&tmp_link);
+        panic!("cannot replace symlink: {err}");
+    }
 }
