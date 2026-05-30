@@ -239,7 +239,7 @@ arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
 axum = { version = "0.8.9", features = ["http2"] }
-axum-accept = "0.0.5"
+axum-accept = "0.0.6"
 axum-extra = { version = "0.12.6", features = ["query"] }
 base64 = "0.22.1"
 bytes = "1.11.1"
@@ -254,7 +254,7 @@ config = { version = "0.15.23", default-features = false, features = [
 ] }
 console-subscriber = "0.5.0"
 const_format = "0.2.36"
-croner = "2"
+croner = "3"
 criterion = "0.8"
 crossterm = "0.29.0"
 deadpool-postgres = "0.14.1"
@@ -276,11 +276,11 @@ futures-concurrency = "7.7.1"
 futures-lite = "2.6.1"
 futures-util = "0.3.32"
 getrandom = "0.4"
-hashbrown = { version = "0.16.1", features = ["serde"] }
+hashbrown = { version = "0.17.1", features = ["serde"] }
 hdrhistogram = { version = "7.5.4", default-features = false }
-http = "1.4.0"
+http = "1.4.1"
 http-body-util = "0.1"
-hyper = "1.9.0"
+hyper = "1.10.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.3.0"
 indexmap = { version = "2.14", features = ["serde"] }
@@ -289,13 +289,13 @@ itertools = "0.14"
 jsonwebtoken = { version = "10", default-features = false }
 lazy_static = "1.5"
 libc = "0.2.186"
-oci-client = { version = "0.16.1", default-features = false }
+oci-client = { version = "0.17.0", default-features = false }
 oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
 prost = "0.14.3"
 prost-wkt-types = "0.7"
 quote = "1"
-rand = "0.9"
+rand = "0.10"
 refinery = { package = "obeli-sk-refinery", version = "0.9.0-obeli-sk.1", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
@@ -309,7 +309,7 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 route-recognizer = "0.3.1"
 rstest = "0.26"
-rusqlite = { version = "0.39.0", features = [
+rusqlite = { version = "0.40.0", features = [
     "bundled",
     "chrono",
     "serde_json",
@@ -320,8 +320,8 @@ semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.150", features = ["preserve_order"] }
 serde_with = "3.20.0"
-hmac = "0.12.1"
-sha2 = "0.10.9"
+hmac = "0.13.0"
+sha2 = "0.11.0"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3.27"
@@ -341,7 +341,7 @@ tokio = { version = "1", features = [
 ] }
 tokio-stream = "0.1.18"
 toml = { version = "1.1.2", features = ["preserve_order"] }
-toml_edit = "0.25.11"
+toml_edit = "0.25.12"
 tonic = { version = "0.14.6", default-features = false }
 tonic-prost = "0.14.6"
 tonic-prost-build = "0.14.6"
@@ -360,16 +360,16 @@ utoipa-axum = "0.2.0"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "45.0.0", features = ["memory-protection-keys"] }
-wasmtime-wasi = "45.0.0"
-wasmtime-wasi-io = "45.0.0"
-wasmtime-wasi-http = "45.0.0"
-wasmtime-environ = "45.0.0"
+wasmtime = { version = "43.0.2", features = ["memory-protection-keys"] }
+wasmtime-wasi = "43.0.2"
+wasmtime-wasi-io = "43.0.2"
+wasmtime-wasi-http = "43.0.2"
+wasmtime-environ = "43.0.2"
 # wasm-tools
-wast = "248.0.0"
-wit-parser = "0.248.0"
-wasmparser = "0.248.0"
-wit-component = "0.248.0"
+wast = "251.0.0"
+wit-parser = "0.251.0"
+wasmparser = "0.251.0"
+wit-component = "0.251.0"
 
 # boa
 boa_engine = { package="obeli-sk-boa-engine", version="1.0.0-obeli-sk.7", default-features = false }
@@ -391,10 +391,10 @@ wit-bindgen-rust = "0.57.1"
 wstd = "0.6.5"
 
 # otlp
-opentelemetry = "0.31.0"
-opentelemetry-http = "0.31.0"
-opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.1", default-features = false, features = [
+opentelemetry = "0.32.0"
+opentelemetry-http = "0.32.0"
+opentelemetry_sdk = { version = "0.32.1", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
     "tls",
     "tls-roots",
     "grpc-tonic",
@@ -403,7 +403,7 @@ opentelemetry-otlp = { version = "0.31.1", default-features = false, features = 
     "metrics",
 ] }
 opentelemetry-semantic-conventions = "0.32.0"
-tracing-opentelemetry = "0.32"
+tracing-opentelemetry = "0.33"
 
 [workspace.lints]
 # lower the priority to allow overriding later
