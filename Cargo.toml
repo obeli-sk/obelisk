@@ -457,3 +457,4 @@ pkg-fmt = "tgz"
 
 [profile.dev]
 debug = "line-tables-only"
+debug-assertions = false # Hack: Wasmtime's cache is keyed by binary's mtime unless this is set
