@@ -48,16 +48,19 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - id: cargo-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             target
             test-codegen-cache
-          key: cargo-target-${{ matrix.report }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            cargo-target-${{ matrix.report }}-
+            cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+            cargo-target-${{ matrix.report }}-${{ runner.os }}-
 
       - name: Build tests
+        id: build-tests
         run: nix develop --command cargo nextest run --workspace --no-run
 
       - name: Run tests
@@ -75,6 +78,15 @@ jobs:
         if: always()
         run: |
           rm -rf target/debug/incremental target/release_testprograms target/release_wasm_runtime
+
+      - name: Save cargo cache
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true' && steps.build-tests.outcome == 'success'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            target
+            test-codegen-cache
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
       # Report results
       - name: Rename test report
