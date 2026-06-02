@@ -4,7 +4,7 @@
   </a>
 </h1>
 
-A [deterministic](https://obeli.sk/faq/) workflow engine built on the WASM Component Model.
+A [deterministic](https://obeli.sk/#faq) workflow engine built on the WASM Component Model.
 
 > [!WARNING]
 > **Pre-release**: Expect changes in CLI, gRPC, WIT, and database schema.
@@ -71,7 +71,7 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 ```sh
 curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
 ```
-Or use [cargo-binstall](https://crates.io/crates/cargo-binstall):
+Or use [cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
 ```sh
 cargo binstall obelisk
 ```
@@ -119,7 +119,7 @@ For more options see [Installation](https://obeli.sk/install/).
 
 ## Getting Started
 
-Check out the [Getting Started Guide](https://obeli.sk/docs/latest/getting-started/) for details.
+Check out the [Getting Started Guide](https://obeli.sk/docs/latest/js/getting-started/) for details.
 
 ### Start the Server
 ```sh
