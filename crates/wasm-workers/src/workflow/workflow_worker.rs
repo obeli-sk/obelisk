@@ -1568,7 +1568,9 @@ impl WorkflowWorker {
                         created_at: self.clock_fn.now(),
                         event: ExecutionRequest::Unlocked {
                             backoff_expires_at: self.clock_fn.now(),
-                            reason: UnlockedReason::AutoUpgradeSucceeded,
+                            reason: UnlockedReason::Other {
+                                reason: "auto-upgrade succeeded".into(),
+                            },
                         },
                     },
                 )

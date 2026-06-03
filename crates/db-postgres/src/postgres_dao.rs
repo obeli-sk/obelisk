@@ -613,7 +613,6 @@ struct PendingAfterEventUpdate<'a> {
 #[derive(Clone, Copy)]
 enum IncompatibleDigestUpdate<'a> {
     LeaveUnchanged,
-    Clear,
     Set(&'a ComponentDigest),
 }
 
@@ -637,7 +636,6 @@ async fn update_state_pending_after_event_appended(
     ];
     let incompatible_digest_assignment = match update.incompatible_digest_update {
         IncompatibleDigestUpdate::LeaveUnchanged => String::new(),
-        IncompatibleDigestUpdate::Clear => "incompatible_digest = NULL,".to_string(),
         IncompatibleDigestUpdate::Set(digest) => {
             params.push(Box::new(digest.to_vec()));
             format!("incompatible_digest = ${},", params.len())
@@ -2081,7 +2079,6 @@ async fn append(
             reason,
         } => {
             let incompatible_digest_update = match reason {
-                UnlockedReason::AutoUpgradeSucceeded => IncompatibleDigestUpdate::Clear,
                 UnlockedReason::AutoUpgradeFailed { target_digest, .. } => {
                     IncompatibleDigestUpdate::Set(target_digest)
                 }

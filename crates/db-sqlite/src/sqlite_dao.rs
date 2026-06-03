@@ -483,7 +483,6 @@ struct PendingAfterEventUpdate<'a> {
 #[derive(Clone, Copy)]
 enum IncompatibleDigestUpdate<'a> {
     LeaveUnchanged,
-    Clear,
     Set(&'a ComponentDigest),
 }
 
@@ -1104,7 +1103,6 @@ impl SqlitePool {
         ];
         let incompatible_digest_assignment = match update.incompatible_digest_update {
             IncompatibleDigestUpdate::LeaveUnchanged => String::new(),
-            IncompatibleDigestUpdate::Clear => "incompatible_digest = NULL,".to_string(),
             IncompatibleDigestUpdate::Set(digest) => {
                 params.push((":incompatible_digest", Box::new(digest.clone())));
                 "incompatible_digest = :incompatible_digest,".to_string()
@@ -2113,7 +2111,6 @@ impl SqlitePool {
                 reason,
             } => {
                 let incompatible_digest_update = match reason {
-                    UnlockedReason::AutoUpgradeSucceeded => IncompatibleDigestUpdate::Clear,
                     UnlockedReason::AutoUpgradeFailed { target_digest, .. } => {
                         IncompatibleDigestUpdate::Set(target_digest)
                     }

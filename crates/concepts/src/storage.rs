@@ -420,8 +420,6 @@ pub enum UnlockedReason {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
         reason: StrVariant,
     },
-    #[display("execution automatically upgraded")]
-    AutoUpgradeSucceeded,
     #[display("auto-upgrade failed: {reason}")]
     AutoUpgradeFailed {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity().component_digest))]
@@ -465,7 +463,6 @@ mod unlocked_reason_compat {
         Other {
             reason: StrVariant,
         },
-        AutoUpgradeSucceeded,
         AutoUpgradeFailed {
             target_digest: ComponentDigest,
             reason: StrVariant,
@@ -485,7 +482,6 @@ mod unlocked_reason_compat {
         fn from(value: Current) -> Self {
             match value {
                 Current::Other { reason } => Self::Other { reason },
-                Current::AutoUpgradeSucceeded => Self::AutoUpgradeSucceeded,
                 Current::AutoUpgradeFailed {
                     target_digest,
                     reason,
@@ -2742,10 +2738,6 @@ mod tests {
 
     #[test]
     fn unlocked_reason_should_deserialize_current_tagged_shape() {
-        let actual: UnlockedReason =
-            serde_json::from_str(r#"{"type":"auto_upgrade_succeeded"}"#).unwrap();
-        assert_eq!(UnlockedReason::AutoUpgradeSucceeded, actual);
-
         let actual: UnlockedReason =
             serde_json::from_str(r#"{"type":"other","reason":"executor closing"}"#).unwrap();
         assert_eq!(
