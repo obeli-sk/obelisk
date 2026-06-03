@@ -1307,16 +1307,13 @@ impl TestServer {
                 }
                 grpc::grpc_gen::advance_execution_response::Result::Error(error) => {
                     match error.error.expect("advance error must be set") {
-                        grpc::grpc_gen::advance_execution_response::error::Error::NoWrites(_) => {
-                            panic!("advance returned no_writes on step {steps}")
-                        }
                         grpc::grpc_gen::advance_execution_response::error::Error::VersionMismatch(_) => {
                             panic!("advance returned version mismatch on step {steps}")
                         }
                         grpc::grpc_gen::advance_execution_response::error::Error::ReplayMismatch(_) => {
                             panic!("advance returned replay mismatch on step {steps}")
                         }
-                        grpc::grpc_gen::advance_execution_response::error::Error::ReplayError(err) => {
+                        grpc::grpc_gen::advance_execution_response::error::Error::TransientError(err) => {
                             panic!("advance returned replay error on step {steps}: {}", err.message)
                         }
                     }

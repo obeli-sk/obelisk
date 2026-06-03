@@ -3,7 +3,9 @@ use concepts::ExecutionFailureKind;
 use concepts::ExecutionId;
 use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
+use concepts::JoinSetId;
 use concepts::TrapKind;
+use concepts::component_id::ComponentDigest;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::HistoryEvent;
 use concepts::storage::Locked;
@@ -47,10 +49,12 @@ pub struct RunFinished {
 pub struct WorkerContext {
     pub execution_id: ExecutionId,
     pub metadata: ExecutionMetadata,
+    pub component_digest: ComponentDigest,
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub event_history: Vec<(HistoryEvent, Version)>,
     pub responses: Vec<ResponseWithCursor>,
+    pub parent: Option<(ExecutionId, JoinSetId)>,
     pub version: Version,
     pub can_be_retried: bool,
     pub worker_span: Span,

@@ -146,23 +146,26 @@ fn extract_exported_ffqns_noext(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
         .collect::<Arc<_>>()
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LockingStrategy {
     ByFfqns,
     ByComponentDigest,
+    Auto,
 }
 impl LockingStrategy {
     fn holder(&self, ffqns: Arc<[FunctionFqn]>) -> LockingStrategyHolder {
         match self {
             LockingStrategy::ByFfqns => LockingStrategyHolder::ByFfqns(ffqns),
-            LockingStrategy::ByComponentDigest => LockingStrategyHolder::ByComponentId,
+            LockingStrategy::ByComponentDigest => LockingStrategyHolder::ByComponentDigest,
+            LockingStrategy::Auto => LockingStrategyHolder::Auto { ffqns },
         }
     }
 }
 
 enum LockingStrategyHolder {
     ByFfqns(Arc<[FunctionFqn]>),
-    ByComponentId,
+    ByComponentDigest,
+    Auto { ffqns: Arc<[FunctionFqn]> },
 }
 
 #[derive(Default)]
@@ -234,6 +237,7 @@ impl ExecTask {
         }
     }
 
+    /// Spawn new tokio worker locking executions and starting worker tasks.
     pub fn spawn_new(
         deployment_id: DeploymentId,
         worker: Arc<dyn Worker>,
@@ -268,11 +272,41 @@ impl ExecTask {
                 let res = log_err_if_new(res, &mut old_err);
                 if let Ok(db_exec) = res {
                     let _ = task.tick(db_exec.as_ref(), clock_fn.now(), RunId::generate(), deployment_id).await;
-                    db_exec
-                        .wait_for_pending_by_component_digest(clock_fn.now(), &task.config.component_id.component_digest, {
-                            let sleep = sleep.clone();
-                            Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })})
-                        .await;
+                    let timeout_fut = {
+                        let sleep = sleep.clone();
+                        Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })
+                    };
+                    match &task.locking_strategy_holder {
+                        LockingStrategyHolder::ByFfqns(ffqns) => {
+                            db_exec
+                                .wait_for_pending_by_ffqn(
+                                    clock_fn.now(),
+                                    ffqns.clone(),
+                                    None,
+                                    timeout_fut,
+                                )
+                                .await;
+                        }
+                        LockingStrategyHolder::ByComponentDigest => {
+                            db_exec
+                                .wait_for_pending_by_component_digest(
+                                    clock_fn.now(),
+                                    &task.config.component_id.component_digest,
+                                    timeout_fut,
+                                )
+                                .await;
+                        }
+                        LockingStrategyHolder::Auto { ffqns } => {
+                            db_exec
+                                .wait_for_pending_by_ffqn(
+                                    clock_fn.now(),
+                                    ffqns.clone(),
+                                    Some(task.config.component_id.component_digest.clone()),
+                                    timeout_fut,
+                                )
+                                .await;
+                        }
+                    }
                 } else  {
                     sleep.sleep(task.config.tick_sleep).await;
                 }
@@ -381,6 +415,22 @@ impl ExecTask {
             let lock_expires_at = executed_at + self.config.lock_expiry;
             let batch_size = u32::try_from(permits.len()).expect("ExecConfig.batch_size is u32");
             let locked_executions = match &self.locking_strategy_holder {
+                LockingStrategyHolder::Auto { ffqns } => {
+                    db_exec
+                        .lock_pending_by_ffqns_auto(
+                            batch_size,
+                            executed_at, // fetch expiring before now
+                            ffqns.clone(),
+                            executed_at, // created at
+                            self.config.component_id.clone(),
+                            deployment_id,
+                            self.config.executor_id,
+                            lock_expires_at,
+                            run_id,
+                            self.config.retry_config,
+                        )
+                        .await?
+                }
                 LockingStrategyHolder::ByFfqns(ffqns) => {
                     db_exec
                         .lock_pending_by_ffqns(
@@ -397,7 +447,7 @@ impl ExecTask {
                         )
                         .await?
                 }
-                LockingStrategyHolder::ByComponentId => {
+                LockingStrategyHolder::ByComponentDigest => {
                     db_exec
                         .lock_pending_by_component_digest(
                             batch_size,
@@ -449,7 +499,7 @@ impl ExecTask {
                         let res = Self::run_worker(
                             component_type,
                             worker,
-                            db_pool.as_ref(),
+                            db_pool,
                             clock_fn,
                             locked_execution,
                             retry_config,
@@ -474,7 +524,7 @@ impl ExecTask {
     async fn run_worker(
         component_type: ComponentType,
         worker: Arc<dyn Worker>,
-        db_pool: &dyn DbPool,
+        db_pool: Arc<dyn DbPool>,
         clock_fn: Box<dyn ClockFn>,
         locked_execution: LockedExecution,
         retry_config: ComponentRetryConfig,
@@ -498,13 +548,17 @@ impl ExecTask {
                 locked_execution.intermittent_event_count + 1,
                 retry_config.retry_exp_backoff,
             );
+        let parent = locked_execution.parent.clone();
+        let execution_id = locked_execution.execution_id.clone();
         let ctx = WorkerContext {
             execution_id: locked_execution.execution_id.clone(),
             metadata: locked_execution.metadata,
+            component_digest: locked_execution.component_digest,
             ffqn: locked_execution.ffqn,
             params: locked_execution.params,
             event_history: locked_execution.event_history,
             responses: locked_execution.responses,
+            parent: parent.clone(),
             version: locked_execution.next_version,
             can_be_retried: can_be_retried.is_some(),
             locked_event: locked_execution.locked_event,
@@ -516,10 +570,10 @@ impl ExecTask {
         let result_obtained_at = clock_fn.now();
         match Self::worker_result_to_execution_event(
             component_type,
-            locked_execution.execution_id,
+            execution_id,
             worker_result,
             result_obtained_at,
-            locked_execution.parent,
+            parent,
             can_be_retried,
             unlock_expiry_on_limit_reached,
         )? {
@@ -730,7 +784,7 @@ impl ExecTask {
                         (
                             ExecutionRequest::Unlocked {
                                 backoff_expires_at: expires_at,
-                                reason: StrVariant::from(reason),
+                                reason: StrVariant::from(reason).into(),
                             },
                             None,
                             new_version,

@@ -949,11 +949,15 @@ impl ComponentCommon {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LockingStrategy {
+    /// Select all exported FFQNs
     ByFfqns,
+    /// Select by component digest
     ByComponentDigest,
+    /// Only applicable for workflows: Same as `ByFffqns`, with automatic upgrade
+    Auto,
 }
 impl From<LockingStrategy> for executor::executor::LockingStrategy {
     fn from(value: LockingStrategy) -> Self {
@@ -962,6 +966,7 @@ impl From<LockingStrategy> for executor::executor::LockingStrategy {
             LockingStrategy::ByComponentDigest => {
                 executor::executor::LockingStrategy::ByComponentDigest
             }
+            LockingStrategy::Auto => executor::executor::LockingStrategy::Auto,
         }
     }
 }
@@ -972,6 +977,7 @@ impl From<executor::executor::LockingStrategy> for LockingStrategy {
             executor::executor::LockingStrategy::ByComponentDigest => {
                 LockingStrategy::ByComponentDigest
             }
+            executor::executor::LockingStrategy::Auto => LockingStrategy::Auto,
         }
     }
 }
@@ -1036,10 +1042,16 @@ fn locking_strategy(
         // needed for seed execution deduplication.
         return Ok(executor::executor::LockingStrategy::ByComponentDigest);
     }
+    // Auto is only valid for workflows
+    if component_type != ComponentType::Workflow
+        && locking_strategy_override == Some(LockingStrategy::Auto)
+    {
+        bail!("Locking strategy `auto` is only available for workflows");
+    }
     Ok(locking_strategy_override.map(executor::executor::LockingStrategy::from).unwrap_or_else(||
     match component_type {
         ComponentType::Activity => executor::executor::LockingStrategy::ByFfqns,
-        ComponentType::Workflow => executor::executor::LockingStrategy::ByComponentDigest,
+        ComponentType::Workflow => executor::executor::LockingStrategy::Auto,
         other => unreachable!(
             "unexpected type {other}, only workflows, activities, and crons expose locking strategy"
         ),

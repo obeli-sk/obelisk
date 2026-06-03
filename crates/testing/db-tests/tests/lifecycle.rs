@@ -352,7 +352,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
         let req = AppendRequest {
             event: ExecutionRequest::Unlocked {
                 backoff_expires_at,
-                reason: StrVariant::Static("reason"),
+                reason: StrVariant::Static("reason").into(),
             },
             created_at,
         };
@@ -2249,7 +2249,7 @@ async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
         } => (*backoff_expires_at, reason)
     );
     assert_eq!(paused_at, backoff_expires_at);
-    assert_eq!("paused", reason.as_ref());
+    assert_eq!("paused", reason.to_string());
     assert_matches!(log.events[3].event, ExecutionRequest::Paused);
 
     // Unpause and verify it returns to pending state instead of reviving the old lock.
@@ -2471,7 +2471,7 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
                 created_at: sim_clock.now(),
                 event: ExecutionRequest::Unlocked {
                     backoff_expires_at: sim_clock.now(),
-                    reason: StrVariant::Static("paused"),
+                    reason: StrVariant::Static("paused").into(),
                 },
             },
         )

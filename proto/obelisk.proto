@@ -872,25 +872,19 @@ message AdvanceExecutionResponse {
   }
 
   message Error {
-    message NoWrites {
-    }
-
-    message ReplayError {
-      string message = 1;
-    }
-
     message VersionMismatch {
       uint32 expected = 1;
     }
-
     message ReplayMismatch {
+    }
+    message TransientError {
+      string message = 1;
     }
 
     oneof error {
-      NoWrites no_writes = 1;
-      ReplayError replay_error = 2;
       VersionMismatch version_mismatch = 3;
       ReplayMismatch replay_mismatch = 4;
+      TransientError transient_error = 5;
     }
   }
 

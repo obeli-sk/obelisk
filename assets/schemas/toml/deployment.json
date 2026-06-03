@@ -259,6 +259,7 @@
     "LockingStrategy": {
       "type": "string",
       "enum": [
+        "auto",
         "by_ffqns",
         "by_component_digest"
       ]

@@ -147,7 +147,7 @@
           "additionalProperties": false
         },
         {
-          "description": "Returns execution to [`PendingState::PendingAt`] state at the specified time.\nThis can happen when:\n- executor is running out of resources like [`WorkerError::LimitReached`]\n- workflow made progress but then its lock expired.\n- executor is being closed (shutdown or hot redeploy requested)\n- activity is paused",
+          "description": "Returns execution to [`PendingState::PendingAt`] state at the specified time.\nThis can happen when:\n- executor is running out of resources like [`WorkerError::LimitReached`]\n- executor is being closed (shutdown or hot redeploy requested)\n- activity is paused\n- workflow made progress but then its lock expired\n- workflow attempted to auto-upgrade an execution and failed, recording its digest in `incompatible_digest`",
           "type": "object",
           "properties": {
             "unlocked": {
@@ -158,7 +158,7 @@
                   "format": "date-time"
                 },
                 "reason": {
-                  "type": "string"
+                  "$ref": "#/$defs/UnlockedReason"
                 }
               },
               "required": [
@@ -380,6 +380,58 @@
       "required": [
         "secs",
         "nanos"
+      ]
+    },
+    "UnlockedReason": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "other"
+            }
+          },
+          "required": [
+            "type",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "auto_upgrade_succeeded"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "target_digest": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "auto_upgrade_failed"
+            }
+          },
+          "required": [
+            "type",
+            "target_digest",
+            "reason"
+          ]
+        }
       ]
     },
     "HttpClientTrace": {

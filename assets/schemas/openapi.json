@@ -759,6 +759,9 @@
               }
             }
           },
+          "400": {
+            "description": "Bad request"
+          },
           "404": {
             "description": "Not found"
           },
@@ -1472,38 +1475,6 @@
           {
             "type": "object",
             "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "no_writes"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "message",
-              "type"
-            ],
-            "properties": {
-              "message": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "replay_error"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
               "expected",
               "type"
             ],
@@ -1531,6 +1502,20 @@
                 "type": "string",
                 "enum": [
                   "replay_mismatch"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "transient"
                 ]
               }
             }

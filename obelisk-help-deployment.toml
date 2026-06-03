@@ -5,11 +5,12 @@
 # exec.lock_expiry.seconds = 1 # Each execution is locked for 1s by default.
 # exec.tick_sleep.milliseconds = 200 # Sleep between event loop ticks.
 ### Locking strategy
-## There are two strategies how components can select and lock executions to be worked on:
-## - using function's FFQN, meaning new component version will continue working on executions started by the previous version, or
-## - using component's hash digest. Since every component code change triggers new digest, old pending executions must be explicitly upgraded to the current digest first.
-## The default strategy for activities (both JS and WASM) is "by_ffqn", for workflows it is "by_component_digest".
-# exec.locking_strategy = "by_ffqn" # One of "by_ffqn"|"by_component_digest"
+## There are three strategies how components can select and lock executions to be worked on:
+## - "by_ffqns": select pending executions by function FFQN, meaning a new component version will continue working on executions started by a previous version without replay/upgrade gating.
+## - "by_component_digest": select pending executions by component hash digest. Since every component code change triggers a new digest, old pending executions must be explicitly upgraded to the current digest first.
+## - "auto": workflows select pending executions by FFQN. When an execution's stored digest differs from the current component digest, the workflow is replayed against the current component, compatible executions are upgraded automatically, and executions already known to be incompatible with the current digest are skipped.
+## The default strategy for activities (both JS and WASM) is "by_ffqns", for workflows it is "auto".
+# exec.locking_strategy = "auto" # One of "by_ffqns"|"by_component_digest"|"auto"
 
 
 ### WASM Activity components configuration

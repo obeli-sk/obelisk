@@ -363,14 +363,15 @@ pub enum ExecutionRequest {
     /// Returns execution to [`PendingState::PendingAt`] state at the specified time.
     /// This can happen when:
     /// - executor is running out of resources like [`WorkerError::LimitReached`]
-    /// - workflow made progress but then its lock expired.
     /// - executor is being closed (shutdown or hot redeploy requested)
     /// - activity is paused
+    /// - workflow made progress but then its lock expired
+    /// - workflow attempted to auto-upgrade an execution and failed, recording its digest in `incompatible_digest`
     #[display("Unlocked(`{backoff_expires_at}`)")]
     Unlocked {
         backoff_expires_at: DateTime<Utc>,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
-        reason: StrVariant,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = UnlockedReason::Other { reason: StrVariant::Static("reason") }))]
+        reason: UnlockedReason,
     },
     // Created by the executor holding the lock.
     // After expiry interpreted as pending.
@@ -408,6 +409,115 @@ pub enum ExecutionRequest {
     Paused,
     #[display("Unpaused")]
     Unpaused,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, schemars::JsonSchema)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UnlockedReason {
+    #[display("{reason}")]
+    Other {
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
+        reason: StrVariant,
+    },
+    #[display("execution automatically upgraded")]
+    AutoUpgradeSucceeded,
+    #[display("auto-upgrade failed: {reason}")]
+    AutoUpgradeFailed {
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity().component_digest))]
+        target_digest: ComponentDigest,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
+        reason: StrVariant,
+    },
+}
+
+impl<'de> Deserialize<'de> for UnlockedReason {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        unlocked_reason_compat::deserialize(deserializer)
+    }
+}
+
+mod unlocked_reason_compat {
+    use super::{ComponentDigest, StrVariant, UnlockedReason};
+    use serde::Deserialize;
+
+    // TODO: Delete this compatibility module with the next DB-breaking release.
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<UnlockedReason, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Compat::deserialize(deserializer).map(Into::into)
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Compat {
+        Current(Current),
+        Legacy(StrVariant),
+    }
+
+    #[derive(Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    enum Current {
+        Other {
+            reason: StrVariant,
+        },
+        AutoUpgradeSucceeded,
+        AutoUpgradeFailed {
+            target_digest: ComponentDigest,
+            reason: StrVariant,
+        },
+    }
+
+    impl From<Compat> for UnlockedReason {
+        fn from(value: Compat) -> Self {
+            match value {
+                Compat::Current(current) => current.into(),
+                Compat::Legacy(reason) => Self::Other { reason },
+            }
+        }
+    }
+
+    impl From<Current> for UnlockedReason {
+        fn from(value: Current) -> Self {
+            match value {
+                Current::Other { reason } => Self::Other { reason },
+                Current::AutoUpgradeSucceeded => Self::AutoUpgradeSucceeded,
+                Current::AutoUpgradeFailed {
+                    target_digest,
+                    reason,
+                } => Self::AutoUpgradeFailed {
+                    target_digest,
+                    reason,
+                },
+            }
+        }
+    }
+}
+
+impl From<StrVariant> for UnlockedReason {
+    fn from(value: StrVariant) -> Self {
+        Self::Other { reason: value }
+    }
+}
+
+impl From<String> for UnlockedReason {
+    fn from(value: String) -> Self {
+        Self::Other {
+            reason: StrVariant::from(value),
+        }
+    }
+}
+
+impl From<&'static str> for UnlockedReason {
+    fn from(value: &'static str) -> Self {
+        Self::Other {
+            reason: StrVariant::Static(value),
+        }
+    }
 }
 
 impl ExecutionRequest {
@@ -921,6 +1031,7 @@ pub struct LockedExecution {
     pub execution_id: ExecutionId,
     pub next_version: Version,
     pub metadata: ExecutionMetadata,
+    pub component_digest: ComponentDigest,
     pub locked_event: Locked,
     pub ffqn: FunctionFqn,
     pub params: Params,
@@ -1041,7 +1152,6 @@ pub enum CapturedDbWrite {
         backtraces: Vec<BacktraceInfo>,
     },
     AppendFinished {
-        // TODO: Extract struct AppendFinished
         execution_id: ExecutionId,
         version: Version,
         current_time: DateTime<Utc>,
@@ -1049,11 +1159,32 @@ pub enum CapturedDbWrite {
         parent: Option<(ExecutionId, JoinSetId)>,
     },
 }
+impl CapturedDbWrite {
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        matches!(self, CapturedDbWrite::AppendFinished { .. })
+    }
+}
 
 #[async_trait]
 pub trait DbExecutor: Send + Sync {
     #[expect(clippy::too_many_arguments)]
     async fn lock_pending_by_ffqns(
+        &self,
+        batch_size: u32,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: Arc<[FunctionFqn]>,
+        created_at: DateTime<Utc>,
+        component_id: ComponentId,
+        deployment_id: DeploymentId,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
+        retry_config: ComponentRetryConfig,
+    ) -> Result<LockPendingResponse, DbErrorWrite>;
+
+    #[expect(clippy::too_many_arguments)]
+    async fn lock_pending_by_ffqns_auto(
         &self,
         batch_size: u32,
         pending_at_or_sooner: DateTime<Utc>,
@@ -1118,10 +1249,12 @@ pub trait DbExecutor: Send + Sync {
     /// Return immediately if there are pending notifications at `pending_at_or_sooner`.
     /// Otherwise wait until `timeout_fut` resolves.
     /// Delay requests that expire between `pending_at_or_sooner` and timeout can be disregarded.
+    /// If `current_digest` is set, ignore executions with incompatible digests.
     async fn wait_for_pending_by_ffqn(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
+        current_digest: Option<ComponentDigest>,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     );
 
@@ -2542,8 +2675,10 @@ mod tests {
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
+    use super::UnlockedReason;
     use crate::ExecutionFailureKind;
     use crate::JoinSetId;
+    use crate::StrVariant;
     use crate::SupportedFunctionReturnValue;
     use chrono::DateTime;
     use chrono::Datelike;
@@ -2583,6 +2718,42 @@ mod tests {
         let ser = serde_json::to_string(&expected).unwrap();
         let actual: PendingStateFinished = serde_json::from_str(&ser).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn unlocked_reason_should_deserialize_legacy_string() {
+        let actual: UnlockedReason = serde_json::from_str(r#""executor closing""#).unwrap();
+        assert_eq!(
+            UnlockedReason::Other {
+                reason: StrVariant::Static("executor closing"),
+            },
+            actual
+        );
+    }
+
+    #[test]
+    fn unlocked_reason_other_should_serialize_current_tagged_shape() {
+        let actual = serde_json::to_string(&UnlockedReason::Other {
+            reason: StrVariant::Static("executor closing"),
+        })
+        .unwrap();
+        assert_eq!(r#"{"type":"other","reason":"executor closing"}"#, actual);
+    }
+
+    #[test]
+    fn unlocked_reason_should_deserialize_current_tagged_shape() {
+        let actual: UnlockedReason =
+            serde_json::from_str(r#"{"type":"auto_upgrade_succeeded"}"#).unwrap();
+        assert_eq!(UnlockedReason::AutoUpgradeSucceeded, actual);
+
+        let actual: UnlockedReason =
+            serde_json::from_str(r#"{"type":"other","reason":"executor closing"}"#).unwrap();
+        assert_eq!(
+            UnlockedReason::Other {
+                reason: StrVariant::Static("executor closing"),
+            },
+            actual
+        );
     }
 
     #[test]

@@ -905,6 +905,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .execution_id
             .argument_must_exist("execution_id")?
             .try_into()?;
+        if request.captured_writes.is_empty() {
+            return Err(tonic::Status::failed_precondition(
+                "`captured_writes` must not be empty",
+            ));
+        }
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
         let (deployment_id, component_registry_ro) = {
             let ctx = self.deployment_ctx.read().await;
@@ -989,17 +994,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 info!("Advance failed: {err:?}");
                 let error = match err {
                     AdvanceError::NoWrites => {
-                        grpc_gen::advance_execution_response::error::Error::NoWrites(
-                            grpc_gen::advance_execution_response::error::NoWrites {},
-                        )
+                        unreachable!("no requested writes handled above")
                     }
-                    AdvanceError::ReplayError(replay_error) => {
-                        grpc_gen::advance_execution_response::error::Error::ReplayError(
-                            grpc_gen::advance_execution_response::error::ReplayError {
-                                message: replay_error.to_string(),
-                            },
-                        )
-                    }
+                    AdvanceError::DbError(err) => return Err(db_error_write_to_status(&err)),
                     AdvanceError::VersionMismatch { expected } => {
                         grpc_gen::advance_execution_response::error::Error::VersionMismatch(
                             grpc_gen::advance_execution_response::error::VersionMismatch {
@@ -1010,6 +1007,15 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     AdvanceError::ReplayMismatch => {
                         grpc_gen::advance_execution_response::error::Error::ReplayMismatch(
                             grpc_gen::advance_execution_response::error::ReplayMismatch {},
+                        )
+                    }
+                    err @ (AdvanceError::ExecutorClosing
+                    | AdvanceError::LimitReached { .. }
+                    | AdvanceError::LockExpired) => {
+                        grpc_gen::advance_execution_response::error::Error::TransientError(
+                            grpc_gen::advance_execution_response::error::TransientError {
+                                message: err.to_string(),
+                            },
                         )
                     }
                 };

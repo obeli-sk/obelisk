@@ -19,7 +19,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
-    CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog, Locked, Version,
+    AppendRequest, CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog,
+    ExecutionRequest, Locked, UnlockedReason, Version,
 };
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
@@ -480,7 +481,7 @@ impl WorkflowWorker {
         log: ExecutionLog,
         ffqn: FunctionFqn,
         params: Params,
-    ) -> Result<(Vec<InternalCapturedWrite>, Option<FatalError>), ReplayError> {
+    ) -> Result<(Vec<InternalCapturedWrite>, Option<FatalError>), ReplayInternalError> {
         let replay_kind = if log.is_finished() {
             ReplayKind::Finished
         } else {
@@ -506,15 +507,17 @@ impl WorkflowWorker {
                 .connection()
                 .await
                 .map_err(DbErrorWrite::from)?,
-            parent,
+            parent.clone(),
         );
         let ctx = WorkerContext {
             execution_id,
             metadata: ExecutionMetadata::empty(),
+            component_digest: config.component_id.component_digest.clone(),
             ffqn,
             params,
             event_history: log.event_history().collect(),
             responses: log.responses,
+            parent,
             version: log.next_version,
             can_be_retried: true, // Avoid retryability warnings during replay/advance.
             worker_span: Span::current(),
@@ -535,8 +538,9 @@ impl WorkflowWorker {
             config,
             engine,
             clock_fn.clone_box(),
-        )?;
-        let linked = compiled.link(fn_registry)?;
+        )
+        .expect("FIXME: accept worker");
+        let linked = compiled.link(fn_registry).expect("FIXME: accept worker");
         let worker = linked.into_worker(
             deployment_id,
             real_db_pool,
@@ -558,7 +562,7 @@ impl WorkflowWorker {
         requested: ReplayAdvanceable,
         fresh_replay: Vec<InternalCapturedWrite>,
         old_version: Version,
-    ) -> Result<AdvanceResponse, AdvanceError> {
+    ) -> Result<AdvanceResponse, AdvanceFromLogError> {
         assert!(
             !requested.captured_writes.is_empty(),
             "caller must have checked for NoWrites error"
@@ -567,30 +571,28 @@ impl WorkflowWorker {
             .iter()
             .map(|write| write.write.clone())
             .collect();
-        let outcome = if requested.is_prefix_of(&fresh_public_writes) {
-            let writes_to_apply = merge_requested_overrides_into_fresh_prefix(
-                &requested.captured_writes,
-                &fresh_replay,
-            );
-            apply_writes(
-                db_conn,
-                cancel_registry,
-                log_forwarder_sender,
-                writes_to_apply,
-                old_version,
-            )
-            .await?;
-            AdvanceResponse {
-                finished: requested.get_return_value().cloned(),
-            }
-        } else {
+        if !requested.is_prefix_of(&fresh_public_writes) {
             debug!(
                 "Mismatch between expected and actual captured writes. Requested: {:?}, fresh replay produced: {fresh_public_writes:?}",
                 requested.captured_writes,
             );
-            return Err(AdvanceError::ReplayMismatch);
-        };
+            return Err(AdvanceFromLogError::ReplayMismatch);
+        }
 
+        let writes_to_apply =
+            merge_requested_overrides_into_fresh_prefix(&requested.captured_writes, &fresh_replay);
+        let version = apply_writes(
+            db_conn,
+            cancel_registry,
+            log_forwarder_sender,
+            writes_to_apply,
+            old_version,
+        )
+        .await?;
+        let outcome = AdvanceResponse {
+            finished: requested.get_return_value().cloned(),
+            version,
+        };
         info!(
             "Advance written {} captured writes{}",
             requested.captured_writes.len(),
@@ -1010,7 +1012,7 @@ impl WorkflowWorker {
         ctx: WorkerContext,
         replay_db_connection: ReplayWorkflowDbConnection,
         replay_kind: ReplayKind,
-    ) -> Result<(Vec<InternalCapturedWrite>, Option<FatalError>), ReplayError> {
+    ) -> Result<(Vec<InternalCapturedWrite>, Option<FatalError>), ReplayInternalError> {
         let (retval, replay_db_connection, fatal_error) = match self
             .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
             .await
@@ -1026,9 +1028,17 @@ impl WorkflowWorker {
                 );
                 Ok((Some(retval), db_connection, Some(err)))
             }
-            Err(err) => {
-                debug!("Replay failed: {err:?}");
-                Err(ReplayError::from(err))
+            Err(WorkflowError::LimitReached { reason, version }) => {
+                Err(ReplayInternalError::LimitReached { reason, version })
+            }
+            Err(WorkflowError::DbError(db_error_write)) => {
+                Err(ReplayInternalError::DbError(db_error_write))
+            }
+            Err(WorkflowError::LockExpired(version)) => {
+                Err(ReplayInternalError::LockExpired(version))
+            }
+            Err(WorkflowError::ExecutorClosing(version)) => {
+                Err(ReplayInternalError::ExecutorClosing(version))
             }
         }?;
 
@@ -1137,10 +1147,10 @@ impl WorkflowWorker {
             .into_iter()
             .map(|write| write.write)
             .collect();
-        Self::replay_response(captured_writes, fatal_error, already_finished_result)
+        Self::transform_replay_to_response(captured_writes, fatal_error, already_finished_result)
     }
 
-    pub(crate) fn replay_response(
+    pub(crate) fn transform_replay_to_response(
         captured_writes: Vec<CapturedDbWrite>,
         fatal_error: Option<FatalError>,
         already_finished_result: Option<SupportedFunctionReturnValue>,
@@ -1227,7 +1237,7 @@ impl WorkflowWorker {
         )
         .await?;
 
-        Self::advance_from_log(
+        Ok(Self::advance_from_log(
             &*db_conn,
             &cancel_registry,
             log_forwarder_sender,
@@ -1235,7 +1245,7 @@ impl WorkflowWorker {
             fresh_replay,
             old_version,
         )
-        .await
+        .await?)
     }
 }
 
@@ -1329,44 +1339,74 @@ impl ReplayAdvanceable {
         captured_writes.truncate(len);
         Self { captured_writes }
     }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.captured_writes.is_empty()
+    }
 }
 
 /// Result of advancing a paused workflow execution.
 #[derive(Debug, Clone)]
 pub struct AdvanceResponse {
     pub finished: Option<SupportedFunctionReturnValue>,
+    version: Version,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum AdvanceError {
-    #[error(transparent)]
-    ReplayError(#[from] ReplayError),
     #[error("no writes supplied")]
     NoWrites,
     #[error("version mismatch: expected {expected}")]
     VersionMismatch { expected: Version },
     #[error("replay mismatch")]
     ReplayMismatch,
+    #[error(transparent)]
+    DbError(#[from] DbErrorWrite),
+    // Errors from ReplayInternalError
+    #[error("limit reached: {reason}")]
+    LimitReached { reason: String, version: Version },
+    #[error("lock expired")]
+    LockExpired,
+    #[error("executor closing")]
+    ExecutorClosing,
+}
+impl From<ReplayInternalError> for AdvanceError {
+    fn from(value: ReplayInternalError) -> Self {
+        match value {
+            ReplayInternalError::DbError(err) => Self::DbError(err),
+            ReplayInternalError::LimitReached { reason, version } => {
+                Self::LimitReached { reason, version }
+            }
+            ReplayInternalError::LockExpired(_) => Self::LockExpired,
+            ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,
+        }
+    }
 }
 
-impl From<DbErrorWrite> for AdvanceError {
-    fn from(value: DbErrorWrite) -> Self {
-        Self::ReplayError(ReplayError::DbError(value))
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum AdvanceFromLogError {
+    #[error("replay mismatch")]
+    ReplayMismatch,
+    #[error(transparent)]
+    DbError(#[from] DbErrorWrite),
+}
+impl From<AdvanceFromLogError> for AdvanceError {
+    fn from(value: AdvanceFromLogError) -> Self {
+        match value {
+            AdvanceFromLogError::DbError(db_err) => AdvanceError::DbError(db_err),
+            AdvanceFromLogError::ReplayMismatch => AdvanceError::ReplayMismatch,
+        }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReplayError {
     #[error(transparent)]
-    DecodeError(#[from] DecodeError),
-    #[error(transparent)]
-    LinkError(#[from] WasmFileError),
+    DbError(#[from] DbErrorWrite),
     // Transient error
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
-    // Transient error
-    #[error(transparent)]
-    DbError(#[from] DbErrorWrite),
     // Transient error
     #[error("lock expired")]
     LockExpired,
@@ -1381,19 +1421,162 @@ pub enum ReplayError {
         captured_writes: Vec<CapturedDbWrite>,
     },
 }
-impl From<WorkflowError> for ReplayError {
-    fn from(value: WorkflowError) -> Self {
+
+// Does not contain `FatalError`
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ReplayInternalError {
+    #[error(transparent)]
+    DbError(#[from] DbErrorWrite),
+    #[error("limit reached: {reason}")]
+    LimitReached { reason: String, version: Version },
+    #[error("lock expired")]
+    LockExpired(Version),
+    #[error("executor closing")]
+    ExecutorClosing(Version),
+}
+impl From<ReplayInternalError> for ReplayError {
+    fn from(value: ReplayInternalError) -> Self {
         match value {
-            WorkflowError::LimitReached { reason, version } => {
-                ReplayError::LimitReached { reason, version }
+            ReplayInternalError::DbError(db_error_write) => Self::DbError(db_error_write),
+            ReplayInternalError::LimitReached { reason, version } => {
+                Self::LimitReached { reason, version }
             }
-            WorkflowError::DbError(db_error_write) => ReplayError::DbError(db_error_write),
-            WorkflowError::FatalError { .. } => unreachable!(
-                "fatal errors are transformed to SupportedFunctionReturnValue::ExecutionFailure"
-            ),
-            WorkflowError::LockExpired(_version) => ReplayError::LockExpired,
-            WorkflowError::ExecutorClosing(_version) => ReplayError::ExecutorClosing,
+            ReplayInternalError::LockExpired(_) => Self::LockExpired,
+            ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,
         }
+    }
+}
+
+impl WorkflowWorker {
+    async fn auto_upgrade_locked(&self, ctx: WorkerContext) -> Result<(), WorkerError> {
+        let db_conn = self
+            .db_pool
+            .connection()
+            .await
+            .map_err(|err| WorkerError::DbError(err.into()))?;
+        let old_digest = ctx.component_digest.clone();
+        let new_digest = self.config.component_id.component_digest.clone();
+        let execution_id = ctx.execution_id.clone();
+        let version = ctx.version.clone();
+        let parent = ctx.parent.clone();
+        let replay_db_connection = ReplayWorkflowDbConnection::new(
+            execution_id.clone(),
+            version.clone(),
+            self.db_pool
+                .connection()
+                .await
+                .map_err(|err| WorkerError::DbError(err.into()))?,
+            parent,
+        );
+        let replay_ctx = WorkerContext {
+            can_be_retried: true,
+            ..ctx
+        };
+
+        let (fresh_replay, fatal_error) = self
+            .replay_internal(replay_ctx, replay_db_connection, ReplayKind::Unfinished)
+            .await
+            .map_err(|err| match err {
+                ReplayInternalError::DbError(db_err) => WorkerError::DbError(db_err),
+                ReplayInternalError::LimitReached { reason, version } => {
+                    WorkerError::LimitReached { reason, version }
+                }
+                ReplayInternalError::LockExpired(version) => WorkerError::TemporaryTimeout {
+                    http_client_traces: None,
+                    version,
+                },
+                ReplayInternalError::ExecutorClosing(version) => {
+                    WorkerError::ExecutorClosing(version)
+                }
+            })?;
+
+        // Although not all fatal errors are caused by nondeterminism detected, auto upgrade will not persist any of them.
+        if let Some(fatal_error) = fatal_error {
+            // Set ignore_component_digest to avoid needless locks in the future.
+            db_conn
+                .append(
+                    execution_id,
+                    version,
+                    AppendRequest {
+                        created_at: self.clock_fn.now(),
+                        event: ExecutionRequest::Unlocked {
+                            backoff_expires_at: self.clock_fn.now(),
+                            reason: UnlockedReason::AutoUpgradeFailed {
+                                target_digest: self.config.component_id.component_digest.clone(),
+                                reason: StrVariant::from(fatal_error.to_string()),
+                            },
+                        },
+                    },
+                )
+                .await
+                .map_err(WorkerError::DbError)?;
+            return Ok(()); // NOK but db already updated
+        }
+
+        self.db_pool
+            .external_api_conn()
+            .await
+            .map_err(|err| WorkerError::DbError(err.into()))?
+            .upgrade_execution_component(&execution_id, &old_digest, &new_digest)
+            .await
+            .map_err(WorkerError::DbError)?;
+
+        let unlock_version = {
+            let captured_writes: Vec<_> = fresh_replay
+                .iter()
+                .map(|write| write.write.clone())
+                .collect();
+            if !captured_writes.is_empty() {
+                let advance_res = Self::advance_from_log(
+                    &*db_conn,
+                    &self.cancel_registry,
+                    self.logs_storage_config
+                        .as_ref()
+                        .map(|config| &config.log_sender),
+                    ReplayAdvanceable { captured_writes },
+                    fresh_replay,
+                    version,
+                )
+                .await;
+                match advance_res {
+                    Ok(outcome) => {
+                        if outcome.finished.is_some() {
+                            None // Do not send Unlocked evend if execution is going to be finished.
+                        } else {
+                            Some(outcome.version)
+                        }
+                    }
+                    Err(AdvanceFromLogError::ReplayMismatch) => {
+                        unreachable!("requested writes == fresh replay")
+                    }
+                    Err(AdvanceFromLogError::DbError(db_err)) => {
+                        return Err(WorkerError::DbError(db_err));
+                    }
+                }
+            } else {
+                // No captured events = blocked
+                Some(version)
+            }
+        };
+
+        if let Some(unlock_version) = unlock_version {
+            db_conn
+                .append(
+                    execution_id,
+                    unlock_version,
+                    AppendRequest {
+                        created_at: self.clock_fn.now(),
+                        event: ExecutionRequest::Unlocked {
+                            backoff_expires_at: self.clock_fn.now(),
+                            reason: UnlockedReason::AutoUpgradeSucceeded,
+                        },
+                    },
+                )
+                .await
+                .map_err(WorkerError::DbError)?;
+        }
+        info!("Execution auto-upgraded");
+        Ok(())
     }
 }
 
@@ -1404,6 +1587,11 @@ impl Worker for WorkflowWorker {
     }
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
+        if ctx.component_digest != self.config.component_id.component_digest {
+            self.auto_upgrade_locked(ctx).await?;
+            return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
+        }
+
         let db_connection = Box::new(CachingDbConnection::new(
             self.db_pool.connection().await.unwrap(),
             ctx.execution_id.clone(),
@@ -2434,10 +2622,12 @@ pub(crate) mod tests {
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
+            component_digest: worker.config.component_id.component_digest.clone(),
             ffqn: SLEEP1_HOST_ACTIVITY_FFQN,
             params: Params::from_json_values_test(vec![json!({"milliseconds": SLEEP_MILLIS})]),
             event_history: Vec::new(),
             responses: Vec::new(),
+            parent: None,
             version: Version::new(0),
             can_be_retried: false,
             worker_span: info_span!("worker-test"),
@@ -4129,11 +4319,10 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    #[expand_enum_database]
     #[rstest]
     #[tokio::test]
     async fn activity_trap_should_be_converted_as_custom_err_execution_failed_variant(
-        db: db_tests::Database,
+        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)] db: db_tests::Database,
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,
     ) {
@@ -4178,7 +4367,9 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 component_id: match locking_strategy {
-                    LockingStrategy::ByFfqns => ComponentId::dummy_workflow(), // must not matter
+                    LockingStrategy::Auto | LockingStrategy::ByFfqns => {
+                        ComponentId::dummy_workflow()
+                    } // must not matter
                     LockingStrategy::ByComponentDigest => {
                         workflow_worker.config.component_id.clone()
                     }

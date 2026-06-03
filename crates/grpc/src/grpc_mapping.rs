@@ -14,7 +14,7 @@ use concepts::{
         LogEntry, LogEntryRow, LogLevel, LogStreamType, Pagination, PendingState,
         PendingStateBlockedByJoinSet, PendingStateFinished, PendingStateFinishedError,
         PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt, PersistKind,
-        ScheduleRequestError, StubError, Version, VersionParseError,
+        ScheduleRequestError, StubError, UnlockedReason, Version, VersionParseError,
         http_client_trace::HttpClientTrace,
     },
 };
@@ -1092,7 +1092,9 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
                     .backoff_expires_at
                     .argument_must_exist("backoff_expires_at")?
                     .into(),
-                reason: StrVariant::from(unlocked.reason),
+                reason: UnlockedReason::Other {
+                    reason: StrVariant::from(unlocked.reason),
+                },
             },
             grpc_gen::execution_event::Event::TemporarilyFailed(failed) => {
                 ExecutionRequest::TemporarilyFailed {

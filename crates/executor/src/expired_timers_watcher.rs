@@ -4,7 +4,6 @@ use crate::executor::ChildFinishedResponse;
 use chrono::{DateTime, Utc};
 use concepts::ExecutionFailureKind;
 use concepts::ExecutionId;
-use concepts::StrVariant;
 use concepts::SupportedFunctionReturnValue;
 use concepts::storage::AppendRequest;
 use concepts::storage::DbConnection;
@@ -12,6 +11,7 @@ use concepts::storage::DbErrorWrite;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionLog;
 use concepts::storage::ExpiredDelay;
+use concepts::storage::UnlockedReason;
 use concepts::time::ClockFn;
 use concepts::{
     FinishedExecutionFailure,
@@ -111,7 +111,9 @@ pub(crate) async fn tick(
                             created_at: executed_at,
                             event: ExecutionRequest::Unlocked {
                                 backoff_expires_at: executed_at,
-                                reason: StrVariant::Static("made progress"),
+                                reason: UnlockedReason::Other {
+                                    reason: "made progress".into(),
+                                },
                             },
                         },
                         execution_id: execution_id.clone(),

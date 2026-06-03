@@ -141,7 +141,7 @@ impl Worker for CronWorker {
                     created_at: now,
                     event: ExecutionRequest::Unlocked {
                         backoff_expires_at: next_fire,
-                        reason: StrVariant::Static("cron: waiting for next cron tick"),
+                        reason: StrVariant::Static("cron: waiting for next cron tick").into(),
                     },
                 }
             }
@@ -232,17 +232,20 @@ mod tests {
         version: Version,
         now: DateTime<Utc>,
     ) -> WorkerContext {
+        let locked_event = make_locked_event(now);
         WorkerContext {
             execution_id,
             metadata: ExecutionMetadata::empty(),
+            component_digest: locked_event.component_id.component_digest.clone(),
             ffqn: cron_ffqn(&TARGET_FFQN),
             params: Params::empty(),
             event_history: Vec::new(),
             responses: Vec::new(),
+            parent: None,
             version,
             can_be_retried: false,
             worker_span: tracing::info_span!("schedule_test"),
-            locked_event: make_locked_event(now),
+            locked_event,
             executor_close_watcher: tokio::sync::watch::channel(false).1,
         }
     }

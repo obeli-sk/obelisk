@@ -526,7 +526,11 @@ impl WorkflowJsWorker {
             })
             .collect();
 
-        WorkflowWorker::replay_response(captured_writes, fatal_error, already_finished_result)
+        WorkflowWorker::transform_replay_to_response(
+            captured_writes,
+            fatal_error,
+            already_finished_result,
+        )
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
@@ -593,7 +597,8 @@ impl WorkflowJsWorker {
             ffqn,
             params,
         )
-        .await?;
+        .await
+        .map_err(AdvanceError::from)?;
         if let Some(InternalCapturedWrite {
             write:
                 CapturedDbWrite::AppendFinished {
@@ -606,7 +611,7 @@ impl WorkflowJsWorker {
                 transform_to_append_finished(retval.clone(), version, &js_info.user_return_type);
             *retval = retval_transformed;
         }
-        WorkflowWorker::advance_from_log(
+        Ok(WorkflowWorker::advance_from_log(
             &*db_conn,
             &cancel_registry,
             log_forwarder_sender,
@@ -614,7 +619,7 @@ impl WorkflowJsWorker {
             fresh_replay,
             old_version,
         )
-        .await
+        .await?)
     }
 }
 
@@ -841,10 +846,12 @@ mod tests {
         WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: ExecutionMetadata::empty(),
+            component_digest: component_id.component_digest.clone(),
             ffqn,
             params: Params::from_json_values_test(params_json),
             event_history: Vec::new(),
             responses: Vec::new(),
+            parent: None,
             version: Version::new(0),
             can_be_retried: true,
             worker_span: info_span!("js_workflow_test"),
