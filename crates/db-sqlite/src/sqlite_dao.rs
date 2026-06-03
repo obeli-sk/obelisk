@@ -9,13 +9,14 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
-        ComponentMetadataRecord, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
-        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
-        DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
-        DeploymentComponentDetail, DeploymentComponentRecord, DeploymentRecord, DeploymentState,
-        DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        ComponentMetadataRecord, ComponentUpgradeReason, CreateRequest, DUMMY_CREATED,
+        DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
+        DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
+        DbPool, DbPoolCloseable, DeploymentComponentDetail, DeploymentComponentRecord,
+        DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionEvent,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
@@ -1155,6 +1156,34 @@ impl SqlitePool {
         ))
     }
 
+    fn update_state_component_upgraded(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        component_digest: &ComponentDigest,
+        appending_version: &Version,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        debug!("Updating t_state to component {component_digest}");
+        let mut stmt = tx.prepare_cached(
+            r"
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    updated_at = CURRENT_TIMESTAMP,
+                    component_id_input_digest = :component_digest
+                WHERE execution_id = :execution_id;
+            ",
+        )?;
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id.to_string(),
+            ":appending_version": appending_version.0,
+            ":component_digest": component_digest,
+        })?;
+        if updated != 1 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(appending_version.increment())
+    }
+
     #[expect(clippy::too_many_arguments)]
     #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
     fn update_state_locked_get_intermittent_event_count(
@@ -2132,6 +2161,18 @@ impl SqlitePool {
                 return Ok((next_version, notifier));
             }
 
+            ExecutionRequest::ComponentUpgraded {
+                component_digest, ..
+            } => {
+                let next_version = Self::update_state_component_upgraded(
+                    tx,
+                    execution_id,
+                    component_digest,
+                    &appending_version,
+                )?;
+                return Ok((next_version, AppendNotifier::default()));
+            }
+
             ExecutionRequest::Paused => {
                 match &combined_state.execution_with_state.pending_state {
                     PendingState::Finished { .. } => {
@@ -3000,27 +3041,25 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         old: &ComponentDigest,
         new: &ComponentDigest,
+        reason: ComponentUpgradeReason,
     ) -> Result<(), DbErrorWrite> {
-        debug!("Updating t_state to component {new}");
-        let mut stmt = tx.prepare_cached(
-            r"
-                UPDATE t_state
-                SET
-                    updated_at = CURRENT_TIMESTAMP,
-                    component_id_input_digest = :new
-                WHERE
-                    execution_id = :execution_id AND
-                    component_id_input_digest = :old
-            ",
-        )?;
-        let updated = stmt.execute(named_params! {
-            ":execution_id": execution_id,
-            ":old": old,
-            ":new": new,
-        })?;
-        if updated != 1 {
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
+        if combined_state.execution_with_state.component_digest != *old {
             return Err(DbErrorWrite::NotFound);
         }
+        let appending_version = combined_state.get_next_version_fail_if_finished()?;
+        Self::append(
+            tx,
+            execution_id,
+            AppendRequest {
+                created_at: Utc::now(),
+                event: ExecutionRequest::ComponentUpgraded {
+                    component_digest: new.clone(),
+                    reason,
+                },
+            },
+            appending_version,
+        )?;
         Ok(())
     }
 
@@ -4390,12 +4429,21 @@ impl DbExternalApi for SqlitePool {
         execution_id: &ExecutionId,
         old: &ComponentDigest,
         new: &ComponentDigest,
+        reason: ComponentUpgradeReason,
     ) -> Result<(), DbErrorWrite> {
         let execution_id = execution_id.clone();
         let old = old.clone();
         let new = new.clone();
         self.transaction(
-            move |tx| Self::upgrade_execution_component_single_write(tx, &execution_id, &old, &new),
+            move |tx| {
+                Self::upgrade_execution_component_single_write(
+                    tx,
+                    &execution_id,
+                    &old,
+                    &new,
+                    reason.clone(),
+                )
+            },
             TxType::Other, // single write
             "upgrade_execution_component",
         )

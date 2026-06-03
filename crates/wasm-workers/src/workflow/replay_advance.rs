@@ -206,6 +206,13 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             backoff_expires_at: DateTime::UNIX_EPOCH,
             reason,
         },
+        ExecutionRequest::ComponentUpgraded {
+            component_digest,
+            reason,
+        } => ExecutionRequest::ComponentUpgraded {
+            component_digest,
+            reason,
+        },
         ExecutionRequest::TemporarilyFailed {
             backoff_expires_at: _,
             reason,

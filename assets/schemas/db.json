@@ -175,6 +175,30 @@
         {
           "type": "object",
           "properties": {
+            "component_upgraded": {
+              "type": "object",
+              "properties": {
+                "component_digest": {
+                  "type": "string"
+                },
+                "reason": {
+                  "$ref": "#/$defs/ComponentUpgradeReason"
+                }
+              },
+              "required": [
+                "component_digest",
+                "reason"
+              ]
+            }
+          },
+          "required": [
+            "component_upgraded"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
             "temporarily_failed": {
               "type": "object",
               "properties": {
@@ -418,6 +442,38 @@
             "type",
             "target_digest",
             "reason"
+          ]
+        }
+      ]
+    },
+    "ComponentUpgradeReason": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "auto"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "force": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "manual"
+            }
+          },
+          "required": [
+            "type",
+            "force"
           ]
         }
       ]

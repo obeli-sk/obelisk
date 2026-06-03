@@ -2615,7 +2615,14 @@ async fn execution_upgrade(
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?
-        .upgrade_execution_component(&execution_id, &payload.old, &payload.new)
+        .upgrade_execution_component(
+            &execution_id,
+            &payload.old,
+            &payload.new,
+            concepts::storage::ComponentUpgradeReason::Manual {
+                force: payload.skip_determinism_check,
+            },
+        )
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(HttpResponse {

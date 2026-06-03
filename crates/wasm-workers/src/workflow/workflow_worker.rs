@@ -11,7 +11,7 @@ use crate::workflow::caching_db_connection::{
 };
 use crate::workflow::deadline_tracker::{DeadlineTrackerFactoryForReplay, EpochCallbackError};
 use crate::workflow::replay_db_proxy::{
-    InternalCapturedWrite, ReplayWorkflowDbConnection, apply_writes,
+    InternalCapturedWrite, ReplayWorkflowDbConnection, apply_writes, bump_versions_for_execution,
 };
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
@@ -19,8 +19,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
-    AppendRequest, CapturedDbWrite, DbConnection, DbErrorWrite, DbPool, ExecutionLog,
-    ExecutionRequest, Locked, UnlockedReason, Version,
+    AppendRequest, CapturedDbWrite, ComponentUpgradeReason, DbConnection, DbErrorWrite, DbPool,
+    ExecutionLog, ExecutionRequest, Locked, UnlockedReason, Version,
 };
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
@@ -581,7 +581,7 @@ impl WorkflowWorker {
 
         let writes_to_apply =
             merge_requested_overrides_into_fresh_prefix(&requested.captured_writes, &fresh_replay);
-        let version = apply_writes(
+        let _version = apply_writes(
             db_conn,
             cancel_registry,
             log_forwarder_sender,
@@ -591,7 +591,6 @@ impl WorkflowWorker {
         .await?;
         let outcome = AdvanceResponse {
             finished: requested.get_return_value().cloned(),
-            version,
         };
         info!(
             "Advance written {} captured writes{}",
@@ -1350,7 +1349,6 @@ impl ReplayAdvanceable {
 #[derive(Debug, Clone)]
 pub struct AdvanceResponse {
     pub finished: Option<SupportedFunctionReturnValue>,
-    version: Version,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1454,7 +1452,6 @@ impl WorkflowWorker {
             .connection()
             .await
             .map_err(|err| WorkerError::DbError(err.into()))?;
-        let old_digest = ctx.component_digest.clone();
         let new_digest = self.config.component_id.component_digest.clone();
         let execution_id = ctx.execution_id.clone();
         let version = ctx.version.clone();
@@ -1473,7 +1470,7 @@ impl WorkflowWorker {
             ..ctx
         };
 
-        let (fresh_replay, fatal_error) = self
+        let (mut fresh_replay, fatal_error) = self
             .replay_internal(replay_ctx, replay_db_connection, ReplayKind::Unfinished)
             .await
             .map_err(|err| match err {
@@ -1513,45 +1510,40 @@ impl WorkflowWorker {
             return Ok(()); // NOK but db already updated
         }
 
-        self.db_pool
-            .external_api_conn()
-            .await
-            .map_err(|err| WorkerError::DbError(err.into()))?
-            .upgrade_execution_component(&execution_id, &old_digest, &new_digest)
+        let version = db_conn
+            .append(
+                execution_id.clone(),
+                version,
+                AppendRequest {
+                    created_at: self.clock_fn.now(),
+                    event: ExecutionRequest::ComponentUpgraded {
+                        component_digest: new_digest,
+                        reason: ComponentUpgradeReason::Auto,
+                    },
+                },
+            )
             .await
             .map_err(WorkerError::DbError)?;
 
         let unlock_version = {
-            let captured_writes: Vec<_> = fresh_replay
-                .iter()
-                .map(|write| write.write.clone())
-                .collect();
-            if !captured_writes.is_empty() {
-                let advance_res = Self::advance_from_log(
-                    &*db_conn,
+            if let Some(last) = fresh_replay.last() {
+                let finished = matches!(last.write, CapturedDbWrite::AppendFinished { .. });
+                bump_versions_for_execution(&mut fresh_replay, &execution_id);
+                let version = apply_writes(
+                    db_conn.as_ref(),
                     &self.cancel_registry,
                     self.logs_storage_config
                         .as_ref()
                         .map(|config| &config.log_sender),
-                    ReplayAdvanceable { captured_writes },
                     fresh_replay,
                     version,
                 )
-                .await;
-                match advance_res {
-                    Ok(outcome) => {
-                        if outcome.finished.is_some() {
-                            None // Do not send Unlocked evend if execution is going to be finished.
-                        } else {
-                            Some(outcome.version)
-                        }
-                    }
-                    Err(AdvanceFromLogError::ReplayMismatch) => {
-                        unreachable!("requested writes == fresh replay")
-                    }
-                    Err(AdvanceFromLogError::DbError(db_err)) => {
-                        return Err(WorkerError::DbError(db_err));
-                    }
+                .await
+                .map_err(WorkerError::DbError)?;
+                if finished {
+                    None // Do not send Unlocked evend if execution is going to be finished.
+                } else {
+                    Some(version)
                 }
             } else {
                 // No captured events = blocked

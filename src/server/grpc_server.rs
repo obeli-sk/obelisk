@@ -1107,7 +1107,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?
-            .upgrade_execution_component(&execution_id, &old, &new)
+            .upgrade_execution_component(
+                &execution_id,
+                &old,
+                &new,
+                concepts::storage::ComponentUpgradeReason::Manual {
+                    force: request.skip_determinism_check,
+                },
+            )
             .await
             .to_status()?;
         Ok(tonic::Response::new(

@@ -373,6 +373,12 @@ pub enum ExecutionRequest {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = UnlockedReason::Other { reason: StrVariant::Static("reason") }))]
         reason: UnlockedReason,
     },
+    #[display("ComponentUpgraded({component_digest})")]
+    ComponentUpgraded {
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity().component_digest))]
+        component_digest: ComponentDigest,
+        reason: ComponentUpgradeReason,
+    },
     // Created by the executor holding the lock.
     // After expiry interpreted as pending.
     #[display("TemporarilyFailed(`{backoff_expires_at}`)")]
@@ -427,6 +433,18 @@ pub enum UnlockedReason {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
         reason: StrVariant,
     },
+}
+
+#[derive(
+    Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ComponentUpgradeReason {
+    #[display("auto")]
+    Auto,
+    #[display("manual(force = {force})")]
+    Manual { force: bool },
 }
 
 impl<'de> Deserialize<'de> for UnlockedReason {
@@ -532,6 +550,7 @@ impl ExecutionRequest {
             ExecutionRequest::Created { .. } => "created",
             ExecutionRequest::Locked(_) => "locked",
             ExecutionRequest::Unlocked { .. } => "unlocked",
+            ExecutionRequest::ComponentUpgraded { .. } => "component_upgraded",
             ExecutionRequest::TemporarilyFailed { .. } => "temporarily_failed",
             ExecutionRequest::TemporarilyTimedOut { .. } => "temporarily_timed_out",
             ExecutionRequest::Finished { .. } => "finished",
@@ -1500,6 +1519,7 @@ pub trait DbExternalApi: DbConnection {
         execution_id: &ExecutionId,
         old: &ComponentDigest,
         new: &ComponentDigest,
+        reason: ComponentUpgradeReason,
     ) -> Result<(), DbErrorWrite>;
 
     async fn list_logs(
