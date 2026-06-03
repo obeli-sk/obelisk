@@ -150,6 +150,11 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
                 | ExecutionRequest::Locked(Locked { component_id, .. }) => {
                     component_id.component_digest = COMPONENT_DIGEST_DUMMY;
                 }
+                ExecutionRequest::ComponentUpgraded {
+                    component_digest, ..
+                } => {
+                    *component_digest = COMPONENT_DIGEST_DUMMY;
+                }
                 ExecutionRequest::Finished {
                     retval:
                         SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {

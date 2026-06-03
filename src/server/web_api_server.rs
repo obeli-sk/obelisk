@@ -49,9 +49,14 @@ use tracing::{Instrument as _, Span, debug, info, info_span, instrument, trace, 
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
-    activity::cancel_registry::CancelRegistry, component_logger::LogStrageConfig, engines::Engines,
-    webhook::webhook_registry::WebhookRegistry, workflow::workflow_js_worker::WorkflowJsWorker,
-    workflow::workflow_worker::WorkflowWorker,
+    activity::cancel_registry::CancelRegistry,
+    component_logger::LogStrageConfig,
+    engines::Engines,
+    webhook::webhook_registry::WebhookRegistry,
+    workflow::{
+        workflow_js_worker::WorkflowJsWorker,
+        workflow_worker::{AdvanceError, WorkflowWorker},
+    },
 };
 
 #[derive(Clone)]
@@ -1909,10 +1914,9 @@ enum AdvanceResponseSer {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AdvanceErrorSer {
-    NoWrites,
-    ReplayError { message: String },
     VersionMismatch { expected: u32 },
     ReplayMismatch,
+    Transient(String),
 }
 
 /// Get execution return value
@@ -2240,6 +2244,7 @@ async fn execution_replay(
     request_body = AdvanceRequestSer,
     responses(
         (status = 200, description = "Execution advance outcome", body = AdvanceResponseSer),
+        (status = 400, description = "Bad request"),
         (status = 404, description = "Not found"),
         (status = 422, description = "Advance failed", body = AdvanceErrorSer)
     )
@@ -2261,7 +2266,7 @@ async fn execution_advance(
             log_sender: state.log_forwarder_sender.clone(),
         });
 
-    let expected = wasm_workers::workflow::workflow_worker::ReplayAdvanceable {
+    let captured_writes = wasm_workers::workflow::workflow_worker::ReplayAdvanceable {
         captured_writes: payload
             .captured_writes
             .into_iter()
@@ -2273,6 +2278,12 @@ async fn execution_advance(
                 accept,
             })?,
     };
+    if captured_writes.is_empty() {
+        return Err(HttpResponse::bad_request(
+            accept,
+            "`captured_writes` must not be empty".to_string(),
+        ));
+    }
 
     let advance_res = if let Some(js_info) = &replay_info.js_workflow_info {
         WorkflowJsWorker::advance(
@@ -2288,7 +2299,7 @@ async fn execution_advance(
             logs_storage_config,
             Now.clone_box(),
             js_info,
-            expected,
+            captured_writes,
         )
         .await
     } else {
@@ -2304,7 +2315,7 @@ async fn execution_advance(
             execution_id.clone(),
             logs_storage_config,
             Now.clone_box(),
-            expected,
+            captured_writes,
         )
         .await
     };
@@ -2314,22 +2325,19 @@ async fn execution_advance(
         Err(err) => {
             info!("Advance failed: {err:?}");
             let error = match err {
-                wasm_workers::workflow::workflow_worker::AdvanceError::ReplayError(
-                    replay_error,
-                ) => AdvanceErrorSer::ReplayError {
-                    message: replay_error.to_string(),
-                },
-                wasm_workers::workflow::workflow_worker::AdvanceError::NoWrites => {
-                    AdvanceErrorSer::NoWrites
+                AdvanceError::NoWrites => {
+                    unreachable!("sent 401")
                 }
-                wasm_workers::workflow::workflow_worker::AdvanceError::VersionMismatch {
-                    expected,
-                } => AdvanceErrorSer::VersionMismatch {
+                AdvanceError::VersionMismatch { expected } => AdvanceErrorSer::VersionMismatch {
                     expected: expected.0,
                 },
-                wasm_workers::workflow::workflow_worker::AdvanceError::ReplayMismatch => {
-                    AdvanceErrorSer::ReplayMismatch
+                AdvanceError::ReplayMismatch => AdvanceErrorSer::ReplayMismatch,
+                AdvanceError::DbError(db_err) => {
+                    return Err(ErrorWrapper(db_err, accept).into());
                 }
+                err @ (AdvanceError::ExecutorClosing
+                | AdvanceError::LimitReached { .. }
+                | AdvanceError::LockExpired) => AdvanceErrorSer::Transient(err.to_string()),
             };
             let response = match accept {
                 AcceptHeader::Json => {
@@ -2337,14 +2345,11 @@ async fn execution_advance(
                 }
                 AcceptHeader::Text => {
                     let text = match error {
-                        AdvanceErrorSer::NoWrites => "error: no_writes".to_string(),
-                        AdvanceErrorSer::ReplayError { message } => {
-                            format!("error: replay_error\nmessage: {message}")
-                        }
                         AdvanceErrorSer::VersionMismatch { expected } => {
                             format!("error: version_mismatch\nexpected: {expected}")
                         }
                         AdvanceErrorSer::ReplayMismatch => "error: replay_mismatch".to_string(),
+                        AdvanceErrorSer::Transient(err) => format!("transient error: {err}"),
                     };
                     (StatusCode::UNPROCESSABLE_ENTITY, text).into_response()
                 }
@@ -2610,7 +2615,14 @@ async fn execution_upgrade(
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?
-        .upgrade_execution_component(&execution_id, &payload.old, &payload.new)
+        .upgrade_execution_component(
+            &execution_id,
+            &payload.old,
+            &payload.new,
+            concepts::storage::ComponentUpgradeReason::Manual {
+                force: payload.skip_determinism_check,
+            },
+        )
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     Ok(HttpResponse {

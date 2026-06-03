@@ -259,10 +259,22 @@
       ]
     },
     "LockingStrategy": {
-      "type": "string",
-      "enum": [
-        "by_ffqns",
-        "by_component_digest"
+      "oneOf": [
+        {
+          "description": "Select all exported FFQNs",
+          "type": "string",
+          "const": "by_ffqns"
+        },
+        {
+          "description": "Select by component digest",
+          "type": "string",
+          "const": "by_component_digest"
+        },
+        {
+          "description": "Only applicable for workflows: Same as `ByFffqns`, with automatic upgrade",
+          "type": "string",
+          "const": "auto"
+        }
       ]
     },
     "InflightSemaphore": {

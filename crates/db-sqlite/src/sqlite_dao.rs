@@ -9,20 +9,21 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
-        ComponentMetadataRecord, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
-        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
-        DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
-        DeploymentComponentDetail, DeploymentComponentRecord, DeploymentRecord, DeploymentState,
-        DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        ComponentMetadataRecord, ComponentUpgradeReason, CreateRequest, DUMMY_CREATED,
+        DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
+        DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
+        DbPool, DbPoolCloseable, DeploymentComponentDetail, DeploymentComponentRecord,
+        DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionEvent,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedResultKind, PendingStateMergedPause, ResponseCursor,
         ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType,
+        STATE_PENDING_AT, TimeoutOutcome, UnlockedReason, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -471,6 +472,19 @@ fn deployment_component_detail_from_row(
         exports,
         wit,
     })
+}
+
+struct PendingAfterEventUpdate<'a> {
+    scheduled_at: DateTime<Utc>,
+    intermittent_failure: bool,
+    component_input_digest: ComponentDigest,
+    incompatible_digest_update: IncompatibleDigestUpdate<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum IncompatibleDigestUpdate<'a> {
+    LeaveUnchanged,
+    Set(&'a ComponentDigest),
 }
 
 impl SqlitePool {
@@ -1069,17 +1083,33 @@ impl SqlitePool {
         })
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at, %appending_version))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, scheduled_at = %update.scheduled_at, %appending_version))]
     fn update_state_pending_after_event_appended(
         tx: &Transaction,
         execution_id: &ExecutionId,
         appending_version: &Version,
-        scheduled_at: DateTime<Utc>, // Changing to state PendingAt
-        intermittent_failure: bool,
-        component_input_digest: ComponentDigest,
+        update: PendingAfterEventUpdate<'_>,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
+        let scheduled_at = update.scheduled_at;
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
-        let mut stmt = tx.prepare_cached(
+        let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![
+            (":execution_id", Box::new(execution_id.to_string())),
+            (":appending_version", Box::new(appending_version.0)),
+            (":pending_expires_finished", Box::new(scheduled_at)),
+            (":state", Box::new(STATE_PENDING_AT)),
+            (
+                ":intermittent_delta",
+                Box::new(i32::from(update.intermittent_failure)),
+            ),
+        ];
+        let incompatible_digest_assignment = match update.incompatible_digest_update {
+            IncompatibleDigestUpdate::LeaveUnchanged => String::new(),
+            IncompatibleDigestUpdate::Set(digest) => {
+                params.push((":incompatible_digest", Box::new(digest.clone())));
+                "incompatible_digest = :incompatible_digest,".to_string()
+            }
+        };
+        let sql = format!(
             r"
                 UPDATE t_state
                 SET
@@ -1088,6 +1118,7 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
                     intermittent_event_count = intermittent_event_count + :intermittent_delta,
+                    {incompatible_digest_assignment}
 
                     max_retries = NULL,
                     retry_exp_backoff_millis = NULL,
@@ -1098,16 +1129,15 @@ impl SqlitePool {
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id;
-            ", // `executor_id` and `run_id` are preserved for lock extension.
-        )?;
+            " // `executor_id` and `run_id` are preserved for lock extension.
+        );
+        let mut stmt = tx.prepare_cached(&sql)?;
+        let params_refs: Vec<(&str, &dyn ToSql)> = params
+            .iter()
+            .map(|(name, value)| (*name, value.as_ref() as &dyn ToSql))
+            .collect();
         let updated = stmt
-            .execute(named_params! {
-                ":execution_id": execution_id.to_string(),
-                ":appending_version": appending_version.0,
-                ":pending_expires_finished": scheduled_at,
-                ":state": STATE_PENDING_AT,
-                ":intermittent_delta": i32::from(intermittent_failure) // 0 or 1
-            })
+            .execute(params_refs.as_slice())
             .map_err(DbErrorWrite::from)?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
@@ -1118,12 +1148,40 @@ impl SqlitePool {
                 pending_at: Some(NotifierPendingAt {
                     scheduled_at,
                     ffqn: Self::fetch_created_event(tx, execution_id)?.ffqn,
-                    component_input_digest,
+                    component_input_digest: update.component_input_digest,
                 }),
                 execution_finished: None,
                 response: None,
             },
         ))
+    }
+
+    fn update_state_component_upgraded(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        component_digest: &ComponentDigest,
+        appending_version: &Version,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        debug!("Updating t_state to component {component_digest}");
+        let mut stmt = tx.prepare_cached(
+            r"
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    updated_at = CURRENT_TIMESTAMP,
+                    component_id_input_digest = :component_digest
+                WHERE execution_id = :execution_id;
+            ",
+        )?;
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id.to_string(),
+            ":appending_version": appending_version.0,
+            ":component_digest": component_digest,
+        })?;
+        if updated != 1 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(appending_version.increment())
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -1132,7 +1190,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         deployment_id: DeploymentId,
-        component_digest: &ComponentDigest,
+        component_digest: Option<&ComponentDigest>,
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
@@ -1159,7 +1217,7 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
                     deployment_id = :deployment_id,
-                    component_id_input_digest = :component_id_input_digest,
+                    component_id_input_digest = COALESCE(:component_id_input_digest, component_id_input_digest),
 
                     max_retries = :max_retries,
                     retry_exp_backoff_millis = :retry_exp_backoff_millis,
@@ -1181,7 +1239,7 @@ impl SqlitePool {
             ":pending_expires_finished": lock_expires_at,
             ":state": STATE_LOCKED,
             ":deployment_id": deployment_id.to_string(),
-            ":component_id_input_digest": component_digest,
+            ":component_id_input_digest": component_digest.cloned(), // no change if `None` due to `coalesce`
             ":max_retries": retry_config.max_retries,
             ":retry_exp_backoff_millis": backoff_millis,
             ":executor_id": executor_id.to_string(),
@@ -1747,12 +1805,17 @@ impl SqlitePool {
         })
     }
 
+    /// `component_id` is used to construct the `Locked` event.
+    /// If `update_component_digest` is set, `t_state` will be set to the component's digest.
+    /// This should be true in all cases except for `lock_pending_by_ffqns_auto`, where
+    /// the digest in `t_state` is only updated after a successful execution upgrade.
     #[instrument(level = Level::TRACE, skip(tx))]
     #[expect(clippy::too_many_arguments)]
     fn lock_single_execution(
         tx: &Transaction,
         created_at: DateTime<Utc>,
         component_id: &ComponentId,
+        update_component_digest: bool, // if set, update `t_state` as well
         deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
@@ -1763,6 +1826,11 @@ impl SqlitePool {
     ) -> Result<LockedExecution, DbErrorWrite> {
         trace!("lock_single_execution");
         let combined_state = Self::get_combined_state(tx, execution_id)?;
+        let context_component_digest = if update_component_digest {
+            component_id.component_digest.clone()
+        } else {
+            combined_state.execution_with_state.component_digest.clone()
+        };
         combined_state
             .execution_with_state
             .pending_state
@@ -1821,7 +1889,7 @@ impl SqlitePool {
             tx,
             execution_id,
             deployment_id,
-            &component_id.component_digest,
+            update_component_digest.then_some(&component_id.component_digest),
             executor_id,
             run_id,
             lock_expires_at,
@@ -1890,6 +1958,7 @@ impl SqlitePool {
         Ok(LockedExecution {
             execution_id: execution_id.clone(),
             metadata,
+            component_digest: context_component_digest,
             next_version: appending_version.increment(),
             ffqn,
             params,
@@ -1988,6 +2057,7 @@ impl SqlitePool {
                 tx,
                 created_at,
                 &component_id,
+                true,
                 deployment_id,
                 execution_id,
                 run_id,
@@ -2053,25 +2123,54 @@ impl SqlitePool {
                     tx,
                     execution_id,
                     &appending_version,
-                    *backoff_expires_at,
-                    true, // an intermittent failure
-                    combined_state.execution_with_state.component_digest,
+                    PendingAfterEventUpdate {
+                        scheduled_at: *backoff_expires_at,
+                        intermittent_failure: true,
+                        component_input_digest: combined_state
+                            .execution_with_state
+                            .component_digest,
+                        incompatible_digest_update: IncompatibleDigestUpdate::LeaveUnchanged,
+                    },
                 )?;
                 return Ok((next_version, notifier));
             }
 
             ExecutionRequest::Unlocked {
-                backoff_expires_at, ..
+                backoff_expires_at,
+                reason,
             } => {
+                let incompatible_digest_update = match reason {
+                    UnlockedReason::AutoUpgradeFailed { target_digest, .. } => {
+                        IncompatibleDigestUpdate::Set(target_digest)
+                    }
+                    UnlockedReason::Other { .. } => IncompatibleDigestUpdate::LeaveUnchanged,
+                };
                 let (next_version, notifier) = Self::update_state_pending_after_event_appended(
                     tx,
                     execution_id,
                     &appending_version,
-                    *backoff_expires_at,
-                    false, // not an intermittent failure
-                    combined_state.execution_with_state.component_digest,
+                    PendingAfterEventUpdate {
+                        scheduled_at: *backoff_expires_at,
+                        intermittent_failure: false,
+                        component_input_digest: combined_state
+                            .execution_with_state
+                            .component_digest,
+                        incompatible_digest_update,
+                    },
                 )?;
                 return Ok((next_version, notifier));
+            }
+
+            ExecutionRequest::ComponentUpgraded {
+                component_digest, ..
+            } => {
+                let next_version = Self::update_state_component_upgraded(
+                    tx,
+                    execution_id,
+                    component_digest,
+                    &appending_version,
+                )?;
+                return Ok((next_version, AppendNotifier::default()));
             }
 
             ExecutionRequest::Paused => {
@@ -2223,9 +2322,14 @@ impl SqlitePool {
                         tx,
                         execution_id,
                         &appending_version,
-                        scheduled_at,
-                        false, // not an intermittent failure
-                        combined_state.execution_with_state.component_digest,
+                        PendingAfterEventUpdate {
+                            scheduled_at,
+                            intermittent_failure: false,
+                            component_input_digest: combined_state
+                                .execution_with_state
+                                .component_digest,
+                            incompatible_digest_update: IncompatibleDigestUpdate::LeaveUnchanged,
+                        },
                     )?;
                     return Ok((next_version, notifier));
                 }
@@ -2755,6 +2859,12 @@ impl SqlitePool {
         let batch_size = usize::try_from(batch_size).expect("16 bit systems are unsupported");
         let mut execution_ids_versions = Vec::with_capacity(batch_size);
         for ffqn in ffqns {
+            let needed = batch_size - execution_ids_versions.len();
+            if needed == 0 {
+                break;
+            }
+            let needed =
+                u32::try_from(needed).expect("`batch_size`:u32 - usize cannot overflow an u32");
             // Select executions in PendingAt.
             let stmt = conn.prepare_cached(&format!(
                 r#"
@@ -2766,19 +2876,64 @@ impl SqlitePool {
                     "#
             ))?;
 
-            if let Ok(execs_and_versions) = Self::get_pending_of_single_ffqn(
-                stmt,
-                u32::try_from(batch_size - execution_ids_versions.len())
-                    .expect("u32 - anything must fit to u32"),
-                pending_at_or_sooner,
-                ffqn,
-            ) {
+            if let Ok(execs_and_versions) =
+                Self::get_pending_of_single_ffqn(stmt, needed, pending_at_or_sooner, ffqn)
+            {
+                execution_ids_versions.extend(execs_and_versions);
+                // consistency errors are ignored since we want to return at least some rows.
+            }
+        }
+        Ok(execution_ids_versions)
+    }
+
+    fn get_pending_by_ffqns_auto(
+        conn: &Connection,
+        batch_size: u32,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: &[FunctionFqn],
+        current_digest: &ComponentDigest,
+    ) -> Result<Vec<(ExecutionId, Version)>, RusqliteError> {
+        let batch_size = usize::try_from(batch_size).expect("16 bit systems are unsupported");
+        let mut execution_ids_versions = Vec::with_capacity(batch_size);
+        for ffqn in ffqns {
+            let needed = batch_size - execution_ids_versions.len();
+            if needed == 0 {
+                break;
+            }
+            let mut stmt = conn.prepare_cached(&format!(
+                r#"
+                    SELECT execution_id, corresponding_version FROM t_state WHERE
+                    state = "{STATE_PENDING_AT}" AND
+                    pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
+                    AND is_paused = false
+                    AND (incompatible_digest IS NULL OR incompatible_digest <> :current_digest)
+                    ORDER BY pending_expires_finished LIMIT :batch_size
+                    "#
+            ))?;
+
+            if let Ok(execs_and_versions) = stmt
+                .query_map(
+                    named_params! {
+                        ":pending_expires_finished": pending_at_or_sooner,
+                        ":ffqn": ffqn.to_string(),
+                        ":current_digest": current_digest,
+                        ":batch_size": u32::try_from(needed)
+                            .expect("`needed` is <= `batch_size` which is u32"),
+                    },
+                    |row| {
+                        let execution_id = row.get::<_, ExecutionId>("execution_id")?;
+                        let next_version =
+                            Version::new(row.get::<_, VersionType>("corresponding_version")?)
+                                .increment();
+                        Ok((execution_id, next_version))
+                    },
+                )
+                .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+            {
                 execution_ids_versions.extend(execs_and_versions);
                 if execution_ids_versions.len() == batch_size {
-                    // Prioritieze lowering of db requests, although ffqns later in the list might get starved.
                     break;
                 }
-                // consistency errors are ignored since we want to return at least some rows.
             }
         }
         Ok(execution_ids_versions)
@@ -2886,27 +3041,25 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         old: &ComponentDigest,
         new: &ComponentDigest,
+        reason: ComponentUpgradeReason,
     ) -> Result<(), DbErrorWrite> {
-        debug!("Updating t_state to component {new}");
-        let mut stmt = tx.prepare_cached(
-            r"
-                UPDATE t_state
-                SET
-                    updated_at = CURRENT_TIMESTAMP,
-                    component_id_input_digest = :new
-                WHERE
-                    execution_id = :execution_id AND
-                    component_id_input_digest = :old
-            ",
-        )?;
-        let updated = stmt.execute(named_params! {
-            ":execution_id": execution_id,
-            ":old": old,
-            ":new": new,
-        })?;
-        if updated != 1 {
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
+        if combined_state.execution_with_state.component_digest != *old {
             return Err(DbErrorWrite::NotFound);
         }
+        let appending_version = combined_state.get_next_version_fail_if_finished()?;
+        Self::append(
+            tx,
+            execution_id,
+            AppendRequest {
+                created_at: Utc::now(),
+                event: ExecutionRequest::ComponentUpgraded {
+                    component_digest: new.clone(),
+                    reason,
+                },
+            },
+            appending_version,
+        )?;
         Ok(())
     }
 
@@ -3377,7 +3530,7 @@ impl SqlitePool {
                     created_at: paused_at,
                     event: ExecutionRequest::Unlocked {
                         backoff_expires_at: paused_at,
-                        reason: StrVariant::Static("paused"),
+                        reason: StrVariant::Static("paused").into(),
                     },
                 },
                 appending_version,
@@ -3458,6 +3611,7 @@ impl DbExecutor for SqlitePool {
                             tx,
                             created_at,
                             &component_id,
+                            true,
                             deployment_id,
                             execution_id,
                             run_id,
@@ -3471,6 +3625,68 @@ impl DbExecutor for SqlitePool {
                 },
                 TxType::MultipleWrites,
                 "lock_pending_by_ffqns_one",
+            )
+            .await
+        }
+    }
+
+    #[instrument(level = Level::TRACE, skip(self))]
+    async fn lock_pending_by_ffqns_auto(
+        &self,
+        batch_size: u32,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: Arc<[FunctionFqn]>,
+        created_at: DateTime<Utc>,
+        component_id: ComponentId,
+        deployment_id: DeploymentId,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
+        retry_config: ComponentRetryConfig,
+    ) -> Result<LockPendingResponse, DbErrorWrite> {
+        let current_digest = component_id.component_digest.clone();
+        let execution_ids_versions = self
+            .transaction(
+                move |conn| {
+                    Self::get_pending_by_ffqns_auto(
+                        conn,
+                        batch_size,
+                        pending_at_or_sooner,
+                        &ffqns,
+                        &current_digest,
+                    )
+                },
+                TxType::Other,
+                "lock_pending_by_ffqns_auto_get",
+            )
+            .await
+            .map_err(to_generic_error)?;
+        if execution_ids_versions.is_empty() {
+            Ok(vec![])
+        } else {
+            debug!("Auto-locking {execution_ids_versions:?}");
+            self.transaction(
+                move |tx| {
+                    let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
+                    for (execution_id, version) in &execution_ids_versions {
+                        locked_execs.push(Self::lock_single_execution(
+                            tx,
+                            created_at,
+                            &component_id,
+                            false,
+                            deployment_id,
+                            execution_id,
+                            run_id,
+                            version,
+                            executor_id,
+                            lock_expires_at,
+                            retry_config,
+                        )?);
+                    }
+                    Ok::<_, DbErrorWrite>(locked_execs)
+                },
+                TxType::MultipleWrites,
+                "lock_pending_by_ffqns_auto_one",
             )
             .await
         }
@@ -3521,6 +3737,7 @@ impl DbExecutor for SqlitePool {
                             tx,
                             created_at,
                             &component_id,
+                            true,
                             deployment_id,
                             execution_id,
                             run_id,
@@ -3561,6 +3778,7 @@ impl DbExecutor for SqlitePool {
                     tx,
                     created_at,
                     &component_id,
+                    true,
                     deployment_id,
                     &execution_id,
                     run_id,
@@ -3675,6 +3893,7 @@ impl DbExecutor for SqlitePool {
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
+        current_digest: Option<ComponentDigest>,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         let unique_tag: u64 = rand::random();
@@ -3690,7 +3909,24 @@ impl DbExecutor for SqlitePool {
                 .transaction(
                     {
                         let ffqns = ffqns.clone();
-                        move |conn| Self::get_pending_by_ffqns(conn, 1, pending_at_or_sooner, ffqns.as_ref())
+                        move |conn| {
+                            if let Some(current_digest) = &current_digest {
+                                Self::get_pending_by_ffqns_auto(
+                                    conn,
+                                    1,
+                                    pending_at_or_sooner,
+                                    ffqns.as_ref(),
+                                    current_digest,
+                                )
+                            } else {
+                                Self::get_pending_by_ffqns(
+                                    conn,
+                                    1,
+                                    pending_at_or_sooner,
+                                    ffqns.as_ref(),
+                                )
+                            }
+                        }
                     },
                     TxType::Other, // read only
                     "get_pending_by_ffqns",
@@ -4193,12 +4429,21 @@ impl DbExternalApi for SqlitePool {
         execution_id: &ExecutionId,
         old: &ComponentDigest,
         new: &ComponentDigest,
+        reason: ComponentUpgradeReason,
     ) -> Result<(), DbErrorWrite> {
         let execution_id = execution_id.clone();
         let old = old.clone();
         let new = new.clone();
         self.transaction(
-            move |tx| Self::upgrade_execution_component_single_write(tx, &execution_id, &old, &new),
+            move |tx| {
+                Self::upgrade_execution_component_single_write(
+                    tx,
+                    &execution_id,
+                    &old,
+                    &new,
+                    reason.clone(),
+                )
+            },
             TxType::Other, // single write
             "upgrade_execution_component",
         )

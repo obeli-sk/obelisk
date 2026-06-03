@@ -526,7 +526,11 @@ impl WorkflowJsWorker {
             })
             .collect();
 
-        WorkflowWorker::replay_response(captured_writes, fatal_error, already_finished_result)
+        WorkflowWorker::transform_replay_to_response(
+            captured_writes,
+            fatal_error,
+            already_finished_result,
+        )
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
@@ -593,7 +597,8 @@ impl WorkflowJsWorker {
             ffqn,
             params,
         )
-        .await?;
+        .await
+        .map_err(AdvanceError::from)?;
         if let Some(InternalCapturedWrite {
             write:
                 CapturedDbWrite::AppendFinished {
@@ -606,7 +611,7 @@ impl WorkflowJsWorker {
                 transform_to_append_finished(retval.clone(), version, &js_info.user_return_type);
             *retval = retval_transformed;
         }
-        WorkflowWorker::advance_from_log(
+        Ok(WorkflowWorker::advance_from_log(
             &*db_conn,
             &cancel_registry,
             log_forwarder_sender,
@@ -614,7 +619,7 @@ impl WorkflowJsWorker {
             fresh_replay,
             old_version,
         )
-        .await
+        .await?)
     }
 }
 
@@ -630,13 +635,14 @@ mod tests {
     use crate::workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig};
     use assert_matches::assert_matches;
     use chrono::DateTime;
-    use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest};
+    use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest, Digest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutorId, RunId};
     use concepts::storage::{
-        CapturedDbWrite, CreateRequest, DbConnectionTest, DbPool, DbPoolCloseable,
-        ExecutionRequest, HistoryEvent, JoinSetRequest, JoinSetResponse, Locked, LogEntry,
-        LogInfoAppendRow, LogLevel, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, PendingStatePendingAt, Version,
+        CapturedDbWrite, ComponentUpgradeReason, CreateRequest, DbConnectionTest, DbPool,
+        DbPoolCloseable, ExecutionRequest, HistoryEvent, JoinSetRequest, JoinSetResponse, Locked,
+        LogEntry, LogInfoAppendRow, LogLevel, PendingState, PendingStateFinished,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStatePendingAt,
+        UnlockedReason, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
@@ -651,6 +657,7 @@ mod tests {
     use insta::assert_json_snapshot;
     use rstest::rstest;
     use serde_json::json;
+    use sha2::{Digest as ShaDigest, Sha256};
     use std::str::FromStr as _;
     use std::time::Duration;
     use test_db_macro::expand_enum_database;
@@ -658,7 +665,6 @@ mod tests {
     use test_utils::{ExecutionLogSanitized, redact_component_digest};
     use tokio::sync::mpsc;
     use tracing::{info, info_span};
-    use utils::sha256sum::calculate_sha256_file;
     use val_json::wast_val::WastVal;
     use wasmtime::Engine;
 
@@ -692,6 +698,31 @@ mod tests {
             },
             wit_type: StrVariant::Static("result<string, string>"),
         }
+    }
+
+    fn default_js_params() -> Vec<ParameterType> {
+        vec![ParameterType {
+            type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
+            name: StrVariant::Static("params"),
+            wit_type: StrVariant::Static("list<string>"),
+        }]
+    }
+
+    fn workflow_js_component_digest(
+        js_source: &str,
+        user_ffqn: &FunctionFqn,
+        params: &[ParameterType],
+        return_type: &ReturnTypeExtendable,
+    ) -> ComponentDigest {
+        let mut hasher = Sha256::new();
+        hasher.update(b"workflow_js:");
+        hasher.update(js_source.as_bytes());
+        hasher.update(user_ffqn.to_string().as_bytes());
+        for param in params {
+            hasher.update(param.wit_type.as_ref().as_bytes());
+        }
+        hasher.update(return_type.wit_type.as_bytes());
+        ComponentDigest(Digest(hasher.finalize().into()))
     }
 
     fn default_js_info(js_source: &str) -> JsWorkflowReplayInfo {
@@ -747,11 +778,7 @@ mod tests {
             js_source.to_string(),
             String::new(),
             user_ffqn,
-            vec![ParameterType {
-                type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
-                name: StrVariant::Static("params"),
-                wit_type: StrVariant::Static("list<string>"),
-            }],
+            default_js_params(),
             return_type,
         )
         .unwrap();
@@ -814,11 +841,7 @@ mod tests {
             js_source.to_string(),
             String::new(),
             user_ffqn,
-            vec![ParameterType {
-                type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
-                name: StrVariant::Static("params"),
-                wit_type: StrVariant::Static("list<string>"),
-            }],
+            default_js_params(),
             default_return_type(),
         )
         .unwrap();
@@ -841,10 +864,12 @@ mod tests {
         WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: ExecutionMetadata::empty(),
+            component_digest: component_id.component_digest.clone(),
             ffqn,
             params: Params::from_json_values_test(params_json),
             event_history: Vec::new(),
             responses: Vec::new(),
+            parent: None,
             version: Version::new(0),
             can_be_retried: true,
             worker_span: info_span!("js_workflow_test"),
@@ -1008,7 +1033,7 @@ mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-    async fn compile_js_workflow_worker(
+    fn compile_js_workflow_worker(
         js_source: &str,
         user_ffqn: &FunctionFqn,
         db_pool: Arc<dyn DbPool>,
@@ -1017,10 +1042,12 @@ mod tests {
         workflow_engine: Arc<Engine>,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
+        let params = default_js_params();
+        let return_type = default_return_type();
         let component_id = concepts::ComponentId::new(
             ComponentType::Workflow,
             StrVariant::Static("test_js_workflow"),
-            ComponentDigest(calculate_sha256_file(wasm_path).await.unwrap().0),
+            workflow_js_component_digest(js_source, user_ffqn, &params, &return_type),
         )
         .unwrap();
 
@@ -1051,12 +1078,8 @@ mod tests {
             js_source.to_string(),
             String::new(),
             user_ffqn,
-            vec![ParameterType {
-                type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
-                name: StrVariant::Static("params"),
-                wit_type: StrVariant::Static("list<string>"),
-            }],
-            default_return_type(),
+            params,
+            return_type,
         )
         .unwrap();
 
@@ -1082,6 +1105,36 @@ mod tests {
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
     ) -> ExecTask {
+        new_js_workflow_exec_task_with_locking_strategy(
+            worker,
+            clock_fn,
+            db_pool,
+            LockingStrategy::ByComponentDigest,
+        )
+    }
+
+    fn new_js_workflow_exec_task_with_locking_strategy(
+        worker: WorkflowJsWorker,
+        clock_fn: Box<dyn ClockFn>,
+        db_pool: Arc<dyn DbPool>,
+        locking_strategy: LockingStrategy,
+    ) -> ExecTask {
+        new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+            worker,
+            clock_fn,
+            db_pool,
+            locking_strategy,
+            ExecutorId::generate(),
+        )
+    }
+
+    fn new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+        worker: WorkflowJsWorker,
+        clock_fn: Box<dyn ClockFn>,
+        db_pool: Arc<dyn DbPool>,
+        locking_strategy: LockingStrategy,
+        executor_id: ExecutorId,
+    ) -> ExecTask {
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
@@ -1089,9 +1142,9 @@ mod tests {
             component_id: worker.inner.config.component_id.clone(),
             task_limiter_global: None,
             task_limiter_local: None,
-            executor_id: ExecutorId::generate(),
+            executor_id,
             retry_config: ComponentRetryConfig::WORKFLOW,
-            locking_strategy: LockingStrategy::ByComponentDigest,
+            locking_strategy,
         };
         ExecTask::new_all_ffqns_test(Arc::new(worker), exec_config, clock_fn, db_pool)
     }
@@ -1292,8 +1345,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry.clone(),
             workflow_engine.clone(),
-        )
-        .await;
+        );
 
         let workflow_exec =
             new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
@@ -1573,8 +1625,7 @@ mod tests {
                 sim_clock.clone_box(),
                 fn_registry,
                 workflow_engine,
-            )
-            .await;
+            );
 
             let workflow_exec =
                 new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
@@ -1991,8 +2042,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry,
             workflow_engine,
-        )
-        .await;
+        );
 
         let exec_task = new_js_workflow_exec_task_with_close_watcher(
             worker,
@@ -2207,6 +2257,270 @@ mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_auto_locking_upgrades_modified_sleeping_workflow(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let sim_clock = SimClock::epoch();
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-auto-locking");
+        let original_js_source = r"
+        export default function test_auto_locking(params) {
+            obelisk.sleep({ milliseconds: 10 });
+            obelisk.sleep({ milliseconds: 10 });
+            return 'ok';
+        }";
+        let first_upgrade_js_source = r"
+        export default function test_auto_locking(params) {
+            obelisk.sleep({ milliseconds: 10 });
+            obelisk.sleep({ milliseconds: 10 });
+            return 'first-upgrade';
+        }";
+        let second_upgrade_js_source = r"
+        export default function test_auto_locking(params) {
+            obelisk.sleep({ milliseconds: 10 });
+            obelisk.sleep({ milliseconds: 10 });
+            return 'second-upgrade';
+        }";
+
+        let fn_registry: Arc<dyn FunctionRegistry> =
+            TestingFnRegistry::new_from_components(Vec::new());
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (original_worker, original_component_id, _original_runnable) =
+            compile_js_workflow_worker(
+                original_js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                fn_registry.clone(),
+                workflow_engine.clone(),
+            );
+        let (first_upgrade_worker, first_upgrade_component_id, _first_upgrade_runnable) =
+            compile_js_workflow_worker(
+                first_upgrade_js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                fn_registry.clone(),
+                workflow_engine.clone(),
+            );
+        let (second_upgrade_worker, second_upgrade_component_id, _second_upgrade_runnable) =
+            compile_js_workflow_worker(
+                second_upgrade_js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                fn_registry,
+                workflow_engine,
+            );
+        assert_ne!(
+            original_component_id.component_digest,
+            first_upgrade_component_id.component_digest
+        );
+        assert_ne!(
+            first_upgrade_component_id.component_digest,
+            second_upgrade_component_id.component_digest
+        );
+
+        let original_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+            original_worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            LockingStrategy::Auto,
+            ExecutorId::from_parts(0, 9004),
+        );
+        let first_upgrade_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+            first_upgrade_worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            LockingStrategy::Auto,
+            ExecutorId::from_parts(0, 9005),
+        );
+        let second_upgrade_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+            second_upgrade_worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            LockingStrategy::Auto,
+            ExecutorId::from_parts(0, 9006),
+        );
+
+        let execution_id = ExecutionId::from_parts(0, 9004);
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: original_component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            1,
+            original_exec
+                .tick_test_await(sim_clock.now(), RunId::from_parts(0, 9004))
+                .await
+                .len()
+        );
+        let first_pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            original_component_id.component_digest,
+            first_pending_state.component_digest
+        );
+        assert_matches!(
+            first_pending_state.pending_state,
+            PendingState::BlockedByJoinSet(..)
+        );
+        let original_log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(5, original_log.events.len());
+        assert_matches!(
+            &original_log.events[0].event,
+            ExecutionRequest::Created { .. }
+        );
+        assert_matches!(&original_log.events[1].event, ExecutionRequest::Locked(_));
+        assert_matches!(
+            &original_log.events[2].event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinSetCreate { .. }
+            }
+        );
+        assert_matches!(
+            &original_log.events[3].event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinSetRequest {
+                    request: JoinSetRequest::DelayRequest { .. },
+                    ..
+                }
+            }
+        );
+        assert_matches!(
+            &original_log.events[4].event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinNext { .. }
+            }
+        );
+
+        sim_clock.move_time_forward(Duration::from_millis(10));
+        assert_eq!(
+            1,
+            expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
+                .await
+                .unwrap()
+                .expired_async_timers
+        );
+
+        assert_eq!(
+            1,
+            first_upgrade_exec
+                .tick_test_await(sim_clock.now(), RunId::from_parts(0, 9005))
+                .await
+                .len()
+        );
+        let upgraded_pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            first_upgrade_component_id.component_digest,
+            upgraded_pending_state.component_digest
+        );
+        assert_matches!(
+            upgraded_pending_state.pending_state,
+            PendingState::PendingAt(..)
+        );
+        let first_upgrade_log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(11, first_upgrade_log.events.len());
+        assert_matches!(
+            &first_upgrade_log.events[5].event,
+            ExecutionRequest::Locked(_)
+        );
+        assert_matches!(
+            &first_upgrade_log.events[6].event,
+            ExecutionRequest::ComponentUpgraded { component_digest, reason: ComponentUpgradeReason::Auto } => {
+                assert_eq!(&first_upgrade_component_id.component_digest, component_digest);
+            }
+        );
+        assert_matches!(
+            &first_upgrade_log.events[7].event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinSetCreate { .. }
+            }
+        );
+        assert_matches!(
+            &first_upgrade_log.events[8].event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinSetRequest {
+                    request: JoinSetRequest::DelayRequest { .. },
+                    ..
+                }
+            }
+        );
+        assert_matches!(
+            &first_upgrade_log.events[9].event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinNext { .. }
+            }
+        );
+        assert_matches!(
+            &first_upgrade_log.events[10].event,
+            ExecutionRequest::Unlocked {
+                reason: UnlockedReason::Other { reason },
+                ..
+            } => {
+                assert_eq!("auto-upgrade succeeded", reason.as_ref());
+            }
+        );
+
+        sim_clock.move_time_forward(Duration::from_millis(10));
+        assert_eq!(
+            1,
+            expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
+                .await
+                .unwrap()
+                .expired_async_timers
+        );
+        assert_eq!(
+            1,
+            second_upgrade_exec
+                .tick_test_await(sim_clock.now(), RunId::from_parts(0, 9006))
+                .await
+                .len()
+        );
+        let second_upgrade_log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(14, second_upgrade_log.events.len());
+        assert_matches!(
+            &second_upgrade_log.events[11].event,
+            ExecutionRequest::Locked(_)
+        );
+        assert_matches!(
+            &second_upgrade_log.events[12].event,
+            ExecutionRequest::ComponentUpgraded { component_digest, reason: ComponentUpgradeReason::Auto } => {
+                assert_eq!(&second_upgrade_component_id.component_digest, component_digest);
+            }
+        );
+        assert_matches!(
+            &second_upgrade_log.events[13].event,
+            ExecutionRequest::Finished { .. }
+        );
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
     /// Test: replay of a JS workflow that creates a join set and returns.
     /// Replays at three stages:
     /// 1. Just after creation (no events in DB) — preview returns `JoinSetCreate` + finished result.
@@ -2240,8 +2554,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry.clone(),
             workflow_engine.clone(),
-        )
-        .await;
+        );
 
         let workflow_exec =
             new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
@@ -2437,8 +2750,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry.clone(),
             workflow_engine.clone(),
-        )
-        .await;
+        );
 
         let workflow_exec =
             new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
@@ -2578,8 +2890,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry.clone(),
             workflow_engine.clone(),
-        )
-        .await;
+        );
 
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -2680,8 +2991,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry.clone(),
             workflow_engine.clone(),
-        )
-        .await;
+        );
 
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -2768,8 +3078,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry.clone(),
             workflow_engine.clone(),
-        )
-        .await;
+        );
 
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection_test().await.unwrap();
@@ -2880,8 +3189,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry.clone(),
             workflow_engine.clone(),
-        )
-        .await;
+        );
 
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection_test().await.unwrap();
@@ -3171,8 +3479,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry.clone(),
             workflow_engine.clone(),
-        )
-        .await;
+        );
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = ExecutionId::from_parts(0, 9002);
         let created_at = sim_clock.now();
@@ -3324,8 +3631,7 @@ mod tests {
             sim_clock.clone_box(),
             fn_registry.clone(),
             workflow_engine.clone(),
-        )
-        .await;
+        );
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = ExecutionId::from_parts(0, 9003);
         let created_at = sim_clock.now();

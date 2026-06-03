@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use concepts::component_id::ComponentDigest;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{
     CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionEvent, ExecutionRequest,
@@ -13,6 +14,18 @@ use concepts::{ExecutionId, ExecutionMetadata};
 use concepts::{FunctionFqn, Params};
 use std::cmp::max;
 use tokio::sync::oneshot;
+
+fn component_id_with_digest(
+    component_id: &ComponentId,
+    component_digest: ComponentDigest,
+) -> ComponentId {
+    ComponentId::new(
+        component_id.component_type,
+        component_id.name.clone(),
+        component_digest,
+    )
+    .expect("existing component name must remain valid")
+}
 
 #[derive(Debug)]
 pub(crate) struct ExecutionJournal {
@@ -454,7 +467,8 @@ impl ExecutionJournal {
                     }
                 }
                 // No pending state change for following events:
-                ExecutionRequest::Paused
+                ExecutionRequest::ComponentUpgraded { .. }
+                | ExecutionRequest::Paused
                 | ExecutionRequest::Unpaused
                 | ExecutionRequest::HistoryEvent {
                     event:
@@ -535,14 +549,29 @@ impl ExecutionJournal {
 
     fn update_pending_state(&mut self) {
         self.pending_state = self.find_current_pending_state();
-        self.component_id = self
-            .find_last_lock()
-            .map(|locked| locked.component_id.clone())
-            .unwrap_or_else(|| self.get_create_request().component_id);
+        self.component_id = self.find_current_component_id();
         self.deployment_id = self
             .find_last_lock()
             .map(|locked| locked.deployment_id)
             .unwrap_or_else(|| self.get_create_request().deployment_id);
+    }
+
+    fn find_current_component_id(&self) -> ComponentId {
+        self.execution_events
+            .iter()
+            .rev()
+            .find_map(|event| match &event.event {
+                ExecutionRequest::Locked(locked) => Some(locked.component_id.clone()),
+                ExecutionRequest::ComponentUpgraded {
+                    component_digest, ..
+                } => Some(component_id_with_digest(
+                    self.component_id_last(),
+                    component_digest.clone(),
+                )),
+                ExecutionRequest::Created { component_id, .. } => Some(component_id.clone()),
+                _ => None,
+            })
+            .expect("journal must begin with Created event")
     }
 
     pub fn event_history(&self) -> impl Iterator<Item = (HistoryEvent, Version)> + '_ {

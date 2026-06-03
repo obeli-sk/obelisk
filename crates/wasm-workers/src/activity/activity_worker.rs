@@ -1053,10 +1053,12 @@ pub(crate) mod tests {
                 let ctx = WorkerContext {
                     execution_id: execution_id.clone(),
                     metadata: concepts::ExecutionMetadata::empty(),
+                    component_digest: ComponentId::dummy_activity().component_digest,
                     ffqn: FIBO_ACTIVITY_FFQN,
                     params: Params::from_json_values_test(vec![json!(fibo_input)]),
                     event_history: Vec::new(),
                     responses: Vec::new(),
+                    parent: None,
                     version: Version::new(0),
                     can_be_retried: false,
                     worker_span: info_span!("worker-test"),
@@ -1220,6 +1222,7 @@ pub(crate) mod tests {
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
+            component_digest: ComponentId::dummy_activity().component_digest,
             ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
             params: Params::from_json_values_test(vec![
                 json!(
@@ -1228,6 +1231,7 @@ pub(crate) mod tests {
             ]),
             event_history: Vec::new(),
             responses: Vec::new(),
+            parent: None,
             version: version.clone(),
             can_be_retried: false,
             worker_span: info_span!("worker-test"),
@@ -1275,6 +1279,7 @@ pub(crate) mod tests {
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
+            component_digest: ComponentId::dummy_activity().component_digest,
             ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
             params: Params::from_json_values_test(vec![
                 json!(
@@ -1283,6 +1288,7 @@ pub(crate) mod tests {
             ]),
             event_history: Vec::new(),
             responses: Vec::new(),
+            parent: None,
             version: version.clone(),
             can_be_retried: false,
             worker_span: info_span!("worker-test"),

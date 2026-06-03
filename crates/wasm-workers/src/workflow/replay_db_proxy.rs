@@ -123,6 +123,48 @@ pub(crate) async fn apply_writes(
     Ok(version)
 }
 
+pub(crate) fn bump_versions_for_execution(
+    actual: &mut [InternalCapturedWrite],
+    target_execution_id: &ExecutionId,
+) {
+    for write in actual {
+        match &mut write.write {
+            CapturedDbWrite::Append {
+                execution_id,
+                version,
+                ..
+            }
+            | CapturedDbWrite::AppendBatch {
+                execution_id,
+                version,
+                ..
+            }
+            | CapturedDbWrite::AppendBatchCreateNewExecution {
+                execution_id,
+                version,
+                ..
+            }
+            | CapturedDbWrite::AppendFinished {
+                execution_id,
+                version,
+                ..
+            } => {
+                if execution_id == target_execution_id {
+                    *version = version.increment();
+                }
+            }
+            CapturedDbWrite::AppendStubResponse {
+                events, response, ..
+            } => {
+                if events.execution_id == *target_execution_id {
+                    events.version = events.version.increment();
+                    response.finished_version = response.finished_version.increment();
+                }
+            }
+        }
+    }
+}
+
 async fn apply_captured_write(
     write: &InternalCapturedWrite,
     conn: &dyn DbConnection,

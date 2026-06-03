@@ -70,6 +70,34 @@ impl DbExecutor for InMemoryDbConnection {
     }
 
     #[instrument(skip_all)]
+    async fn lock_pending_by_ffqns_auto(
+        &self,
+        batch_size: u32,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: Arc<[FunctionFqn]>,
+        created_at: DateTime<Utc>,
+        component_id: ComponentId,
+        deployment_id: DeploymentId,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
+        retry_config: ComponentRetryConfig,
+    ) -> Result<LockPendingResponse, DbErrorWrite> {
+        Ok(self.0.lock().unwrap().lock_pending_by_ffqns(
+            batch_size,
+            pending_at_or_sooner,
+            &ffqns,
+            created_at,
+            &component_id,
+            deployment_id,
+            executor_id,
+            lock_expires_at,
+            run_id,
+            retry_config,
+        ))
+    }
+
+    #[instrument(skip_all)]
     async fn lock_pending_by_component_digest(
         &self,
         batch_size: u32,
@@ -130,6 +158,7 @@ impl DbExecutor for InMemoryDbConnection {
         Ok(LockedExecution {
             execution_id: journal.execution_id().clone(),
             metadata: journal.metadata().clone(),
+            component_digest: journal.component_id.component_digest.clone(),
             next_version,
             ffqn: journal.ffqn().clone(),
             params: journal.params(),
@@ -171,6 +200,7 @@ impl DbExecutor for InMemoryDbConnection {
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
+        _current_digest: Option<ComponentDigest>,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         let either = {
@@ -750,6 +780,7 @@ impl DbHolder {
             let row = LockedExecution {
                 execution_id: journal.execution_id().clone(),
                 metadata: journal.metadata().clone(),
+                component_digest: journal.component_id.component_digest.clone(),
                 next_version: journal.version(), // updated later
                 ffqn: journal.ffqn().clone(),
                 params: journal.params(),
@@ -809,6 +840,7 @@ impl DbHolder {
             let row = LockedExecution {
                 execution_id: journal.execution_id().clone(),
                 metadata: journal.metadata().clone(),
+                component_digest: journal.component_id.component_digest.clone(),
                 next_version: journal.version(), // updated later
                 ffqn: journal.ffqn().clone(),
                 params: journal.params(),

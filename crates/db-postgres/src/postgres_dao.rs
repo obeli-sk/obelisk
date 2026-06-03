@@ -9,20 +9,21 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
-        ComponentMetadataRecord, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
-        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
-        DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
-        DeploymentComponentDetail, DeploymentComponentRecord, DeploymentRecord, DeploymentState,
-        DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        ComponentMetadataRecord, ComponentUpgradeReason, CreateRequest, DUMMY_CREATED,
+        DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
+        DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
+        DbPool, DbPoolCloseable, DeploymentComponentDetail, DeploymentComponentRecord,
+        DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionEvent,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedResultKind, PendingStateMergedPause, ResponseCursor,
         ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, TimeoutOutcome, Version, VersionType, WasmBacktrace,
+        STATE_PENDING_AT, TimeoutOutcome, UnlockedReason, Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -603,22 +604,46 @@ async fn update_state_pending_after_response_appended(
     })
 }
 
-#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %scheduled_at, %appending_version))]
+struct PendingAfterEventUpdate<'a> {
+    scheduled_at: DateTime<Utc>,
+    intermittent_failure: bool,
+    component_input_digest: ComponentDigest,
+    incompatible_digest_update: IncompatibleDigestUpdate<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum IncompatibleDigestUpdate<'a> {
+    LeaveUnchanged,
+    Set(&'a ComponentDigest),
+}
+
+#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, scheduled_at = %update.scheduled_at, %appending_version))]
 async fn update_state_pending_after_event_appended(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     appending_version: &Version,
-    scheduled_at: DateTime<Utc>,
-    intermittent_failure: bool,
-    component_input_digest: ComponentDigest,
+    update: PendingAfterEventUpdate<'_>,
 ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
+    let scheduled_at = update.scheduled_at;
     debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
 
-    let intermittent_delta = i64::from(intermittent_failure); // 0 or 1
-
-    let updated = tx
-        .execute(
-            r"
+    let intermittent_delta = i64::from(update.intermittent_failure); // 0 or 1
+    let mut params: Vec<Box<dyn ToSql + Send + Sync>> = vec![
+        Box::new(i64::from(appending_version.0)), // $1
+        Box::new(scheduled_at),                   // $2
+        Box::new(STATE_PENDING_AT),               // $3
+        Box::new(intermittent_delta),             // $4
+        Box::new(execution_id.to_string()),       // $5
+    ];
+    let incompatible_digest_assignment = match update.incompatible_digest_update {
+        IncompatibleDigestUpdate::LeaveUnchanged => String::new(),
+        IncompatibleDigestUpdate::Set(digest) => {
+            params.push(Box::new(digest.to_vec()));
+            format!("incompatible_digest = ${},", params.len())
+        }
+    };
+    let sql = format!(
+        r"
             UPDATE t_state
             SET
                 corresponding_version = $1,
@@ -626,6 +651,7 @@ async fn update_state_pending_after_event_appended(
                 state = $3,
                 updated_at = CURRENT_TIMESTAMP,
                 intermittent_event_count = intermittent_event_count + $4,
+                {incompatible_digest_assignment}
 
                 max_retries = NULL,
                 retry_exp_backoff_millis = NULL,
@@ -636,16 +662,10 @@ async fn update_state_pending_after_event_appended(
 
                 result_kind = NULL
             WHERE execution_id = $5;
-            ",
-            &[
-                &i64::from(appending_version.0), // $1
-                &scheduled_at,                   // $2
-                &STATE_PENDING_AT,               // $3
-                &intermittent_delta,             // $4
-                &execution_id.to_string(),       // $5
-            ],
-        )
-        .await?;
+            "
+    );
+    let params_refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_ref() as _).collect();
+    let updated = tx.execute(&sql, &params_refs).await?;
 
     if updated != 1 {
         return Err(DbErrorWrite::NotFound);
@@ -657,12 +677,44 @@ async fn update_state_pending_after_event_appended(
             pending_at: Some(NotifierPendingAt {
                 scheduled_at,
                 ffqn: fetch_created_event(tx, execution_id).await?.ffqn,
-                component_input_digest,
+                component_input_digest: update.component_input_digest,
             }),
             execution_finished: None,
             response: None,
         },
     ))
+}
+
+async fn update_state_component_upgraded(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    component_digest: &ComponentDigest,
+    appending_version: &Version,
+) -> Result<AppendResponse, DbErrorWrite> {
+    debug!("Updating t_state to component {component_digest}");
+
+    let updated = tx
+        .execute(
+            r"
+            UPDATE t_state
+            SET
+                corresponding_version = $1,
+                updated_at = CURRENT_TIMESTAMP,
+                component_id_input_digest = $2
+            WHERE execution_id = $3;
+            ",
+            &[
+                &i64::from(appending_version.0),
+                &component_digest.as_slice(),
+                &execution_id.to_string(),
+            ],
+        )
+        .await?;
+
+    if updated != 1 {
+        return Err(DbErrorWrite::NotFound);
+    }
+    Ok(appending_version.increment())
 }
 
 #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
@@ -671,7 +723,7 @@ async fn update_state_locked_get_intermittent_event_count(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     deployment_id: DeploymentId,
-    component_digest: &ComponentDigest,
+    component_digest: Option<&ComponentDigest>,
     executor_id: ExecutorId,
     run_id: RunId,
     lock_expires_at: DateTime<Utc>,
@@ -702,7 +754,7 @@ async fn update_state_locked_get_intermittent_event_count(
                 state = $3,
                 updated_at = CURRENT_TIMESTAMP,
                 deployment_id = $4,
-                component_id_input_digest = $5,
+                component_id_input_digest = COALESCE($5, component_id_input_digest),
 
                 max_retries = $6,
                 retry_exp_backoff_millis = $7,
@@ -722,7 +774,7 @@ async fn update_state_locked_get_intermittent_event_count(
                 &lock_expires_at,
                 &STATE_LOCKED,
                 &deployment_id.to_string(),
-                &component_digest,
+                &component_digest.map(|component_digest| component_digest.as_slice().to_vec()), // no change if `None` due to `coalesce`
                 &retry_config.max_retries.map(i64::from),
                 &backoff_millis,
                 &executor_id.to_string(),
@@ -1723,12 +1775,17 @@ fn parse_response_with_cursor(
     })
 }
 
+/// `component_id` is used to construct the `Locked` event.
+/// If `update_component_digest` is set, `t_state` will be set to the component's digest.
+/// This should be true in all cases except for `lock_pending_by_ffqns_auto`, where
+/// the digest in `t_state` is only updated after a successful execution upgrade.
 #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %run_id, %executor_id))]
 #[expect(clippy::too_many_arguments)]
 async fn lock_single_execution(
     tx: &Transaction<'_>,
     created_at: DateTime<Utc>,
     component_id: &ComponentId,
+    update_component_digest: bool, // if set, update `t_state` as well
     deployment_id: DeploymentId,
     execution_id: &ExecutionId,
     run_id: RunId,
@@ -1741,6 +1798,11 @@ async fn lock_single_execution(
 
     // Check State
     let combined_state = get_combined_state(tx, execution_id).await?;
+    let context_component_digest = if update_component_digest {
+        component_id.component_digest.clone()
+    } else {
+        combined_state.execution_with_state.component_digest.clone()
+    };
     combined_state
         .execution_with_state
         .pending_state
@@ -1792,7 +1854,7 @@ async fn lock_single_execution(
         tx,
         execution_id,
         deployment_id,
-        &component_id.component_digest,
+        update_component_digest.then_some(&component_id.component_digest),
         executor_id,
         run_id,
         lock_expires_at,
@@ -1865,6 +1927,7 @@ async fn lock_single_execution(
     Ok(LockedExecution {
         execution_id: execution_id.clone(),
         metadata,
+        component_digest: context_component_digest,
         next_version: appending_version.increment(),
         ffqn,
         params,
@@ -1966,6 +2029,7 @@ async fn append(
             tx,
             created_at,
             &component_id,
+            true, // update_component_digest
             deployment_id,
             execution_id,
             run_id,
@@ -2032,27 +2096,53 @@ async fn append(
                 tx,
                 execution_id,
                 &appending_version,
-                *backoff_expires_at,
-                true, // an intermittent failure
-                combined_state.execution_with_state.component_digest,
+                PendingAfterEventUpdate {
+                    scheduled_at: *backoff_expires_at,
+                    intermittent_failure: true,
+                    component_input_digest: combined_state.execution_with_state.component_digest,
+                    incompatible_digest_update: IncompatibleDigestUpdate::LeaveUnchanged,
+                },
             )
             .await?;
             return Ok((next_version, notifier));
         }
 
         ExecutionRequest::Unlocked {
-            backoff_expires_at, ..
+            backoff_expires_at,
+            reason,
         } => {
+            let incompatible_digest_update = match reason {
+                UnlockedReason::AutoUpgradeFailed { target_digest, .. } => {
+                    IncompatibleDigestUpdate::Set(target_digest)
+                }
+                UnlockedReason::Other { .. } => IncompatibleDigestUpdate::LeaveUnchanged,
+            };
             let (next_version, notifier) = update_state_pending_after_event_appended(
                 tx,
                 execution_id,
                 &appending_version,
-                *backoff_expires_at,
-                false, // not an intermittent failure
-                combined_state.execution_with_state.component_digest,
+                PendingAfterEventUpdate {
+                    scheduled_at: *backoff_expires_at,
+                    intermittent_failure: false,
+                    component_input_digest: combined_state.execution_with_state.component_digest,
+                    incompatible_digest_update,
+                },
             )
             .await?;
             return Ok((next_version, notifier));
+        }
+
+        ExecutionRequest::ComponentUpgraded {
+            component_digest, ..
+        } => {
+            let next_version = update_state_component_upgraded(
+                tx,
+                execution_id,
+                component_digest,
+                &appending_version,
+            )
+            .await?;
+            return Ok((next_version, AppendNotifier::default()));
         }
 
         ExecutionRequest::Paused => {
@@ -2210,9 +2300,14 @@ async fn append(
                     tx,
                     execution_id,
                     &appending_version,
-                    scheduled_at,
-                    false, // not an intermittent failure
-                    combined_state.execution_with_state.component_digest,
+                    PendingAfterEventUpdate {
+                        scheduled_at,
+                        intermittent_failure: false,
+                        component_input_digest: combined_state
+                            .execution_with_state
+                            .component_digest,
+                        incompatible_digest_update: IncompatibleDigestUpdate::LeaveUnchanged,
+                    },
                 )
                 .await?;
                 return Ok((next_version, notifier));
@@ -2799,12 +2894,75 @@ async fn get_pending_by_ffqns(
         if needed == 0 {
             break;
         }
-        let needed = u32::try_from(needed).expect("u32 - usize cannot overflow an 32");
+        let needed =
+            u32::try_from(needed).expect("`batch_size`:u32 - usize cannot overflow an u32");
         if let Ok(execs) =
             get_pending_of_single_ffqn(tx, needed, pending_at_or_sooner, ffqn, select_strategy)
                 .await
         {
             execution_ids_versions.extend(execs);
+        }
+    }
+
+    Ok(execution_ids_versions)
+}
+
+async fn get_pending_by_ffqns_auto(
+    tx: &Transaction<'_>,
+    batch_size: u32,
+    pending_at_or_sooner: DateTime<Utc>,
+    ffqns: &[FunctionFqn],
+    current_digest: &ComponentDigest,
+    select_strategy: SelectStrategy,
+) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
+    let batch_size = usize::try_from(batch_size).expect("16 bit systems are unsupported");
+    let mut execution_ids_versions = Vec::with_capacity(batch_size);
+
+    for ffqn in ffqns {
+        let needed = batch_size - execution_ids_versions.len();
+        if needed == 0 {
+            break;
+        }
+        let rows = tx
+            .query(
+                &format!(
+                    r"
+                    SELECT execution_id, corresponding_version FROM t_state
+                    WHERE
+                    state = '{STATE_PENDING_AT}' AND
+                    pending_expires_finished <= $1 AND ffqn = $2
+                    AND is_paused = false
+                    AND (incompatible_digest IS NULL OR incompatible_digest <> $3)
+                    ORDER BY pending_expires_finished
+                    {}
+                    LIMIT $4
+                    ",
+                    if select_strategy == SelectStrategy::LockForUpdate {
+                        "FOR UPDATE SKIP LOCKED"
+                    } else {
+                        ""
+                    }
+                ),
+                &[
+                    &pending_at_or_sooner,                                                     // $1
+                    &ffqn.to_string(),                                                         // $2
+                    &current_digest,                                                           // $3
+                    &i64::try_from(needed).expect("`needed` is <= `batch_size` which is u32"), // $4
+                ],
+            )
+            .await
+            .map_err(DbErrorGeneric::from)?;
+
+        for row in rows {
+            let eid_str: String = get(&row, "execution_id")?;
+            let corresponding_version: i64 = get(&row, "corresponding_version")?;
+            let corresponding_version = Version::try_from(corresponding_version)
+                .map_err(|_| consistency_db_err("version must be non-negative"))?;
+            if let Ok(eid) = ExecutionId::from_str(&eid_str) {
+                execution_ids_versions.push((eid, corresponding_version.increment()));
+            } else {
+                warn!("Ignoring corrupted row in pending auto check: invalid execution_id");
+            }
         }
     }
 
@@ -2886,31 +3044,26 @@ async fn upgrade_execution_component(
     execution_id: &ExecutionId,
     old: &ComponentDigest,
     new: &ComponentDigest,
+    reason: ComponentUpgradeReason,
 ) -> Result<(), DbErrorWrite> {
-    debug!("Updating t_state to component {new}");
-
-    let updated = tx
-        .execute(
-            r"
-                UPDATE t_state
-                SET
-                    updated_at = CURRENT_TIMESTAMP,
-                    component_id_input_digest = $1
-                WHERE
-                    execution_id = $2 AND
-                    component_id_input_digest = $3
-                ",
-            &[
-                &new.as_slice(),           // $1: BYTEA
-                &execution_id.to_string(), // $2: TEXT
-                &old.as_slice(),           // $3: BYTEA
-            ],
-        )
-        .await?;
-
-    if updated != 1 {
+    let combined_state = get_combined_state(tx, execution_id).await?;
+    if combined_state.execution_with_state.component_digest != *old {
         return Err(DbErrorWrite::NotFound);
     }
+    let appending_version = combined_state.get_next_version_fail_if_finished()?;
+    append(
+        tx,
+        execution_id,
+        AppendRequest {
+            created_at: Utc::now(),
+            event: ExecutionRequest::ComponentUpgraded {
+                component_digest: new.clone(),
+                reason,
+            },
+        },
+        appending_version,
+    )
+    .await?;
     Ok(())
 }
 
@@ -3009,6 +3162,7 @@ impl DbExecutor for PostgresConnection {
                 &tx,
                 created_at,
                 &component_id,
+                true, // update_component_digest
                 deployment_id,
                 &execution_id,
                 run_id,
@@ -3023,6 +3177,71 @@ impl DbExecutor for PostgresConnection {
                 Err(err) => {
                     tx.rollback().await?; // lock_single_execution performs multiple writes
                     debug!("Locking row {execution_id} failed - {err:?}");
+                    return Err(err);
+                }
+            }
+        }
+
+        tx.commit().await?;
+
+        Ok(locked_execs)
+    }
+
+    #[instrument(level = Level::TRACE, skip(self))]
+    async fn lock_pending_by_ffqns_auto(
+        &self,
+        batch_size: u32,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: Arc<[FunctionFqn]>,
+        created_at: DateTime<Utc>,
+        component_id: ComponentId,
+        deployment_id: DeploymentId,
+        executor_id: ExecutorId,
+        lock_expires_at: DateTime<Utc>,
+        run_id: RunId,
+        retry_config: ComponentRetryConfig,
+    ) -> Result<LockPendingResponse, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let current_digest = component_id.component_digest.clone();
+
+        let execution_ids_versions = get_pending_by_ffqns_auto(
+            &tx,
+            batch_size,
+            pending_at_or_sooner,
+            &ffqns,
+            &current_digest,
+            SelectStrategy::LockForUpdate,
+        )
+        .await?;
+
+        if execution_ids_versions.is_empty() {
+            tx.commit().await?;
+            return Ok(vec![]);
+        }
+
+        debug!("Auto-locking {execution_ids_versions:?}");
+        let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
+        for (execution_id, version) in execution_ids_versions {
+            match lock_single_execution(
+                &tx,
+                created_at,
+                &component_id,
+                false, // update_component_digest
+                deployment_id,
+                &execution_id,
+                run_id,
+                &version,
+                executor_id,
+                lock_expires_at,
+                retry_config,
+            )
+            .await
+            {
+                Ok(locked) => locked_execs.push(locked),
+                Err(err) => {
+                    tx.rollback().await?;
+                    debug!("Auto-locking row {execution_id} failed - {err:?}");
                     return Err(err);
                 }
             }
@@ -3071,6 +3290,7 @@ impl DbExecutor for PostgresConnection {
                 &tx,
                 created_at,
                 component_id,
+                true, // update_component_digest
                 deployment_id,
                 &execution_id,
                 run_id,
@@ -3116,6 +3336,7 @@ impl DbExecutor for PostgresConnection {
             &tx,
             created_at,
             &component_id,
+            true, // update_component_digest
             deployment_id,
             execution_id,
             run_id,
@@ -3218,6 +3439,7 @@ impl DbExecutor for PostgresConnection {
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
+        current_digest: Option<ComponentDigest>,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
         let unique_tag: u64 = rand::random();
@@ -3236,14 +3458,27 @@ impl DbExecutor for PostgresConnection {
                 let mut client_guard = self.client.lock().await;
                 // Read-only transaction check
                 if let Ok(tx) = client_guard.transaction().await {
-                    if let Ok(res) = get_pending_by_ffqns(
-                        &tx,
-                        1,
-                        pending_at_or_sooner,
-                        &ffqns,
-                        SelectStrategy::Read,
-                    )
-                    .await
+                    let res = if let Some(current_digest) = current_digest {
+                        get_pending_by_ffqns_auto(
+                            &tx,
+                            1,
+                            pending_at_or_sooner,
+                            &ffqns,
+                            &current_digest,
+                            SelectStrategy::Read,
+                        )
+                        .await
+                    } else {
+                        get_pending_by_ffqns(
+                            &tx,
+                            1,
+                            pending_at_or_sooner,
+                            &ffqns,
+                            SelectStrategy::Read,
+                        )
+                        .await
+                    };
+                    if let Ok(res) = res
                         && !res.is_empty()
                     {
                         db_has_pending = true;
@@ -4265,11 +4500,12 @@ impl DbExternalApi for PostgresConnection {
         execution_id: &ExecutionId,
         old: &ComponentDigest,
         new: &ComponentDigest,
+        reason: ComponentUpgradeReason,
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        upgrade_execution_component(&tx, execution_id, old, new).await?;
+        upgrade_execution_component(&tx, execution_id, old, new, reason).await?;
 
         tx.commit().await?;
         Ok(())
@@ -4538,7 +4774,7 @@ impl DbExternalApi for PostgresConnection {
                     created_at: paused_at,
                     event: ExecutionRequest::Unlocked {
                         backoff_expires_at: paused_at,
-                        reason: StrVariant::Static("paused"),
+                        reason: StrVariant::Static("paused").into(),
                     },
                 },
                 appending_version,
