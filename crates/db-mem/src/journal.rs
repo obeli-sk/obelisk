@@ -555,9 +555,9 @@ impl ExecutionJournal {
             .iter()
             .rev()
             .find_map(|event| match &event.event {
-                ExecutionRequest::ComponentUpgraded { deployment_id, .. } => Some(*deployment_id),
                 ExecutionRequest::Locked(locked) => Some(locked.deployment_id),
-                ExecutionRequest::Created { deployment_id, .. } => Some(*deployment_id),
+                ExecutionRequest::ComponentUpgraded { deployment_id, .. }
+                | ExecutionRequest::Created { deployment_id, .. } => Some(*deployment_id),
                 _ => None,
             })
             .unwrap_or_else(|| self.get_create_request().deployment_id);
