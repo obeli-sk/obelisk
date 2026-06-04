@@ -99,7 +99,7 @@ pub struct WorkflowWorker {
     instance_pre: InstancePre<WorkflowCtx>,
     fn_registry: Arc<dyn FunctionRegistry>,
     pub(crate) cancel_registry: CancelRegistry,
-    deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+    pub(crate) deadline_factory: Arc<dyn DeadlineTrackerFactory>,
     pub(crate) logs_storage_config: Option<LogStrageConfig>,
 }
 
@@ -1069,6 +1069,10 @@ impl WorkflowWorker {
 
     #[instrument(skip_all, fields(%execution_id))]
     pub async fn replay(&self, execution_id: ExecutionId) -> Result<ReplayResponse, ReplayError> {
+        assert!(
+            self.deadline_factory.is_for_replay(),
+            "replay() requires DeadlineTrackerFactoryForReplay"
+        );
         let db_conn = self
             .db_pool
             .connection()
@@ -1123,6 +1127,10 @@ impl WorkflowWorker {
         execution_id: ExecutionId,
         requested: ReplayAdvanceable,
     ) -> Result<AdvanceResponse, AdvanceError> {
+        assert!(
+            self.deadline_factory.is_for_replay(),
+            "advance() requires DeadlineTrackerFactoryForReplay"
+        );
         info!("Advance to requested {requested:?}");
         // Check version before replaying.
         let db_conn = self
@@ -1286,8 +1294,6 @@ pub enum AdvanceError {
     // Errors from ReplayInternalError
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
-    #[error("lock expired")]
-    LockExpired,
     #[error("executor closing")]
     ExecutorClosing,
 }
@@ -1298,7 +1304,11 @@ impl From<ReplayInternalError> for AdvanceError {
             ReplayInternalError::LimitReached { reason, version } => {
                 Self::LimitReached { reason, version }
             }
-            ReplayInternalError::LockExpired(_) => Self::LockExpired,
+            ReplayInternalError::LockExpired(_) => {
+                unreachable!(
+                    "advance() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
+                )
+            }
             ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,
         }
     }
@@ -1327,9 +1337,6 @@ pub enum ReplayError {
     // Transient error
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
-    // Transient error
-    #[error("lock expired")]
-    LockExpired,
     // Transient error
     #[error("executor closing")]
     ExecutorClosing,
@@ -1361,7 +1368,11 @@ impl From<ReplayInternalError> for ReplayError {
             ReplayInternalError::LimitReached { reason, version } => {
                 Self::LimitReached { reason, version }
             }
-            ReplayInternalError::LockExpired(_) => Self::LockExpired,
+            ReplayInternalError::LockExpired(_) => {
+                unreachable!(
+                    "replay() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
+                )
+            }
             ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,
         }
     }
