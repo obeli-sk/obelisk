@@ -74,24 +74,17 @@ use tracing::info_span;
 use tracing::instrument;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
-use wasm_workers::component_logger::LogStrageConfig;
-use wasm_workers::engines::Engines;
+use wasm_workers::registry::ReplayWorker;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
-use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorker;
-use wasm_workers::workflow::workflow_worker::{
-    AdvanceError, ReplayAdvanceable, ReplayResponse, WorkflowWorker,
-};
+use wasm_workers::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
 
 pub(crate) struct GrpcServer {
     server_verified: ServerVerified,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: watch::Receiver<()>,
     cancel_registry: CancelRegistry,
-    engines: Engines,
     prepared_dirs: PreparedDirs,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-    // config: ServerConfigToml,
-    // path_prefixes: Arc<crate::config::config_holder::PathPrefixes>,
     deployment_ctx: DeploymentContextHandle,
     webhook_registry: Arc<WebhookRegistry>,
 }
@@ -103,7 +96,6 @@ impl GrpcServer {
         db_pool: Arc<dyn DbPool>,
         termination_watcher: watch::Receiver<()>,
         cancel_registry: CancelRegistry,
-        engines: Engines,
         prepared_dirs: PreparedDirs,
         log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
         deployment_ctx: DeploymentContextHandle,
@@ -114,7 +106,6 @@ impl GrpcServer {
             db_pool,
             termination_watcher,
             cancel_registry,
-            engines,
             prepared_dirs,
             log_forwarder_sender,
             deployment_ctx,
@@ -786,9 +777,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
-        let (deployment_id, component_registry_ro) = {
+        let (component_registry_ro, replay_workers) = {
             let ctx = self.deployment_ctx.read().await;
-            (ctx.deployment_id, ctx.component_registry_ro.clone())
+            (
+                ctx.component_registry_ro.clone(),
+                ctx.replay_workers.clone(),
+            )
         };
         let conn = self.db_pool.connection().await.map_err(map_to_status)?;
         // Find the execution's ffqn.
@@ -806,47 +800,17 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         Span::current().record("component_id", tracing::field::display(component_id));
 
-        let (component_id, replay_info) = component_registry_ro
-            .get_workflow_replay_info(&component_id.component_digest)
-            .expect("digest taken from found component id");
+        let (_component_id, replay_worker) = replay_workers
+            .get(&component_id.component_digest)
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "replay worker for component '{component_id}' not found"
+                ))
+            })?;
 
-        let logs_storage_config =
-            replay_info
-                .logs_store_min_level
-                .map(|min_level| LogStrageConfig {
-                    min_level,
-                    log_sender: self.log_forwarder_sender.clone(),
-                });
-
-        let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
-            WorkflowJsWorker::replay(
-                deployment_id,
-                component_id.clone(),
-                replay_info.runnable_component.wasmtime_component.clone(),
-                &replay_info.runnable_component.wasm_component.exim,
-                self.engines.workflow_engine.clone(),
-                Arc::new(component_registry_ro.clone()),
-                self.db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config,
-                Now.clone_box(),
-                js_info,
-            )
-            .await
-        } else {
-            WorkflowWorker::replay(
-                deployment_id,
-                component_id.clone(),
-                replay_info.runnable_component.wasmtime_component.clone(),
-                &replay_info.runnable_component.wasm_component.exim,
-                self.engines.workflow_engine.clone(),
-                Arc::new(component_registry_ro.clone()),
-                self.db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config,
-                Now.clone_box(),
-            )
-            .await
+        let replay_res = match replay_worker {
+            ReplayWorker::Js(worker) => worker.replay(execution_id.clone()).await,
+            ReplayWorker::Wasm(worker) => worker.replay(execution_id.clone()).await,
         };
         let outcome = match replay_res {
             Ok(ReplayResponse::Advanceable(replay)) => {
@@ -911,9 +875,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             ));
         }
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
-        let (deployment_id, component_registry_ro) = {
+        let (component_registry_ro, replay_workers) = {
             let ctx = self.deployment_ctx.read().await;
-            (ctx.deployment_id, ctx.component_registry_ro.clone())
+            (
+                ctx.component_registry_ro.clone(),
+                ctx.replay_workers.clone(),
+            )
         };
         let conn = self.db_pool.connection().await.map_err(map_to_status)?;
         let create_req = conn.get_create_request(&execution_id).await.to_status()?;
@@ -927,17 +894,13 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             })?;
         Span::current().record("component_id", tracing::field::display(component_id));
 
-        let (component_id, replay_info) = component_registry_ro
-            .get_workflow_replay_info(&component_id.component_digest)
-            .expect("digest taken from found component id");
-
-        let logs_storage_config =
-            replay_info
-                .logs_store_min_level
-                .map(|min_level| LogStrageConfig {
-                    min_level,
-                    log_sender: self.log_forwarder_sender.clone(),
-                });
+        let (_component_id, replay_worker) = replay_workers
+            .get(&component_id.component_digest)
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "replay worker for component '{component_id}' not found"
+                ))
+            })?;
 
         let expected = ReplayAdvanceable {
             captured_writes: request
@@ -947,39 +910,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .collect::<Result<Vec<_>, _>>()?,
         };
 
-        let advance_res = if let Some(js_info) = &replay_info.js_workflow_info {
-            WorkflowJsWorker::advance(
-                deployment_id,
-                component_id.clone(),
-                replay_info.runnable_component.wasmtime_component.clone(),
-                &replay_info.runnable_component.wasm_component.exim,
-                self.engines.workflow_engine.clone(),
-                Arc::new(component_registry_ro.clone()),
-                self.cancel_registry.clone(),
-                self.db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config,
-                Now.clone_box(),
-                js_info,
-                expected,
-            )
-            .await
-        } else {
-            WorkflowWorker::advance(
-                deployment_id,
-                component_id.clone(),
-                replay_info.runnable_component.wasmtime_component.clone(),
-                &replay_info.runnable_component.wasm_component.exim,
-                self.engines.workflow_engine.clone(),
-                Arc::new(component_registry_ro.clone()),
-                self.cancel_registry.clone(),
-                self.db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config,
-                Now.clone_box(),
-                expected,
-            )
-            .await
+        let advance_res = match replay_worker {
+            ReplayWorker::Js(worker) => worker.advance(execution_id.clone(), expected).await,
+            ReplayWorker::Wasm(worker) => worker.advance(execution_id.clone(), expected).await,
         };
 
         let result = match advance_res {
@@ -1050,52 +983,16 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("new_component_digest")?
             .try_into()?;
         if !request.skip_determinism_check {
-            let (deployment_id, component_registry_ro) = {
+            let replay_workers = {
                 let ctx = self.deployment_ctx.read().await;
-                (ctx.deployment_id, ctx.component_registry_ro.clone())
+                ctx.replay_workers.clone()
             };
-            let (component_id, replay_info) = component_registry_ro
-                .get_workflow_replay_info(&new)
-                .ok_or_else(|| {
-                    tonic::Status::not_found(format!("new component '{new}' not found in registry"))
-                })?;
-
-            let logs_storage_config =
-                replay_info
-                    .logs_store_min_level
-                    .map(|min_level| LogStrageConfig {
-                        min_level,
-                        log_sender: self.log_forwarder_sender.clone(),
-                    });
-            let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
-                WorkflowJsWorker::replay(
-                    deployment_id,
-                    component_id.clone(),
-                    replay_info.runnable_component.wasmtime_component.clone(),
-                    &replay_info.runnable_component.wasm_component.exim,
-                    self.engines.workflow_engine.clone(),
-                    Arc::new(component_registry_ro.clone()),
-                    self.db_pool.clone(),
-                    execution_id.clone(),
-                    logs_storage_config,
-                    Now.clone_box(),
-                    js_info,
-                )
-                .await
-            } else {
-                WorkflowWorker::replay(
-                    deployment_id,
-                    component_id.clone(),
-                    replay_info.runnable_component.wasmtime_component.clone(),
-                    &replay_info.runnable_component.wasm_component.exim,
-                    self.engines.workflow_engine.clone(),
-                    Arc::new(component_registry_ro.clone()),
-                    self.db_pool.clone(),
-                    execution_id.clone(),
-                    logs_storage_config,
-                    Now.clone_box(),
-                )
-                .await
+            let (_component_id, replay_worker) = replay_workers.get(&new).ok_or_else(|| {
+                tonic::Status::not_found(format!("new component '{new}' not found in registry"))
+            })?;
+            let replay_res = match replay_worker {
+                ReplayWorker::Js(worker) => worker.replay(execution_id.clone()).await,
+                ReplayWorker::Wasm(worker) => worker.replay(execution_id.clone()).await,
             };
             if let Err(err) = replay_res {
                 info!("Replay failed: {err:?}");

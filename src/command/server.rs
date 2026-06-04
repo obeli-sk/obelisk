@@ -128,9 +128,9 @@ use wasm_workers::registry::ComponentConfig;
 use wasm_workers::registry::ComponentConfigImportable;
 use wasm_workers::registry::ComponentConfigRegistry;
 use wasm_workers::registry::ComponentConfigRegistryRO;
-use wasm_workers::registry::JsWorkflowReplayInfo;
+use wasm_workers::registry::ReplayWorker;
+use wasm_workers::registry::ReplayWorkerRegistry;
 use wasm_workers::registry::WitOrigin;
-use wasm_workers::registry::WorkflowReplayInfo;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
@@ -139,10 +139,14 @@ use wasm_workers::webhook::webhook_trigger::WebhookEndpointConfig;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstanceLinked;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointJsConfig;
 use wasm_workers::webhook::webhook_trigger::WebhookServerState;
-use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
+use wasm_workers::workflow::deadline_tracker::{
+    DeadlineTrackerFactoryForReplay, DeadlineTrackerFactoryTokio,
+};
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerCompiled;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerLinked;
+use wasm_workers::workflow::workflow_worker::JoinNextBlockingStrategy;
+use wasm_workers::workflow::workflow_worker::WorkflowConfig;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 use wasmtime::Engine;
@@ -151,6 +155,7 @@ pub(crate) struct DeploymentContext {
     pub(crate) deployment_id: DeploymentId,
     pub(crate) component_registry_ro: wasm_workers::registry::ComponentConfigRegistryRO,
     pub(crate) exec_task_handles: Vec<ExecutorTaskHandle>,
+    pub(crate) replay_workers: Arc<ReplayWorkerRegistry>,
     pub(crate) closed: bool,
 }
 
@@ -509,7 +514,7 @@ async fn verify_db_schema(
     db_config_toml: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
 ) -> Result<DbPoolCloseableContainer, anyhow::Error> {
-    Ok(match db_config_toml {
+    let result: DbPoolCloseableContainer = match db_config_toml {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
             let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes).await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
@@ -547,7 +552,8 @@ async fn verify_db_schema(
             });
             Some((db_pool, db_close))
         }
-    })
+    };
+    Ok(result)
 }
 
 #[derive(Debug, Default, Clone)]
@@ -1017,7 +1023,6 @@ pub(crate) async fn run_internal(
         server_init.db_pool.clone(),
         termination_watcher.clone(),
         cancel_registry.clone(),
-        server_init.engines.clone(),
         prepared_dirs.clone(),
         server_init.log_forwarder_sender.clone(),
         server_init.deployment_ctx.clone(),
@@ -1076,7 +1081,6 @@ pub(crate) async fn run_internal(
         cancel_registry,
         termination_watcher: termination_watcher.clone(),
         subscription_interruption,
-        engines: server_init.engines.clone(),
         log_forwarder_sender: server_init.log_forwarder_sender.clone(),
         prepared_dirs: server_init.prepared_dirs.clone(),
         webhook_registry: server_init.webhook_registry.clone(),
@@ -1331,7 +1335,7 @@ impl ServerCompiledLinked {
             deployment_id,
             self.workers_linked.iter().filter_map(|worker_linked| {
                 if let LinkedWorkerKind::Cron(cron_config) = &worker_linked.worker {
-                    Some(cron_config)
+                    Some(cron_config.as_ref())
                 } else {
                     None
                 }
@@ -1697,23 +1701,27 @@ async fn switch_hot_redeploy(
         .create_missing_cron_seeds(db_pool, deployment_id)
         .await?;
 
-    let new_handles: Vec<ExecutorTaskHandle> = server_compiled_linked
-        .workers_linked
-        .into_iter()
-        .map(|pre_spawn| {
-            pre_spawn.spawn(
-                deployment_id,
-                db_pool,
-                cancel_registry.clone(),
-                log_forwarder_sender,
-            )
-        })
-        .collect();
+    let mut new_handles: Vec<ExecutorTaskHandle> =
+        Vec::with_capacity(server_compiled_linked.workers_linked.len());
+    let mut replay_workers = ReplayWorkerRegistry::default();
+    for pre_spawn in server_compiled_linked.workers_linked {
+        let (handle, replay_entry) = pre_spawn.spawn(
+            deployment_id,
+            db_pool,
+            cancel_registry.clone(),
+            log_forwarder_sender,
+        );
+        new_handles.push(handle);
+        if let Some((component_id, worker)) = replay_entry {
+            replay_workers.insert(component_id, worker);
+        }
+    }
 
     *write_guard_ctx = DeploymentContext {
         deployment_id,
         component_registry_ro: server_compiled_linked.component_registry_ro.clone(),
         exec_task_handles: new_handles,
+        replay_workers: Arc::new(replay_workers),
         closed: false,
     };
 
@@ -1831,18 +1839,21 @@ async fn spawn_tasks_and_threads(
     };
 
     // Spawn executors
-    let exec_join_handles: Vec<ExecutorTaskHandle> = server_compiled_linked
-        .workers_linked
-        .into_iter()
-        .map(|pre_spawn| {
-            pre_spawn.spawn(
-                deployment_id,
-                &db_pool,
-                cancel_registry.clone(),
-                &log_forwarder_sender,
-            )
-        })
-        .collect();
+    let mut exec_join_handles: Vec<ExecutorTaskHandle> =
+        Vec::with_capacity(server_compiled_linked.workers_linked.len());
+    let mut replay_workers = ReplayWorkerRegistry::default();
+    for pre_spawn in server_compiled_linked.workers_linked {
+        let (handle, replay_entry) = pre_spawn.spawn(
+            deployment_id,
+            &db_pool,
+            cancel_registry.clone(),
+            &log_forwarder_sender,
+        );
+        exec_join_handles.push(handle);
+        if let Some((component_id, worker)) = replay_entry {
+            replay_workers.insert(component_id, worker);
+        }
+    }
 
     let webhook_registry = WebhookRegistry::new(
         server_compiled_linked
@@ -1871,6 +1882,7 @@ async fn spawn_tasks_and_threads(
             deployment_id,
             component_registry_ro: server_compiled_linked.component_registry_ro,
             exec_task_handles: exec_join_handles,
+            replay_workers: Arc::new(replay_workers),
             closed: false,
         }));
     let server_init = ServerInit {
@@ -2680,7 +2692,6 @@ async fn compile_and_link(
                         imports: vec![],
                         workflow_or_activity_config: Some(component_config_importable),
                         wit,
-                        workflow_replay_info: None,
                         wit_origin: WitOrigin::Wasm,
                     };
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
@@ -2879,7 +2890,6 @@ async fn compile_and_link(
                     imports: webhook_compiled.imports().to_vec(),
                     workflow_or_activity_config: None,
                     wit: webhook_compiled.runnable_component.wasm_component.wit(),
-                    workflow_replay_info: None,
                     wit_origin: WitOrigin::Wasm,
                 };
                 component_registry.insert(component)?;
@@ -2899,7 +2909,6 @@ async fn compile_and_link(
             imports: vec![],
             workflow_or_activity_config: None,
             wit: String::new(), // does not matter, WIT is not exposed
-            workflow_replay_info: None,
             wit_origin: WitOrigin::Synthesized,
         };
         component_registry.insert(component_config)?; // Mostly just for name uniqueness checking
@@ -2936,13 +2945,13 @@ async fn compile_and_link(
             )
         })?;
         workers_linked.push(WorkerLinked {
-            worker: LinkedWorkerKind::Cron(ScheduleWorkerConfig {
+            worker: LinkedWorkerKind::Cron(Box::new(ScheduleWorkerConfig {
                 component_id: cron.component_id,
                 target_ffqn: cron.target_ffqn,
                 target_component_id: target_component_id.clone(),
                 params,
                 cron_schedule: cron.cron_schedule,
-            }),
+            })),
             exec_config: cron.exec_config,
             logs_store_min_level: None,
         });
@@ -2995,7 +3004,6 @@ fn compile_activity_inline(
         imports: vec![],
         workflow_or_activity_config: Some(component_config_importable),
         wit: wit_text_with_extensions,
-        workflow_replay_info: None,
         wit_origin: WitOrigin::Synthesized,
     })
 }
@@ -3100,7 +3108,6 @@ fn prespawn_activity_wasm(
                 }),
                 imports: imports_flat,
                 wit,
-                workflow_replay_info: None,
                 wit_origin: WitOrigin::Wasm,
             };
             Ok(CompiledComponent::ActivityStubOrExternal { component_config })
@@ -3319,8 +3326,25 @@ fn prespawn_workflow_js(
     assert!(component_id.component_type == ComponentType::Workflow);
     let engine = engines.workflow_engine.clone();
 
-    let inner = WorkflowWorkerCompiled::new_with_config(
+    let replay_inner = WorkflowWorkerCompiled::new_with_config(
         runnable_component.clone(),
+        replay_workflow_config(&component_id),
+        engine.clone(),
+        Now.clone_box(),
+    )
+    .with_context(|| format!("cannot compile replay JS workflow runtime for {component_id}"))?;
+    let replay_compiled = WorkflowJsWorkerCompiled::new(
+        replay_inner,
+        workflow_js.js_source.clone(),
+        workflow_js.js_file_name.clone(),
+        &workflow_js.ffqn,
+        workflow_js.params.clone(),
+        workflow_js.return_type.clone(),
+    )
+    .with_context(|| format!("cannot create replay JS workflow worker for {component_id}"))?;
+
+    let inner = WorkflowWorkerCompiled::new_with_config(
+        runnable_component,
         workflow_js.workflow_config,
         engine,
         Now.clone_box(),
@@ -3332,40 +3356,56 @@ fn prespawn_workflow_js(
         workflow_js.js_source.clone(),
         workflow_js.js_file_name.clone(),
         &workflow_js.ffqn,
-        workflow_js.params.clone(),
-        workflow_js.return_type.clone(),
+        workflow_js.params,
+        workflow_js.return_type,
     )
     .with_context(|| format!("cannot create JS workflow worker for {component_id}"))?;
     let wit = worker.wit();
     Ok(WorkerCompiled::new_js_workflow(
         worker,
-        runnable_component,
+        replay_compiled,
         workflow_js.exec_config,
         workflow_js.logs_store_min_level,
         workflows_lock_extension_leeway,
         wit,
         workflow_js.js_source,
         workflow_js.js_file_name,
-        workflow_js.params,
-        workflow_js.return_type,
     ))
+}
+
+/// Replay-purposed [`WorkflowConfig`]: Interrupt strategy, persisted backtraces, stubbed WASI,
+/// no lock extension, no subscription interruption, no fuel limit.
+fn replay_workflow_config(component_id: &ComponentId) -> WorkflowConfig {
+    WorkflowConfig {
+        component_id: component_id.clone(),
+        join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+        backtrace_persist: true,
+        stub_wasi: true,
+        fuel: None,
+        lock_extension: None, // does not matter for the `Interrupt` strategy.
+        subscription_interruption: None, // does not matter for the `Interrupt` strategy.
+    }
 }
 
 struct WorkflowWorkerCompiledWithConfig {
     worker: WorkflowWorkerCompiled,
     workflows_lock_extension_leeway: Duration,
+    /// Replay-purposed compiled worker (Interrupt strategy, stubbed WASI, persisted backtraces).
+    /// Linked alongside the production worker; spawned into a long-lived [`ReplayWorker`].
+    replay_compiled: WorkflowWorkerCompiled,
 }
 
 struct WorkflowJsWorkerCompiledWithConfig {
     worker: WorkflowJsWorkerCompiled,
     workflows_lock_extension_leeway: Duration,
+    replay_compiled: WorkflowJsWorkerCompiled,
 }
 
 enum CompiledWorkerKind {
-    ActivityWasm(ActivityWorkerCompiled),
+    ActivityWasm(Box<ActivityWorkerCompiled>),
     ActivityJs(Box<ActivityJsWorkerCompiled>),
     ActivityExec(Box<ActivityExecWorkerCompiled>),
-    WorkflowWasm(WorkflowWorkerCompiledWithConfig),
+    WorkflowWasm(Box<WorkflowWorkerCompiledWithConfig>),
     WorkflowJs(Box<WorkflowJsWorkerCompiledWithConfig>),
 }
 
@@ -3390,12 +3430,11 @@ impl WorkerCompiled {
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
-            workflow_replay_info: None,
             wit_origin: WitOrigin::Wasm,
         };
         (
             WorkerCompiled {
-                worker: CompiledWorkerKind::ActivityWasm(worker),
+                worker: CompiledWorkerKind::ActivityWasm(Box::new(worker)),
                 exec_config,
                 logs_store_min_level,
             },
@@ -3418,7 +3457,6 @@ impl WorkerCompiled {
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
-            workflow_replay_info: None,
             wit_origin: WitOrigin::Synthesized,
         };
         (
@@ -3446,7 +3484,6 @@ impl WorkerCompiled {
             }),
             imports: vec![],
             wit,
-            workflow_replay_info: None,
             wit_origin: WitOrigin::Synthesized,
         };
         (
@@ -3469,8 +3506,14 @@ impl WorkerCompiled {
         (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent),
         utils::wasm_tools::DecodeError,
     > {
-        let worker = WorkflowWorkerCompiled::new_with_config(
+        let replay_compiled = WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
+            replay_workflow_config(&workflow.workflow_config.component_id),
+            engine.clone(),
+            Now.clone_box(),
+        )?;
+        let worker = WorkflowWorkerCompiled::new_with_config(
+            runnable_component,
             workflow.workflow_config,
             engine,
             Now.clone_box(),
@@ -3483,19 +3526,17 @@ impl WorkerCompiled {
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
-            workflow_replay_info: Some(WorkflowReplayInfo {
-                runnable_component,
-                logs_store_min_level: workflow.logs_store_min_level,
-                js_workflow_info: None,
-            }),
             wit_origin: WitOrigin::Wasm,
         };
         Ok((
             WorkerCompiled {
-                worker: CompiledWorkerKind::WorkflowWasm(WorkflowWorkerCompiledWithConfig {
-                    worker,
-                    workflows_lock_extension_leeway,
-                }),
+                worker: CompiledWorkerKind::WorkflowWasm(Box::new(
+                    WorkflowWorkerCompiledWithConfig {
+                        worker,
+                        workflows_lock_extension_leeway,
+                        replay_compiled,
+                    },
+                )),
                 exec_config: workflow.exec_config,
                 logs_store_min_level: workflow.logs_store_min_level,
             },
@@ -3507,18 +3548,15 @@ impl WorkerCompiled {
     #[expect(clippy::too_many_arguments)]
     fn new_js_workflow(
         worker: WorkflowJsWorkerCompiled,
-        runnable_component: RunnableComponent,
+        replay_compiled: WorkflowJsWorkerCompiled,
         exec_config: ExecConfig,
         logs_store_min_level: Option<LogLevel>,
         workflows_lock_extension_leeway: Duration,
         wit: String,
         js_source: String,
         js_file_name: String,
-        user_params: Vec<concepts::ParameterType>,
-        user_return_type: ReturnTypeExtendable,
     ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
-        let frame_files =
-            WorkflowJsConfigVerified::frame_sources(js_file_name.clone(), js_source.clone());
+        let frame_files = WorkflowJsConfigVerified::frame_sources(js_file_name, js_source);
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -3527,16 +3565,6 @@ impl WorkerCompiled {
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
-            workflow_replay_info: Some(WorkflowReplayInfo {
-                runnable_component,
-                logs_store_min_level,
-                js_workflow_info: Some(JsWorkflowReplayInfo {
-                    js_source,
-                    js_file_name,
-                    user_params,
-                    user_return_type,
-                }),
-            }),
             wit_origin: WitOrigin::Synthesized,
         };
         (
@@ -3545,6 +3573,7 @@ impl WorkerCompiled {
                     WorkflowJsWorkerCompiledWithConfig {
                         worker,
                         workflows_lock_extension_leeway,
+                        replay_compiled,
                     },
                 )),
                 exec_config,
@@ -3569,18 +3598,24 @@ impl WorkerCompiled {
                     LinkedWorkerKind::ActivityExec(exec_activity)
                 }
                 CompiledWorkerKind::WorkflowWasm(workflow_compiled) => {
-                    LinkedWorkerKind::WorkflowWasm(WorkflowWorkerLinkedWithConfig {
+                    LinkedWorkerKind::WorkflowWasm(Box::new(WorkflowWorkerLinkedWithConfig {
                         worker: workflow_compiled.worker.link(fn_registry.clone())?,
                         workflows_lock_extension_leeway: workflow_compiled
                             .workflows_lock_extension_leeway,
-                    })
+                        replay_linked: workflow_compiled
+                            .replay_compiled
+                            .link(fn_registry.clone())?,
+                    }))
                 }
                 CompiledWorkerKind::WorkflowJs(workflow_js_compiled) => {
-                    LinkedWorkerKind::WorkflowJs(WorkflowJsWorkerLinkedWithConfig {
+                    LinkedWorkerKind::WorkflowJs(Box::new(WorkflowJsWorkerLinkedWithConfig {
                         worker: workflow_js_compiled.worker.link(fn_registry.clone())?,
                         workflows_lock_extension_leeway: workflow_js_compiled
                             .workflows_lock_extension_leeway,
-                    })
+                        replay_linked: workflow_js_compiled
+                            .replay_compiled
+                            .link(fn_registry.clone())?,
+                    }))
                 }
             },
             exec_config: self.exec_config,
@@ -3592,20 +3627,22 @@ impl WorkerCompiled {
 struct WorkflowWorkerLinkedWithConfig {
     worker: WorkflowWorkerLinked,
     workflows_lock_extension_leeway: Duration,
+    replay_linked: WorkflowWorkerLinked,
 }
 
 struct WorkflowJsWorkerLinkedWithConfig {
     worker: WorkflowJsWorkerLinked,
     workflows_lock_extension_leeway: Duration,
+    replay_linked: WorkflowJsWorkerLinked,
 }
 
 enum LinkedWorkerKind {
-    ActivityWasm(ActivityWorkerCompiled),
+    ActivityWasm(Box<ActivityWorkerCompiled>),
     ActivityJs(Box<ActivityJsWorkerCompiled>),
     ActivityExec(Box<ActivityExecWorkerCompiled>),
-    WorkflowWasm(WorkflowWorkerLinkedWithConfig),
-    WorkflowJs(WorkflowJsWorkerLinkedWithConfig),
-    Cron(ScheduleWorkerConfig),
+    WorkflowWasm(Box<WorkflowWorkerLinkedWithConfig>),
+    WorkflowJs(Box<WorkflowJsWorkerLinkedWithConfig>),
+    Cron(Box<ScheduleWorkerConfig>),
 }
 
 /// Configuration carried through the pipeline to construct a [`ScheduleWorker`] at spawn time.
@@ -3629,11 +3666,12 @@ impl WorkerLinked {
         db_pool: &Arc<dyn DbPool>,
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
-    ) -> ExecutorTaskHandle {
+    ) -> (ExecutorTaskHandle, Option<(ComponentId, ReplayWorker)>) {
         let logs_storage_config = self.logs_store_min_level.map(|min_level| LogStrageConfig {
             min_level,
             log_sender: log_forwarder_sender.clone(),
         });
+        let mut replay_entry: Option<(ComponentId, ReplayWorker)> = None;
         let worker: Arc<dyn Worker> = match self.worker {
             LinkedWorkerKind::ActivityWasm(activity_compiled) => {
                 Arc::from(activity_compiled.into_worker(
@@ -3661,6 +3699,17 @@ impl WorkerLinked {
                     workflow_linked.workflows_lock_extension_leeway,
                     Now.clone_box(),
                 );
+                let replay_worker = Arc::new(workflow_linked.replay_linked.into_worker(
+                    deployment_id,
+                    db_pool.clone(),
+                    Arc::new(DeadlineTrackerFactoryForReplay {}),
+                    CancelRegistry::new(),
+                    logs_storage_config.clone(),
+                ));
+                replay_entry = Some((
+                    self.exec_config.component_id.clone(),
+                    ReplayWorker::Wasm(replay_worker),
+                ));
                 Arc::from(workflow_linked.worker.into_worker(
                     deployment_id,
                     db_pool.clone(),
@@ -3674,6 +3723,17 @@ impl WorkerLinked {
                     workflow_js_linked.workflows_lock_extension_leeway,
                     Now.clone_box(),
                 );
+                let replay_worker = Arc::new(workflow_js_linked.replay_linked.into_worker(
+                    deployment_id,
+                    db_pool.clone(),
+                    Arc::new(DeadlineTrackerFactoryForReplay {}),
+                    CancelRegistry::new(),
+                    logs_storage_config.clone(),
+                ));
+                replay_entry = Some((
+                    self.exec_config.component_id.clone(),
+                    ReplayWorker::Js(replay_worker),
+                ));
                 Arc::from(workflow_js_linked.worker.into_worker(
                     deployment_id,
                     db_pool.clone(),
@@ -3682,25 +3742,29 @@ impl WorkerLinked {
                     logs_storage_config,
                 ))
             }
-            LinkedWorkerKind::Cron(config) => Arc::from(CronWorker::new(
-                config.component_id,
-                config.target_ffqn,
-                config.target_component_id,
-                config.params,
-                config.cron_schedule,
-                deployment_id,
-                db_pool.clone(),
-                Now.clone_box(),
-            )),
+            LinkedWorkerKind::Cron(config) => {
+                let config = *config;
+                Arc::from(CronWorker::new(
+                    config.component_id,
+                    config.target_ffqn,
+                    config.target_component_id,
+                    config.params,
+                    config.cron_schedule,
+                    deployment_id,
+                    db_pool.clone(),
+                    Now.clone_box(),
+                ))
+            }
         };
-        ExecTask::spawn_new(
+        let handle = ExecTask::spawn_new(
             deployment_id,
             worker,
             self.exec_config,
             Now.clone_box(),
             db_pool.clone(),
             TokioSleep,
-        )
+        );
+        (handle, replay_entry)
     }
 }
 

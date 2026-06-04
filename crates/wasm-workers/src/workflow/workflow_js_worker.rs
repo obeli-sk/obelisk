@@ -9,7 +9,6 @@ use super::workflow_worker::{
 };
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
-use crate::registry::JsWorkflowReplayInfo;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
 use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use crate::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
@@ -17,12 +16,10 @@ use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::storage::{CapturedDbWrite, DbPool, Version};
-use concepts::time::ClockFn;
 use concepts::{
-    ComponentId, ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionFailure,
-    FunctionFqn, FunctionMetadata, FunctionRegistry, PackageIfcFns, ParameterType, Params,
-    ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
-    SupportedFunctionReturnValue,
+    ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionFailure, FunctionFqn,
+    FunctionMetadata, FunctionRegistry, PackageIfcFns, ParameterType, Params, ResultParsingError,
+    ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue,
 };
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
@@ -33,7 +30,6 @@ use tracing::{debug, info};
 use utils::wasm_tools::WasmComponent;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
-use wasmtime::Engine;
 
 /// Compiled JS workflow. Holds the compiled Boa WASM component + JS source + user FFQN.
 pub struct WorkflowJsWorkerCompiled {
@@ -443,21 +439,10 @@ impl WorkflowJsWorker {
     /// This function recreates the workflow execution from the database log,
     /// transforming the context to call the workflow-js-runtime just like the
     /// regular `run` method does.
-    #[expect(clippy::too_many_arguments)]
-    pub async fn replay(
-        deployment_id: DeploymentId,
-        component_id: ComponentId,
-        wasmtime_component: wasmtime::component::Component,
-        exim: &utils::wasm_tools::ExIm,
-        engine: Arc<Engine>,
-        fn_registry: Arc<dyn FunctionRegistry>,
-        real_db_pool: Arc<dyn DbPool>,
-        execution_id: ExecutionId,
-        logs_storage_config: Option<LogStrageConfig>,
-        clock_fn: Box<dyn ClockFn>,
-        js_info: &JsWorkflowReplayInfo,
-    ) -> Result<ReplayResponse, ReplayError> {
-        let db_conn = real_db_pool
+    pub async fn replay(&self, execution_id: ExecutionId) -> Result<ReplayResponse, ReplayError> {
+        let db_conn = self
+            .inner
+            .db_pool
             .connection()
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
@@ -466,31 +451,17 @@ impl WorkflowJsWorker {
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
         let already_finished_result = log.as_finished_result();
-        let resolved_imports =
-            resolve_js_imports(&js_info.js_source, fn_registry.as_ref()).unwrap_or_default();
         let (ffqn, params) = Self::boa_invocation(
             log.params(),
-            js_info.js_source.clone(),
-            Some(js_info.js_file_name.clone()),
-            &resolved_imports,
+            self.js_source.clone(),
+            Some(self.js_file_name.clone()),
+            &self.resolved_imports,
         );
 
-        let (captured_writes, mut fatal_error) = WorkflowWorker::capture_replay_writes_from_log(
-            deployment_id,
-            component_id,
-            wasmtime_component,
-            exim,
-            engine,
-            fn_registry,
-            real_db_pool,
-            execution_id,
-            logs_storage_config,
-            clock_fn,
-            log,
-            ffqn,
-            params,
-        )
-        .await?;
+        let (captured_writes, mut fatal_error) = self
+            .inner
+            .capture_replay_writes_from_log(execution_id, log, ffqn, params)
+            .await?;
         // Remove side effects, unwrapping user retval or fatal error.
         let captured_writes: Vec<_> = captured_writes
             .into_iter()
@@ -504,11 +475,8 @@ impl WorkflowJsWorker {
                         retval, // workflow-js-runtime WASM result
                         parent,
                     } => {
-                        let (retval, fatal_error_from_wit) = transform_to_append_finished(
-                            retval,
-                            &version,
-                            &js_info.user_return_type,
-                        );
+                        let (retval, fatal_error_from_wit) =
+                            transform_to_append_finished(retval, &version, &self.user_return_type);
                         if fatal_error_from_wit.is_some() {
                             // TODO: can both fatal errors be present?
                             fatal_error = fatal_error_from_wit;
@@ -534,24 +502,15 @@ impl WorkflowJsWorker {
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
-    #[expect(clippy::too_many_arguments)]
     pub async fn advance(
-        deployment_id: DeploymentId,
-        component_id: ComponentId,
-        wasmtime_component: wasmtime::component::Component,
-        exim: &utils::wasm_tools::ExIm,
-        engine: Arc<Engine>,
-        fn_registry: Arc<dyn FunctionRegistry>,
-        cancel_registry: CancelRegistry,
-        real_db_pool: Arc<dyn DbPool>,
+        &self,
         execution_id: ExecutionId,
-        logs_storage_config: Option<LogStrageConfig>,
-        clock_fn: Box<dyn ClockFn>,
-        js_info: &JsWorkflowReplayInfo,
         requested: ReplayAdvanceable,
     ) -> Result<AdvanceResponse, AdvanceError> {
         info!("Advance to requested {requested:?}");
-        let db_conn = real_db_pool
+        let db_conn = self
+            .inner
+            .db_pool
             .connection()
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
@@ -571,34 +530,22 @@ impl WorkflowJsWorker {
         }
 
         let old_version = log.next_version.clone();
-        let resolved_imports =
-            resolve_js_imports(&js_info.js_source, fn_registry.as_ref()).unwrap_or_default();
         let (ffqn, params) = Self::boa_invocation(
             log.params(),
-            js_info.js_source.clone(),
-            Some(js_info.js_file_name.clone()),
-            &resolved_imports,
+            self.js_source.clone(),
+            Some(self.js_file_name.clone()),
+            &self.resolved_imports,
         );
-        let log_forwarder_sender = logs_storage_config
+        let log_forwarder_sender = self
+            .inner
+            .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (mut fresh_replay, _fatal_error) = WorkflowWorker::capture_replay_writes_from_log(
-            deployment_id,
-            component_id,
-            wasmtime_component,
-            exim,
-            engine,
-            fn_registry,
-            real_db_pool,
-            execution_id,
-            logs_storage_config.clone(),
-            clock_fn,
-            log,
-            ffqn,
-            params,
-        )
-        .await
-        .map_err(AdvanceError::from)?;
+        let (mut fresh_replay, _fatal_error) = self
+            .inner
+            .capture_replay_writes_from_log(execution_id, log, ffqn, params)
+            .await
+            .map_err(AdvanceError::from)?;
         if let Some(InternalCapturedWrite {
             write:
                 CapturedDbWrite::AppendFinished {
@@ -608,12 +555,12 @@ impl WorkflowJsWorker {
         }) = fresh_replay.last_mut()
         {
             let (retval_transformed, _fatal_error_from_wit) =
-                transform_to_append_finished(retval.clone(), version, &js_info.user_return_type);
+                transform_to_append_finished(retval.clone(), version, &self.user_return_type);
             *retval = retval_transformed;
         }
         Ok(WorkflowWorker::advance_from_log(
             &*db_conn,
-            &cancel_registry,
+            &self.inner.cancel_registry,
             log_forwarder_sender,
             requested,
             fresh_replay,
@@ -725,13 +672,55 @@ mod tests {
         ComponentDigest(Digest(hasher.finalize().into()))
     }
 
-    fn default_js_info(js_source: &str) -> JsWorkflowReplayInfo {
-        JsWorkflowReplayInfo {
-            js_source: js_source.to_string(),
-            js_file_name: String::new(),
-            user_params: Vec::new(),
-            user_return_type: default_return_type(),
-        }
+    /// Build a [`WorkflowJsWorker`] configured for replay/advance.
+    #[allow(clippy::too_many_arguments)]
+    fn build_js_replay_worker(
+        deployment_id: concepts::prefixed_ulid::DeploymentId,
+        component_id: concepts::ComponentId,
+        runnable_component: &RunnableComponent,
+        workflow_engine: Arc<wasmtime::Engine>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        db_pool: Arc<dyn DbPool>,
+        logs_storage_config: Option<LogStrageConfig>,
+        clock_fn: Box<dyn concepts::time::ClockFn>,
+        js_source: String,
+        user_return_type: ReturnTypeExtendable,
+    ) -> WorkflowJsWorker {
+        use crate::workflow::deadline_tracker::DeadlineTrackerFactoryForReplay;
+        let config = WorkflowConfig {
+            component_id,
+            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+            backtrace_persist: true,
+            stub_wasi: true,
+            fuel: None,
+            lock_extension: None,
+            subscription_interruption: None,
+        };
+        let compiled = WorkflowWorkerCompiled::new_with_config(
+            runnable_component.clone(),
+            config,
+            workflow_engine,
+            clock_fn,
+        )
+        .unwrap();
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-fn");
+        let js_compiled = WorkflowJsWorkerCompiled::new(
+            compiled,
+            js_source,
+            String::new(),
+            &user_ffqn,
+            default_js_params(),
+            user_return_type,
+        )
+        .unwrap();
+        let linked = js_compiled.link(fn_registry).unwrap();
+        linked.into_worker(
+            deployment_id,
+            db_pool,
+            Arc::new(DeadlineTrackerFactoryForReplay {}),
+            CancelRegistry::new(),
+            logs_storage_config,
+        )
     }
 
     fn new_js_workflow_worker_with_return_type(
@@ -1533,26 +1522,25 @@ mod tests {
 
         let stopwatch = std::time::Instant::now();
         let (log_sender, mut log_storage_recv) = mpsc::channel(100);
-        WorkflowJsWorker::replay(
+        let replay_worker = build_js_replay_worker(
             DeploymentId::generate(),
             workflow_exec.config.component_id.clone(),
-            runnable_component.wasmtime_component,
-            &runnable_component.wasm_component.exim,
+            &runnable_component,
             workflow_engine,
             fn_registry,
             db_pool.clone(),
-            execution_id,
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender,
             }),
             sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+            js_source.to_string(),
+            default_return_type(),
+        );
+        replay_worker.replay(execution_id).await.unwrap();
         info!("Replayed in {:?}", stopwatch.elapsed());
-        // Nothing should be added to logs
+        // Drop the worker so the log_sender is closed; otherwise `recv_many` blocks indefinitely.
+        drop(replay_worker);
         let mut buffer = Vec::new();
         let received = log_storage_recv.recv_many(&mut buffer, 100).await;
         assert_eq!(0, received, "expected no new messages, got {buffer:?}");
@@ -2583,24 +2571,22 @@ mod tests {
 
         // --- Stage 1: Replay on just-created execution (no events in DB) ---
         let (log_sender, _log_recv) = mpsc::channel(100);
-        let replay = WorkflowJsWorker::replay(
+        let replay_worker = build_js_replay_worker(
             DeploymentId::generate(),
             component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
+            &runnable_component,
             workflow_engine.clone(),
             fn_registry.clone(),
             db_pool.clone(),
-            execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
             sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+            js_source.to_string(),
+            default_return_type(),
+        );
+        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         info!("Stage 1 replay: {replay:?}");
@@ -2634,24 +2620,7 @@ mod tests {
             .await
             .unwrap();
 
-        let replay2 = WorkflowJsWorker::replay(
-            DeploymentId::generate(),
-            component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
-            sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+        let replay2 = replay_worker.replay(execution_id.clone()).await.unwrap();
 
         let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
         info!("Stage 2 replay: {replay2:?}");
@@ -2689,24 +2658,7 @@ mod tests {
             "unexpected result: {result_str}"
         );
 
-        let replay3 = WorkflowJsWorker::replay(
-            DeploymentId::generate(),
-            component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
-            sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+        let replay3 = replay_worker.replay(execution_id.clone()).await.unwrap();
 
         let result = assert_matches!(replay3, ReplayResponse::Finished { result } => result);
         info!("Stage 3 replay result: {result:?}");
@@ -2778,24 +2730,22 @@ mod tests {
 
         // replay on just-created execution
         let (log_sender, _log_recv) = mpsc::channel(100);
-        let replay = WorkflowJsWorker::replay(
+        let replay_worker = build_js_replay_worker(
             DeploymentId::generate(),
             component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
+            &runnable_component,
             workflow_engine.clone(),
             fn_registry.clone(),
             db_pool.clone(),
-            execution_id.clone(),
             Some(LogStrageConfig {
                 min_level: concepts::storage::LogLevel::Debug,
                 log_sender: log_sender.clone(),
             }),
             sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+            js_source.to_string(),
+            default_return_type(),
+        );
+        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         // With FlushedCache interruption, replay stops after the first cache flush.
@@ -2818,24 +2768,7 @@ mod tests {
                 .len()
         );
         // Replay should return the return value
-        let replay = WorkflowJsWorker::replay(
-            DeploymentId::generate(),
-            component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            Some(LogStrageConfig {
-                min_level: concepts::storage::LogLevel::Debug,
-                log_sender: log_sender.clone(),
-            }),
-            sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let retval = replay
@@ -2920,20 +2853,26 @@ mod tests {
             .create(create_paused_execution(execution_id.clone()))
             .await
             .unwrap();
+        let replay_worker = Arc::new(build_js_replay_worker(
+            deployment_id,
+            component_id,
+            &runnable_component,
+            workflow_engine,
+            fn_registry,
+            db_pool.clone(),
+            logs_storage_config,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            default_return_type(),
+        ));
         let result = workflow_js_step_execution_until_finished(
             &*db_connection,
             WorkflowJsAdvanceHarness {
-                deployment_id,
-                component_id,
-                runnable_component,
-                workflow_engine,
-                fn_registry,
                 db_pool,
                 execution_id,
-                logs_storage_config,
-                js_source: js_source.to_string(),
                 sim_clock,
                 idle_action: None,
+                replay_worker,
             },
             snapshot_suffix,
             16,
@@ -3014,20 +2953,26 @@ mod tests {
             .await
             .unwrap();
 
+        let replay_worker = Arc::new(build_js_replay_worker(
+            deployment_id,
+            component_id,
+            &runnable_component,
+            workflow_engine,
+            fn_registry,
+            db_pool.clone(),
+            None,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            default_return_type(),
+        ));
         let result = workflow_js_step_execution_until_finished(
             &*db_connection,
             WorkflowJsAdvanceHarness {
-                deployment_id,
-                component_id,
-                runnable_component,
-                workflow_engine,
-                fn_registry,
                 db_pool: db_pool.clone(),
                 execution_id: execution_id.clone(),
-                logs_storage_config: None,
-                js_source: js_source.to_string(),
                 sim_clock,
                 idle_action: None,
+                replay_worker,
             },
             test_name,
             16,
@@ -3105,44 +3050,26 @@ mod tests {
             log_sender,
         });
 
-        let replay = WorkflowJsWorker::replay(
+        let replay_worker = build_js_replay_worker(
             DeploymentId::generate(),
-            component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
-            db_pool.clone(),
-            execution_id.clone(),
-            logs_storage_config.clone(),
+            component_id,
+            &runnable_component,
+            workflow_engine,
+            fn_registry,
+            db_pool,
+            logs_storage_config,
             sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+            js_source.to_string(),
+            default_return_type(),
+        );
+        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         assert_matches!(
             log_recv.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         );
 
-        WorkflowJsWorker::advance(
-            DeploymentId::generate(),
-            component_id,
-            runnable_component.wasmtime_component,
-            &runnable_component.wasm_component.exim,
-            workflow_engine,
-            fn_registry,
-            CancelRegistry::new(),
-            db_pool,
-            execution_id,
-            logs_storage_config,
-            sim_clock.clone_box(),
-            &default_js_info(js_source),
-            replay,
-        )
-        .await
-        .unwrap();
+        replay_worker.advance(execution_id, replay).await.unwrap();
 
         assert_matches!(
             log_recv.try_recv(),
@@ -3216,43 +3143,28 @@ mod tests {
             log_sender,
         });
 
+        let replay_worker = build_js_replay_worker(
+            DeploymentId::generate(),
+            component_id,
+            &runnable_component,
+            workflow_engine,
+            fn_registry,
+            db_pool,
+            logs_storage_config,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            default_return_type(),
+        );
         let mut forwarded = Vec::new();
         for expected_len in [3_usize, 2, 1] {
-            let replay = WorkflowJsWorker::replay(
-                DeploymentId::generate(),
-                component_id.clone(),
-                runnable_component.wasmtime_component.clone(),
-                &runnable_component.wasm_component.exim,
-                workflow_engine.clone(),
-                fn_registry.clone(),
-                db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config.clone(),
-                sim_clock.clone_box(),
-                &default_js_info(js_source),
-            )
-            .await
-            .unwrap();
+            let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
             let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
             assert_eq!(replay.captured_writes.len(), expected_len);
 
-            WorkflowJsWorker::advance(
-                DeploymentId::generate(),
-                component_id.clone(),
-                runnable_component.wasmtime_component.clone(),
-                &runnable_component.wasm_component.exim,
-                workflow_engine.clone(),
-                fn_registry.clone(),
-                CancelRegistry::new(),
-                db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config.clone(),
-                sim_clock.clone_box(),
-                &default_js_info(js_source),
-                replay.truncate_to(1),
-            )
-            .await
-            .unwrap();
+            replay_worker
+                .advance(execution_id.clone(), replay.truncate_to(1))
+                .await
+                .unwrap();
 
             forwarded.extend(drain_forwarded_log_messages(&mut log_recv));
         }
@@ -3261,37 +3173,16 @@ mod tests {
             forwarded,
             vec!["before create", "before delay", "before join"]
         );
-        let replay = WorkflowJsWorker::replay(
-            DeploymentId::generate(),
-            component_id,
-            runnable_component.wasmtime_component,
-            &runnable_component.wasm_component.exim,
-            workflow_engine,
-            fn_registry,
-            db_pool,
-            execution_id,
-            logs_storage_config,
-            sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+        let replay = replay_worker.replay(execution_id).await.unwrap();
         assert_matches!(replay, ReplayResponse::Blocked);
     }
 
-    #[derive(Clone)]
     struct WorkflowJsAdvanceHarness {
-        deployment_id: DeploymentId,
-        component_id: ComponentId,
-        runnable_component: RunnableComponent,
-        workflow_engine: Arc<Engine>,
-        fn_registry: Arc<dyn FunctionRegistry>,
         db_pool: Arc<dyn DbPool>,
         execution_id: ExecutionId,
-        logs_storage_config: Option<LogStrageConfig>,
-        js_source: String,
         sim_clock: SimClock,
         idle_action: Option<WorkflowJsAdvanceIdleAction>,
+        replay_worker: Arc<WorkflowJsWorker>,
     }
 
     #[allow(dead_code)]
@@ -3313,21 +3204,11 @@ mod tests {
             harness
                 .sim_clock
                 .move_time_forward(Duration::from_millis(100));
-            let replay = WorkflowJsWorker::replay(
-                harness.deployment_id,
-                harness.component_id.clone(),
-                harness.runnable_component.wasmtime_component.clone(),
-                &harness.runnable_component.wasm_component.exim,
-                harness.workflow_engine.clone(),
-                harness.fn_registry.clone(),
-                harness.db_pool.clone(),
-                harness.execution_id.clone(),
-                harness.logs_storage_config.clone(),
-                harness.sim_clock.clone_box(),
-                &default_js_info(&harness.js_source),
-            )
-            .await
-            .unwrap();
+            let replay = harness
+                .replay_worker
+                .replay(harness.execution_id.clone())
+                .await
+                .unwrap();
             let replay = match replay {
                 ReplayResponse::Advanceable(replay) => replay,
                 ReplayResponse::Finished {
@@ -3385,23 +3266,11 @@ mod tests {
                 .sim_clock
                 .move_time_forward(Duration::from_millis(100));
 
-            let advance = WorkflowJsWorker::advance(
-                harness.deployment_id,
-                harness.component_id.clone(),
-                harness.runnable_component.wasmtime_component.clone(),
-                &harness.runnable_component.wasm_component.exim,
-                harness.workflow_engine.clone(),
-                harness.fn_registry.clone(),
-                CancelRegistry::new(),
-                harness.db_pool.clone(),
-                harness.execution_id.clone(),
-                harness.logs_storage_config.clone(),
-                harness.sim_clock.clone_box(),
-                &default_js_info(&harness.js_source),
-                requested.clone(),
-            )
-            .await
-            .unwrap();
+            let advance = harness
+                .replay_worker
+                .advance(harness.execution_id.clone(), requested.clone())
+                .await
+                .unwrap();
             assert_eq!(advance.finished, requested.get_return_value().cloned());
 
             insta::with_settings!({
@@ -3503,21 +3372,19 @@ mod tests {
 
         let deployment_id = DeploymentId::from_parts(0, 0);
         sim_clock.move_time_forward(Duration::from_millis(100));
-        let replay = WorkflowJsWorker::replay(
+        let replay_worker = build_js_replay_worker(
             deployment_id,
-            component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
+            component_id,
+            &runnable_component,
+            workflow_engine,
+            fn_registry,
             db_pool.clone(),
-            execution_id.clone(),
             None,
             sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+            js_source.to_string(),
+            default_return_type(),
+        );
+        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
@@ -3558,23 +3425,10 @@ mod tests {
             .expect("replay should create a child execution");
         sim_clock.move_time_forward(Duration::from_millis(100));
 
-        let advance = WorkflowJsWorker::advance(
-            deployment_id,
-            component_id,
-            runnable_component.wasmtime_component,
-            &runnable_component.wasm_component.exim,
-            workflow_engine,
-            fn_registry,
-            CancelRegistry::new(),
-            db_pool.clone(),
-            execution_id,
-            None,
-            sim_clock.clone_box(),
-            &default_js_info(js_source),
-            requested,
-        )
-        .await
-        .unwrap();
+        let advance = replay_worker
+            .advance(execution_id, requested)
+            .await
+            .unwrap();
 
         assert_eq!(advance.finished, None);
         assert_matches!(
@@ -3655,21 +3509,19 @@ mod tests {
 
         let deployment_id = DeploymentId::from_parts(0, 0);
         sim_clock.move_time_forward(Duration::from_millis(100));
-        let replay = WorkflowJsWorker::replay(
+        let replay_worker = build_js_replay_worker(
             deployment_id,
-            component_id.clone(),
-            runnable_component.wasmtime_component.clone(),
-            &runnable_component.wasm_component.exim,
-            workflow_engine.clone(),
-            fn_registry.clone(),
+            component_id,
+            &runnable_component,
+            workflow_engine,
+            fn_registry,
             db_pool.clone(),
-            execution_id.clone(),
             None,
             sim_clock.clone_box(),
-            &default_js_info(js_source),
-        )
-        .await
-        .unwrap();
+            js_source.to_string(),
+            default_return_type(),
+        );
+        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
@@ -3712,23 +3564,10 @@ mod tests {
             .expect("replay should create a scheduled execution");
         sim_clock.move_time_forward(Duration::from_millis(100));
 
-        let advance = WorkflowJsWorker::advance(
-            deployment_id,
-            component_id,
-            runnable_component.wasmtime_component,
-            &runnable_component.wasm_component.exim,
-            workflow_engine,
-            fn_registry,
-            CancelRegistry::new(),
-            db_pool.clone(),
-            execution_id,
-            None,
-            sim_clock.clone_box(),
-            &default_js_info(js_source),
-            requested,
-        )
-        .await
-        .unwrap();
+        let advance = replay_worker
+            .advance(execution_id, requested)
+            .await
+            .unwrap();
 
         advance
             .finished

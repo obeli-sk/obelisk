@@ -49,14 +49,8 @@ use tracing::{Instrument as _, Span, debug, info, info_span, instrument, trace, 
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
-    activity::cancel_registry::CancelRegistry,
-    component_logger::LogStrageConfig,
-    engines::Engines,
-    webhook::webhook_registry::WebhookRegistry,
-    workflow::{
-        workflow_js_worker::WorkflowJsWorker,
-        workflow_worker::{AdvanceError, WorkflowWorker},
-    },
+    activity::cancel_registry::CancelRegistry, registry::ReplayWorker,
+    webhook::webhook_registry::WebhookRegistry, workflow::workflow_worker::AdvanceError,
 };
 
 #[derive(Clone)]
@@ -67,7 +61,6 @@ pub(crate) struct WebApiState {
     pub(crate) cancel_registry: CancelRegistry,
     pub(crate) termination_watcher: watch::Receiver<()>,
     pub(crate) subscription_interruption: Option<Duration>,
-    pub(crate) engines: Engines,
     pub(crate) log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     pub(crate) prepared_dirs: PreparedDirs,
     pub(crate) webhook_registry: Arc<WebhookRegistry>,
@@ -2256,15 +2249,7 @@ async fn execution_advance(
     accept: AcceptHeader,
     Json(payload): Json<AdvanceRequestSer>,
 ) -> Result<Response, HttpResponse> {
-    let (deployment_id, component_registry_ro, replay_info, component_id) =
-        get_replay_target(&state, &execution_id, accept).await?;
-
-    let logs_storage_config = replay_info
-        .logs_store_min_level
-        .map(|min_level| LogStrageConfig {
-            min_level,
-            log_sender: state.log_forwarder_sender.clone(),
-        });
+    let replay_worker = get_replay_target(&state, &execution_id, accept).await?;
 
     let captured_writes = wasm_workers::workflow::workflow_worker::ReplayAdvanceable {
         captured_writes: payload
@@ -2285,39 +2270,9 @@ async fn execution_advance(
         ));
     }
 
-    let advance_res = if let Some(js_info) = &replay_info.js_workflow_info {
-        WorkflowJsWorker::advance(
-            deployment_id,
-            component_id.clone(),
-            replay_info.runnable_component.wasmtime_component.clone(),
-            &replay_info.runnable_component.wasm_component.exim,
-            state.engines.workflow_engine.clone(),
-            Arc::new(component_registry_ro.clone()),
-            state.cancel_registry.clone(),
-            state.db_pool.clone(),
-            execution_id.clone(),
-            logs_storage_config,
-            Now.clone_box(),
-            js_info,
-            captured_writes,
-        )
-        .await
-    } else {
-        WorkflowWorker::advance(
-            deployment_id,
-            component_id.clone(),
-            replay_info.runnable_component.wasmtime_component.clone(),
-            &replay_info.runnable_component.wasm_component.exim,
-            state.engines.workflow_engine.clone(),
-            Arc::new(component_registry_ro.clone()),
-            state.cancel_registry.clone(),
-            state.db_pool.clone(),
-            execution_id.clone(),
-            logs_storage_config,
-            Now.clone_box(),
-            captured_writes,
-        )
-        .await
+    let advance_res = match &replay_worker {
+        ReplayWorker::Js(worker) => worker.advance(execution_id.clone(), captured_writes).await,
+        ReplayWorker::Wasm(worker) => worker.advance(execution_id.clone(), captured_writes).await,
     };
 
     let advance_response = match advance_res {
@@ -2398,18 +2353,13 @@ async fn get_replay_target(
     state: &Arc<WebApiState>,
     execution_id: &ExecutionId,
     accept: AcceptHeader,
-) -> Result<
-    (
-        DeploymentId,
-        wasm_workers::registry::ComponentConfigRegistryRO,
-        wasm_workers::registry::WorkflowReplayInfo,
-        concepts::ComponentId,
-    ),
-    HttpResponse,
-> {
-    let (deployment_id, component_registry_ro) = {
+) -> Result<ReplayWorker, HttpResponse> {
+    let (component_registry_ro, replay_workers) = {
         let ctx = state.deployment_ctx.read().await;
-        (ctx.deployment_id, ctx.component_registry_ro.clone())
+        (
+            ctx.component_registry_ro.clone(),
+            ctx.replay_workers.clone(),
+        )
     };
     let conn = state
         .db_pool
@@ -2435,16 +2385,10 @@ async fn get_replay_target(
         ));
     }
     Span::current().record("component_id", tracing::field::display(&component_id));
-    let replay_info_registry = component_registry_ro.clone();
-    let (component_id, replay_info) = replay_info_registry
-        .get_workflow_replay_info(&component_id.component_digest)
-        .expect("digest taken from found component id");
-    Ok((
-        deployment_id,
-        component_registry_ro,
-        replay_info.clone(),
-        component_id.clone(),
-    ))
+    let (_component_id, replay_worker) = replay_workers
+        .get(&component_id.component_digest)
+        .ok_or_else(|| HttpResponse::not_found(accept, "replay worker"))?;
+    Ok(replay_worker.clone())
 }
 
 async fn replay_execution_internal(
@@ -2452,14 +2396,7 @@ async fn replay_execution_internal(
     execution_id: &ExecutionId,
     accept: AcceptHeader,
 ) -> Result<ReplayResponseSer, HttpResponse> {
-    let (deployment_id, component_registry_ro, replay_info, component_id) =
-        get_replay_target(state, execution_id, accept).await?;
-    let logs_storage_config = replay_info
-        .logs_store_min_level
-        .map(|min_level| LogStrageConfig {
-            min_level,
-            log_sender: state.log_forwarder_sender.clone(),
-        });
+    let replay_worker = get_replay_target(state, execution_id, accept).await?;
 
     let map_replay_err =
         |err: wasm_workers::workflow::workflow_worker::ReplayError| -> Result<ReplayResponseSer, HttpResponse> {
@@ -2483,35 +2420,9 @@ async fn replay_execution_internal(
             }
         };
 
-    let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
-        WorkflowJsWorker::replay(
-            deployment_id,
-            component_id,
-            replay_info.runnable_component.wasmtime_component.clone(),
-            &replay_info.runnable_component.wasm_component.exim,
-            state.engines.workflow_engine.clone(),
-            Arc::new(component_registry_ro),
-            state.db_pool.clone(),
-            execution_id.clone(),
-            logs_storage_config,
-            Now.clone_box(),
-            js_info,
-        )
-        .await
-    } else {
-        WorkflowWorker::replay(
-            deployment_id,
-            component_id,
-            replay_info.runnable_component.wasmtime_component.clone(),
-            &replay_info.runnable_component.wasm_component.exim,
-            state.engines.workflow_engine.clone(),
-            Arc::new(component_registry_ro),
-            state.db_pool.clone(),
-            execution_id.clone(),
-            logs_storage_config,
-            Now.clone_box(),
-        )
-        .await
+    let replay_res = match &replay_worker {
+        ReplayWorker::Js(worker) => worker.replay(execution_id.clone()).await,
+        ReplayWorker::Wasm(worker) => worker.replay(execution_id.clone()).await,
     };
     match replay_res {
         Ok(response) => Ok(ReplayResponseSer::from(response)),
@@ -2556,50 +2467,16 @@ async fn execution_upgrade(
     Json(payload): Json<ExecutionUpgradePayload>,
 ) -> Result<Response, HttpResponse> {
     if !payload.skip_determinism_check {
-        let (deployment_id, component_registry_ro) = {
+        let replay_workers = {
             let ctx = state.deployment_ctx.read().await;
-            (ctx.deployment_id, ctx.component_registry_ro.clone())
+            ctx.replay_workers.clone()
         };
-        let (component_id, replay_info) = component_registry_ro
-            .get_workflow_replay_info(&payload.new)
+        let (_component_id, replay_worker) = replay_workers
+            .get(&payload.new)
             .ok_or_else(|| HttpResponse::not_found(accept, Some("new component")))?;
-
-        let logs_storage_config =
-            replay_info
-                .logs_store_min_level
-                .map(|min_level| LogStrageConfig {
-                    min_level,
-                    log_sender: state.log_forwarder_sender.clone(),
-                });
-        let replay_res = if let Some(js_info) = &replay_info.js_workflow_info {
-            WorkflowJsWorker::replay(
-                deployment_id,
-                component_id.clone(),
-                replay_info.runnable_component.wasmtime_component.clone(),
-                &replay_info.runnable_component.wasm_component.exim,
-                state.engines.workflow_engine.clone(),
-                Arc::new(component_registry_ro.clone()),
-                state.db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config,
-                Now.clone_box(),
-                js_info,
-            )
-            .await
-        } else {
-            WorkflowWorker::replay(
-                deployment_id,
-                component_id.clone(),
-                replay_info.runnable_component.wasmtime_component.clone(),
-                &replay_info.runnable_component.wasm_component.exim,
-                state.engines.workflow_engine.clone(),
-                Arc::new(component_registry_ro.clone()),
-                state.db_pool.clone(),
-                execution_id.clone(),
-                logs_storage_config,
-                Now.clone_box(),
-            )
-            .await
+        let replay_res = match replay_worker {
+            ReplayWorker::Js(worker) => worker.replay(execution_id.clone()).await,
+            ReplayWorker::Wasm(worker) => worker.replay(execution_id.clone()).await,
         };
         if let Err(err) = replay_res {
             info!("Replay failed: {err:?}");
