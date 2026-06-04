@@ -174,18 +174,14 @@ fn normalize_timestamps(
         ExecutionRequest::Unlocked {
             backoff_expires_at,
             reason: _,
-        } => {
-            *backoff_expires_at = arbitrary_valid_datetime(unstructured)?;
         }
-        ExecutionRequest::TemporarilyFailed {
+        | ExecutionRequest::TemporarilyFailed {
             backoff_expires_at,
             reason: _,
             detail: _,
             http_client_traces: _,
-        } => {
-            *backoff_expires_at = arbitrary_valid_datetime(unstructured)?;
         }
-        ExecutionRequest::TemporarilyTimedOut {
+        | ExecutionRequest::TemporarilyTimedOut {
             backoff_expires_at,
             http_client_traces: _,
         } => {
