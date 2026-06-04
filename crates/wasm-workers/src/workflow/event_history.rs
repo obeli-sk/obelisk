@@ -3082,7 +3082,8 @@ mod tests {
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
-        CreateRequest, DbConnectionTest, HistoryEventScheduleAt, Locked, StubRetVal,
+        AppendRequest, CreateRequest, DbConnectionTest, ExecutionRequest, HistoryEventScheduleAt,
+        Locked, StubRetVal,
     };
     use concepts::storage::{
         DbConnection, DbPoolCloseable, JoinSetResponse, JoinSetResponseEvent, Version,
@@ -3151,6 +3152,13 @@ mod tests {
             ApplyError::InterruptDbUpdated,
             "should have ended with an interrupt"
         );
+        let finished_version = finish_child_execution(
+            db_connection.as_ref(),
+            child_execution_id.clone(),
+            sim_clock.now(),
+            SUPPORTED_RETURN_VALUE_OK_EMPTY,
+        )
+        .await;
         db_connection
             .append_response(
                 sim_clock.now(),
@@ -3159,7 +3167,7 @@ mod tests {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id.clone(),
-                        finished_version: Version(0), // does not matter
+                        finished_version,
                         result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     },
                 },
@@ -3242,6 +3250,17 @@ mod tests {
         .await;
 
         // append child response before issuing join_next
+        caching_db_connection
+            .flush_non_blocking_event_cache(sim_clock.now())
+            .await
+            .unwrap();
+        let finished_version = finish_child_execution(
+            db_connection.as_ref(),
+            child_execution_id.clone(),
+            sim_clock.now(),
+            CHILD_RESP,
+        )
+        .await;
         db_connection
             .append_response(
                 sim_clock.now(),
@@ -3250,7 +3269,7 @@ mod tests {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id.clone(),
-                        finished_version: Version(0), // does not matter
+                        finished_version,
                         result: CHILD_RESP,
                     },
                 },
@@ -3378,6 +3397,18 @@ mod tests {
             ApplyError::InterruptDbUpdated
         );
         // append two responses
+        let first_child_execution_id = if submits_and_awaits_in_correct_order {
+            child_execution_id_a.clone()
+        } else {
+            child_execution_id_b.clone()
+        };
+        let first_finished_version = finish_child_execution(
+            db_connection.as_ref(),
+            first_child_execution_id.clone(),
+            sim_clock.now(),
+            KID_A_RET,
+        )
+        .await;
         db_connection
             .append_response(
                 sim_clock.now(),
@@ -3385,18 +3416,26 @@ mod tests {
                 JoinSetResponseEvent {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: if submits_and_awaits_in_correct_order {
-                            child_execution_id_a.clone()
-                        } else {
-                            child_execution_id_b.clone()
-                        },
-                        finished_version: Version(0), // does not matter
-                        result: KID_A_RET,            // won't matter on mismatch
+                        child_execution_id: first_child_execution_id,
+                        finished_version: first_finished_version,
+                        result: KID_A_RET, // won't matter on mismatch
                     },
                 },
             )
             .await
             .unwrap();
+        let second_child_execution_id = if submits_and_awaits_in_correct_order {
+            child_execution_id_b.clone()
+        } else {
+            child_execution_id_a.clone()
+        };
+        let second_finished_version = finish_child_execution(
+            db_connection.as_ref(),
+            second_child_execution_id.clone(),
+            sim_clock.now(),
+            KID_B_RET,
+        )
+        .await;
         db_connection
             .append_response(
                 sim_clock.now(),
@@ -3404,13 +3443,9 @@ mod tests {
                 JoinSetResponseEvent {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: if submits_and_awaits_in_correct_order {
-                            child_execution_id_b.clone()
-                        } else {
-                            child_execution_id_a.clone()
-                        },
-                        finished_version: Version(0), // does not matter
-                        result: KID_B_RET,            // won't matter on mismatch
+                        child_execution_id: second_child_execution_id,
+                        finished_version: second_finished_version,
+                        result: KID_B_RET, // won't matter on mismatch
                     },
                 },
             )
@@ -3791,6 +3826,13 @@ mod tests {
             ApplyError::InterruptDbUpdated,
             "should have ended with an interrupt"
         );
+        let finished_version = finish_child_execution(
+            db_connection.as_ref(),
+            child_execution_id.clone(),
+            sim_clock.now(),
+            SUPPORTED_RETURN_VALUE_OK_EMPTY,
+        )
+        .await;
         db_connection
             .append_response(
                 sim_clock.now(),
@@ -3799,7 +3841,7 @@ mod tests {
                     join_set_id: join_set_id.clone(),
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_execution_id.clone(),
-                        finished_version: Version(0), // does not matter
+                        finished_version,
                         result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     },
                 },
@@ -3862,6 +3904,32 @@ mod tests {
             .await
             .unwrap();
         execution_id
+    }
+
+    async fn finish_child_execution(
+        db_connection: &dyn DbConnectionTest,
+        child_execution_id: ExecutionIdDerived,
+        created_at: DateTime<Utc>,
+        result: SupportedFunctionReturnValue,
+    ) -> Version {
+        let child_execution_id = ExecutionId::Derived(child_execution_id);
+        let child_log = db_connection.get(&child_execution_id).await.unwrap();
+        let finished_version = child_log.next_version.clone();
+        db_connection
+            .append(
+                child_execution_id,
+                finished_version.clone(),
+                AppendRequest {
+                    created_at,
+                    event: ExecutionRequest::Finished {
+                        retval: result,
+                        http_client_traces: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        finished_version
     }
 
     async fn load_event_history(
