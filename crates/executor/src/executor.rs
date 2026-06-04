@@ -1121,7 +1121,7 @@ mod tests {
         set_up();
         let created_at = Now.now();
         let clock_fn = Box::new(ConstClock(created_at));
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1251,7 +1251,7 @@ mod tests {
     ) {
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let retry_exp_backoff = Duration::from_millis(100);
         let retry_config = ComponentRetryConfig {
             max_retries: Some(1),
@@ -1393,7 +1393,7 @@ mod tests {
         set_up();
         let created_at = Now.now();
         let clock_fn = Box::new(ConstClock(created_at));
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -1509,7 +1509,7 @@ mod tests {
 
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
 
         let parent_worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
             WorkerResultOk::DbUpdatedByWorkerOrWatcher,
@@ -1747,7 +1747,7 @@ mod tests {
     ) {
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let lock_expiry = Duration::from_millis(100);
         let timeout_duration = Duration::from_millis(300);
         let retry_config = ComponentRetryConfig {

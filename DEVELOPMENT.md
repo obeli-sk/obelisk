@@ -11,7 +11,6 @@
 │   ├── concepts/           # Core types, traits, storage interfaces
 │   ├── db-sqlite/          # SQLite implementation
 │   ├── db-postgres/        # PostgreSQL implementation
-│   ├── db-mem/             # In-memory implementation (limited, for testing)
 │   ├── grpc/               # gRPC codegen and mappings
 │   ├── wasm-workers/       # WASM execution runtime
 │   ├── executor/           # Work-stealing executor

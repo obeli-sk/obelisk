@@ -2809,7 +2809,7 @@ pub(crate) mod tests {
     use crate::workflow::event_history::ApplyError;
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
     use crate::workflow::workflow_ctx::{
-        DirectFnCall, ImportedFnCall, SubmitExecutionFnCall, WorkerPartialResult,
+        DirectFnCall, ImportedFnCall, ReplayKind, SubmitExecutionFnCall, WorkerPartialResult,
     };
     use crate::{
         workflow::workflow_ctx::WorkflowCtx, workflow::workflow_worker::JoinNextBlockingStrategy,
@@ -2881,15 +2881,14 @@ pub(crate) mod tests {
                 WorkerPartialResult::FatalError(err, version) => {
                     Err(executor::worker::WorkerError::FatalError(err, version))
                 }
-                WorkerPartialResult::InterruptDbUpdated => {
+                WorkerPartialResult::InterruptDbUpdated
+                | WorkerPartialResult::ReplayWaitingForResponse => {
                     Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
                 }
                 WorkerPartialResult::DbError(db_err) => {
                     Err(executor::worker::WorkerError::DbError(db_err))
                 }
-                WorkerPartialResult::LockExpired
-                | WorkerPartialResult::ExecutorClosing
-                | WorkerPartialResult::ReplayWaitingForResponse => {
+                WorkerPartialResult::LockExpired | WorkerPartialResult::ExecutorClosing => {
                     unreachable!()
                 }
             }
@@ -2986,6 +2985,11 @@ pub(crate) mod tests {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             info!("Starting");
             let seed = ctx.execution_id.random_seed();
+            let is_replay = if ctx.event_history.is_empty() {
+                None
+            } else {
+                Some(ReplayKind::Unfinished)
+            };
             let join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt; // Cannot Await: when moving time forward both worker and timers watcher would race.
             let caching_db_connection = CachingDbConnection::new(
                 self.db_pool.connection().await.unwrap(),
@@ -3017,7 +3021,7 @@ pub(crate) mod tests {
                 Some(Duration::from_secs(1)), // lock extension
                 None,                         // subscription_interruption
                 None,                         // logs_storage_config,
-                None,                         // is_replay
+                is_replay,
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
@@ -3185,7 +3189,7 @@ pub(crate) mod tests {
         for seed in get_seed() {
             let steps = generate_steps(seed);
             let closure = |steps, mut sim_clock, seed| async move {
-                let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+                let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
                 let mut seedable_rng = StdRng::seed_from_u64(seed);
                 let next_u128 = || rand::Rng::random(&mut seedable_rng);
                 let res = execute_steps(steps, db_pool.clone(), &mut sim_clock, next_u128).await;
@@ -3208,7 +3212,7 @@ pub(crate) mod tests {
 
             println!("Run 1");
             let (execution_id, execution_log) = {
-                let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+                let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
                 let mut seedable_rng = StdRng::seed_from_u64(seed);
                 let next_u128 = || rand::Rng::random(&mut seedable_rng);
                 let (execution_id, execution_log) = execute_steps(
@@ -3223,36 +3227,16 @@ pub(crate) mod tests {
                 (execution_id, execution_log)
             };
             println!("Run 2");
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
             let sim_clock = SimClock::epoch();
             let fn_registry = steps_to_registry(&steps);
-            let workflow_exec = {
-                let worker = Arc::new(WorkflowWorkerMock::new(
-                    FFQN_MOCK,
-                    fn_registry.clone(),
-                    steps,
-                    sim_clock.clone_box(),
-                    db_pool.clone(),
-                ));
-                let exec_config = ExecConfig {
-                    batch_size: 1,
-                    lock_expiry: Duration::from_secs(1),
-                    tick_sleep: TICK_SLEEP,
-                    component_id: ComponentId::dummy_workflow(),
-                    task_limiter_global: None,
-                    task_limiter_local: None,
-                    executor_id: ExecutorId::from_parts(0, 0), // only appears in Locked events
-                    retry_config: ComponentRetryConfig::ZERO,
-                    locking_strategy: LockingStrategy::ByFfqns,
-                };
-                ExecTask::new_test(
-                    exec_config,
-                    worker,
-                    sim_clock.clone_box(),
-                    db_pool.clone(),
-                    Arc::new([FFQN_MOCK]),
-                )
-            };
+            let worker = Arc::new(WorkflowWorkerMock::new(
+                FFQN_MOCK,
+                fn_registry.clone(),
+                steps,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+            ));
             // Create an execution.
             let db_connection = db_pool.connection_test().await.unwrap();
             db_connection
@@ -3272,40 +3256,91 @@ pub(crate) mod tests {
                 })
                 .await
                 .unwrap();
-            // Append responses
-            for response in execution_log.responses {
-                db_connection
-                    .append_response(
-                        response.event.created_at,
-                        execution_id.clone(),
-                        response.event.event,
-                    )
-                    .await
-                    .unwrap();
-            }
+            let mut responses = execution_log.responses.clone();
             // Expect that the same steps + same responses produce same exec log (lock events and timestamps may differ)
             loop {
-                debug!("Ticking");
-                let executed = workflow_exec
-                    .tick_test(
-                        sim_clock.now(),
-                        RunId::from_parts(
-                            u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
-                            0,
-                        ),
-                    )
-                    .await
-                    .wait_for_tasks()
-                    .await
-                    .len();
-                assert!(executed > 0);
-                let pending_state = db_connection
+                let current_log = db_connection.get(&execution_id).await.unwrap();
+                let worker_result = worker
+                    .run(WorkerContext {
+                        execution_id: execution_id.clone(),
+                        metadata: ExecutionMetadata::empty(),
+                        component_digest: ComponentId::dummy_activity().component_digest,
+                        ffqn: FFQN_MOCK,
+                        params: Params::empty(),
+                        event_history: current_log.event_history().collect(),
+                        responses: execution_log.responses.clone(),
+                        parent: None,
+                        version: current_log.next_version.clone(),
+                        can_be_retried: false,
+                        worker_span: info_span!("generate_steps_reexecute"),
+                        locked_event: Locked {
+                            component_id: ComponentId::dummy_activity(),
+                            executor_id: ExecutorId::from_parts(0, 0),
+                            deployment_id: DEPLOYMENT_ID_DUMMY,
+                            run_id: RunId::from_parts(
+                                u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
+                                0,
+                            ),
+                            lock_expires_at: sim_clock.now() + Duration::from_secs(1),
+                            retry_config: ComponentRetryConfig::ZERO,
+                        },
+                        executor_close_watcher: tokio::sync::watch::channel(false).1,
+                    })
+                    .await;
+                if let WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
+                    retval,
+                    version,
+                    http_client_traces,
+                })) = worker_result
+                {
+                    db_connection
+                        .append(
+                            execution_id.clone(),
+                            version,
+                            AppendRequest {
+                                created_at: sim_clock.now(),
+                                event: ExecutionRequest::Finished {
+                                    retval,
+                                    http_client_traces,
+                                },
+                            },
+                        )
+                        .await
+                        .unwrap();
+                }
+                let mut append_response = |join_set_id| {
+                    let response_idx = responses
+                        .iter()
+                        .position(|response| response.event.event.join_set_id == join_set_id)
+                        .expect("response must be found");
+                    responses.remove(response_idx)
+                };
+                match db_connection
                     .get_pending_state(&execution_id)
                     .await
                     .unwrap()
-                    .pending_state;
-                if pending_state.is_finished() {
-                    break;
+                    .pending_state
+                {
+                    PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
+                        join_set_id,
+                        ..
+                    }) => {
+                        let response = append_response(join_set_id);
+                        db_connection
+                            .append_response(
+                                response.event.created_at,
+                                execution_id.clone(),
+                                response.event.event,
+                            )
+                            .await
+                            .unwrap();
+                    }
+                    PendingState::PendingAt(PendingStatePendingAt {
+                        scheduled_at,
+                        last_lock: _,
+                    }) if scheduled_at <= sim_clock.now() => {}
+                    PendingState::Finished { .. } => break,
+                    pending_state => unreachable!("unexpected {pending_state:?}"),
                 }
             }
             let execution_log2 = db_connection.get(&execution_id).await.unwrap();
@@ -3359,7 +3394,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn creating_oneoff_and_generated_join_sets_with_same_name_should_work() {
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
         let steps = vec![
             WorkflowStep::JoinSetCreateNamed {
@@ -3380,7 +3415,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn submitting_two_delays_should_work() {
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
 
         let steps = vec![
@@ -3403,7 +3438,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn submitting_to_closed_join_set_should_be_permanent_execution_error() {
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "foo".into()).unwrap();
         let steps = vec![
             WorkflowStep::JoinSetCreateNamed {
@@ -3449,7 +3484,7 @@ pub(crate) mod tests {
     async fn check_determinism_closing_multiple_join_sets() {
         const SUBMITS: usize = 10;
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(Now.now());
         let db_connection = db_pool.connection_test().await.unwrap();
 

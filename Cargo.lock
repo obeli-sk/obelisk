@@ -2892,7 +2892,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "obeli-sk-concepts",
- "obeli-sk-db-mem",
  "obeli-sk-db-postgres",
  "obeli-sk-db-sqlite",
  "obeli-sk-utils",
@@ -3124,26 +3123,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "obeli-sk-db-mem"
-version = "0.38.2"
-dependencies = [
- "arbitrary",
- "assert_matches",
- "async-trait",
- "chrono",
- "derive_more",
- "hashbrown 0.16.1",
- "itertools",
- "obeli-sk-concepts",
- "obeli-sk-utils",
- "obeli-sk-val-json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-error",
-]
-
-[[package]]
 name = "obeli-sk-db-postgres"
 version = "0.38.2"
 dependencies = [
@@ -3211,7 +3190,6 @@ dependencies = [
  "indexmap 2.14.0",
  "obeli-db-tests",
  "obeli-sk-concepts",
- "obeli-sk-db-mem",
  "obeli-sk-db-sqlite",
  "obeli-sk-utils",
  "obeli-sk-val-json",
@@ -3395,7 +3373,6 @@ dependencies = [
  "obeli-db-tests",
  "obeli-sk-boa-engine",
  "obeli-sk-concepts",
- "obeli-sk-db-mem",
  "obeli-sk-db-sqlite",
  "obeli-sk-executor",
  "obeli-sk-utils",
@@ -3473,7 +3450,6 @@ dependencies = [
  "itertools",
  "jsonwebtoken",
  "obeli-sk-concepts",
- "obeli-sk-db-mem",
  "obeli-sk-db-postgres",
  "obeli-sk-db-sqlite",
  "obeli-sk-executor",

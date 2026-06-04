@@ -755,7 +755,7 @@ pub(crate) mod tests {
         const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
 
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
 
         let server_address = listener
             .local_addr()
@@ -960,7 +960,7 @@ pub(crate) mod tests {
     ) {
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
         let exec = new_activity_fibo(
             db_pool.clone(),
@@ -1116,7 +1116,7 @@ pub(crate) mod tests {
         const LOCK_EXPIRY: Duration = Duration::from_millis(500);
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (worker, _) = new_activity_worker(
             test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
@@ -1331,7 +1331,7 @@ pub(crate) mod tests {
         test_utils::set_up();
         info!("All set up");
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1463,7 +1463,7 @@ pub(crate) mod tests {
         test_utils::set_up();
         info!("All set up");
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1624,7 +1624,7 @@ pub(crate) mod tests {
         };
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1733,7 +1733,7 @@ pub(crate) mod tests {
         const SECRET_ENV_VAR: &str = "TEST_API_KEY";
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1873,7 +1873,7 @@ pub(crate) mod tests {
     ) {
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
         let exec = new_activity_with_config(
             db_pool.clone(),
@@ -1947,7 +1947,7 @@ pub(crate) mod tests {
     ) {
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
         let exec = new_activity_with_config(
             db_pool.clone(),
@@ -2022,7 +2022,7 @@ pub(crate) mod tests {
     ) {
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
         // max_retries > 0, so it would retry if error wasn't permanent
         let retry_config = ComponentRetryConfig {

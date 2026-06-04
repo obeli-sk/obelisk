@@ -177,7 +177,6 @@ mod tests {
         AppendRequest, DbPool, ExecutionRequest, Locked, PendingState, PendingStateFinished,
         PendingStateFinishedResultKind, PendingStatePendingAt, Version,
     };
-    use db_mem::inmemory_dao::InMemoryPool;
     use test_utils::sim_clock::SimClock;
 
     const TARGET_FFQN: FunctionFqn = FunctionFqn::new_static("test:pkg/ifc", "do-work");
@@ -300,17 +299,17 @@ mod tests {
         Utc.with_ymd_and_hms(2025, 1, 15, 10, 30, 0).unwrap()
     }
 
-    #[test]
-    fn next_fire_time_returns_none_for_once() {
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+    #[tokio::test]
+    async fn next_fire_time_returns_none_for_once() {
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(test_time());
         let worker = make_worker(db_pool, CronOrOnce::Once, sim_clock);
         assert!(worker.next_fire_time(test_time()).unwrap().is_none());
     }
 
-    #[test]
-    fn next_fire_time_computes_correct_time() {
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+    #[tokio::test]
+    async fn next_fire_time_computes_correct_time() {
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(test_time());
         let worker = make_worker(db_pool, parse_cron("0 12 * * *"), sim_clock); // daily at 12:00
         let after = Utc.with_ymd_and_hms(2025, 1, 15, 11, 0, 0).unwrap();
@@ -321,9 +320,9 @@ mod tests {
         assert_eq!(next, Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap());
     }
 
-    #[test]
-    fn next_fire_time_wraps_to_next_day() {
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+    #[tokio::test]
+    async fn next_fire_time_wraps_to_next_day() {
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(test_time());
         let worker = make_worker(db_pool, parse_cron("0 12 * * *"), sim_clock); // daily at 12:00
         let after = Utc.with_ymd_and_hms(2025, 1, 15, 13, 0, 0).unwrap();
@@ -337,7 +336,7 @@ mod tests {
     #[tokio::test]
     async fn once_schedule_creates_child_and_finishes() {
         let now = test_time();
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(now);
         let worker = make_worker(db_pool.clone(), CronOrOnce::Once, sim_clock);
 
@@ -403,7 +402,7 @@ mod tests {
     #[tokio::test]
     async fn recurring_schedule_creates_child_and_reschedules() {
         let now = test_time();
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(now);
         let worker = make_worker(db_pool.clone(), parse_cron("0 * * * *"), sim_clock); // every hour
 
@@ -462,7 +461,7 @@ mod tests {
         // Use a fixed time: 2025-01-15 10:30:00 UTC
         // With cron "0 * * * *" (every hour), next tick should be 11:00:00
         let now = test_time();
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(now);
         let worker = make_worker(db_pool.clone(), parse_cron("0 * * * *"), sim_clock); // every hour
 

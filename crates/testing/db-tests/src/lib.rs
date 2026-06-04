@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use concepts::FunctionFqn;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
-use db_mem::inmemory_dao::InMemoryPool;
 use db_postgres::postgres_dao::DbInitialzationOutcome;
 use db_postgres::postgres_dao::PostgresConfig;
 use db_postgres::postgres_dao::PostgresPool;
@@ -17,16 +16,14 @@ pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Database {
-    Memory,
     Sqlite,
     Postgres,
 }
 impl Database {
-    pub const ALL: [Database; 3] = [Database::Sqlite, Database::Memory, Database::Postgres];
+    pub const ALL: [Database; 2] = [Database::Sqlite, Database::Postgres];
 }
 
 pub enum DbGuard {
-    Memory,
     Sqlite(Option<NamedTempFile>),
     Postgres,
 }
@@ -34,11 +31,6 @@ pub enum DbGuard {
 impl Database {
     pub async fn set_up(self) -> (DbGuard, Arc<dyn DbPool>, DbPoolCloseableWrapper) {
         match self {
-            Database::Memory => {
-                let mem_db = InMemoryPool::new();
-                let closeable = DbPoolCloseableWrapper::Memory(mem_db.clone());
-                (DbGuard::Memory, Arc::new(mem_db), closeable)
-            }
             Database::Sqlite => {
                 use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
                 let (sqlite, guard) = sqlite_pool().await;
@@ -87,7 +79,6 @@ fn get_env_val(name: &'static str) -> String {
 }
 
 pub enum DbPoolCloseableWrapper {
-    Memory(InMemoryPool),
     Sqlite(SqlitePool),
     Postgres(Arc<PostgresPool>),
 }
@@ -96,7 +87,6 @@ pub enum DbPoolCloseableWrapper {
 impl DbPoolCloseable for DbPoolCloseableWrapper {
     async fn close(&self) {
         match self {
-            DbPoolCloseableWrapper::Memory(db) => db.close().await,
             DbPoolCloseableWrapper::Sqlite(db) => db.close().await,
             DbPoolCloseableWrapper::Postgres(db) => {
                 db.close().await; // Close the target db.

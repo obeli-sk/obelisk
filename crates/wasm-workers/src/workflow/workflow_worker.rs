@@ -1626,7 +1626,6 @@ pub(crate) mod tests {
             wait_for_pending_state_fn,
         },
     };
-    use db_mem::inmemory_dao::InMemoryPool;
     use db_tests::Database;
     use executor::executor::{LockingStrategy, extract_exported_ffqns_noext_test};
     use executor::{
@@ -2543,7 +2542,7 @@ pub(crate) mod tests {
     #[should_panic(expected = "preinstantiation error")]
     async fn fibo_workflow_with_missing_imports_should_fail() {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool, _db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, _db_close) = Database::Sqlite.set_up().await;
         test_utils::set_up();
         let fn_registry = fn_registry_dummy(&[]);
         let cancel_registry = CancelRegistry::new();
@@ -2563,7 +2562,7 @@ pub(crate) mod tests {
         const SLEEP_MILLIS: u32 = 100;
         test_utils::set_up();
 
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
 
         let sim_clock = SimClock::epoch();
         let cancel_registry = CancelRegistry::new();
@@ -2632,7 +2631,7 @@ pub(crate) mod tests {
         let join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt;
 
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection().await.unwrap();
         let sim_clock = SimClock::epoch();
@@ -4273,10 +4272,11 @@ pub(crate) mod tests {
             .unwrap();
     }
 
+    #[expand_enum_database]
     #[rstest]
     #[tokio::test]
     async fn activity_trap_should_be_converted_as_custom_err_execution_failed_variant(
-        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)] db: db_tests::Database,
+        db: db_tests::Database,
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,
     ) {
@@ -4649,7 +4649,7 @@ pub(crate) mod tests {
         test_utils::set_up();
 
         let sim_clock = SimClock::epoch();
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (workflow_runnable, workflow_component_id) = compile_workflow_with_engine(
@@ -4729,7 +4729,7 @@ pub(crate) mod tests {
     async fn advance_trimmed_writes_forward_only_prefix_logs() {
         test_utils::set_up();
 
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = ExecutionId::generate();
         let component_id = ComponentId::new(
@@ -5281,7 +5281,7 @@ pub(crate) mod tests {
         test_utils::set_up();
 
         let sim_clock = SimClock::epoch();
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (workflow_runnable, workflow_component_id) = compile_workflow_with_engine(

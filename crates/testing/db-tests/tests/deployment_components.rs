@@ -54,9 +54,6 @@ async fn insert_deployment(
 #[rstest]
 #[tokio::test]
 async fn deployment_components_roundtrip(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -157,9 +154,6 @@ async fn deployment_components_roundtrip(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn component_metadata_deduplicates_by_digest_across_deployments(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -242,9 +236,6 @@ async fn component_metadata_deduplicates_by_digest_across_deployments(database: 
 #[rstest]
 #[tokio::test]
 async fn deployment_component_insert_is_idempotent(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -301,9 +292,6 @@ async fn deployment_component_insert_is_idempotent(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn list_deployment_components_orders_by_type_then_name(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;

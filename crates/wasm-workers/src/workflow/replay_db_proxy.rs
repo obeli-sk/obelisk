@@ -738,11 +738,8 @@ mod tests {
     use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
     use crate::workflow::workflow_worker::JoinNextBlockingStrategy;
     use chrono::Utc;
-    use concepts::storage::DbPool;
     use concepts::{FunctionFqn, Params};
-    use db_mem::inmemory_dao::InMemoryPool;
     use rstest::rstest;
-    use std::sync::Arc;
 
     enum ConnectionMode {
         Caching,
@@ -754,7 +751,7 @@ mod tests {
     #[case::replay(ConnectionMode::Replay)]
     #[tokio::test]
     async fn get_stub_create_request_reads_from_captured_writes(#[case] mode: ConnectionMode) {
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let real_connection = db_pool.connection().await.unwrap();
         let parent_execution_id = ExecutionId::from_parts(0, 0);
         let child_execution_id = ExecutionId::from_parts(0, 1);

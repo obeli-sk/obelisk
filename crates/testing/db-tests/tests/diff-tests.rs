@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ExecutionId;
@@ -11,6 +12,9 @@ use concepts::storage::DbConnectionTest;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::ExecutionLog;
 use concepts::storage::ExecutionRequest;
+use concepts::storage::HistoryEvent;
+use concepts::storage::HistoryEventScheduleAt;
+use concepts::storage::JoinSetRequest;
 use concepts::storage::Pagination;
 use concepts::storage::Version;
 use concepts::storage::{AppendRequest, CreateRequest};
@@ -56,10 +60,7 @@ async fn diff_proptest_inner(seed: u64) {
     let mut append_requests = vec![];
     while append_requests.is_empty() {
         append_requests = (0..unstructured.int_in_range(5..=10).unwrap())
-            .map(|_| AppendRequest {
-                event: unstructured.arbitrary().unwrap(),
-                created_at: Now.now(),
-            })
+            .map(|_| arbitrary_valid_append_request(&mut unstructured).unwrap())
             .filter_map(|req| {
                 // Remove Created, Unpaused
                 if let AppendRequest {
@@ -97,45 +98,190 @@ async fn diff_proptest_inner(seed: u64) {
     for (idx, step) in append_requests.iter().enumerate() {
         println!("{idx}: {step:?}");
     }
-    let (_mem_guard, db_mem_pool, db_mem_close) = Database::Memory.set_up().await;
-    let mem_conn = db_mem_pool.connection_test().await.unwrap();
-    let mem_log = ExecutionLogSanitized::from(
+    let (_sqlite_guard, sqlite_pool, db_sqlite_close) = Database::Sqlite.set_up().await;
+    let sqlite_conn = sqlite_pool.connection_test().await.unwrap();
+    let sqlite_log = ExecutionLogSanitized::from(
         create_and_append(
-            mem_conn.as_ref(),
+            sqlite_conn.as_ref(),
             execution_id.clone(),
             create_req.clone(),
             &append_requests,
         )
         .await,
     );
-    db_mem_close.close().await;
-    let (_sqlite_guard, sqlite_pool, db_sqlite_close) = Database::Sqlite.set_up().await;
-    let sqlite_conn = sqlite_pool.connection_test().await.unwrap();
-    let sqlite_log = ExecutionLogSanitized::from(
+    db_sqlite_close.close().await;
+
+    let (_postgres_guard, postgres_pool, db_postgres_close) = Database::Postgres.set_up().await;
+    let postgres_conn = postgres_pool.connection_test().await.unwrap();
+    let postgres_log = ExecutionLogSanitized::from(
         create_and_append(
-            sqlite_conn.as_ref(),
+            postgres_conn.as_ref(),
             execution_id,
             create_req,
             &append_requests,
         )
         .await,
     );
-    db_sqlite_close.close().await;
+    db_postgres_close.close().await;
     println!(
-        "Expected (mem):\n{expected}\nActual (sqlite):\n{actual}",
-        expected = serde_json::to_string(&mem_log).unwrap(),
-        actual = serde_json::to_string(&sqlite_log).unwrap()
+        "Expected (sqlite):\n{expected}\nActual (postgres):\n{actual}",
+        expected = serde_json::to_string(&sqlite_log).unwrap(),
+        actual = serde_json::to_string(&postgres_log).unwrap()
     );
-    assert_eq!(mem_log.pending_state, sqlite_log.pending_state);
-    assert_eq!(mem_log.events.len(), sqlite_log.events.len());
-    for i in 0..mem_log.events.len() {
+    assert_eq!(sqlite_log.pending_state, postgres_log.pending_state);
+    assert_eq!(sqlite_log.events.len(), postgres_log.events.len());
+    for i in 0..sqlite_log.events.len() {
         assert_eq!(
-            mem_log.events[i], sqlite_log.events[i],
+            sqlite_log.events[i], postgres_log.events[i],
             "Failed at {i}-th element"
         );
     }
-    assert_eq!(mem_log.events, sqlite_log.events);
-    assert_eq!(mem_log, sqlite_log,);
+    assert_eq!(sqlite_log.events, postgres_log.events);
+    assert_eq!(sqlite_log, postgres_log,);
+}
+
+fn arbitrary_valid_append_request(
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<AppendRequest> {
+    let mut req = AppendRequest {
+        event: unstructured.arbitrary()?,
+        created_at: Now.now(),
+    };
+    normalize_timestamps(&mut req, unstructured)?;
+    Ok(req)
+}
+
+fn normalize_timestamps(
+    req: &mut AppendRequest,
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<()> {
+    match &mut req.event {
+        ExecutionRequest::Created {
+            ffqn: _,
+            params: _,
+            parent: _,
+            scheduled_at,
+            component_id: _,
+            deployment_id: _,
+            metadata: _,
+            scheduled_by: _,
+        } => {
+            *scheduled_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        ExecutionRequest::Locked(locked) => {
+            locked.lock_expires_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        ExecutionRequest::Unlocked {
+            backoff_expires_at,
+            reason: _,
+        }
+        | ExecutionRequest::TemporarilyFailed {
+            backoff_expires_at,
+            reason: _,
+            detail: _,
+            http_client_traces: _,
+        }
+        | ExecutionRequest::TemporarilyTimedOut {
+            backoff_expires_at,
+            http_client_traces: _,
+        } => {
+            *backoff_expires_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        ExecutionRequest::HistoryEvent { event } => {
+            normalize_history_event_timestamps(event, unstructured)?;
+        }
+        ExecutionRequest::ComponentUpgraded {
+            component_digest: _,
+            deployment_id: _,
+            reason: _,
+        }
+        | ExecutionRequest::Finished {
+            retval: _,
+            http_client_traces: _,
+        }
+        | ExecutionRequest::Paused
+        | ExecutionRequest::Unpaused => {}
+    }
+
+    Ok(())
+}
+
+fn normalize_history_event_timestamps(
+    event: &mut HistoryEvent,
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<()> {
+    match event {
+        HistoryEvent::JoinSetRequest {
+            join_set_id: _,
+            request,
+        } => match request {
+            JoinSetRequest::DelayRequest {
+                delay_id: _,
+                expires_at,
+                schedule_at,
+                paused: _,
+            } => {
+                *expires_at = arbitrary_valid_datetime(unstructured)?;
+                normalize_schedule_at(schedule_at, unstructured)?;
+            }
+            JoinSetRequest::ChildExecutionRequest {
+                child_execution_id: _,
+                target_ffqn: _,
+                params: _,
+                result: _,
+            } => {}
+        },
+        HistoryEvent::JoinNext {
+            join_set_id: _,
+            run_expires_at,
+            requested_ffqn: _,
+            closing: _,
+        } => {
+            *run_expires_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        HistoryEvent::Schedule {
+            execution_id: _,
+            schedule_at,
+            result: _,
+        } => {
+            normalize_schedule_at(schedule_at, unstructured)?;
+        }
+        HistoryEvent::Persist { value: _, kind: _ }
+        | HistoryEvent::JoinSetCreate { join_set_id: _ }
+        | HistoryEvent::JoinNextTry {
+            join_set_id: _,
+            outcome: _,
+        }
+        | HistoryEvent::JoinNextTooMany {
+            join_set_id: _,
+            requested_ffqn: _,
+        }
+        | HistoryEvent::Stub {
+            target_execution_id: _,
+            retval_hash: _,
+            result: _,
+        } => {}
+    }
+
+    Ok(())
+}
+
+fn normalize_schedule_at(
+    schedule_at: &mut HistoryEventScheduleAt,
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<()> {
+    if matches!(schedule_at, HistoryEventScheduleAt::At(_)) {
+        *schedule_at = HistoryEventScheduleAt::At(arbitrary_valid_datetime(unstructured)?);
+    }
+    Ok(())
+}
+
+fn arbitrary_valid_datetime(
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<DateTime<Utc>> {
+    let seconds = unstructured.int_in_range(0..=4_102_444_800_i64)?;
+    let micros = unstructured.int_in_range(0..=999_999_u32)?;
+    Ok(DateTime::from_timestamp(seconds, micros * 1_000).unwrap())
 }
 
 async fn create_and_append(
@@ -276,9 +422,6 @@ async fn get_execution_event_should_not_break_json_order(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn list_execution_events_should_not_break_json_order(database: Database) {
-    if database == Database::Memory {
-        return; // external_api_conn not implemented for in-memory DB
-    }
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.external_api_conn().await.unwrap();
