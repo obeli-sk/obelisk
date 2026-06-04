@@ -1,6 +1,7 @@
 //! Component registry for a single deployment.
 //!
-use crate::RunnableComponent;
+use crate::workflow::workflow_js_worker::WorkflowJsWorker;
+use crate::workflow::workflow_worker::WorkflowWorker;
 use concepts::ComponentId;
 use concepts::ComponentType;
 use concepts::FunctionFqn;
@@ -8,10 +9,8 @@ use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
-use concepts::ReturnTypeExtendable;
 use concepts::StrVariant;
 use concepts::component_id::ComponentDigest;
-use concepts::storage::LogLevel;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::fmt::Debug;
@@ -35,25 +34,47 @@ pub struct ComponentConfig {
     pub imports: Vec<FunctionMetadata>,
     pub workflow_or_activity_config: Option<ComponentConfigImportable>,
     pub wit: String,
-    pub workflow_replay_info: Option<WorkflowReplayInfo>,
     /// Origin of this component's WIT (parsed from WASM vs synthesized from `TypeWrapper`s).
     pub wit_origin: WitOrigin,
 }
 
-#[derive(Debug, Clone)]
-pub struct WorkflowReplayInfo {
-    pub runnable_component: RunnableComponent,
-    pub logs_store_min_level: Option<LogLevel>,
-    /// For JS workflows: the JS source code and user's FFQN
-    pub js_workflow_info: Option<JsWorkflowReplayInfo>,
+/// A replay-purposed worker held by the server so gRPC and REST handlers can replay/advance
+/// executions without re-compiling the WASM component on every request.
+#[derive(Clone)]
+pub enum ReplayWorker {
+    Wasm(Arc<WorkflowWorker>),
+    Js(Arc<WorkflowJsWorker>),
 }
 
-#[derive(Debug, Clone)]
-pub struct JsWorkflowReplayInfo {
-    pub js_source: String,
-    pub js_file_name: String, // Used as frame key to find the source in `DbExternalApi::get_source_file`
-    pub user_params: Vec<concepts::ParameterType>,
-    pub user_return_type: ReturnTypeExtendable,
+impl Debug for ReplayWorker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReplayWorker::Wasm(_) => f.write_str("ReplayWorker::Wasm(..)"),
+            ReplayWorker::Js(_) => f.write_str("ReplayWorker::Js(..)"),
+        }
+    }
+}
+
+/// Per-deployment registry of replay-purposed workflow workers, indexed by component digest.
+#[derive(Default, Debug, Clone)]
+pub struct ReplayWorkerRegistry {
+    workers: HashMap<ComponentDigest, (ComponentId, ReplayWorker)>,
+}
+
+impl ReplayWorkerRegistry {
+    pub fn insert(&mut self, component_id: ComponentId, worker: ReplayWorker) {
+        let digest = component_id.component_digest.clone();
+        let old = self.workers.insert(digest, (component_id, worker));
+        assert!(
+            old.is_none(),
+            "replay worker already registered for this digest"
+        );
+    }
+
+    #[must_use]
+    pub fn get(&self, digest: &ComponentDigest) -> Option<(&ComponentId, &ReplayWorker)> {
+        self.workers.get(digest).map(|(id, w)| (id, w))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +101,6 @@ struct ComponentConfigRegistryInner {
     names_to_components: IndexMap<StrVariant, ComponentConfig>,
     /// Digest-keyed secondary indexes.
     digests_to_wit: IndexMap<ComponentDigest, String>,
-    digests_to_replay_info: IndexMap<ComponentDigest, (ComponentId, WorkflowReplayInfo)>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -178,14 +198,6 @@ impl ComponentConfigRegistry {
                 component.wit.clone(),
             );
             assert!(old.is_none());
-            // Insert into `workflow_replay_info`
-            if let Some(replay_info) = component.workflow_replay_info.clone() {
-                let old = self.inner.digests_to_replay_info.insert(
-                    component.component_id.component_digest.clone(),
-                    (component.component_id.clone(), replay_info),
-                );
-                assert!(old.is_none());
-            }
         } else if component.component_id.component_type == ComponentType::WebhookEndpoint {
             // first wins for digest-keyed maps (same code = same WIT)
             self.inner
@@ -340,17 +352,6 @@ impl ComponentConfigRegistryRO {
             .digests_to_wit
             .get(input_digest)
             .map(std::string::String::as_str)
-    }
-
-    #[must_use]
-    pub fn get_workflow_replay_info(
-        &self,
-        input_digest: &ComponentDigest,
-    ) -> Option<(&ComponentId, &WorkflowReplayInfo)> {
-        self.inner
-            .digests_to_replay_info
-            .get(input_digest)
-            .map(|(id, ri)| (id, ri))
     }
 
     #[must_use]
