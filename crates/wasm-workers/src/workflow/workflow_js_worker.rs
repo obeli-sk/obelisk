@@ -440,6 +440,10 @@ impl WorkflowJsWorker {
     /// transforming the context to call the workflow-js-runtime just like the
     /// regular `run` method does.
     pub async fn replay(&self, execution_id: ExecutionId) -> Result<ReplayResponse, ReplayError> {
+        assert!(
+            self.inner.deadline_factory.is_for_replay(),
+            "replay() requires DeadlineTrackerFactoryForReplay"
+        );
         let db_conn = self
             .inner
             .db_pool
@@ -507,6 +511,10 @@ impl WorkflowJsWorker {
         execution_id: ExecutionId,
         requested: ReplayAdvanceable,
     ) -> Result<AdvanceResponse, AdvanceError> {
+        assert!(
+            self.inner.deadline_factory.is_for_replay(),
+            "advance() requires DeadlineTrackerFactoryForReplay"
+        );
         info!("Advance to requested {requested:?}");
         let db_conn = self
             .inner

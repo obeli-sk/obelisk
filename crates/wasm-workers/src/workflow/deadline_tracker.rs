@@ -39,6 +39,12 @@ pub trait DeadlineTrackerFactory: Send + Sync {
         lock_expires_at: DateTime<Utc>,
         unlock_executor_close_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired>;
+
+    /// True iff this factory produces trackers that never expire the lock.
+    /// Required precondition for `replay()` / `advance()` entry points.
+    fn is_for_replay(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -201,6 +207,10 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryForReplay {
         _executor_close_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         Ok(Box::new(DeadlineTrackerFactoryForReplay {}))
+    }
+
+    fn is_for_replay(&self) -> bool {
+        true
     }
 }
 impl DeadlineTracker for DeadlineTrackerFactoryForReplay {

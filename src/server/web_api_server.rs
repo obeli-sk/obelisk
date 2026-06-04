@@ -2290,9 +2290,9 @@ async fn execution_advance(
                 AdvanceError::DbError(db_err) => {
                     return Err(ErrorWrapper(db_err, accept).into());
                 }
-                err @ (AdvanceError::ExecutorClosing
-                | AdvanceError::LimitReached { .. }
-                | AdvanceError::LockExpired) => AdvanceErrorSer::Transient(err.to_string()),
+                err @ (AdvanceError::ExecutorClosing | AdvanceError::LimitReached { .. }) => {
+                    AdvanceErrorSer::Transient(err.to_string())
+                }
             };
             let response = match accept {
                 AcceptHeader::Json => {
