@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use concepts::ComponentId;
 use concepts::ComponentRetryConfig;
 use concepts::ExecutionId;
@@ -11,6 +12,9 @@ use concepts::storage::DbConnectionTest;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::ExecutionLog;
 use concepts::storage::ExecutionRequest;
+use concepts::storage::HistoryEvent;
+use concepts::storage::HistoryEventScheduleAt;
+use concepts::storage::JoinSetRequest;
 use concepts::storage::Pagination;
 use concepts::storage::Version;
 use concepts::storage::{AppendRequest, CreateRequest};
@@ -56,10 +60,7 @@ async fn diff_proptest_inner(seed: u64) {
     let mut append_requests = vec![];
     while append_requests.is_empty() {
         append_requests = (0..unstructured.int_in_range(5..=10).unwrap())
-            .map(|_| AppendRequest {
-                event: unstructured.arbitrary().unwrap(),
-                created_at: Now.now(),
-            })
+            .map(|_| arbitrary_valid_append_request(&mut unstructured).unwrap())
             .filter_map(|req| {
                 // Remove Created, Unpaused
                 if let AppendRequest {
@@ -137,6 +138,154 @@ async fn diff_proptest_inner(seed: u64) {
     }
     assert_eq!(sqlite_log.events, postgres_log.events);
     assert_eq!(sqlite_log, postgres_log,);
+}
+
+fn arbitrary_valid_append_request(
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<AppendRequest> {
+    let mut req = AppendRequest {
+        event: unstructured.arbitrary()?,
+        created_at: Now.now(),
+    };
+    normalize_timestamps(&mut req, unstructured)?;
+    Ok(req)
+}
+
+fn normalize_timestamps(
+    req: &mut AppendRequest,
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<()> {
+    match &mut req.event {
+        ExecutionRequest::Created {
+            ffqn: _,
+            params: _,
+            parent: _,
+            scheduled_at,
+            component_id: _,
+            deployment_id: _,
+            metadata: _,
+            scheduled_by: _,
+        } => {
+            *scheduled_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        ExecutionRequest::Locked(locked) => {
+            locked.lock_expires_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        ExecutionRequest::Unlocked {
+            backoff_expires_at,
+            reason: _,
+        } => {
+            *backoff_expires_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        ExecutionRequest::TemporarilyFailed {
+            backoff_expires_at,
+            reason: _,
+            detail: _,
+            http_client_traces: _,
+        } => {
+            *backoff_expires_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        ExecutionRequest::TemporarilyTimedOut {
+            backoff_expires_at,
+            http_client_traces: _,
+        } => {
+            *backoff_expires_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        ExecutionRequest::HistoryEvent { event } => {
+            normalize_history_event_timestamps(event, unstructured)?;
+        }
+        ExecutionRequest::ComponentUpgraded {
+            component_digest: _,
+            deployment_id: _,
+            reason: _,
+        }
+        | ExecutionRequest::Finished {
+            retval: _,
+            http_client_traces: _,
+        }
+        | ExecutionRequest::Paused
+        | ExecutionRequest::Unpaused => {}
+    }
+
+    Ok(())
+}
+
+fn normalize_history_event_timestamps(
+    event: &mut HistoryEvent,
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<()> {
+    match event {
+        HistoryEvent::JoinSetRequest {
+            join_set_id: _,
+            request,
+        } => match request {
+            JoinSetRequest::DelayRequest {
+                delay_id: _,
+                expires_at,
+                schedule_at,
+                paused: _,
+            } => {
+                *expires_at = arbitrary_valid_datetime(unstructured)?;
+                normalize_schedule_at(schedule_at, unstructured)?;
+            }
+            JoinSetRequest::ChildExecutionRequest {
+                child_execution_id: _,
+                target_ffqn: _,
+                params: _,
+                result: _,
+            } => {}
+        },
+        HistoryEvent::JoinNext {
+            join_set_id: _,
+            run_expires_at,
+            requested_ffqn: _,
+            closing: _,
+        } => {
+            *run_expires_at = arbitrary_valid_datetime(unstructured)?;
+        }
+        HistoryEvent::Schedule {
+            execution_id: _,
+            schedule_at,
+            result: _,
+        } => {
+            normalize_schedule_at(schedule_at, unstructured)?;
+        }
+        HistoryEvent::Persist { value: _, kind: _ }
+        | HistoryEvent::JoinSetCreate { join_set_id: _ }
+        | HistoryEvent::JoinNextTry {
+            join_set_id: _,
+            outcome: _,
+        }
+        | HistoryEvent::JoinNextTooMany {
+            join_set_id: _,
+            requested_ffqn: _,
+        }
+        | HistoryEvent::Stub {
+            target_execution_id: _,
+            retval_hash: _,
+            result: _,
+        } => {}
+    }
+
+    Ok(())
+}
+
+fn normalize_schedule_at(
+    schedule_at: &mut HistoryEventScheduleAt,
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<()> {
+    if matches!(schedule_at, HistoryEventScheduleAt::At(_)) {
+        *schedule_at = HistoryEventScheduleAt::At(arbitrary_valid_datetime(unstructured)?);
+    }
+    Ok(())
+}
+
+fn arbitrary_valid_datetime(
+    unstructured: &mut arbitrary::Unstructured<'_>,
+) -> arbitrary::Result<DateTime<Utc>> {
+    let seconds = unstructured.int_in_range(0..=4_102_444_800_i64)?;
+    let micros = unstructured.int_in_range(0..=999_999_u32)?;
+    Ok(DateTime::from_timestamp(seconds, micros * 1_000).unwrap())
 }
 
 async fn create_and_append(
