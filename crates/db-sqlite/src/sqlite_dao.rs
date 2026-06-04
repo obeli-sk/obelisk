@@ -1160,6 +1160,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         component_digest: &ComponentDigest,
+        deployment_id: DeploymentId,
         appending_version: &Version,
     ) -> Result<AppendResponse, DbErrorWrite> {
         debug!("Updating t_state to component {component_digest}");
@@ -1169,7 +1170,9 @@ impl SqlitePool {
                 SET
                     corresponding_version = :appending_version,
                     updated_at = CURRENT_TIMESTAMP,
-                    component_id_input_digest = :component_digest
+                    component_id_input_digest = :component_digest,
+                    deployment_id = :deployment_id,
+                    incompatible_digest = NULL
                 WHERE execution_id = :execution_id;
             ",
         )?;
@@ -1177,6 +1180,7 @@ impl SqlitePool {
             ":execution_id": execution_id.to_string(),
             ":appending_version": appending_version.0,
             ":component_digest": component_digest,
+            ":deployment_id": deployment_id.to_string(),
         })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
@@ -2162,12 +2166,15 @@ impl SqlitePool {
             }
 
             ExecutionRequest::ComponentUpgraded {
-                component_digest, ..
+                component_digest,
+                deployment_id,
+                ..
             } => {
                 let next_version = Self::update_state_component_upgraded(
                     tx,
                     execution_id,
                     component_digest,
+                    *deployment_id,
                     &appending_version,
                 )?;
                 return Ok((next_version, AppendNotifier::default()));
@@ -3055,6 +3062,7 @@ impl SqlitePool {
                 created_at: Utc::now(),
                 event: ExecutionRequest::ComponentUpgraded {
                     component_digest: new.clone(),
+                    deployment_id: combined_state.execution_with_state.deployment_id,
                     reason,
                 },
             },

@@ -551,8 +551,15 @@ impl ExecutionJournal {
         self.pending_state = self.find_current_pending_state();
         self.component_id = self.find_current_component_id();
         self.deployment_id = self
-            .find_last_lock()
-            .map(|locked| locked.deployment_id)
+            .execution_events
+            .iter()
+            .rev()
+            .find_map(|event| match &event.event {
+                ExecutionRequest::Locked(locked) => Some(locked.deployment_id),
+                ExecutionRequest::ComponentUpgraded { deployment_id, .. }
+                | ExecutionRequest::Created { deployment_id, .. } => Some(*deployment_id),
+                _ => None,
+            })
             .unwrap_or_else(|| self.get_create_request().deployment_id);
     }
 

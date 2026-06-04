@@ -2446,7 +2446,7 @@ mod tests {
         );
         assert_matches!(
             &first_upgrade_log.events[6].event,
-            ExecutionRequest::ComponentUpgraded { component_digest, reason: ComponentUpgradeReason::Auto } => {
+            ExecutionRequest::ComponentUpgraded { component_digest, reason: ComponentUpgradeReason::Auto, .. } => {
                 assert_eq!(&first_upgrade_component_id.component_digest, component_digest);
             }
         );
@@ -2504,7 +2504,7 @@ mod tests {
         );
         assert_matches!(
             &second_upgrade_log.events[12].event,
-            ExecutionRequest::ComponentUpgraded { component_digest, reason: ComponentUpgradeReason::Auto } => {
+            ExecutionRequest::ComponentUpgraded { component_digest, reason: ComponentUpgradeReason::Auto, .. } => {
                 assert_eq!(&second_upgrade_component_id.component_digest, component_digest);
             }
         );

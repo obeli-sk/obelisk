@@ -1451,6 +1451,7 @@ impl WorkflowWorker {
                     created_at: self.clock_fn.now(),
                     event: ExecutionRequest::ComponentUpgraded {
                         component_digest: new_digest,
+                        deployment_id: self.deployment_id,
                         reason: ComponentUpgradeReason::Auto,
                     },
                 },
